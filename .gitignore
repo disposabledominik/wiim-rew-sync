@@ -23,6 +23,9 @@ ENV/
 coverage.xml
 htmlcov/
 
+# Hypothesis (property-based testing database — machine-specific)
+.hypothesis/
+
 # Type checking
 .mypy_cache/
 
@@ -31,15 +34,21 @@ htmlcov/
 
 # Logs (runtime-generated, not source)
 logs/
+*.log
 
 # Backups & local profiles (runtime-generated, not source)
 backups/
 profiles/
 
 # PyInstaller
-*.spec
 dist/
 build/
+*.manifest
+*.toc
+
+# Built executables (local testing artifacts)
+*.exe
+*.app
 
 # IDE
 .vscode/
@@ -50,6 +59,7 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Kiro IDE internal (keep steering.md, exclude any generated cache)
+# Kiro IDE internal (keep steering.md and specs, exclude generated cache)
 .kiro/settings/

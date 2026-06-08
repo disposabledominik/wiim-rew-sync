@@ -10,7 +10,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 1: Foundation & Models
 
-- [ ] 1. Initialize project structure and tooling
+- [x] 1. Initialize project structure and tooling
   - Create the full `src/` directory layout as specified in `design.md` (models, translator, utils, discovery, adapters, repository, gui, logging, cli, tests)
   - Create `pyproject.toml` with Python 3.12+ requirement, PySide6, httpx, pydantic v2, hypothesis, pytest, ruff, mypy, and pytest-cov dependencies
   - Configure `ruff` linting and `mypy` type checking (strict mode for `src/translator/` and `src/models/`)
@@ -19,7 +19,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Create the `logs/` directory creation logic in application startup
   - _Requirements: 19.2_
 
-- [ ] 2. Implement logging module
+- [x] 2. Implement logging module
   - Create `src/logging/setup.py` with `RotatingFileHandler` configuration for three channels: `logs/app.log`, `logs/wiim_api.log`, `logs/rew_api.log`
   - Each handler: max 10 MB per file, 5 backup archives retained
   - Every log entry must include: timestamp, log level, component name, message
