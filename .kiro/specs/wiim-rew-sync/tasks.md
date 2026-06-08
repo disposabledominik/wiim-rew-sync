@@ -37,7 +37,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests covering validation rejection cases and the `Profile` channel-mode validator
   - _Requirements: 4.4, 4.5, 6.4, 6.5, 9.2, 9.3, 9.4_
 
-- [ ] 4. Implement floating-point tolerance utilities
+- [x] 4. Implement floating-point tolerance utilities
   - Create `src/utils/fp_compare.py` with constants: `FREQ_TOLERANCE_HZ = 0.1`, `GAIN_TOLERANCE_DB = 0.05`, `Q_TOLERANCE = 0.01`
   - Implement `freq_matches(a, b)`, `gain_matches(a, b)`, `q_matches(a, b)` predicates
   - Implement `band_matches(intended, read_back)` — OFF bands require only type match
