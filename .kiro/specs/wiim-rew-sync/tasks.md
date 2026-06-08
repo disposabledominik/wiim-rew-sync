@@ -27,7 +27,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests verifying creation, rotation, and independent channel writes
   - _Requirements: 15.1, 15.2, 15.3, 15.8, 19.2_
 
-- [ ] 3. Implement core Pydantic models
+- [x] 3. Implement core Pydantic models
   - Implement `CanonicalFilter` in `src/models/canonical.py` with `type` (FilterType literal), `frequency_hz` (10–22000 Hz), `gain_db`, `q` fields and field validators
   - Implement `PEQBand` and `PEQSettings` in `src/models/peq.py`
   - Implement `DeviceCapabilities` and `DeviceInfo` in `src/models/capabilities.py`
