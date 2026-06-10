@@ -53,7 +53,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 2: Translation Engine
 
-- [ ] 6. Implement REW text file parser
+- [x] 6. Implement REW text file parser
   - Create `src/translator/rew_parser.py` implementing `REWParser`
   - `parse_file(path)` requires first line exactly `Equaliser: Parametric EQ`; maps `PK`→`"PEAK"`, `LS`→`"LS"`, `HS`→`"HS"`, `OFF <type>`→`"OFF"`
   - Raise `ParseError` (with line number) for malformed lines; raise `ValidationError` for unknown type tokens or frequency outside 10–22000 Hz
@@ -75,7 +75,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Use `@settings(max_examples=100)`
   - **Validates: Requirements 16.6, 6.1, 6.3, 7.1, 7.2, 7.3, 7.4, 7.5**
 
-- [ ] 9. Implement WiiM API response parser
+- [x] 9. Implement WiiM API response parser
   - Create `src/translator/wiim_parser.py`
   - `parse_wiim_band_array(band_array, channel="stereo")` maps `EQBand`/`EQBandL`/`EQBandR` arrays to `list[CanonicalFilter]`
   - Mode mapping: `−1`→`"OFF"`, `1`→`"PEAK"`, `0`→`"LS"`, `2`→`"HS"`

@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "name": "Type-check Translator & Models",
+  "description": "Runs mypy on src/translator and src/models when files in those strict-mode directories are edited.",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "src/translator/*.py",
+      "src/models/*.py"
+    ]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "python3 -m mypy src/translator src/models"
+  }
+}

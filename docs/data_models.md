@@ -77,18 +77,26 @@ class DeviceCapabilities:
 
 ## PEQ Settings Model
 
-Represents the complete PEQ state for one source on a device:
+Represents the PEQ state for one channel of one source on a device:
 
 ```python
 class PEQSettings:
     source_name: str        # e.g. "wifi", "bluetooth", "line-in"
     enabled: bool           # Whether PEQ is active for this source
-    channel_mode: str       # "Stereo" or "L/R"
+    channel_mode: str       # "stereo", "left", or "right"
     name: str               # Loaded preset name, empty if none
-    bands: list[PEQBand]    # 10 bands (Stereo mode or when channel_mode == "Stereo")
-    bands_l: list[PEQBand]  # Left channel bands (L/R mode only)
-    bands_r: list[PEQBand]  # Right channel bands (L/R mode only)
+    bands: list[CanonicalFilter]  # Filters for this channel view
 ```
+
+### Channel mode mapping (internal ↔ wire)
+
+| Internal `channel_mode` | WiiM API `channelMode` | Bands key(s) used |
+|---|---|---|
+| `"stereo"` | `"Stereo"` | `EQBand` |
+| `"left"` | `"L/R"` | `EQBandL` |
+| `"right"` | `"L/R"` | `EQBandR` |
+
+The internal model uses a per-channel view: when the device is in `"L/R"` mode, two `PEQSettings` objects are created (one with `channel_mode="left"`, one with `channel_mode="right"`). The WiiM adapter is responsible for mapping between the two-value wire format (`"Stereo"` / `"L/R"`) and the three-value internal representation.
 
 ---
 
@@ -98,6 +106,7 @@ Represents a single EQ band at the WiiM API level (not Canonical):
 
 ```python
 class PEQBand:
+    band_number: int   # Band index: 1–10
     letter: str    # Band identifier: "a"–"j" (bands 1–10)
     mode: int      # -1=Off, 0=Low Shelf, 1=Peak, 2=High Shelf
     frequency: float   # 10–22000 Hz
@@ -109,9 +118,9 @@ class PEQBand:
 
 ## Profile JSON Schema (Local Storage)
 
-Used for both saved user profiles and automatic backups. The `channel_mode` field in `device` determines which filter array(s) are present.
+Used for both saved user profiles and automatic backups. The `channel_mode` field determines which filter array(s) are present.
 
-**Stereo mode:**
+**Stereo mode (`channel_mode: "stereo"`):**
 ```json
 {
   "schema_version": 1,
@@ -124,7 +133,7 @@ Used for both saved user profiles and automatic backups. The `channel_mode` fiel
     "uuid": "FF31F09E12345678",
     "mac_address": "AA:BB:CC:DD:EE:FF",
     "source": "wifi",
-    "channel_mode": "Stereo"
+    "channel_mode": "stereo"
   },
   "filters": [
     {"type": "PEAK", "frequency_hz": 40.0, "gain_db": 4.5, "q": 1.5},
@@ -135,7 +144,7 @@ Used for both saved user profiles and automatic backups. The `channel_mode` fiel
 }
 ```
 
-**L/R mode:** `channel_mode` is `"L/R"` and `filters_l` / `filters_r` replace `filters`. The `filters` key must not be present.
+**L/R mode (`channel_mode: "left"` or `"right"`):** `filters_l` / `filters_r` replace `filters`. The `filters` key must not be present.
 ```json
 {
   "schema_version": 1,
@@ -148,7 +157,7 @@ Used for both saved user profiles and automatic backups. The `channel_mode` fiel
     "uuid": "FF31F09E12345678",
     "mac_address": "AA:BB:CC:DD:EE:FF",
     "source": "wifi",
-    "channel_mode": "L/R"
+    "channel_mode": "left"
   },
   "filters_l": [
     {"type": "PEAK", "frequency_hz": 1000.0, "gain_db": -1.5, "q": 1.41}
@@ -162,8 +171,8 @@ Used for both saved user profiles and automatic backups. The `channel_mode` fiel
 
 ### Schema rules
 
-- When `channel_mode == "Stereo"`: `filters` is present; `filters_l` and `filters_r` must be absent.
-- When `channel_mode == "L/R"`: `filters_l` and `filters_r` are present; `filters` must be absent.
+- When `channel_mode == "stereo"`: `filters` is present; `filters_l` and `filters_r` must be absent.
+- When `channel_mode == "left"` or `"right"`: `filters_l` and `filters_r` are present; `filters` must be absent.
 - A profile missing the expected filter key(s) for its `channel_mode` is invalid and must not be loaded silently.
 
 ### `profile_type` values
