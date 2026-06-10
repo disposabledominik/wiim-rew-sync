@@ -44,7 +44,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests in `src/tests/test_fp_compare.py` covering exact boundary values (pass at ε, fail at ε + 0.0001)
   - _Requirements: 5.6_
 
-- [ ] 5. Write property test: floating-point tolerance predicate correctness (PBT)
+- [x] 5. Write property test: floating-point tolerance predicate correctness (PBT)
   - In `src/tests/test_fp_compare.py`, add a Hypothesis `@given` test
   - Define a `st_float_near_boundary(center, tolerance)` strategy in `conftest.py`
   - Property: `band_matches()` returns True iff `|a - b| <= tolerance` for each parameter type; OFF bands always True

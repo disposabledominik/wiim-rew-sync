@@ -9,6 +9,30 @@ Strategies defined here (used across multiple PBT tasks):
 
 from __future__ import annotations
 
-# Strategies will be implemented in later tasks (Tasks 5, 8, 11, 12).
-# This file is a placeholder that ensures the tests/ package is recognised
-# by pytest and that shared fixtures are importable.
+from hypothesis import strategies as st
+
+
+def st_float_near_boundary(center: float, tolerance: float) -> st.SearchStrategy[float]:
+    """Generate floats near a boundary: within tolerance OR just outside."""
+    return st.one_of(
+        # Within tolerance (should match)
+        st.floats(
+            min_value=center - tolerance,
+            max_value=center + tolerance,
+            allow_nan=False,
+            allow_infinity=False,
+        ),
+        # Just outside tolerance (should not match)
+        st.floats(
+            min_value=center + tolerance * 1.001,
+            max_value=center + tolerance * 2,
+            allow_nan=False,
+            allow_infinity=False,
+        ),
+        st.floats(
+            min_value=center - tolerance * 2,
+            max_value=center - tolerance * 1.001,
+            allow_nan=False,
+            allow_infinity=False,
+        ),
+    )

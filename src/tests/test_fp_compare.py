@@ -174,3 +174,139 @@ class TestBandMatches:
         intended = _make_filter(type_="HS", freq=8000.0, gain=1.5, q=0.5)
         read_back = _make_filter(type_="HS", freq=8000.09, gain=1.54, q=0.509)
         assert band_matches(intended, read_back) is True
+
+
+# ---------------------------------------------------------------------------
+# Property-based tests (Hypothesis)
+# Validates: Requirements 5.6, 16.7
+# ---------------------------------------------------------------------------
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from src.utils.fp_compare import (
+    FREQ_TOLERANCE_HZ,
+    GAIN_TOLERANCE_DB,
+    Q_TOLERANCE,
+    _FP_EPS,
+)
+from src.tests.conftest import st_float_near_boundary
+
+
+class TestFreqMatchesProperty:
+    """Property tests for freq_matches.
+
+    **Validates: Requirements 5.6, 16.7**
+    """
+
+    @given(
+        center=st.floats(min_value=10.0, max_value=22000.0, allow_nan=False, allow_infinity=False),
+        delta=st_float_near_boundary(0.0, FREQ_TOLERANCE_HZ),
+    )
+    @settings(max_examples=100)
+    def test_freq_matches_iff_within_tolerance(self, center: float, delta: float) -> None:
+        """freq_matches(a, b) returns True iff |a - b| <= FREQ_TOLERANCE_HZ + _FP_EPS."""
+        b = center + delta
+        expected = abs(delta) <= FREQ_TOLERANCE_HZ + _FP_EPS
+        assert freq_matches(center, b) is expected
+
+
+class TestGainMatchesProperty:
+    """Property tests for gain_matches.
+
+    **Validates: Requirements 5.6, 16.7**
+    """
+
+    @given(
+        center=st.floats(min_value=-20.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        delta=st_float_near_boundary(0.0, GAIN_TOLERANCE_DB),
+    )
+    @settings(max_examples=100)
+    def test_gain_matches_iff_within_tolerance(self, center: float, delta: float) -> None:
+        """gain_matches(a, b) returns True iff |a - b| <= GAIN_TOLERANCE_DB + _FP_EPS."""
+        b = center + delta
+        expected = abs(center - b) <= GAIN_TOLERANCE_DB + _FP_EPS
+        assert gain_matches(center, b) is expected
+
+
+class TestQMatchesProperty:
+    """Property tests for q_matches.
+
+    **Validates: Requirements 5.6, 16.7**
+    """
+
+    @given(
+        center=st.floats(min_value=0.01, max_value=24.0, allow_nan=False, allow_infinity=False),
+        delta=st_float_near_boundary(0.0, Q_TOLERANCE),
+    )
+    @settings(max_examples=100)
+    def test_q_matches_iff_within_tolerance(self, center: float, delta: float) -> None:
+        """q_matches(a, b) returns True iff |a - b| <= Q_TOLERANCE + _FP_EPS."""
+        b = center + delta
+        expected = abs(center - b) <= Q_TOLERANCE + _FP_EPS
+        assert q_matches(center, b) is expected
+
+
+class TestBandMatchesOffProperty:
+    """Property tests for band_matches with OFF bands.
+
+    **Validates: Requirements 5.6, 16.7**
+    """
+
+    @given(
+        freq_a=st.floats(min_value=10.0, max_value=22000.0, allow_nan=False, allow_infinity=False),
+        freq_b=st.floats(min_value=10.0, max_value=22000.0, allow_nan=False, allow_infinity=False),
+        gain_a=st.floats(min_value=-20.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        gain_b=st.floats(min_value=-20.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        q_a=st.floats(min_value=0.01, max_value=24.0, allow_nan=False, allow_infinity=False),
+        q_b=st.floats(min_value=0.01, max_value=24.0, allow_nan=False, allow_infinity=False),
+    )
+    @settings(max_examples=100)
+    def test_off_bands_always_match(
+        self,
+        freq_a: float,
+        freq_b: float,
+        gain_a: float,
+        gain_b: float,
+        q_a: float,
+        q_b: float,
+    ) -> None:
+        """band_matches with OFF type always returns True regardless of numeric values."""
+        intended = CanonicalFilter(type="OFF", frequency_hz=freq_a, gain_db=gain_a, q=q_a)
+        read_back = CanonicalFilter(type="OFF", frequency_hz=freq_b, gain_db=gain_b, q=q_b)
+        assert band_matches(intended, read_back) is True
+
+
+# Strategy for non-OFF filter types
+_NON_OFF_TYPES = ["PEAK", "LS", "HS"]
+
+
+class TestBandMatchesTypeMismatchProperty:
+    """Property tests for band_matches with type mismatches.
+
+    **Validates: Requirements 5.6, 16.7**
+    """
+
+    @given(
+        type_a=st.sampled_from(_NON_OFF_TYPES),
+        type_b=st.sampled_from(_NON_OFF_TYPES),
+        freq=st.floats(min_value=10.0, max_value=22000.0, allow_nan=False, allow_infinity=False),
+        gain=st.floats(min_value=-20.0, max_value=20.0, allow_nan=False, allow_infinity=False),
+        q=st.floats(min_value=0.01, max_value=24.0, allow_nan=False, allow_infinity=False),
+    )
+    @settings(max_examples=100)
+    def test_band_matches_type_mismatch_always_false(
+        self,
+        type_a: str,
+        type_b: str,
+        freq: float,
+        gain: float,
+        q: float,
+    ) -> None:
+        """band_matches with different non-OFF types always returns False."""
+        from hypothesis import assume
+
+        assume(type_a != type_b)
+        intended = CanonicalFilter(type=type_a, frequency_hz=freq, gain_db=gain, q=q)
+        read_back = CanonicalFilter(type=type_b, frequency_hz=freq, gain_db=gain, q=q)
+        assert band_matches(intended, read_back) is False

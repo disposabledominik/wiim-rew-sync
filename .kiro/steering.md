@@ -1,5 +1,18 @@
 # Kiro IDE Steering Rules
 
+## Development Environment
+
+- **Shell:** WSL2 Ubuntu (Linux). All shell commands must be Linux-compatible. Never use Windows cmd or PowerShell syntax.
+- **Python:** Use `python3` (not `python`). Use `pip3` or `python3 -m pip` for package management.
+- **Virtual environment:** Activate with `source .venv/bin/activate`, not `.venv\Scripts\activate`.
+- **Path separators:** Use forward slashes (`/`) in shell commands. The IDE may show Windows paths (`C:\...`) but the execution shell is Linux.
+- **Install command:** `pip install -e ".[dev]"` (editable install with dev deps).
+- **Test command:** `python3 -m pytest` (preferred over bare `pytest` to avoid PATH issues).
+- **Lint:** `python3 -m ruff check src/`
+- **Type check:** `python3 -m mypy src/`
+
+---
+
 1. **Never invent undocumented WiiM endpoints.** If it's not in `wiim_api_notes.md` or confirmed by the capability prober, do not guess. Use the Uncertainty Protocol.
 
 2. **Prefer official documentation.** For WiiM: the official HTTP API PDF and `pywiim` source. For REW: the official REW API and Equaliser help pages.
