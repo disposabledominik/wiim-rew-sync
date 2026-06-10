@@ -8,6 +8,6 @@
   },
   "then": {
     "type": "runCommand",
-    "command": "wsl bash -c \"cd /mnt/c/Users/domin/Desktop/Misc/_dev/wiim-rew-sync && python3 -m pytest --no-header -q\""
+    "command": "c:\\Users\\domin\\Desktop\\Misc\\_dev\\wiim-rew-sync\\scripts\\hook_test.bat"
   }
 }

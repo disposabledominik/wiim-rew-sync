@@ -1,16 +1,16 @@
 {
   "enabled": true,
   "name": "Lint on Save",
-  "description": "Runs ruff check on any saved Python file to catch style and lint issues immediately.",
+  "description": "Runs ruff check on any saved Python file in src/ to catch style and lint issues immediately.",
   "version": "1",
   "when": {
     "type": "fileEdited",
     "patterns": [
-      "**/*.py"
+      "src/**/*.py"
     ]
   },
   "then": {
     "type": "runCommand",
-    "command": "wsl bash -c \"cd /mnt/c/Users/domin/Desktop/Misc/_dev/wiim-rew-sync && python3 -m ruff check src/\""
+    "command": "c:\\Users\\domin\\Desktop\\Misc\\_dev\\wiim-rew-sync\\scripts\\hook_lint.bat"
   }
 }

@@ -80,19 +80,16 @@ git clone https://github.com/<your-org>/wiim-rew-sync.git
 cd wiim-rew-sync
 
 # Create a virtual environment (recommended)
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
+python3 -m venv .venv
 source .venv/bin/activate
 
 # Install in editable mode with dev dependencies
-pip install -e ".[dev]"
+pip3 install -e ".[dev]"
 
 # Verify setup
-pytest src/tests/ -v
-ruff check src/
-mypy src/
+python3 -m pytest src/tests/ -v
+python3 -m ruff check src/
+python3 -m mypy src/
 ```
 
 ---

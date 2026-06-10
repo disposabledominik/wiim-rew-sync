@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 
 from src.models.canonical import CanonicalFilter, FilterType
-from src.translator import ValidationWarning
+from src.translator._warnings import ValidationWarning
 
 logger = logging.getLogger("wiim_rew_sync.app")
 

@@ -18,8 +18,13 @@ src/
 ├── repository/      # Local JSON profile storage and backup management
 ├── tests/           # All tests (pytest + hypothesis)
 ├── translator/      # Translation engine (REW ↔ Canonical ↔ WiiM)
+│   ├── __init__.py     # TranslationEngine facade (stateless, all @staticmethod)
+│   ├── _warnings.py    # ValidationWarning dataclass
 │   ├── rew_parser.py   # REW text/API → Canonical
-│   └── wiim_parser.py  # WiiM API → Canonical and Canonical → WiiM payload
+│   ├── rew_generator.py # Canonical → REW text
+│   ├── wiim_parser.py  # WiiM API → Canonical
+│   ├── wiim_generator.py # Canonical → WiiM API payload
+│   └── schema_migrator.py # Profile schema version migration
 └── utils/           # Shared utilities (fp_compare, etc.)
 
 docs/                # Project documentation (PRD, architecture, API notes, etc.)
@@ -37,7 +42,8 @@ docs/                # Project documentation (PRD, architecture, API notes, etc.
 ## Development Phases
 
 The project follows a strict phased approach:
-1. **Models & Translator** — domain models and stateless translation (current phase)
-2. **CLI Proof of Concept** — full round-trip against real hardware (must pass before GUI)
-3. **GUI Layer** — PySide6 interface built on validated business logic
-4. **Packaging** — PyInstaller single-file distribution
+1. **Models & Translator** — domain models and stateless translation (COMPLETE)
+2. **Network & Discovery** — HTTP clients, device discovery, capability probing (current phase)
+3. **CLI Proof of Concept** — full round-trip against real hardware (must pass before GUI)
+4. **GUI Layer** — PySide6 interface built on validated business logic
+5. **Packaging** — PyInstaller single-file distribution

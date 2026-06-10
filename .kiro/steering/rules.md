@@ -54,6 +54,6 @@ These rules are mandatory for all work in this codebase. They encode hard-won le
 
 ## Workflow Gates
 
-17. **Do not skip the CLI phase.** Task 022 is a hard gate. No GUI work begins until CLI validation passes against real hardware.
+17. **Do not skip the CLI phase.** Task 32 is a hard gate. No GUI work begins until CLI validation passes against real hardware.
 
 18. **Uncertainty Protocol**: If endpoint behaviour is uncertain — stop, document the uncertainty in `docs/corrections.md` as a new row, create a `# TODO:` comment, set the relevant capability flag to the most conservative (safe) value, and continue with confirmed functionality only.

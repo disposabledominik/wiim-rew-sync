@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from hypothesis import strategies as st
 
+from src.models.canonical import CanonicalFilter
+
 
 def st_float_near_boundary(center: float, tolerance: float) -> st.SearchStrategy[float]:
     """Generate floats near a boundary: within tolerance OR just outside."""
@@ -36,3 +38,22 @@ def st_float_near_boundary(center: float, tolerance: float) -> st.SearchStrategy
             allow_infinity=False,
         ),
     )
+
+
+@st.composite
+def st_canonical_filter(draw: st.DrawFn) -> CanonicalFilter:
+    """Generate a single valid CanonicalFilter."""
+    filter_type = draw(st.sampled_from(["PEAK", "LS", "HS", "OFF"]))
+    freq = draw(st.floats(min_value=10.0, max_value=22000.0, allow_nan=False, allow_infinity=False))
+    gain = draw(st.floats(min_value=-20.0, max_value=20.0, allow_nan=False, allow_infinity=False))
+    q = draw(st.floats(min_value=0.01, max_value=24.0, allow_nan=False, allow_infinity=False))
+    return CanonicalFilter(type=filter_type, frequency_hz=freq, gain_db=gain, q=q)  # type: ignore[arg-type]
+
+
+@st.composite
+def st_canonical_filter_list(
+    draw: st.DrawFn, min_size: int = 1, max_size: int = 10
+) -> list[CanonicalFilter]:
+    """Generate a list of valid CanonicalFilters."""
+    n = draw(st.integers(min_value=min_size, max_value=max_size))
+    return [draw(st_canonical_filter()) for _ in range(n)]

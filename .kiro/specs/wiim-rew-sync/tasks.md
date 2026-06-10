@@ -68,7 +68,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests: first-line format, band numbering, decimal precision, OFF band format, L/R suffix naming
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-- [ ] 8. Write property test: REW parse-generate-parse round-trip (PBT)
+- [x] 8. Write property test: REW parse-generate-parse round-trip (PBT)
   - In `src/tests/test_translator.py`, add a Hypothesis `@given` test
   - Define `st_canonical_filter()` and `st_canonical_filter_list(min_size=1, max_size=10)` strategies in `conftest.py`
   - Property: for any valid `CanonicalFilter` list, `generate_file` → `parse_file` must return a list identical to the original
@@ -89,14 +89,14 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests: 10 filters → 40-entry output, OFF maps to mode −1, clipping triggers and logs warnings, round-trip within tolerance
   - _Requirements: 6.7, 6.8, 16.3, 16.4, 16.5_
 
-- [ ] 11. Write property test: WiiM generate-parse round-trip (PBT)
+- [x] 11. Write property test: WiiM generate-parse round-trip (PBT)
   - In `src/tests/test_translator.py`, add a Hypothesis `@given` test
   - Reuse `st_canonical_filter_list` strategy
   - Property: for any valid `CanonicalFilter` list, `generate_wiim_band_array` → `parse_wiim_band_array` must produce filters matching originals within tolerances (freq ±0.1 Hz, gain ±0.05 dB, Q ±0.01)
   - Use `@settings(max_examples=100)`
   - **Validates: Requirements 16.7, 4.2, 4.4, 4.5**
 
-- [ ] 12. Write property test: WiiM value clipping invariant (PBT)
+- [x] 12. Write property test: WiiM value clipping invariant (PBT)
   - In `src/tests/test_translator.py`, add a Hypothesis `@given` test
   - Strategy: generate `CanonicalFilter` objects with gain and Q values outside WiiM limits
   - Property: `generate_wiim_band_array()` must always produce entries with gain in [−12.0, +12.0] and Q in [0.01, 24.0], regardless of input values
@@ -109,7 +109,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests: current-version is no-op, old version migrates, unknown version raises `SchemaVersionError`
   - _Requirements: 9.8_
 
-- [ ] 14. Assemble TranslationEngine facade and verify coverage
+- [x] 14. Assemble TranslationEngine facade and verify coverage
   - Create `src/translator/__init__.py` with the stateless `TranslationEngine` facade (all `@staticmethod` methods)
   - Run `pytest --cov=src/translator --cov-report=term-missing` and confirm ≥ 90% coverage
   - Ensure `mypy src/translator/` passes with zero errors
