@@ -11,7 +11,6 @@ from src.models.canonical import CanonicalFilter
 from src.models.errors import ValidationError
 from src.translator.wiim_parser import parse_wiim_band_array
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

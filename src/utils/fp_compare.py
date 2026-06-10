@@ -3,7 +3,7 @@
 Used by the Safe Write Protocol to compare intended vs. read-back filter values.
 
 A small relative epsilon (1e-9) is added to each tolerance to absorb unavoidable
-IEEE 754 representation error (e.g. |1000.0 − 1000.1| slightly exceeds 0.1 in
+IEEE 754 representation error (e.g. |1000.0 - 1000.1| slightly exceeds 0.1 in
 binary64). This ensures that values which are nominally at the boundary are
 correctly accepted.
 """

@@ -25,7 +25,7 @@ _MODE_MAP: dict[int, FilterType] = {
 
 
 def parse_wiim_band_array(
-    band_array: list[dict],
+    band_array: list[dict[str, int | float | str]],
     channel: str = "stereo",
 ) -> list[CanonicalFilter]:
     """Parse a WiiM EQBand array into a list of CanonicalFilter objects.

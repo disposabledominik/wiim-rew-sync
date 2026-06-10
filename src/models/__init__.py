@@ -11,8 +11,8 @@ from src.models.errors import (
     SchemaVersionError,
     ValidationError,
     WiiMConnectionError,
-    WiiMREWSyncError,
     WiiMResponseError,
+    WiiMREWSyncError,
     WiiMSlaveTargetError,
     WiiMTimeoutError,
 )

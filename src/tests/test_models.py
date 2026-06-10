@@ -14,15 +14,14 @@ from src.models.errors import (
     SchemaVersionError,
     ValidationError,
     WiiMConnectionError,
-    WiiMREWSyncError,
     WiiMResponseError,
+    WiiMREWSyncError,
     WiiMSlaveTargetError,
     WiiMTimeoutError,
 )
-from src.models.peq import PEQBand, PEQSettings
+from src.models.peq import PEQBand
 from src.models.profile import BackupRecord, Profile
 from src.translator import ValidationWarning
-
 
 # ---------------------------------------------------------------------------
 # CanonicalFilter validation tests

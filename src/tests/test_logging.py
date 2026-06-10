@@ -34,7 +34,6 @@ from src.logging.setup import (
     ensure_logs_directory,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -345,7 +344,8 @@ class TestIdempotency:
             for name in (LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API):
                 rotating = _get_rotating_handlers(logging.getLogger(name))
                 assert len(rotating) == 1, (
-                    f"Logger '{name}' has {len(rotating)} RotatingFileHandlers after two calls; expected 1"
+                    f"Logger '{name}' has {len(rotating)} "
+                    f"RotatingFileHandlers after two calls; expected 1"
                 )
         finally:
             _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)
@@ -409,7 +409,8 @@ class TestHandlerConfiguration:
                 handlers = _get_rotating_handlers(logging.getLogger(name))
                 assert len(handlers) == 1
                 assert handlers[0].backupCount == LOG_BACKUP_COUNT, (
-                    f"Logger '{name}': backupCount={handlers[0].backupCount}, expected {LOG_BACKUP_COUNT}"
+                    f"Logger '{name}': backupCount="
+                    f"{handlers[0].backupCount}, expected {LOG_BACKUP_COUNT}"
                 )
         finally:
             _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)

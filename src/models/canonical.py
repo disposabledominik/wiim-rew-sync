@@ -23,7 +23,7 @@ class CanonicalFilter(BaseModel):
     def frequency_in_range(cls, v: float) -> float:
         """Frequency must be between 10 Hz and 22 kHz."""
         if not (10.0 <= v <= 22000.0):
-            raise ValueError(f"frequency_hz {v} out of range 10–22000 Hz")
+            raise ValueError(f"frequency_hz {v} out of range 10-22000 Hz")
         return v
 
     @field_validator("q")

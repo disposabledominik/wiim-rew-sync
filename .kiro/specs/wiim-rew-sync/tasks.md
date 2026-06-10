@@ -61,7 +61,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests covering valid file, OFF filter, all type mappings, frequency error, unknown type error, malformed line error
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
 
-- [ ] 7. Implement REW text file generator
+- [x] 7. Implement REW text file generator
   - Create `src/translator/rew_generator.py` implementing `REWGenerator`
   - `generate_file(filters, path, max_filters=10)`: first line exactly `Equaliser: Parametric EQ`; 1-based two-digit zero-padded numbering; gain and freq to 2 dp, Q to 3 dp; OFF bands as `OFF PK Fc <freq> Hz Gain <gain> dB Q <q>`
   - `generate_lr_files(filters_l, filters_r, base_path, max_filters=10)`: two files with `_L` / `_R` suffixes; return `(left_path, right_path)`
@@ -82,7 +82,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests: 10-band array, L/R mode, all mode value mappings
   - _Requirements: 4.2, 4.3, 4.4, 4.5_
 
-- [ ] 10. Implement WiiM API payload generator
+- [x] 10. Implement WiiM API payload generator
   - Create `src/translator/wiim_generator.py`
   - `generate_wiim_band_array(filters)` produces 40-entry parameter list (4 params × 10 bands)
   - Clip gain to ±12 dB and Q to 0.01–24; log WARNING for each clip
@@ -103,7 +103,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Use `@settings(max_examples=100)`
   - **Validates: Requirements 6.7, 6.8, 16.3, 16.4**
 
-- [ ] 13. Implement schema migrator
+- [x] 13. Implement schema migrator
   - Create `src/translator/schema_migrator.py`
   - `migrate_profile(raw: dict) -> dict`: upgrade from any older `schema_version` to current; raise `SchemaVersionError` if migration is impossible
   - Write unit tests: current-version is no-op, old version migrates, unknown version raises `SchemaVersionError`

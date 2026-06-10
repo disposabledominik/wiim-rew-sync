@@ -12,6 +12,6 @@
   },
   "then": {
     "type": "runCommand",
-    "command": "python3 -m mypy src/translator src/models"
+    "command": "wsl bash -c \"cd /mnt/c/Users/domin/Desktop/Misc/_dev/wiim-rew-sync && python3 -m mypy src/translator src/models\""
   }
 }

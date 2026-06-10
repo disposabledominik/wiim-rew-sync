@@ -5,14 +5,21 @@ Tests verify exact boundary behaviour: pass at ε, fail at ε + 0.0001.
 
 from __future__ import annotations
 
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from src.models.canonical import CanonicalFilter
+from src.tests.conftest import st_float_near_boundary
 from src.utils.fp_compare import (
+    _FP_EPS,
+    FREQ_TOLERANCE_HZ,
+    GAIN_TOLERANCE_DB,
+    Q_TOLERANCE,
     band_matches,
     freq_matches,
     gain_matches,
     q_matches,
 )
-
 
 # ---------------------------------------------------------------------------
 # freq_matches
@@ -180,17 +187,6 @@ class TestBandMatches:
 # Property-based tests (Hypothesis)
 # Validates: Requirements 5.6, 16.7
 # ---------------------------------------------------------------------------
-
-from hypothesis import given, settings
-from hypothesis import strategies as st
-
-from src.utils.fp_compare import (
-    FREQ_TOLERANCE_HZ,
-    GAIN_TOLERANCE_DB,
-    Q_TOLERANCE,
-    _FP_EPS,
-)
-from src.tests.conftest import st_float_near_boundary
 
 
 class TestFreqMatchesProperty:

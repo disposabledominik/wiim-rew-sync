@@ -39,9 +39,9 @@ _API_TYPE_MAP: dict[str, str] = {
 
 
 def _validate_frequency(freq: float, *, line_number: int | None = None) -> None:
-    """Raise ValidationError if frequency is outside 10–22000 Hz."""
+    """Raise ValidationError if frequency is outside 10-22000 Hz."""
     if not (10.0 <= freq <= 22000.0):
-        msg = f"Frequency {freq} Hz is outside valid range 10–22000 Hz"
+        msg = f"Frequency {freq} Hz is outside valid range 10-22000 Hz"
         if line_number is not None:
             msg = f"Line {line_number}: {msg}"
         raise ValidationError(msg)
@@ -153,7 +153,7 @@ class REWParser:
             # Validate frequency
             if not (10.0 <= freq <= 22000.0):
                 raise ValidationError(
-                    f"Filter {i + 1}: Frequency {freq} Hz is outside valid range 10–22000 Hz"
+                    f"Filter {i + 1}: Frequency {freq} Hz is outside valid range 10-22000 Hz"
                 )
 
             # Determine canonical type
