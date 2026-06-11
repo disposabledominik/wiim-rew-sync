@@ -32,6 +32,10 @@ class PEQSettings(BaseModel):
     For stereo mode: ``bands`` holds the shared filter list.
     For L/R mode: ``bands_l`` and ``bands_r`` hold per-channel filters;
     ``bands`` is left empty.
+
+    NOTE: ``channel_mode`` here uses "stereo"/"lr" (device state).
+    ``Profile.channel_mode`` uses "stereo"/"left"/"right" (saved snapshot).
+    Conversion between the two happens in the profile repository layer.
     """
 
     source_name: str

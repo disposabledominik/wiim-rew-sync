@@ -16,6 +16,7 @@ from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
 from src.models.errors import WiiMConnectionError, WiiMResponseError
+from src.models.peq import PEQSettings
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -404,3 +405,366 @@ class TestGetMultiroomMasterIp:
         result = await adapter.get_multiroom_master_ip()
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_peq — Batch path
+# ---------------------------------------------------------------------------
+
+
+class TestWritePeqBatch:
+    """Test PEQ write via batch path (supports_batch_write=True)."""
+
+    @pytest.fixture
+    def batch_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with batch write support."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_batch_write=True,
+            supports_channel_peq=True,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def batch_adapter(
+        self, mock_client: AsyncMock, batch_capabilities: DeviceCapabilities
+    ) -> WiiMAdapter:
+        """Adapter configured for batch write."""
+        return WiiMAdapter(http_client=mock_client, capabilities=batch_capabilities)
+
+    def _make_settings(self) -> PEQSettings:
+        """Create minimal PEQSettings for testing."""
+        from src.models.canonical import CanonicalFilter
+
+        bands = [
+            CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41),
+            CanonicalFilter(type="LS", frequency_hz=120.0, gain_db=2.0, q=0.71),
+        ]
+        # Remaining bands will be filled as OFF by generate_wiim_band_array
+        return PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="stereo",
+            bands=bands,
+        )
+
+    async def test_batch_write_issues_single_command(
+        self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Batch write issues exactly one EQSetLV2SourceBand command."""
+        mock_client.command.return_value = "OK"
+        settings = self._make_settings()
+
+        await batch_adapter.write_peq("wifi", settings)
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQSetLV2SourceBand:")
+
+    async def test_batch_write_payload_contains_source_and_plugin(
+        self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Batch payload includes source_name, pluginURI, and channelMode."""
+        mock_client.command.return_value = "OK"
+        settings = self._make_settings()
+
+        await batch_adapter.write_peq("wifi", settings)
+
+        call_args = mock_client.command.call_args[0][0]
+        # URL-decoded the command should contain these keys
+        assert "wifi" in call_args
+        assert "EqNp" in call_args
+        assert "Stereo" in call_args
+
+    async def test_batch_write_payload_contains_all_bands(
+        self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Batch payload includes EQBand with 40 parameters (10 bands x 4 params)."""
+        mock_client.command.return_value = "OK"
+        settings = self._make_settings()
+
+        await batch_adapter.write_peq("wifi", settings)
+
+        call_args = mock_client.command.call_args[0][0]
+        # Should contain all band letters
+        assert "a_mode" in call_args
+        assert "j_mode" in call_args
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_peq — Sequential path
+# ---------------------------------------------------------------------------
+
+
+class TestWritePeqSequential:
+    """Test PEQ write via sequential path (supports_batch_write=False)."""
+
+    @pytest.fixture
+    def seq_capabilities(self) -> DeviceCapabilities:
+        """Capabilities without batch write support."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_batch_write=False,
+            supports_channel_peq=True,
+            max_filters=10,
+            model="WiiM_Pro",
+            firmware="5.0.0.10",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def seq_adapter(
+        self, mock_client: AsyncMock, seq_capabilities: DeviceCapabilities
+    ) -> WiiMAdapter:
+        """Adapter configured for sequential write."""
+        return WiiMAdapter(http_client=mock_client, capabilities=seq_capabilities)
+
+    def _make_settings(self) -> PEQSettings:
+        """Create minimal PEQSettings for testing."""
+        from src.models.canonical import CanonicalFilter
+
+        bands = [
+            CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41),
+        ]
+        return PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="stereo",
+            bands=bands,
+        )
+
+    async def test_sequential_write_uses_queue(
+        self, seq_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Sequential write delegates to queue.enqueue for each band."""
+        mock_queue = AsyncMock()
+        mock_queue.enqueue = AsyncMock()
+        settings = self._make_settings()
+
+        await seq_adapter.write_peq("wifi", settings, queue=mock_queue)
+
+        # 10 bands should each be enqueued
+        assert mock_queue.enqueue.call_count == 10
+
+    async def test_sequential_write_without_queue_uses_client(
+        self, seq_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Sequential write without queue falls back to direct client.command."""
+        mock_client.command.return_value = "OK"
+        settings = self._make_settings()
+
+        await seq_adapter.write_peq("wifi", settings, queue=None)
+
+        # 10 commands issued (one per band)
+        assert mock_client.command.call_count == 10
+
+    async def test_sequential_write_commands_contain_single_band(
+        self, seq_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Each sequential command targets one band (4 params)."""
+        mock_queue = AsyncMock()
+        mock_queue.enqueue = AsyncMock()
+        settings = self._make_settings()
+
+        await seq_adapter.write_peq("wifi", settings, queue=mock_queue)
+
+        # First call should contain band "a" parameters
+        first_call = mock_queue.enqueue.call_args_list[0][0][0]
+        assert "a_mode" in first_call
+        assert "EQSetLV2SourceBand:" in first_call
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_peq — Slave guard
+# ---------------------------------------------------------------------------
+
+
+class TestWritePeqSlaveGuard:
+    """Test that write_peq raises WiiMSlaveTargetError for slave devices."""
+
+    @pytest.fixture
+    def slave_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with slave role."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_batch_write=True,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="slave",
+        )
+
+    @pytest.fixture
+    def slave_adapter(
+        self, mock_client: AsyncMock, slave_capabilities: DeviceCapabilities
+    ) -> WiiMAdapter:
+        """Adapter configured as slave device."""
+        return WiiMAdapter(http_client=mock_client, capabilities=slave_capabilities)
+
+    async def test_slave_write_raises_error(
+        self, slave_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Writing PEQ to a slave device raises WiiMSlaveTargetError."""
+        from src.models.canonical import CanonicalFilter
+        from src.models.errors import WiiMSlaveTargetError
+        from src.models.peq import PEQSettings
+
+        settings = PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="stereo",
+            bands=[CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)],
+        )
+
+        with pytest.raises(WiiMSlaveTargetError, match="slave"):
+            await slave_adapter.write_peq("wifi", settings)
+
+    async def test_slave_write_does_not_issue_commands(
+        self, slave_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Slave guard prevents any HTTP command from being issued."""
+        from src.models.canonical import CanonicalFilter
+        from src.models.errors import WiiMSlaveTargetError
+        from src.models.peq import PEQSettings
+
+        settings = PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="stereo",
+            bands=[CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)],
+        )
+
+        with pytest.raises(WiiMSlaveTargetError):
+            await slave_adapter.write_peq("wifi", settings)
+
+        mock_client.command.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: read_roomfit — Level gating
+# ---------------------------------------------------------------------------
+
+
+class TestReadRoomfit:
+    """Test read_roomfit level gating and response parsing."""
+
+    @pytest.fixture
+    def roomfit_read_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with roomfit_level >= 2 (read supported)."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_roomfit=True,
+            supports_roomfit_read=True,
+            roomfit_level=3,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def low_roomfit_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with roomfit_level < 2 (read NOT supported)."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            roomfit_level=1,
+            max_filters=10,
+            model="WiiM_Mini",
+            firmware="5.0.0.10",
+            role="solo",
+        )
+
+    async def test_read_roomfit_insufficient_level_raises(
+        self, mock_client: AsyncMock, low_roomfit_capabilities: DeviceCapabilities
+    ) -> None:
+        """read_roomfit raises WiiMResponseError when roomfit_level < 2."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=low_roomfit_capabilities
+        )
+
+        with pytest.raises(WiiMResponseError, match="roomfit_level >= 2"):
+            await adapter.read_roomfit()
+
+    async def test_read_roomfit_insufficient_level_no_commands(
+        self, mock_client: AsyncMock, low_roomfit_capabilities: DeviceCapabilities
+    ) -> None:
+        """No HTTP commands issued when level is insufficient."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=low_roomfit_capabilities
+        )
+
+        with pytest.raises(WiiMResponseError):
+            await adapter.read_roomfit()
+
+        mock_client.command.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_roomfit — Level gating
+# ---------------------------------------------------------------------------
+
+
+class TestWriteRoomfit:
+    """Test write_roomfit level gating."""
+
+    @pytest.fixture
+    def roomfit_write_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with roomfit_level >= 4 (write supported)."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_roomfit=True,
+            supports_roomfit_read=True,
+            supports_roomfit_write=True,
+            roomfit_level=4,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def insufficient_write_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with roomfit_level < 4 (write NOT supported)."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_roomfit=True,
+            supports_roomfit_read=True,
+            roomfit_level=3,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    async def test_write_roomfit_insufficient_level_raises(
+        self, mock_client: AsyncMock, insufficient_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """write_roomfit raises WiiMResponseError when roomfit_level < 4."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=insufficient_write_capabilities
+        )
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
+
+        with pytest.raises(WiiMResponseError, match="roomfit_level >= 4"):
+            await adapter.write_roomfit(filters)
+
+    async def test_write_roomfit_insufficient_level_no_commands(
+        self, mock_client: AsyncMock, insufficient_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """No HTTP commands issued when level is insufficient for write."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=insufficient_write_capabilities
+        )
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
+
+        with pytest.raises(WiiMResponseError):
+            await adapter.write_roomfit(filters)
+
+        mock_client.command.assert_not_called()

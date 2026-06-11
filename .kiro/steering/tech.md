@@ -128,7 +128,8 @@ When executing multiple tasks from the same wave in parallel:
 
 - **If two or more tasks write to the same file** (e.g., multiple PBT tests targeting `test_translator.py`, or multiple tasks extending `conftest.py`), they MUST be batched into a single subagent call. Never dispatch them as separate parallel subagents — the last one to finish will overwrite the others.
 - **Tasks writing to completely separate files** can be safely dispatched as parallel subagent calls.
-- **Always verify after parallel execution** by running `python3 -m pytest --no-header -q` to confirm no content was lost.
+- **If Task A creates a module that Task B calls**, specify the exact public API (method names, signatures) in BOTH dispatch prompts to prevent interface mismatches. Example: when the adapter calls the queue, both subagents must agree on `enqueue(command)` as the method name.
+- **Always verify after parallel execution** by running `python3 -m pytest --no-header -q` to confirm no content was lost and no interface mismatches exist.
 
 ## Task Completion Quality Gate
 
@@ -144,7 +145,11 @@ If any step fails, fix the issues before marking the task done. Do not accumulat
 
 ## Task Dispatch Efficiency Rules
 
-- **Do not read files just to check existence** before dispatching. Let the subagent handle missing files.
+- **Only read files that ALREADY EXIST and whose content you need to pass context about.** Before dispatching:
+  - DO read: source files the subagent will EXTEND (e.g., adding methods to an existing adapter)
+  - DO NOT read: files the subagent will CREATE from scratch (they don't exist yet — reading returns nothing)
+  - DO NOT read: spec files (design.md, requirements.md) — pass them as contextFiles instead
+  - DO NOT read: test files that the subagent will create
 - **Keep subagent prompts concise.** Include: task ID, acceptance criteria, and known gotchas. Do not paste full design docs — pass them as contextFiles instead.
 - **Commit after each wave, not after each task.** Unless the user explicitly asks for per-task commits.
 - **Dispatch aggressively within a wave.** If tasks write to separate files, run them all in parallel — don't wait for one to finish before starting the next.

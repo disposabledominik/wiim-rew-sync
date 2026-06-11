@@ -5,6 +5,9 @@ src/
 ├── adapters/        # WiiM HTTP adapter and REW HTTP adapter (network I/O)
 ├── cli/             # CLI entry point and proof-of-concept commands
 ├── discovery/       # mDNS device discovery (zeroconf)
+│   ├── discovery_module.py # Orchestrator: mDNS then subnet fallback
+│   ├── zeroconf_discover.py # mDNS probe (_wiim._tcp.local.)
+│   └── subnet_scanner.py   # Fallback getStatusEx subnet scan
 ├── gui/             # PySide6 GUI layer
 │   ├── dialogs/     # Modal dialogs
 │   └── panels/      # Main window panels

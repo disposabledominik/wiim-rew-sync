@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Integrity Review",
+  "description": "Reviews the codebase for bugs, interface mismatches, and documentation inconsistencies. Checks that all module interfaces align, models are compatible, steering/specs match implementation, and docs are lean and consistent.",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Perform a full integrity review of the wiim-rew-sync project. Check for:\n\n1. **Interface mismatches** — Verify all cross-module method calls use correct names and signatures. Check adapters call methods that exist on their dependencies.\n\n2. **Model inconsistencies** — Check that Literal types, field names, and validation logic are consistent between models that interact (e.g., PEQSettings vs Profile channel_mode, CanonicalFilter usage across translator modules).\n\n3. **Documentation vs implementation** — Check steering files (structure.md, rules.md, tech.md, product.md), DEPENDENCIES.md, and spec files against actual code on disk. Flag stale references, incorrect task numbers, missing files from structure listings, or outdated phase descriptions.\n\n4. **Import correctness** — Verify no circular imports, no broken import chains, and that all public APIs are importable as documented.\n\n5. **Test coverage gaps** — Check if any source module in src/adapters/, src/translator/, or src/repository/ lacks a corresponding test file.\n\nReport all findings with file paths. Fix trivial issues directly. For design decisions that need user input, list them as questions."
+  }
+}

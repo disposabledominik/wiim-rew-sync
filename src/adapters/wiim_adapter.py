@@ -1,25 +1,30 @@
 """
-WiiM device adapter — PEQ read and multiroom operations.
+WiiM device adapter — PEQ read/write and multiroom operations.
 
 Wraps WiiMHttpClient with domain-aware methods that issue the correct LV2 PEQ
 commands, parse responses via ``wiim_parser``, and return typed domain objects.
 
-Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7
+Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 5.3, 5.4, 5.11, 17.1, 17.4
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
-from src.models.errors import WiiMConnectionError, WiiMResponseError
+from src.models.errors import WiiMConnectionError, WiiMResponseError, WiiMSlaveTargetError
 from src.models.peq import PEQSettings
+from src.translator.wiim_generator import generate_wiim_band_array
 from src.translator.wiim_parser import parse_wiim_band_array
+
+if TYPE_CHECKING:
+    from src.adapters.command_queue import WiiMCommandQueue
 
 logger = logging.getLogger("wiim_rew_sync.wiim_api")
 
@@ -229,3 +234,186 @@ class WiiMAdapter:
             return master_ip
 
         return None
+
+    # ------------------------------------------------------------------
+    # PEQ Write
+    # ------------------------------------------------------------------
+
+    async def write_peq(
+        self,
+        source_name: str,
+        settings: PEQSettings,
+        queue: WiiMCommandQueue | None = None,
+    ) -> None:
+        """Write PEQ bands to the device for a given source.
+
+        Uses the batch path (single ``EQSetLV2SourceBand`` with full payload) when
+        ``supports_batch_write`` is True. Otherwise writes bands sequentially via
+        the queue with a 100 ms inter-command delay.
+
+        Args:
+            source_name: Audio input source (e.g. "wifi", "bluetooth").
+            settings: PEQ settings containing bands to write.
+            queue: Optional command queue for sequential writes.
+
+        Raises:
+            WiiMSlaveTargetError: Device role is slave (writes not allowed).
+            WiiMResponseError: Device returned an error response.
+            WiiMConnectionError: Device unreachable.
+        """
+        if self._capabilities.role == "slave":
+            raise WiiMSlaveTargetError(
+                "Cannot write PEQ to a slave device; target the master node instead"
+            )
+
+        # Determine which bands to write based on channel mode
+        if settings.channel_mode == "stereo":
+            bands = settings.bands
+            channel_mode_wire = "Stereo"
+        else:
+            # For L/R mode, write left bands (right handled separately if needed)
+            bands = settings.bands_l if settings.bands_l else settings.bands
+            channel_mode_wire = "L/R"
+
+        # Generate the WiiM 40-entry flat parameter array
+        band_array, _warnings = generate_wiim_band_array(bands)
+
+        if self._capabilities.supports_batch_write:
+            await self._write_peq_batch(source_name, band_array, channel_mode_wire)
+        else:
+            await self._write_peq_sequential(source_name, band_array, channel_mode_wire, queue)
+
+    async def _write_peq_batch(
+        self,
+        source_name: str,
+        band_array: list[float],
+        channel_mode: str,
+    ) -> None:
+        """Write all bands in a single EQSetLV2SourceBand payload."""
+        # Build the EQBand parameter array from the flat band_array
+        eq_band_params: list[dict[str, str | float]] = []
+        for i in range(10):
+            offset = i * 4
+            letter = _BAND_LETTERS[i]
+            eq_band_params.append({"param_name": f"{letter}_mode", "value": band_array[offset]})
+            eq_band_params.append({"param_name": f"{letter}_freq", "value": band_array[offset + 1]})
+            eq_band_params.append({"param_name": f"{letter}_gain", "value": band_array[offset + 2]})
+            eq_band_params.append({"param_name": f"{letter}_q", "value": band_array[offset + 3]})
+
+        payload = json.dumps({
+            "pluginURI": _PLUGIN_URI,
+            "source_name": source_name,
+            "channelMode": channel_mode,
+            "EQBand": eq_band_params,
+        })
+        command = f"EQSetLV2SourceBand:{quote(payload)}"
+        await self._client.command(command)
+
+    async def _write_peq_sequential(
+        self,
+        source_name: str,
+        band_array: list[float],
+        channel_mode: str,
+        queue: WiiMCommandQueue | None,
+    ) -> None:
+        """Write bands one at a time via queue with 100ms inter-command delay."""
+        for i in range(10):
+            offset = i * 4
+            letter = _BAND_LETTERS[i]
+
+            band_params: list[dict[str, str | float]] = [
+                {"param_name": f"{letter}_mode", "value": band_array[offset]},
+                {"param_name": f"{letter}_freq", "value": band_array[offset + 1]},
+                {"param_name": f"{letter}_gain", "value": band_array[offset + 2]},
+                {"param_name": f"{letter}_q", "value": band_array[offset + 3]},
+            ]
+
+            payload = json.dumps({
+                "pluginURI": _PLUGIN_URI,
+                "source_name": source_name,
+                "channelMode": channel_mode,
+                "EQBand": band_params,
+            })
+            command = f"EQSetLV2SourceBand:{quote(payload)}"
+
+            if queue is not None:
+                await queue.enqueue(command)
+            else:
+                await self._client.command(command)
+
+            # 100ms delay between sequential band writes
+            if i < 9:
+                await asyncio.sleep(0.1)
+
+    # ------------------------------------------------------------------
+    # RoomFit
+    # ------------------------------------------------------------------
+
+    async def read_roomfit(self) -> list[CanonicalFilter]:
+        """Read RoomFit filter bands from the device.
+
+        Requires ``roomfit_level >= 2`` in device capabilities.
+
+        Returns:
+            List of CanonicalFilter objects representing the RoomFit filters.
+
+        Raises:
+            WiiMResponseError: RoomFit read not supported (level < 2) or
+                device returned an unexpected response.
+        """
+        if self._capabilities.roomfit_level < 2:
+            raise WiiMResponseError(
+                f"RoomFit read requires roomfit_level >= 2, "
+                f"device has level {self._capabilities.roomfit_level}"
+            )
+
+        response = await self._client.command("getRoomFitBands")
+
+        if not isinstance(response, dict):
+            raise WiiMResponseError(
+                f"Expected JSON dict from EQGetRoomFitBandEx, got: {type(response).__name__}"
+            )
+
+        eq_band_raw: list[dict[str, Any]] | None = response.get("EQBand")
+        if eq_band_raw is None:
+            raise WiiMResponseError("RoomFit response missing 'EQBand' field")
+
+        band_dicts = _params_to_band_dicts(eq_band_raw)
+        return parse_wiim_band_array(band_dicts, channel="stereo")
+
+    async def write_roomfit(self, filters: list[CanonicalFilter]) -> None:
+        """Write RoomFit filter bands to the device.
+
+        Requires ``roomfit_level >= 4`` in device capabilities.
+
+        Args:
+            filters: List of CanonicalFilter objects to write as RoomFit bands.
+
+        Raises:
+            WiiMResponseError: RoomFit write not supported (level < 4) or
+                device returned an error.
+        """
+        if self._capabilities.roomfit_level < 4:
+            raise WiiMResponseError(
+                f"RoomFit write requires roomfit_level >= 4, "
+                f"device has level {self._capabilities.roomfit_level}"
+            )
+
+        band_array, _warnings = generate_wiim_band_array(filters)
+
+        # Build EQBand parameter array
+        eq_band_params: list[dict[str, str | float]] = []
+        for i in range(10):
+            offset = i * 4
+            letter = _BAND_LETTERS[i]
+            eq_band_params.append({"param_name": f"{letter}_mode", "value": band_array[offset]})
+            eq_band_params.append({"param_name": f"{letter}_freq", "value": band_array[offset + 1]})
+            eq_band_params.append({"param_name": f"{letter}_gain", "value": band_array[offset + 2]})
+            eq_band_params.append({"param_name": f"{letter}_q", "value": band_array[offset + 3]})
+
+        payload = json.dumps({
+            "pluginURI": _PLUGIN_URI,
+            "EQBand": eq_band_params,
+        })
+        command = f"setRoomFitBands:{quote(payload)}"
+        await self._client.command(command)

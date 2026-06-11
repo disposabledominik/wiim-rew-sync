@@ -159,13 +159,13 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests with mocked HTTP client and fixture JSON responses
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
-- [ ] 20. Implement WiiM adapter — PEQ write and RoomFit
+- [x] 20. Implement WiiM adapter — PEQ write and RoomFit
   - Add `write_peq(source_name, settings, queue)` to `WiiMAdapter`: batch path when `supports_batch_write=True`, queue path otherwise; raise `WiiMSlaveTargetError` if device role is slave
   - Add `read_roomfit()` and `write_roomfit(filters)` (gated by `roomfit_level`)
   - Write unit tests: batch path, sequential path, slave guard
   - _Requirements: 5.3, 5.4, 5.11, 17.1, 17.4_
 
-- [ ] 21. Implement WiiM command queue
+- [x] 21. Implement WiiM command queue
   - Create `src/adapters/command_queue.py` implementing `WiiMCommandQueue`
   - Single asyncio FIFO consumer; 100 ms inter-command delay; max 3 retries per command
   - `start()`, `drain_and_stop()`, `cancel()` lifecycle
