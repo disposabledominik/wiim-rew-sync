@@ -133,7 +133,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests with fake `ServiceInfo` callbacks and mocked `WiiMHttpClient`
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8_
 
-- [ ] 17. Write property test: discovery result field completeness (PBT)
+- [x] 17. Write property test: discovery result field completeness (PBT)
   - In `src/tests/test_discovery.py`, add a Hypothesis `@given` test
   - Strategy: generate `getStatusEx` response dicts with valid WiiM `project` fields and varying `DeviceName`, `Release`, `ip` values
   - Property: for any valid WiiM response, `DiscoveryModule` must produce a `DeviceInfo` with non-empty `ip`, `name`, `model`, and `firmware`
@@ -150,7 +150,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 4: WiiM Adapter & Safe Write
 
-- [ ] 19. Implement WiiM adapter — PEQ read
+- [x] 19. Implement WiiM adapter — PEQ read
   - Create `src/adapters/wiim_adapter.py` implementing `WiiMAdapter`
   - `read_peq(source_name)`: issue `EQGetLV2SourceBandEx`; convert via `wiim_parser`; return `PEQSettings`
   - Stereo: parse `EQBand`; L/R: parse `EQBandL` and `EQBandR` separately

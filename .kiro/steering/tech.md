@@ -68,6 +68,20 @@ python3 -m src.cli.main
 
 **NOTE on exit codes:** `pytest` exits with code 1 when tests fail — this is NORMAL, not a broken command. Read the output to identify which tests failed, fix them, and re-run. Do NOT pipe output to files, wrap in try/catch scripts, or use other workarounds. Just run the command directly and read the result.
 
+**NOTE on coverage gate:** When running a SINGLE test file (e.g., `python3 -m pytest src/tests/test_wiim_adapter.py -v`), always add `--no-cov` to skip the coverage check. The 90% gate is only meaningful for the full test suite. Pattern:
+- Single file: `python3 -m pytest src/tests/test_foo.py -v --no-cov`
+- Full suite (final verification): `python3 -m pytest --no-header -q`
+
+**NEVER do any of the following:**
+- Do NOT check `python3 --version` — it's Python 3.12+, this is confirmed and will never change.
+- Do NOT create temporary shell scripts to run single commands.
+- Do NOT pipe test output to files and then read the files. Just run the command directly.
+- Do NOT re-run `pip install -e ".[dev]"` unless a new dependency was added to pyproject.toml. The environment is already set up.
+- Do NOT run `pytest`, `ruff`, or `mypy` as background processes. These complete in under 30 seconds — run them directly with `timeout=60000`.
+- Do NOT add `sleep` commands to wait for output. If a command needs more time, increase the timeout parameter instead.
+
+**Command timeout guidance:** Always use `timeout=60000` (60 seconds) for `pytest`, `ruff check`, and `mypy` calls. These commands always finish within 30s on this machine.
+
 ## Key Configuration (pyproject.toml)
 
 - **ruff**: line-length 100, target py312, rules: E/W/F/I/B/C4/UP/ANN/S/RUF
@@ -120,10 +134,12 @@ When executing multiple tasks from the same wave in parallel:
 
 Every task is only complete when ALL of the following pass:
 
-1. `python3 -m pytest --no-header -q` — all tests pass
+1. `python3 -m pytest src/tests/test_<module>.py -v --no-cov` — the task's own tests pass
 2. `python3 -m ruff check src/` — zero lint errors
 3. `python3 -m mypy src/translator src/models` — zero type errors on strict modules
+4. `python3 -m pytest --no-header -q` — full suite passes (coverage gate active)
 
+Steps 1-3 are for fast iteration. Step 4 is the final verification before marking done.
 If any step fails, fix the issues before marking the task done. Do not accumulate lint/type debt across waves.
 
 ## Task Dispatch Efficiency Rules
@@ -133,6 +149,9 @@ If any step fails, fix the issues before marking the task done. Do not accumulat
 - **Commit after each wave, not after each task.** Unless the user explicitly asks for per-task commits.
 - **Dispatch aggressively within a wave.** If tasks write to separate files, run them all in parallel — don't wait for one to finish before starting the next.
 - **Do not re-read files already passed as contextFiles.** If a file is in the contextFiles array, it's already in context — reading it again wastes tokens.
+- **Do not read back files you just wrote.** The write tool confirms success. Only re-read if you need to verify complex content or check for conflicts.
+- **Do not re-read design.md or requirements.md from disk** if they are already in contextFiles. Trust the content provided.
+- **Do not run `pip install` at the start of every task.** Only run it if a new dependency was added to `pyproject.toml` in the current wave.
 
 ## Implementation Patterns (follow these for consistency)
 

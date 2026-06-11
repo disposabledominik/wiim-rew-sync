@@ -11,6 +11,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from src.discovery.discovery_module import DiscoveryModule
 from src.discovery.subnet_scanner import SubnetScanner, _is_recognised_project
@@ -330,3 +332,54 @@ async def test_zeroconf_returns_empty_when_service_has_no_addresses() -> None:
 
     # Device with no addresses is skipped
     assert result == []
+
+
+# --------------------------------------------------------------------------
+# Property-Based Test: discovery result field completeness
+# --------------------------------------------------------------------------
+
+# Strategy: generate valid getStatusEx response dicts with recognised WiiM projects
+_WIIM_PROJECTS = st.sampled_from(["WiiM_Pro", "WiiM_Mini", "WiiM_Amp", "WiiM_Ultra"])
+
+
+@given(
+    project=_WIIM_PROJECTS,
+    device_name=st.text(min_size=1),
+    release=st.text(min_size=1),
+    uuid=st.text(),
+    ip=st.from_regex(
+        r"192\.168\.\d{1,3}\.\d{1,3}", fullmatch=True
+    ),
+)
+@settings(max_examples=100)
+def test_pbt_discovery_result_field_completeness(
+    project: str,
+    device_name: str,
+    release: str,
+    uuid: str,
+    ip: str,
+) -> None:
+    """For any valid WiiM getStatusEx response, SubnetScanner must produce a
+    DeviceInfo with non-empty ip, name, model, and firmware.
+
+    **Validates: Requirements 1.5, 1.8**
+    """
+    response: dict[str, str] = {
+        "project": project,
+        "DeviceName": device_name,
+        "Release": release,
+        "uuid": uuid,
+    }
+
+    scanner = SubnetScanner(timeout=1.0)
+    result = scanner._parse_status_response(ip, response)
+
+    # A recognised WiiM project must always produce a DeviceInfo
+    assert result is not None, f"Expected DeviceInfo for project={project}, got None"
+    assert isinstance(result, DeviceInfo)
+
+    # All key fields must be non-empty
+    assert result.ip, "DeviceInfo.ip must be non-empty"
+    assert result.name, "DeviceInfo.name must be non-empty"
+    assert result.model, "DeviceInfo.model must be non-empty"
+    assert result.firmware, "DeviceInfo.firmware must be non-empty"
