@@ -17,6 +17,7 @@
 ## Development Environment
 
 - **Shell:** WSL2 Ubuntu (Linux). All commands must be Linux-compatible. Never use Windows cmd or PowerShell syntax.
+- **CRITICAL: The execution shell is ALREADY Linux (WSL).** Do NOT prefix commands with `wsl`, `wsl bash -c`, or `bash -c`. Just run commands directly (e.g. `python3 -m pytest`, not `wsl bash -c "python3 -m pytest"`).
 - **Python:** Use `python3` (not `python`). Use `pip3` or `python3 -m pip` for package management.
 - **Virtual environment:** Activate with `source .venv/bin/activate`.
 - **Path separators:** Use forward slashes (`/`). The IDE may show Windows paths but execution is Linux.
@@ -65,6 +66,8 @@ python3 -m mypy src/
 python3 -m src.cli.main
 ```
 
+**NOTE on exit codes:** `pytest` exits with code 1 when tests fail — this is NORMAL, not a broken command. Read the output to identify which tests failed, fix them, and re-run. Do NOT pipe output to files, wrap in try/catch scripts, or use other workarounds. Just run the command directly and read the result.
+
 ## Key Configuration (pyproject.toml)
 
 - **ruff**: line-length 100, target py312, rules: E/W/F/I/B/C4/UP/ANN/S/RUF
@@ -82,6 +85,28 @@ python3 -m src.cli.main
 - Pydantic `BaseModel` with `field_validator` for domain models
 - Custom exception classes in `src/models/errors.py`
 - Floating-point comparisons always use tolerances (see `src/utils/fp_compare.py`)
+
+## Common Pitfalls (avoid these)
+
+1. **Never use en-dash `–` or minus sign `−` in code.** Always use ASCII hyphen `-`. Ruff RUF001/RUF002/RUF003 will reject unicode dashes in strings, comments, and docstrings.
+
+2. **Logger `propagate=False` breaks `caplog`.** Our logging setup disables propagation on `wiim_rew_sync.app`, `wiim_rew_sync.wiim_api`, and `wiim_rew_sync.rew_api`. To test logging with `caplog`, temporarily set `propagate=True` in a try/finally block:
+   ```python
+   logger = logging.getLogger("wiim_rew_sync.wiim_api")
+   logger.propagate = True
+   try:
+       with caplog.at_level(logging.DEBUG, logger="wiim_rew_sync.wiim_api"):
+           await some_operation()
+       assert "expected message" in caplog.text
+   finally:
+       logger.propagate = False
+   ```
+
+3. **Do not leave unused imports.** Ruff F401 will catch them. Only import what you use. Run `python3 -m ruff check <file>` after writing to confirm.
+
+4. **Dict type annotations require type args in strict modules.** Use `dict[str, object]` not `dict` in `src/translator/` and `src/models/` (mypy disallow_any_generics is enabled).
+
+5. **`httpx` exceptions mapping:** `httpx.TimeoutException` (not `httpx.TimeoutError`), `httpx.ConnectError` (not `httpx.ConnectionError`). These differ from stdlib names.
 
 ## Parallel Task Execution Rule
 
@@ -107,3 +132,38 @@ If any step fails, fix the issues before marking the task done. Do not accumulat
 - **Keep subagent prompts concise.** Include: task ID, acceptance criteria, and known gotchas. Do not paste full design docs — pass them as contextFiles instead.
 - **Commit after each wave, not after each task.** Unless the user explicitly asks for per-task commits.
 - **Dispatch aggressively within a wave.** If tasks write to separate files, run them all in parallel — don't wait for one to finish before starting the next.
+- **Do not re-read files already passed as contextFiles.** If a file is in the contextFiles array, it's already in context — reading it again wastes tokens.
+
+## Implementation Patterns (follow these for consistency)
+
+**Async adapter pattern** (see `src/adapters/wiim_http.py`):
+```python
+class SomeAdapter:
+    def __init__(self, client: WiiMHttpClient) -> None:  # DI
+        self._client = client
+
+    async def some_operation(self) -> Result:
+        try:
+            resp = await self._client.command("SomeCommand")
+        except WiiMTimeoutError:
+            ...  # re-raise or handle
+```
+
+**Test pattern for async adapters** (see `src/tests/test_wiim_http.py`):
+```python
+from unittest.mock import AsyncMock
+
+client = AsyncMock(spec=WiiMHttpClient)
+client.command = AsyncMock(return_value={"key": "value"})
+adapter = SomeAdapter(client)
+result = await adapter.some_operation()
+assert result == expected
+```
+
+**PBT test pattern** (see `src/tests/test_translator.py`):
+```python
+@given(filters=st_canonical_filter_list(min_size=1, max_size=10))
+@settings(max_examples=100)
+def test_some_property(filters: list[CanonicalFilter]) -> None:
+    # property assertion here
+```

@@ -126,7 +126,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests using `respx` or `unittest.mock.AsyncMock`
   - _Requirements: 4.6, 8.6, 14.7, 15.4_
 
-- [ ] 16. Implement device discovery module
+- [x] 16. Implement device discovery module
   - Create `src/discovery/zeroconf_discover.py` for mDNS probing (`_wiim._tcp.local.` → `_linkplay._tcp.local.`)
   - Create `src/discovery/subnet_scanner.py` for fallback scan: `getStatusEx` probe; accept only recognisable `project` fields; exclude unrecognised hosts
   - Create `src/discovery/discovery_module.py` implementing `DiscoveryModule` with `discover()` and `refresh()` (configurable timeout, non-blocking, returns empty list on no results)
@@ -140,7 +140,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Use `@settings(max_examples=100)`
   - **Validates: Requirements 1.5, 1.8**
 
-- [ ] 18. Implement capability prober
+- [x] 18. Implement capability prober
   - Create `src/adapters/capability_prober.py` implementing `CapabilityProber`
   - `probe()` never raises; all failed probes default to the most conservative value
   - Probing sequence: `getStatusEx` → `EQGetLV2BandEx` → batch-write test → `EQGetLV2List` → RoomFit levels 0–4 sequential probe → `GetMultiroomInfo`
