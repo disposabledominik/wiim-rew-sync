@@ -117,7 +117,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 3: Network & Discovery
 
-- [ ] 15. Implement WiiM HTTP client
+- [x] 15. Implement WiiM HTTP client
   - Create `src/adapters/wiim_http.py` implementing `WiiMHttpClient`
   - Use `httpx.AsyncClient` with `verify=False` and default 5 s timeout
   - `command(command)`: GET `https://<ip>/httpapi.asp?command=<command>`; return parsed JSON dict or raw string
