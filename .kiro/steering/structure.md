@@ -46,7 +46,8 @@ docs/                # Project documentation (PRD, architecture, API notes, etc.
 
 The project follows a strict phased approach:
 1. **Models & Translator** — domain models and stateless translation (COMPLETE)
-2. **Network & Discovery** — HTTP clients, device discovery, capability probing (current phase)
-3. **CLI Proof of Concept** — full round-trip against real hardware (must pass before GUI)
-4. **GUI Layer** — PySide6 interface built on validated business logic
-5. **Packaging** — PyInstaller single-file distribution
+2. **Network & Discovery** — HTTP clients, device discovery, capability probing (COMPLETE)
+3. **Adapters & Repository** — safe write protocol, backup manager, profile storage (COMPLETE)
+4. **CLI Proof of Concept** — full round-trip against real hardware (current phase)
+5. **GUI Layer** — PySide6 interface built on validated business logic
+6. **Packaging** — PyInstaller single-file distribution

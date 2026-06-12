@@ -9,15 +9,14 @@ Requirements tested: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from urllib.parse import quote
 
 import pytest
 
-from src.adapters.capability_prober import CapabilityProber, PLUGIN_URI
+from src.adapters.capability_prober import PLUGIN_URI, CapabilityProber
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
-
 
 # ---------------------------------------------------------------------------
 # Fixture responses

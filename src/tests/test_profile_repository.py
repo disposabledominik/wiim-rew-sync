@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from src.models.canonical import CanonicalFilter
 from src.models.errors import ProfileNotFoundError
 from src.models.profile import Profile
 from src.repository.profile_repository import ProfileRepository
+from src.tests.conftest import st_canonical_filter_list
 
 # --- Fixtures ---
 
@@ -270,3 +273,112 @@ class TestSchemaMigration:
         assert loaded.tags == []
         assert loaded.name == "legacy"
         assert loaded.filters is not None
+
+
+# --- Property-Based Tests (Hypothesis) ---
+
+# --- Task 26: profile channel-mode key invariant (PBT) ---
+
+
+@st.composite
+def st_stereo_profile(draw: st.DrawFn) -> Profile:
+    """Generate a valid stereo Profile with random filter contents."""
+    filters = draw(st_canonical_filter_list(min_size=1, max_size=10))
+    name = draw(
+        st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("L", "N")))
+    )
+    return Profile(name=name, channel_mode="stereo", filters=filters)
+
+
+@st.composite
+def st_lr_profile(draw: st.DrawFn) -> Profile:
+    """Generate a valid L/R Profile with random filter contents."""
+    filters_l = draw(st_canonical_filter_list(min_size=1, max_size=10))
+    filters_r = draw(st_canonical_filter_list(min_size=1, max_size=10))
+    name = draw(
+        st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("L", "N")))
+    )
+    channel_mode = draw(st.sampled_from(["left", "right"]))
+    return Profile(
+        name=name, channel_mode=channel_mode, filters_l=filters_l, filters_r=filters_r
+    )
+
+
+@given(profile=st.one_of(st_stereo_profile(), st_lr_profile()))
+@settings(
+    max_examples=100,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_channel_mode_key_invariant(profile: Profile, tmp_path: object) -> None:
+    """Property: save/load round-trip preserves correct filter key structure.
+
+    Stereo: loaded profile has `filters` set, `filters_l`/`filters_r` are None.
+    L/R: loaded profile has `filters_l` and `filters_r` set, `filters` is None.
+
+    **Validates: Requirements 9.2, 9.3, 9.4**
+    """
+    import tempfile
+    from pathlib import Path
+
+    work_dir = Path(tempfile.mkdtemp(dir=str(tmp_path)))
+    repo = ProfileRepository(work_dir)
+    repo.save(profile)
+    loaded = repo.load(profile.name)
+
+    if profile.channel_mode == "stereo":
+        assert loaded.filters is not None, "Stereo profile must have 'filters'"
+        assert loaded.filters_l is None, "Stereo profile must not have 'filters_l'"
+        assert loaded.filters_r is None, "Stereo profile must not have 'filters_r'"
+        assert loaded.filters == profile.filters
+    else:
+        assert loaded.filters_l is not None, "L/R profile must have 'filters_l'"
+        assert loaded.filters_r is not None, "L/R profile must have 'filters_r'"
+        assert loaded.filters is None, "L/R profile must not have 'filters'"
+        assert loaded.filters_l == profile.filters_l
+        assert loaded.filters_r == profile.filters_r
+
+    assert loaded.channel_mode == profile.channel_mode
+    assert loaded.name == profile.name
+
+
+# --- Task 27: profile list sort-order invariant (PBT) ---
+
+
+@given(
+    names=st.lists(
+        st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("L", "N"))),
+        min_size=1,
+        max_size=10,
+        unique=True,
+    )
+)
+@settings(
+    max_examples=100,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+def test_list_sort_order_invariant(names: list[str], tmp_path: object) -> None:
+    """Property: list() returns profiles in ascending lexicographic order (case-insensitive).
+
+    For any set of profiles saved in any order, list() returns them sorted by
+    name.lower().
+
+    **Validates: Requirements 9.6**
+    """
+    import tempfile
+    from pathlib import Path
+
+    work_dir = Path(tempfile.mkdtemp(dir=str(tmp_path)))
+    repo = ProfileRepository(work_dir)
+
+    for name in names:
+        profile = Profile(
+            name=name,
+            channel_mode="stereo",
+            filters=[CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=0.0, q=1.0)],
+        )
+        repo.save(profile)
+
+    listed = repo.list()
+    listed_names = [p.name for p in listed]
+    expected = sorted(names, key=lambda n: n.lower())
+    assert listed_names == expected

@@ -182,7 +182,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests using `tmp_path`: creation, retention at 20, deletion trigger at 21, deletion-failure → `BackupError`
   - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6_
 
-- [ ] 23. Implement safe write protocol
+- [x] 23. Implement safe write protocol
   - Create `src/adapters/safe_write.py` implementing `SafeWrite` and `WriteResult`
   - `execute()` implements the five-step sequence in order: (1) Backup, (2) Write, (3) Read-Back (fresh call), (4) Verify via `band_matches()`, (5a) Commit / (5b) Rollback
   - On rollback: create `"pre_rollback"` backup; write backup state via queue; verify rollback
@@ -212,14 +212,14 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests using `tmp_path` pytest fixture
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9, 9.10_
 
-- [ ] 26. Write property test: profile channel-mode key invariant (PBT)
+- [x] 26. Write property test: profile channel-mode key invariant (PBT)
   - In `src/tests/test_profile_repository.py`, add a Hypothesis `@given` test
   - Strategy: generate `Profile` objects in both Stereo and L/R modes with varying filter contents
   - Property: `save()` → `load()` round-trip preserves correct filter key structure for both channel modes
   - Use `@settings(max_examples=100)`
   - **Validates: Requirements 9.2, 9.3, 9.4**
 
-- [ ] 27. Write property test: profile list sort-order invariant (PBT)
+- [x] 27. Write property test: profile list sort-order invariant (PBT)
   - In `src/tests/test_profile_repository.py`, add a Hypothesis `@given` test
   - Strategy: generate arbitrary sets of profile names with varying case, length, and leading characters
   - Property: for any set of profiles saved in any order, `list()` returns them in ascending lexicographic order by name (case-insensitive)
