@@ -15,12 +15,14 @@ from __future__ import annotations
 from src.models.canonical import CanonicalFilter, FilterType
 from src.models.errors import ValidationError
 
-# Mode value → CanonicalFilter type mapping
+# Mode value -> CanonicalFilter type mapping
 _MODE_MAP: dict[int, FilterType] = {
     -1: "OFF",
     0: "LS",
     1: "PEAK",
     2: "HS",
+    3: "LP",
+    5: "HP",
 }
 
 

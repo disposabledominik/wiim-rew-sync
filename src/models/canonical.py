@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
-FilterType = Literal["PEAK", "LS", "HS", "OFF"]
+FilterType = Literal["PEAK", "LS", "HS", "LP", "HP", "OFF"]
 
 
 class CanonicalFilter(BaseModel):

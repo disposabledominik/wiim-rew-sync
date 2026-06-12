@@ -25,12 +25,14 @@ from src.translator._warnings import ValidationWarning
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
-# Canonical type → WiiM LV2 mode integer
+# Canonical type -> WiiM LV2 mode integer
 _TYPE_TO_MODE: dict[FilterType, int] = {
     "OFF": -1,
     "PEAK": 1,
     "LS": 0,
     "HS": 2,
+    "LP": 3,
+    "HP": 5,
 }
 
 # Hardware limits

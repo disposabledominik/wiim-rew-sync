@@ -7,10 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.adapters.safe_write import WriteResult
 from src.cli import main as cli
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
-from src.models.errors import WiiMConnectionError
+from src.models.errors import WiiMConnectionError, WiiMSlaveTargetError
 from src.models.peq import PEQSettings
 
 # ---------------------------------------------------------------------------
@@ -306,3 +307,223 @@ def test_global_timeout_option(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert exc_info.value.code == 0
     assert captured_timeout["timeout"] == 2.5
+
+
+# ---------------------------------------------------------------------------
+# set-filters
+# ---------------------------------------------------------------------------
+
+
+_VALID_REW_FOR_SET = """Equaliser: Parametric EQ
+Filter  1: ON  PK Fc 100.0 Hz  Gain 3.0 dB  Q 2.0
+Filter  2: ON  PK Fc 1000.0 Hz  Gain -4.0 dB  Q 1.5
+"""
+
+
+def _patch_set_filters_stack(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    caps: DeviceCapabilities | None = None,
+    execute_result: WriteResult | None = None,
+    execute_side_effect: Exception | None = None,
+) -> None:
+    """Patch the full write stack for set-filters tests."""
+    if caps is None:
+        caps = _make_caps()
+
+    client_instance = MagicMock()
+    client_instance.close = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
+
+    prober_instance = MagicMock()
+    prober_instance.probe = AsyncMock(return_value=caps)
+    monkeypatch.setattr(cli, "CapabilityProber", MagicMock(return_value=prober_instance))
+
+    adapter_instance = MagicMock()
+    monkeypatch.setattr(cli, "WiiMAdapter", MagicMock(return_value=adapter_instance))
+
+    monkeypatch.setattr(cli, "BackupManager", MagicMock())
+    monkeypatch.setattr(cli, "get_app_data_dir", MagicMock(return_value=Path("/tmp/test")))
+
+    safe_write_instance = MagicMock()
+    if execute_side_effect:
+        safe_write_instance.execute = AsyncMock(side_effect=execute_side_effect)
+    else:
+        safe_write_instance.execute = AsyncMock(return_value=execute_result)
+    monkeypatch.setattr(cli, "SafeWrite", MagicMock(return_value=safe_write_instance))
+
+    # Patch WiiMCommandQueue to avoid real queue operations
+    queue_instance = MagicMock()
+    queue_instance.start = AsyncMock()
+    queue_instance.drain_and_stop = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMCommandQueue", MagicMock(return_value=queue_instance))
+
+
+def test_set_filters_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
+
+    _patch_set_filters_stack(
+        monkeypatch,
+        execute_result=WriteResult(success=True, backup_path=tmp_path / "backup.json"),
+    )
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.50",
+        source=None,
+        file=str(rew_file),
+        channel="stereo",
+        timeout=5.0,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Verified successfully." in out
+    assert "Done!" in out
+
+
+def test_set_filters_rollback_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
+
+    _patch_set_filters_stack(
+        monkeypatch,
+        execute_result=WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path=tmp_path / "backup.json",
+            error_message="Write verification failed.",
+        ),
+    )
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.50",
+        source=None,
+        file=str(rew_file),
+        channel="stereo",
+        timeout=5.0,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "Verification FAILED. Rolled back to previous state." in captured.out
+    assert "ROLLBACK" in captured.out
+
+
+def test_set_filters_critical_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
+
+    backup_path = tmp_path / "backup.json"
+    _patch_set_filters_stack(
+        monkeypatch,
+        execute_result=WriteResult(
+            success=False,
+            rollback_success=False,
+            backup_path=backup_path,
+            error_message="Both failed.",
+        ),
+    )
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.50",
+        source=None,
+        file=str(rew_file),
+        channel="stereo",
+        timeout=5.0,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "CRITICAL" in captured.err
+    assert str(backup_path) in captured.err
+
+
+def test_set_filters_connection_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
+
+    _patch_set_filters_stack(
+        monkeypatch,
+        execute_side_effect=WiiMConnectionError("device unreachable"),
+    )
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.99",
+        source=None,
+        file=str(rew_file),
+        channel="stereo",
+        timeout=5.0,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "device unreachable" in captured.err
+
+
+def test_set_filters_invalid_rew_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rew_file = tmp_path / "bad.txt"
+    rew_file.write_text("Not a REW file\nGarbage data\n", encoding="utf-8")
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.50",
+        source=None,
+        file=str(rew_file),
+        channel="stereo",
+        timeout=5.0,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "Error" in captured.err
+
+
+def test_set_filters_via_main_exits_zero_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
+
+    _patch_set_filters_stack(
+        monkeypatch,
+        execute_result=WriteResult(success=True, backup_path=tmp_path / "backup.json"),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["set-filters", "--file", str(rew_file), "--device", "192.168.1.50"])
+
+    assert exc_info.value.code == 0
+
+
+def test_set_filters_slave_target_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
+
+    _patch_set_filters_stack(
+        monkeypatch,
+        execute_side_effect=WiiMSlaveTargetError("Cannot write to slave"),
+    )
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.50",
+        source=None,
+        file=str(rew_file),
+        channel="stereo",
+        timeout=5.0,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "slave device" in captured.err

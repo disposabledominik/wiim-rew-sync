@@ -246,7 +246,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Exit code 0 on valid file, 1 on parse/validation error
   - _Requirements: 12.1, 12.2, 12.3, 6.7, 6.8_
 
-- [ ] 31. Implement CLI — `set-filters`
+- [x] 31. Implement CLI — `set-filters`
   - Add `set-filters --file <path> --device <ip> [--source <name>] [--channel <stereo|left|right>]` command
   - Run full safe-write with per-step progress output; print rollback or critical-error output as appropriate
   - Exit code 0 on verified success, 1 on any failure

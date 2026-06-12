@@ -31,8 +31,8 @@ logger = logging.getLogger("wiim_rew_sync.wiim_api")
 # LV2 plugin URI used by all WiiM PEQ commands
 _PLUGIN_URI = "http://moddevices.com/plugins/caps/EqNp"
 
-# Band letters a-j (1-10)
-_BAND_LETTERS = "abcdefghij"
+# Band letters a-l (up to 12 bands on newer firmware; older devices use a-j for 10)
+_BAND_LETTERS = "abcdefghijkl"
 
 
 def _params_to_band_dicts(

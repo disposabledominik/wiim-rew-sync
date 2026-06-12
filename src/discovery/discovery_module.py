@@ -27,6 +27,38 @@ if TYPE_CHECKING:
 logger = logging.getLogger("wiim_rew_sync.discovery")
 
 
+async def _enrich_device(device: DeviceInfo, timeout: float) -> DeviceInfo:
+    """Enrich a DeviceInfo by calling getStatusEx if model/firmware are empty.
+
+    Falls back to the original device info if the probe fails.
+    """
+    if device.model and device.firmware:
+        return device  # Already populated (e.g. from TXT records)
+
+    from src.adapters.wiim_http import WiiMHttpClient
+
+    client = WiiMHttpClient(device.ip, timeout=timeout)
+    try:
+        resp = await client.command("getStatusEx")
+    except Exception:
+        logger.debug("getStatusEx enrichment failed for %s", device.ip)
+        return device
+    finally:
+        await client.close()
+
+    if not isinstance(resp, dict):
+        return device
+
+    return DeviceInfo(
+        ip=device.ip,
+        name=str(resp.get("DeviceName", device.name)) or device.name,
+        model=str(resp.get("project", device.model)) or device.model,
+        firmware=str(resp.get("Release", device.firmware)) or device.firmware,
+        uuid=str(resp.get("uuid", device.uuid)) or device.uuid,
+        role=device.role,
+    )
+
+
 class DiscoveryModule:
     """Orchestrates WiiM device discovery using mDNS and subnet scanning.
 
@@ -71,8 +103,14 @@ class DiscoveryModule:
         try:
             devices = await self._zeroconf.discover()
             if devices:
-                self._devices = devices
-                logger.info("mDNS discovery found %d device(s)", len(devices))
+                # Enrich devices with model/firmware from getStatusEx
+                import asyncio
+
+                enriched = await asyncio.gather(
+                    *[_enrich_device(d, self._timeout) for d in devices]
+                )
+                self._devices = list(enriched)
+                logger.info("mDNS discovery found %d device(s)", len(self._devices))
                 return self._devices
 
             # Fallback to subnet scan

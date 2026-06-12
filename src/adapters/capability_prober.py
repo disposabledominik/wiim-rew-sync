@@ -31,13 +31,15 @@ logger = logging.getLogger("wiim_rew_sync.wiim_api")
 # Known WiiM device project prefixes.
 # Requirement 2.10: never hard-code capabilities by model name alone — but we
 # DO use the project field to distinguish WiiM from generic LinkPlay.
-# ASSUMPTION: All WiiM devices have a project field starting with "WiiM_".
+# NOTE: Some WiiM devices report legacy project names (e.g. "Muzo_Mini" for
+# the WiiM Mini). These are still full WiiM devices with PEQ support.
 WIIM_PROJECT_PREFIXES = (
     "WiiM_Mini",
     "WiiM_Pro",
     "WiiM_Amp",
     "WiiM_Ultra",
     "WiiM_Sound",
+    "Muzo_Mini",
 )
 
 PLUGIN_URI = "http://moddevices.com/plugins/caps/EqNp"
