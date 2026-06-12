@@ -173,7 +173,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests: FIFO order, timing, retry on failure, clean drain
   - _Requirements: 5.4, 18.1_
 
-- [ ] 22. Implement backup manager
+- [x] 22. Implement backup manager
   - Create `src/repository/backup_manager.py` implementing `BackupManager`
   - `create_backup(settings, capabilities, trigger)`: write `BackupRecord` JSON; ISO 8601 timestamp required; `profile_type="backup"` and `trigger` field present
   - Retention: MAX 20 per device UUID; 21st triggers deletion of oldest; deletion failure → raise `BackupError` and abort
@@ -193,7 +193,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 5: REW Adapter & Repository
 
-- [ ] 24. Implement REW HTTP API client
+- [x] 24. Implement REW HTTP API client
   - Create `src/adapters/rew_http_client.py` implementing `REWHttpApiClient`
   - `list_measurements()`: GET `http://localhost:4735/measurements`; return `list[MeasurementSummary]`; raise `REWNotConnectedError` on connection refused
   - `get_filters(uuid)`: parse `FilterSetting` objects via `REWParser.parse_filter_settings()`; raise `REWMeasurementNotFoundError` on 404
@@ -201,7 +201,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Write unit tests with mocked httpx responses
   - _Requirements: 8.1, 8.3, 8.4, 8.5, 8.6_
 
-- [ ] 25. Implement profile repository
+- [x] 25. Implement profile repository
   - Create `src/repository/profile_repository.py` implementing `ProfileRepository`
   - OS-appropriate storage via `src/utils/app_dirs.py`
   - Implement all nine operations: `save`, `load`, `list`, `delete`, `rename`, `duplicate`, `add_tag`, `remove_tag`, `get_by_tag`
