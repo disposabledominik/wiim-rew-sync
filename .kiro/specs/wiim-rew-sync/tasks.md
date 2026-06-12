@@ -228,19 +228,19 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 6: CLI Proof of Concept
 
-- [ ] 28. Implement CLI — `list-devices`
+- [x] 28. Implement CLI — `list-devices`
   - Create `src/cli/main.py` with argparse entry point; register as `wiim-rew-sync` console script in `pyproject.toml`
   - `list-devices`: run discovery; print tabular output (Name | IP | Model | Firmware | Role); print "No devices found." if empty; exit code 0 in both cases
   - Support global options: `--timeout FLOAT` and `--log-level LEVEL`
   - _Requirements: 1.1, 1.6_
 
-- [ ] 29. Implement CLI — `get-filters`
+- [x] 29. Implement CLI — `get-filters`
   - Add `get-filters --device <ip> [--source <name>] [--channel <stereo|left|right>]` command
   - Print 10-row table: Band | Type | Frequency (Hz) | Gain (dB) | Q
   - Exit code 0 on success, 1 on error
   - _Requirements: 4.1, 4.2, 4.3_
 
-- [ ] 30. Implement CLI — `dry-run-import`
+- [x] 30. Implement CLI — `dry-run-import`
   - Add `dry-run-import --file <path>` command
   - Parse REW file, translate to Canonical, print filter table with WiiM range warnings; no network calls
   - Exit code 0 on valid file, 1 on parse/validation error

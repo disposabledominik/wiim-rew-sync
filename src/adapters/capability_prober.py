@@ -346,7 +346,7 @@ class CapabilityProber:
         # See docs/wiim_api_notes.md: "Role: 0=solo, 1=master, 2=slave"
         role_value = resp.get("role", resp.get("Role", 0))
         try:
-            role_int = int(role_value)
+            role_int = int(role_value)  # type: ignore[arg-type]
         except (ValueError, TypeError):
             role_int = 0
 

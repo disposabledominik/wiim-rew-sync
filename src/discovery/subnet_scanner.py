@@ -81,7 +81,7 @@ def _get_local_ip() -> str | None:
         # Connect to a public DNS to determine the default route interface
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+            return s.getsockname()[0]  # type: ignore[return-value]
     except OSError:
         return None
 
