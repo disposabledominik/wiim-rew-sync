@@ -83,7 +83,7 @@ def _filter_rows(bands: list[CanonicalFilter]) -> list[list[str]]:
     return [
         [
             str(index),
-            band.type,
+            f"?{band.raw_mode}" if band.type == "UNKNOWN" else band.type,
             f"{band.frequency_hz:.2f}",
             f"{band.gain_db:.2f}",
             f"{band.q:.3f}",

@@ -390,7 +390,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - _Root cause: `ValidationWarning` was extracted to `src/translator/_warnings.py` but the steering file still implies it lives in `__init__.py`._
   - _Resolution: Verified during integrity review (2026-06-13) — `_warnings.py` was already correctly listed in structure.md. Also added `app_dirs.py` to utils section and updated phase descriptions._
 
-- [ ] 50. Graceful handling of unknown filter types and extra bands (forward compatibility)
+- [x] 50. Graceful handling of unknown filter types and extra bands (forward compatibility)
   - **Problem**: If WiiM firmware adds a new filter mode (e.g. mode 6 = "NOTCH") or new bands (e.g. a-n for 14 bands), the tool currently crashes on read with a `ValidationError`. The user can't even view their device state.
   - **Design goal**: Reads never crash on unknown data. Unknown bands are preserved for backup/display with a warning. Writes only touch bands the tool understands.
   - **Changes required**:

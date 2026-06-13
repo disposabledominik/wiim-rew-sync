@@ -12,8 +12,12 @@ Mode mapping (LV2 EqNp plugin):
 
 from __future__ import annotations
 
+import logging
+
 from src.models.canonical import CanonicalFilter, FilterType
-from src.models.errors import ValidationError
+from src.models.errors import ValidationError  # noqa: F401 — kept for backward compat
+
+logger = logging.getLogger("wiim_rew_sync.app")
 
 # Mode value -> CanonicalFilter type mapping
 _MODE_MAP: dict[int, FilterType] = {
@@ -62,10 +66,22 @@ def parse_wiim_band_array(
 
         filter_type = _MODE_MAP.get(mode_value)
         if filter_type is None:
-            raise ValidationError(
-                f"Unknown WiiM band mode value: {mode_value} "
-                f"(channel={channel}, freq={freq})"
+            logger.warning(
+                "Unknown WiiM band mode value: %d (channel=%s, freq=%s)",
+                mode_value,
+                channel,
+                freq,
             )
+            filters.append(
+                CanonicalFilter(
+                    type="UNKNOWN",
+                    frequency_hz=freq,
+                    gain_db=gain,
+                    q=q,
+                    raw_mode=mode_value,
+                )
+            )
+            continue
 
         filters.append(
             CanonicalFilter(

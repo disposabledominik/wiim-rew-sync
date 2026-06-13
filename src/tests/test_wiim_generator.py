@@ -388,3 +388,59 @@ class Test12BandDevice:
             assert result[base + 1] == 1000.0  # default freq
             assert result[base + 2] == 0.0  # default gain
             assert result[base + 3] == 1.0  # default q
+
+
+# ---------------------------------------------------------------------------
+# Test: UNKNOWN filter type handling (forward compatibility)
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownFilterGeneration:
+    """Forward compatibility: UNKNOWN filters with raw_mode pass through correctly."""
+
+    def test_unknown_with_raw_mode_produces_original_mode(self):
+        """UNKNOWN filter with raw_mode=99 produces mode 99 in output."""
+        filters = [
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=1000.0, gain_db=-2.0, q=1.41, raw_mode=99
+            )
+        ]
+
+        result, warnings = generate_wiim_band_array(filters)
+
+        assert result[0] == 99.0  # mode preserved from raw_mode
+        assert result[1] == 1000.0  # freq
+        assert result[2] == -2.0  # gain
+        assert result[3] == 1.41  # q
+        assert warnings == []
+
+    def test_unknown_without_raw_mode_falls_back_to_off(self):
+        """UNKNOWN filter without raw_mode produces mode -1 (OFF) as safe fallback."""
+        filters = [
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=500.0, gain_db=0.0, q=1.0, raw_mode=None
+            )
+        ]
+
+        result, warnings = generate_wiim_band_array(filters)
+
+        assert result[0] == -1.0  # mode OFF fallback
+        assert result[1] == 500.0
+        assert result[2] == 0.0
+        assert result[3] == 1.0
+        assert warnings == []
+
+    def test_unknown_with_raw_mode_6(self):
+        """UNKNOWN filter with raw_mode=6 (hypothetical NOTCH) preserves mode 6."""
+        filters = [
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=2000.0, gain_db=-5.0, q=3.0, raw_mode=6
+            )
+        ]
+
+        result, _warnings = generate_wiim_band_array(filters)
+
+        assert result[0] == 6.0  # mode 6 preserved
+        assert result[1] == 2000.0
+        assert result[2] == -5.0
+        assert result[3] == 3.0

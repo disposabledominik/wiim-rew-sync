@@ -416,8 +416,74 @@ class TestLPHPRoundTrip:
         parsed = parser.parse_file(out)
 
         assert len(parsed) == len(original)
-        for orig, back in zip(original, parsed):
+        for orig, back in zip(original, parsed, strict=True):
             assert orig.type == back.type
             assert orig.frequency_hz == pytest.approx(back.frequency_hz)
             assert orig.gain_db == pytest.approx(back.gain_db)
             assert orig.q == pytest.approx(back.q, abs=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# UNKNOWN filter type skipping (forward compatibility)
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownFilterSkipping:
+    """Forward compatibility: UNKNOWN bands are skipped in REW export."""
+
+    def test_unknown_bands_skipped_in_output(
+        self, generator: REWGenerator, tmp_path: Path
+    ) -> None:
+        """UNKNOWN bands are omitted from the REW output file."""
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.41),
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=500.0, gain_db=0.0, q=1.0, raw_mode=99
+            ),
+            CanonicalFilter(type="HS", frequency_hz=8000.0, gain_db=-1.5, q=0.71),
+        ]
+        out = tmp_path / "eq.txt"
+        generator.generate_file(filters, out)
+
+        lines = out.read_text(encoding="utf-8").splitlines()
+        # Header + 2 filter lines (UNKNOWN skipped)
+        assert len(lines) == 3
+        assert "100.00 Hz" in lines[1]
+        assert "8000.00 Hz" in lines[2]
+
+    def test_sequential_numbering_after_skip(
+        self, generator: REWGenerator, tmp_path: Path
+    ) -> None:
+        """Band numbering is sequential even after skipping UNKNOWN bands."""
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.41),
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=500.0, gain_db=0.0, q=1.0, raw_mode=6
+            ),
+            CanonicalFilter(type="HS", frequency_hz=8000.0, gain_db=-1.5, q=0.71),
+        ]
+        out = tmp_path / "eq.txt"
+        generator.generate_file(filters, out)
+
+        lines = out.read_text(encoding="utf-8").splitlines()
+        assert "Filter  1:" in lines[1]
+        assert "Filter  2:" in lines[2]
+
+    def test_all_unknown_produces_header_only(
+        self, generator: REWGenerator, tmp_path: Path
+    ) -> None:
+        """If all bands are UNKNOWN, the file contains only the header."""
+        filters = [
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=500.0, gain_db=0.0, q=1.0, raw_mode=99
+            ),
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=1000.0, gain_db=0.0, q=1.0, raw_mode=6
+            ),
+        ]
+        out = tmp_path / "eq.txt"
+        generator.generate_file(filters, out)
+
+        lines = out.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        assert lines[0] == "Equaliser: Parametric EQ"

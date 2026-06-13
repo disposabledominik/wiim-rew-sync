@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from src.models.canonical import CanonicalFilter
+
+logger = logging.getLogger("wiim_rew_sync.app")
 
 # Canonical filter type → REW text type token
 _REVERSE_TYPE_MAP: dict[str, str] = {
@@ -72,8 +75,18 @@ class REWGenerator:
         bands = filters[:max_filters]
 
         lines: list[str] = [HEADER]
-        for i, f in enumerate(bands, start=1):
-            lines.append(_format_filter_line(i, f))
+        band_index = 1
+        for f in bands:
+            if f.type == "UNKNOWN":
+                # Can't export unknown types to REW format - skip with warning
+                logger.warning(
+                    "Skipping UNKNOWN filter (raw_mode=%s, freq=%.1f) during REW export",
+                    f.raw_mode,
+                    f.frequency_hz,
+                )
+                continue
+            lines.append(_format_filter_line(band_index, f))
+            band_index += 1
 
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

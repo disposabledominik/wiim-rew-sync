@@ -91,7 +91,17 @@ def generate_wiim_band_array(
     result: list[float] = []
 
     for i, f in enumerate(filters):
-        mode = float(_TYPE_TO_MODE[f.type])
+        if f.type == "UNKNOWN":
+            if f.raw_mode is not None:
+                mode = float(f.raw_mode)
+            else:
+                mode = float(_TYPE_TO_MODE["OFF"])
+                logger.warning(
+                    "Band %d: UNKNOWN filter with no raw_mode, falling back to OFF",
+                    i + 1,
+                )
+        else:
+            mode = float(_TYPE_TO_MODE[f.type])
         freq = f.frequency_hz
         gain = f.gain_db
         q = f.q

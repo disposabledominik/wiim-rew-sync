@@ -1,10 +1,12 @@
 """Canonical Filter Model — the single normalised intermediate representation."""
 
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
-FilterType = Literal["PEAK", "LS", "HS", "LP", "HP", "OFF"]
+FilterType = Literal["PEAK", "LS", "HS", "LP", "HP", "OFF", "UNKNOWN"]
 
 
 class CanonicalFilter(BaseModel):
@@ -17,6 +19,7 @@ class CanonicalFilter(BaseModel):
     frequency_hz: float
     gain_db: float
     q: float
+    raw_mode: int | None = None  # Stores original mode value for UNKNOWN types
 
     @field_validator("frequency_hz")
     @classmethod

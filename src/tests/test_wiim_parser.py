@@ -8,7 +8,6 @@ from __future__ import annotations
 import pytest
 
 from src.models.canonical import CanonicalFilter
-from src.models.errors import ValidationError
 from src.translator.wiim_parser import parse_wiim_band_array
 
 # ---------------------------------------------------------------------------
@@ -132,19 +131,44 @@ class TestModeMapping:
 
         assert result[0].type == expected_type
 
-    def test_unknown_mode_raises_validation_error(self):
-        """An unknown mode value (e.g. 99) raises ValidationError."""
+    def test_unknown_mode_returns_unknown_filter(self):
+        """An unknown mode value (e.g. 99) returns UNKNOWN filter with raw_mode, no exception."""
         band_array = [_make_band("a", 99, 1000.0, 1.0, 0.0)]
 
-        with pytest.raises(ValidationError, match="Unknown WiiM band mode value: 99"):
-            parse_wiim_band_array(band_array)
+        result = parse_wiim_band_array(band_array)
 
-    def test_unknown_negative_mode_raises_validation_error(self):
-        """Negative mode values other than -1 raise ValidationError."""
+        assert len(result) == 1
+        assert result[0].type == "UNKNOWN"
+        assert result[0].raw_mode == 99
+        assert result[0].frequency_hz == 1000.0
+        assert result[0].gain_db == 0.0
+        assert result[0].q == 1.0
+
+    def test_unknown_negative_mode_returns_unknown_filter(self):
+        """Negative mode values other than -1 return UNKNOWN filter with raw_mode."""
         band_array = [_make_band("a", -2, 1000.0, 1.0, 0.0)]
 
-        with pytest.raises(ValidationError, match="Unknown WiiM band mode value: -2"):
-            parse_wiim_band_array(band_array)
+        result = parse_wiim_band_array(band_array)
+
+        assert len(result) == 1
+        assert result[0].type == "UNKNOWN"
+        assert result[0].raw_mode == -2
+
+    def test_unknown_mode_mixed_with_known(self):
+        """Unknown modes are handled gracefully alongside known modes."""
+        band_array = [
+            _make_band("a", 1, 100.0, 1.0, -3.0),   # PEAK
+            _make_band("b", 99, 500.0, 1.41, 0.0),   # UNKNOWN
+            _make_band("c", 2, 8000.0, 0.71, -1.5),  # HS
+        ]
+
+        result = parse_wiim_band_array(band_array)
+
+        assert len(result) == 3
+        assert result[0].type == "PEAK"
+        assert result[1].type == "UNKNOWN"
+        assert result[1].raw_mode == 99
+        assert result[2].type == "HS"
 
 
 # ---------------------------------------------------------------------------
