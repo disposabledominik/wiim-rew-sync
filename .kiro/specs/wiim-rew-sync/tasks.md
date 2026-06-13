@@ -341,6 +341,61 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Run `ruff check src/` and `mypy src/` with zero errors; document any deviations in `docs/corrections.md`
   - ⚠️ Do not release until all QA scenarios pass
 
+### Phase 10: Integrity Fixes (Tech Debt from Review)
+
+- [ ] 45. Add LP/HP support to REW parser and generator
+  - Add `"LP"` and `"HP"` entries to `_TYPE_MAP` and `_API_TYPE_MAP` in `src/translator/rew_parser.py` (REW uses tokens `LP` and `HP` for low-pass and high-pass filters)
+  - Add `"LP": "LP"` and `"HP": "HP"` entries to `_REVERSE_TYPE_MAP` in `src/translator/rew_generator.py`
+  - Verify that `_format_filter_line()` handles LP/HP formatting correctly (same layout as PK/LS/HS)
+  - Add unit tests: parse a REW file containing LP/HP filters; generate a REW file with LP/HP filters; round-trip LP/HP through parse→generate→parse
+  - _Root cause: LP/HP modes (3, 5) were added to `wiim_parser.py` and `wiim_generator.py` after hardware testing, but the REW translator was not updated. Exporting LP/HP filters to REW format currently causes a `KeyError`._
+
+- [ ] 46. Add LP/HP to Hypothesis PBT strategy
+  - Update `st_canonical_filter()` in `src/tests/conftest.py` to sample from `["PEAK", "LS", "HS", "LP", "HP", "OFF"]`
+  - Verify that all existing PBT tests still pass (the REW round-trip PBT will need task 45 completed first)
+  - Verify that the WiiM round-trip PBT (task 11) now exercises LP/HP code paths
+  - _Root cause: The strategy was written before LP/HP support was added; it only generates PEAK/LS/HS/OFF._
+
+- [ ] 47. Implement dynamic `max_filters` probing in capability prober
+  - In `src/adapters/capability_prober.py`, after `_probe_peq()` succeeds, count the number of distinct band letters present in the `EQGetLV2BandEx` response (e.g. bands a-l = 12)
+  - Set `caps.max_filters` to the detected band count instead of hardcoding `10`
+  - Update `src/translator/wiim_generator.py` to accept a `max_bands` parameter (default 10 for backward compatibility) and pad/truncate to that count
+  - Update `WiiMAdapter._write_peq_batch()` and `_write_peq_sequential()` to iterate `max_filters` bands instead of hardcoded `range(10)`
+  - Add unit test with a 12-band fixture response verifying `max_filters == 12`
+  - _Root cause: WiiM Amp Ultra (firmware 20260409) has 12 bands. `_BAND_LETTERS` already includes `"abcdefghijkl"` for reads, but writes and exports are capped at 10._
+
+- [ ] 48. Fix BackupManager channel_mode mapping for L/R mode
+  - In `src/repository/backup_manager.py`, when `settings.channel_mode == "lr"`, set `channel_mode = "left"` only if both `bands_l` and `bands_r` are populated; otherwise raise `BackupError` with a descriptive message
+  - Consider using `channel_mode = "left"` as a sentinel meaning "this backup has L/R data" (since Profile model requires both `filters_l` and `filters_r` for non-stereo modes) — document this mapping in a code comment
+  - Add a unit test: create a backup from a PEQSettings with `channel_mode="lr"` where both `bands_l` and `bands_r` are populated; verify the BackupRecord validates and round-trips correctly
+  - Add a unit test: verify that attempting to backup a PEQSettings with `channel_mode="lr"` and an empty `bands_r` raises `BackupError`
+  - _Root cause: The mapping from PEQSettings `"lr"` to Profile `"left"` is lossy and fragile. If `read_peq` ever returns only one channel populated, BackupRecord construction raises a Pydantic validation error._
+
+- [ ] 49. Update `structure.md` to reflect actual project layout
+  - Add `_warnings.py` to the translator section in `.kiro/steering/structure.md`
+  - Verify all other listed files match what's on disk; remove any phantom entries
+  - _Root cause: `ValidationWarning` was extracted to `src/translator/_warnings.py` but the steering file still implies it lives in `__init__.py`._
+
+- [ ] 50. Graceful handling of unknown filter types and extra bands (forward compatibility)
+  - **Problem**: If WiiM firmware adds a new filter mode (e.g. mode 6 = "NOTCH") or new bands (e.g. a-n for 14 bands), the tool currently crashes on read with a `ValidationError`. The user can't even view their device state.
+  - **Design goal**: Reads never crash on unknown data. Unknown bands are preserved for backup/display with a warning. Writes only touch bands the tool understands.
+  - **Changes required**:
+    1. In `src/models/canonical.py`: Change `FilterType` from a closed `Literal` to a type that accepts unknown values gracefully. Options: (a) add a catch-all `"UNKNOWN"` variant to the Literal and store the raw mode value in an optional `raw_mode: int | None` field, or (b) use `str` for `type` with runtime validation that warns on unrecognised values instead of rejecting them.
+    2. In `src/translator/wiim_parser.py`: Replace the `raise ValidationError` on unknown mode with a `logging.warning()` and return a `CanonicalFilter(type="UNKNOWN", ...)` (or equivalent). Log the raw mode value for diagnostics.
+    3. In `src/translator/wiim_generator.py`: If a filter has `type="UNKNOWN"` and a `raw_mode` is available, pass the raw mode value through unchanged. If no raw mode is available, skip the band and log a warning.
+    4. In `src/translator/rew_generator.py`: Skip `UNKNOWN`-type bands during REW export with a `ValidationWarning` noting which bands were omitted. Do not crash.
+    5. In `src/translator/rew_parser.py`: No change needed (REW files won't contain unknown types — they're generated by REW itself).
+    6. In `src/adapters/wiim_adapter.py` read path: No changes needed — it already reads all band letters dynamically.
+    7. In GUI (future): Display UNKNOWN bands as read-only/greyed-out rows with a tooltip like "Unsupported filter type (mode X) — upgrade the tool for full support".
+    8. In CLI `get-filters`: Display UNKNOWN bands with the type shown as `?<mode>` (e.g. `?6`) so the user sees them.
+  - **Tests**:
+    - Unit test: `parse_wiim_band_array` with an unknown mode value (e.g. 99) returns a filter with `type="UNKNOWN"` and logs a warning (no exception).
+    - Unit test: `generate_wiim_band_array` with an UNKNOWN filter that has `raw_mode=99` produces mode 99 in the output array.
+    - Unit test: `generate_wiim_band_array` with an UNKNOWN filter without `raw_mode` skips that band and emits a `ValidationWarning`.
+    - Unit test: REW generator skips UNKNOWN bands and returns a warning.
+    - Integration test: A device with 14 bands (hypothetical) can be read without error; bands beyond the tool's write limit are displayed but not overwritten.
+  - _Rationale: WiiM has already added LP (mode 3) and HP (mode 5) in recent firmware. Future firmware could add NOTCH, BANDPASS, ALL-PASS, or additional bands. The tool must degrade gracefully rather than crash on read._
+
 ## Task Dependency Graph
 
 ```json
@@ -361,6 +416,9 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     { "wave": 13, "tasks": [28, 29, 30] },
     { "wave": 14, "tasks": [31] },
     { "wave": 15, "tasks": [32] },
+    { "wave": 15.5, "tasks": [45, 48, 49] },
+    { "wave": 15.6, "tasks": [46, 47] },
+    { "wave": 15.7, "tasks": [50] },
     { "wave": 16, "tasks": [33, 42] },
     { "wave": 17, "tasks": [34] },
     { "wave": 18, "tasks": [35] },

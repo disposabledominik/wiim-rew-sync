@@ -36,6 +36,7 @@ KNOWN_WIIM_PROJECTS: frozenset[str] = frozenset({
     "WiiM_Sound",
     "WiiM_Sound_Lite",
     "WiiM_Mini",
+    "Muzo_Mini",
     # Common variations (underscore vs space, case variations)
     "WiiM Ultra",
     "WiiM Amp Ultra",

@@ -133,10 +133,10 @@ class TestModeMapping:
         assert result[0].type == expected_type
 
     def test_unknown_mode_raises_validation_error(self):
-        """An unknown mode value (e.g. 3, 99) raises ValidationError."""
-        band_array = [_make_band("a", 3, 1000.0, 1.0, 0.0)]
+        """An unknown mode value (e.g. 99) raises ValidationError."""
+        band_array = [_make_band("a", 99, 1000.0, 1.0, 0.0)]
 
-        with pytest.raises(ValidationError, match="Unknown WiiM band mode value: 3"):
+        with pytest.raises(ValidationError, match="Unknown WiiM band mode value: 99"):
             parse_wiim_band_array(band_array)
 
     def test_unknown_negative_mode_raises_validation_error(self):

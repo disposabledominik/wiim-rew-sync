@@ -41,9 +41,10 @@ Name            | IP             | Model          | Firmware    | Role
 ```
 
 **Pass criteria:**
-- [ ] Your WiiM device appears in the table
-- [ ] Name, IP, model, and firmware are all non-empty
-- [ ] Model starts with "WiiM_" (e.g., WiiM_Pro, WiiM_Mini, WiiM_Ultra)
+- [x] Your WiiM device appears in the table
+- [x] Name, IP, model, and firmware are all non-empty
+- [x] Model starts with "WiiM_" (e.g., WiiM_Pro, WiiM_Mini, WiiM_Ultra), except for WiiM Mini which is listed as "Muzo_Mini".
+[Tests performed on 12.06.2026.]
 
 **If no devices found:**
 - Try a longer timeout: `python3 -m src.cli.main --timeout 10 list-devices`
@@ -72,10 +73,11 @@ Band | Type | Frequency (Hz) | Gain (dB) | Q
 ```
 
 **Pass criteria:**
-- [ ] Shows exactly 10 bands (rows 1-10)
-- [ ] Type values are only PEAK, LS, HS, or OFF
-- [ ] Frequency, gain, and Q are valid numbers
-- [ ] Compare 2-3 active bands against what the WiiM app shows — values must match
+- [x] Shows exactly 10 bands (rows 1-10) - NOTE: two extra bands (not configurable by user) show up on some devices.
+- [x] Type values are only PEAK, LS, HS, HP, LP or OFF
+- [x] Frequency, gain, and Q are valid numbers
+- [x] Compare 2-3 active bands against what the WiiM app shows — values must match
+[Tests performed on 12.06.2026.]
 
 **Optional L/R test (if your device supports channel PEQ):**
 ```bash

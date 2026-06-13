@@ -150,7 +150,9 @@ async def _read_filters(
 # The API is case-sensitive: uppercase returns the Stereo slot,
 # lowercase returns the L/R slot. We probe uppercase (Stereo) first to get
 # the "real" source, then lowercase to check if L/R data exists too.
-_CANONICAL_SOURCES = ["wifi", "bluetooth", "line-in", "optical", "HDMI", "Ethernet", "coaxial", "USB"]
+_CANONICAL_SOURCES = [
+    "wifi", "bluetooth", "line-in", "optical", "HDMI", "Ethernet", "coaxial", "USB",
+]
 
 
 async def _probe_sources(
@@ -183,6 +185,7 @@ async def _probe_sources(
                 has_custom = _has_custom_data(bands)
                 results.append((source, mode, has_custom))
             except Exception:
+                logger.debug("Source probe failed for %s", source)
                 continue
     finally:
         await client.close()
