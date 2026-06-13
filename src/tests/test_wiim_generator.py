@@ -316,3 +316,75 @@ def _flat_array_to_band_dicts(flat: list[float]) -> list[dict]:
             "q": flat[base + 3],
         })
     return bands
+
+
+# ---------------------------------------------------------------------------
+# Test: LP/HP mode generation (hardware validation findings)
+# ---------------------------------------------------------------------------
+
+
+class TestLPHPModeGeneration:
+    """Hardware validation: LP → mode 3, HP → mode 5 in generator output."""
+
+    def test_lp_maps_to_mode_3(self):
+        """CanonicalFilter(type='LP') generates mode 3 in WiiM output."""
+        filters = [CanonicalFilter(type="LP", frequency_hz=200.0, gain_db=0.0, q=0.71)]
+
+        result, warnings = generate_wiim_band_array(filters)
+
+        assert result[0] == 3.0  # mode
+        assert result[1] == 200.0  # freq
+        assert result[2] == 0.0  # gain
+        assert result[3] == 0.71  # q
+        assert warnings == []
+
+    def test_hp_maps_to_mode_5(self):
+        """CanonicalFilter(type='HP') generates mode 5 in WiiM output."""
+        filters = [CanonicalFilter(type="HP", frequency_hz=80.0, gain_db=0.0, q=0.71)]
+
+        result, warnings = generate_wiim_band_array(filters)
+
+        assert result[0] == 5.0  # mode
+        assert result[1] == 80.0  # freq
+        assert result[2] == 0.0  # gain
+        assert result[3] == 0.71  # q
+        assert warnings == []
+
+
+# ---------------------------------------------------------------------------
+# Test: 12-band device support (hardware validation findings)
+# ---------------------------------------------------------------------------
+
+
+class Test12BandDevice:
+    """Hardware validation: 12-band devices produce 48-entry arrays."""
+
+    def test_12_band_output_produces_48_entries(self):
+        """12 filters with max_bands=12 produces exactly 48 float entries."""
+        filters = [_peak(freq=100.0 * (i + 1), gain=-3.0, q=1.41) for i in range(12)]
+
+        result, warnings = generate_wiim_band_array(filters, max_bands=12)
+
+        assert len(result) == 48
+        assert warnings == []
+
+    def test_padding_to_12_bands(self):
+        """5 filters with max_bands=12 produces 48 entries, last 7 are OFF."""
+        filters = [_peak(freq=100.0 * (i + 1), gain=-2.0, q=1.0) for i in range(5)]
+
+        result, warnings = generate_wiim_band_array(filters, max_bands=12)
+
+        assert len(result) == 48
+        assert warnings == []
+
+        # First 5 bands should be PEAK (mode 1)
+        for i in range(5):
+            assert result[i * 4] == 1.0  # mode PEAK
+
+        # Last 7 bands should be OFF (mode -1)
+        for i in range(5, 12):
+            base = i * 4
+            assert result[base] == -1.0  # mode OFF
+            assert result[base + 1] == 1000.0  # default freq
+            assert result[base + 2] == 0.0  # default gain
+            assert result[base + 3] == 1.0  # default q

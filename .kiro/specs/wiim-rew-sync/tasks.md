@@ -252,7 +252,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Exit code 0 on verified success, 1 on any failure
   - _Requirements: 5.1-5.10, 12.1-12.3_
 
-- [ ] 51. Fix and test hardware-validation findings
+- [x] 51. Fix and test hardware-validation findings
   - Update unit tests for LP (mode 3) and HP (mode 5) filter type parsing and generation in `test_wiim_parser.py` and `test_wiim_generator.py`
   - Update unit tests for 12-band devices (letters a-l, 48-entry arrays) in `test_wiim_generator.py`
   - Add `Muzo_Mini` test case in `test_capability_prober.py`

@@ -620,3 +620,50 @@ class TestProbeNeverRaises:
         assert caps.model == ""
         assert caps.supports_peq is False
         assert caps.max_filters == 0
+
+
+# ---------------------------------------------------------------------------
+# Test: Muzo_Mini recognition (hardware validation findings)
+# ---------------------------------------------------------------------------
+
+STATUS_EX_MUZO_MINI = {
+    "DeviceName": "Kitchen",
+    "uuid": "FF31F09E-1234-5678-ABCD-000000000099",
+    "Release": "5.2.0.5",
+    "project": "Muzo_Mini",
+    "MAC": "AA:BB:CC:DD:EE:01",
+    "InputList": '["wifi","bluetooth"]',
+}
+
+
+class TestMuzoMiniRecognition:
+    """Hardware validation: Muzo_Mini is recognised as a WiiM device with PEQ."""
+
+    @pytest.mark.asyncio
+    async def test_muzo_mini_recognised_as_wiim(self) -> None:
+        """getStatusEx returning project='Muzo_Mini' → supports_peq=True, max_filters > 0."""
+        client = _make_mock_client()
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return STATUS_EX_MUZO_MINI
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return EQ_GET_LV2_BAND_RESPONSE
+            if cmd.startswith("EQSetLV2Band:"):
+                return "OK"
+            if cmd.startswith("EQGetLV2List:"):
+                return EQ_GET_LV2_LIST_RESPONSE
+            if cmd == "getRoomFitStatus":
+                return "unknown command"
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_peq is True
+        assert caps.max_filters > 0
+        assert caps.model == "Muzo_Mini"

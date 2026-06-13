@@ -179,3 +179,50 @@ class TestEdgeCases:
         assert result[0].frequency_hz == 500.0
         assert result[0].gain_db == -3.0
         assert result[0].q == 1.41
+
+
+# ---------------------------------------------------------------------------
+# Test: LP/HP mode parsing (hardware validation findings)
+# ---------------------------------------------------------------------------
+
+
+class TestLPHPModeParsing:
+    """Hardware validation: LP (mode 3) and HP (mode 5) filter types."""
+
+    @pytest.mark.parametrize(
+        "mode_value,expected_type",
+        [
+            (3, "LP"),
+            (5, "HP"),
+        ],
+        ids=["LP", "HP"],
+    )
+    def test_mode_3_maps_to_lp_and_mode_5_maps_to_hp(self, mode_value, expected_type):
+        """Mode 3 → LP, mode 5 → HP (confirmed on hardware)."""
+        band_array = [_make_band("a", mode_value, 1000.0, 1.0, 0.0)]
+
+        result = parse_wiim_band_array(band_array)
+
+        assert result[0].type == expected_type
+
+    def test_mode_3_maps_to_lp(self):
+        """Band with mode 3 maps to filter type LP."""
+        band_array = [_make_band("a", 3, 200.0, 0.71, -2.0)]
+
+        result = parse_wiim_band_array(band_array)
+
+        assert result[0].type == "LP"
+        assert result[0].frequency_hz == 200.0
+        assert result[0].gain_db == -2.0
+        assert result[0].q == 0.71
+
+    def test_mode_5_maps_to_hp(self):
+        """Band with mode 5 maps to filter type HP."""
+        band_array = [_make_band("a", 5, 80.0, 0.71, -1.5)]
+
+        result = parse_wiim_band_array(band_array)
+
+        assert result[0].type == "HP"
+        assert result[0].frequency_hz == 80.0
+        assert result[0].gain_db == -1.5
+        assert result[0].q == 0.71

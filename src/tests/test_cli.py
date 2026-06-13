@@ -527,3 +527,66 @@ def test_set_filters_slave_target_error(
     captured = capsys.readouterr()
     assert code == 1
     assert "slave device" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# get-filters L/R auto-detection (hardware validation findings)
+# ---------------------------------------------------------------------------
+
+
+def test_get_filters_lr_mode_shows_both_channels(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When device returns L/R mode and user doesn't specify --channel, both channels print."""
+    lr_settings = _make_settings("lr")
+
+    # Patch _read_filters to return L/R mode settings directly
+    monkeypatch.setattr(
+        cli,
+        "_read_filters",
+        AsyncMock(return_value=lr_settings),
+    )
+
+    code = cli.cmd_get_filters(
+        device="192.168.1.50", source="wifi", channel="stereo", timeout=5.0
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Left channel:" in out
+    assert "Right channel:" in out
+
+
+# ---------------------------------------------------------------------------
+# list-sources (hardware validation findings)
+# ---------------------------------------------------------------------------
+
+
+def test_list_sources_shows_available_sources(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Mock the probe to return valid sources, verify table output."""
+    mock_sources = [
+        ("wifi", "Stereo", True),
+        ("bluetooth", "L/R", False),
+        ("optical", "Stereo", True),
+    ]
+
+    monkeypatch.setattr(
+        cli,
+        "_probe_sources",
+        AsyncMock(return_value=mock_sources),
+    )
+
+    code = cli.cmd_list_sources(device="192.168.1.50", timeout=5.0)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Source" in out
+    assert "Channel Mode" in out
+    assert "Has Custom EQ" in out
+    assert "wifi" in out
+    assert "bluetooth" in out
+    assert "optical" in out
+    assert "Stereo" in out
+    assert "L/R" in out

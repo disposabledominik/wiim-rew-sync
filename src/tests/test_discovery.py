@@ -383,3 +383,44 @@ def test_pbt_discovery_result_field_completeness(
     assert result.name, "DeviceInfo.name must be non-empty"
     assert result.model, "DeviceInfo.model must be non-empty"
     assert result.firmware, "DeviceInfo.firmware must be non-empty"
+
+
+# --------------------------------------------------------------------------
+# mDNS enrichment — hardware validation findings
+# --------------------------------------------------------------------------
+
+
+async def test_mdns_enrichment_populates_model_firmware() -> None:
+    """After mDNS enrichment, model and firmware should be populated from getStatusEx."""
+    # Device discovered via mDNS with empty model/firmware
+    bare_device = DeviceInfo(
+        ip="192.168.1.77",
+        name="Bedroom Speaker",
+        model="",
+        firmware="",
+        uuid="",
+    )
+
+    status_response = {
+        "project": "WiiM_Pro",
+        "DeviceName": "Bedroom Speaker",
+        "Release": "6.1.0.5",
+        "uuid": "enriched-uuid-001",
+    }
+
+    with patch(
+        "src.adapters.wiim_http.WiiMHttpClient"
+    ) as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.command = AsyncMock(return_value=status_response)
+        mock_client.close = AsyncMock()
+        mock_client_cls.return_value = mock_client
+
+        from src.discovery.discovery_module import _enrich_device
+
+        enriched = await _enrich_device(bare_device, timeout=5.0)
+
+    assert enriched.model == "WiiM_Pro"
+    assert enriched.firmware == "6.1.0.5"
+    assert enriched.name == "Bedroom Speaker"
+    assert enriched.ip == "192.168.1.77"
