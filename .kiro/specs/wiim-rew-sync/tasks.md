@@ -250,13 +250,23 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Add `set-filters --file <path> --device <ip> [--source <name>] [--channel <stereo|left|right>]` command
   - Run full safe-write with per-step progress output; print rollback or critical-error output as appropriate
   - Exit code 0 on verified success, 1 on any failure
-  - _Requirements: 5.1–5.10, 12.1–12.3_
+  - _Requirements: 5.1-5.10, 12.1-12.3_
+
+- [ ] 31b. Fix and test hardware-validation findings
+  - Update unit tests for LP (mode 3) and HP (mode 5) filter type parsing and generation in `test_wiim_parser.py` and `test_wiim_generator.py`
+  - Update unit tests for 12-band devices (letters a-l, 48-entry arrays) in `test_wiim_generator.py`
+  - Add `Muzo_Mini` test case in `test_capability_prober.py`
+  - Add mDNS enrichment test (discovery calls `getStatusEx`) in `test_discovery.py`
+  - Add CLI L/R auto-detection test and `list-sources` test in `test_cli.py`
+  - Investigate source discovery limitation and document findings
+  - Ensure all existing tests still pass with LP/HP and 12-band changes
+  - _Requirements: 2.10, 4.4, 4.5_
 
 - [ ] 32. CLI end-to-end hardware validation (phase gate)
   - Run all four CLI commands against physical WiiM hardware
   - Verify `get-filters` output matches WiiM app; verify `set-filters` filter change is visible in WiiM app
   - Document any API deviations in `docs/corrections.md`
-  - ⚠️ Do not proceed to Phase 7 until all CLI commands pass on real hardware
+  - Do not proceed to Phase 7 until all CLI commands pass on real hardware
 
 ### Phase 7: GUI Implementation
 
