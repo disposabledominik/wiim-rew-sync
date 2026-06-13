@@ -57,13 +57,22 @@ Name            | IP             | Model          | Firmware    | Role
 
 ## Test 2: Read Current Filters
 
+**First, discover available sources:**
+```bash
+python3 -m src.cli.main list-sources --device <IP>
+```
+This shows which input sources have PEQ data. Use the source name exactly as shown (case matters: `HDMI` not `hdmi`).
+
 **Command:**
 ```bash
-python3 -m src.cli.main get-filters --device <IP>
+python3 -m src.cli.main get-filters --device <IP> --source <SOURCE>
 ```
+Replace `<SOURCE>` with a source from `list-sources` (e.g. `wifi`, `HDMI`, `bluetooth`).
 
 **Expected output:**
 ```
+Source: <source> | Mode: stereo
+
 Band | Type | Frequency (Hz) | Gain (dB) | Q
 -----+------+----------------+-----------+------
 1    | PEAK | 80.00          | -4.00     | 1.410
@@ -73,17 +82,14 @@ Band | Type | Frequency (Hz) | Gain (dB) | Q
 ```
 
 **Pass criteria:**
-- [x] Shows exactly 10 bands (rows 1-10) - NOTE: two extra bands (not configurable by user) show up on some devices.
-- [x] Type values are only PEAK, LS, HS, HP, LP or OFF
+- [x] Shows 10-12 bands (newer firmware has 12 bands; extra 2 are OFF by default)
+- [x] Type values are PEAK, LS, HS, HP, LP, OFF, or ?N (unknown mode N)
 - [x] Frequency, gain, and Q are valid numbers
 - [x] Compare 2-3 active bands against what the WiiM app shows — values must match
+- [x] If device is in L/R mode, both "Left channel:" and "Right channel:" tables appear
 [Tests performed on 12.06.2026.]
 
-**Optional L/R test (if your device supports channel PEQ):**
-```bash
-python3 -m src.cli.main get-filters --device <IP> --channel left
-python3 -m src.cli.main get-filters --device <IP> --channel right
-```
+**Note on source names:** Source names are case-sensitive. Uppercase (e.g. `HDMI`) returns the Stereo PEQ slot. Lowercase (e.g. `hdmi`) returns the L/R slot. Use `list-sources` to find the correct spelling.
 
 ---
 
@@ -158,8 +164,9 @@ python3 -m src.cli.main dry-run-import --file /tmp/hot_eq.txt
 
 **Command:**
 ```bash
-python3 -m src.cli.main set-filters --file /tmp/test_eq.txt --device <IP>
+python3 -m src.cli.main set-filters --file /tmp/test_eq.txt --device <IP> --source <SOURCE>
 ```
+Use the same `<SOURCE>` from Test 2. If omitted, defaults to "wifi".
 
 **Expected output:**
 ```
