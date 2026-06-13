@@ -66,7 +66,7 @@ The final artifact is:
 |---|---|
 | OS | Windows 10+, macOS 12+, or Linux (glibc 2.31+) |
 | RAM | 256 MB available |
-| Disk | ~150 MB for the executable |
+| Disk | ~70-90 MB for the executable |
 | Network | Local network access (Wi-Fi or Ethernet on same subnet as WiiM devices) |
 | Python | **NOT required** — the executable is self-contained |
 
@@ -107,6 +107,8 @@ pyinstaller packaging/wiim_rew_sync_linux.spec     # Linux
 ```
 
 The output appears in `dist/`. Distribute the single file — no Python installation needed on the target machine.
+
+**Size optimization:** The `.spec` files exclude unused Qt modules (QtWebEngine, Qt3D, QtMultimedia, etc.) to keep the binary at ~70-90 MB. UPX compression is intentionally NOT used — it triggers antivirus false positives on Windows, which is unacceptable for non-technical users.
 
 ---
 

@@ -342,7 +342,10 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 - [ ] 43. Create PyInstaller packaging configuration
   - Create `packaging/` with platform-specific `.spec` files for Windows (`.exe`), macOS (`.app`), Linux (single binary)
+  - Exclude unused Qt modules (QtWebEngine, Qt3D, QtMultimedia, QtQuick, QtQml, QtDesigner, QtTest) to reduce binary size (~20-30 MB savings)
+  - Do NOT use UPX compression (causes antivirus false positives for non-technical users)
   - Include all assets and logging configuration; verify each build runs without Python installed
+  - Target size: 70-90 MB for Windows .exe (single file, no installer needed)
   - _Requirements: 19.1, 19.2, 19.3, 19.4_
 
 - [ ] 44. Final QA sign-off (release gate)
