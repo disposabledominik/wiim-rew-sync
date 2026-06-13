@@ -356,20 +356,20 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 10: Integrity Fixes (Tech Debt from Review)
 
-- [ ] 45. Add LP/HP support to REW parser and generator
+- [x] 45. Add LP/HP support to REW parser and generator
   - Add `"LP"` and `"HP"` entries to `_TYPE_MAP` and `_API_TYPE_MAP` in `src/translator/rew_parser.py` (REW uses tokens `LP` and `HP` for low-pass and high-pass filters)
   - Add `"LP": "LP"` and `"HP": "HP"` entries to `_REVERSE_TYPE_MAP` in `src/translator/rew_generator.py`
   - Verify that `_format_filter_line()` handles LP/HP formatting correctly (same layout as PK/LS/HS)
   - Add unit tests: parse a REW file containing LP/HP filters; generate a REW file with LP/HP filters; round-trip LP/HP through parse→generate→parse
   - _Root cause: LP/HP modes (3, 5) were added to `wiim_parser.py` and `wiim_generator.py` after hardware testing, but the REW translator was not updated. Exporting LP/HP filters to REW format currently causes a `KeyError`._
 
-- [ ] 46. Add LP/HP to Hypothesis PBT strategy
+- [x] 46. Add LP/HP to Hypothesis PBT strategy
   - Update `st_canonical_filter()` in `src/tests/conftest.py` to sample from `["PEAK", "LS", "HS", "LP", "HP", "OFF"]`
   - Verify that all existing PBT tests still pass (the REW round-trip PBT will need task 45 completed first)
   - Verify that the WiiM round-trip PBT (task 11) now exercises LP/HP code paths
   - _Root cause: The strategy was written before LP/HP support was added; it only generates PEAK/LS/HS/OFF._
 
-- [ ] 47. Implement dynamic `max_filters` probing in capability prober
+- [x] 47. Implement dynamic `max_filters` probing in capability prober
   - In `src/adapters/capability_prober.py`, after `_probe_peq()` succeeds, count the number of distinct band letters present in the `EQGetLV2BandEx` response (e.g. bands a-l = 12)
   - Set `caps.max_filters` to the detected band count instead of hardcoding `10`
   - Update `src/translator/wiim_generator.py` to accept a `max_bands` parameter (default 10 for backward compatibility) and pad/truncate to that count
@@ -377,7 +377,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Add unit test with a 12-band fixture response verifying `max_filters == 12`
   - _Root cause: WiiM Amp Ultra (firmware 20260409) has 12 bands. `_BAND_LETTERS` already includes `"abcdefghijkl"` for reads, but writes and exports are capped at 10._
 
-- [ ] 48. Fix BackupManager channel_mode mapping for L/R mode
+- [x] 48. Fix BackupManager channel_mode mapping for L/R mode
   - In `src/repository/backup_manager.py`, when `settings.channel_mode == "lr"`, set `channel_mode = "left"` only if both `bands_l` and `bands_r` are populated; otherwise raise `BackupError` with a descriptive message
   - Consider using `channel_mode = "left"` as a sentinel meaning "this backup has L/R data" (since Profile model requires both `filters_l` and `filters_r` for non-stereo modes) — document this mapping in a code comment
   - Add a unit test: create a backup from a PEQSettings with `channel_mode="lr"` where both `bands_l` and `bands_r` are populated; verify the BackupRecord validates and round-trips correctly

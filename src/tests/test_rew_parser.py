@@ -278,3 +278,106 @@ class TestParseFilterSettings:
 
         with pytest.raises(ValidationError, match="outside valid range"):
             parser.parse_filter_settings(settings)
+
+
+# ---------------------------------------------------------------------------
+# LP/HP filter type support
+# ---------------------------------------------------------------------------
+
+
+class TestParseFileLPHP:
+    """Tests for LP and HP filter type parsing."""
+
+    def test_lp_filter_maps_to_lp(self, parser: REWParser, tmp_path: Path) -> None:
+        """LP token in REW file maps to canonical type 'LP'."""
+        content = (
+            "Equaliser: Parametric EQ\n"
+            "Filter  1: ON  LP       Fc   200.00 Hz  Gain   0.00 dB  Q  0.707\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters = parser.parse_file(file)
+
+        assert len(filters) == 1
+        assert filters[0] == CanonicalFilter(
+            type="LP", frequency_hz=200.0, gain_db=0.0, q=0.707
+        )
+
+    def test_hp_filter_maps_to_hp(self, parser: REWParser, tmp_path: Path) -> None:
+        """HP token in REW file maps to canonical type 'HP'."""
+        content = (
+            "Equaliser: Parametric EQ\n"
+            "Filter  1: ON  HP       Fc    80.00 Hz  Gain   0.00 dB  Q  0.707\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters = parser.parse_file(file)
+
+        assert len(filters) == 1
+        assert filters[0] == CanonicalFilter(
+            type="HP", frequency_hz=80.0, gain_db=0.0, q=0.707
+        )
+
+    def test_mixed_file_with_lp_hp(self, parser: REWParser, tmp_path: Path) -> None:
+        """A file with PK, LP, and HP filters parses all correctly."""
+        content = (
+            "Equaliser: Parametric EQ\n"
+            "Filter  1: ON  PK       Fc  1000.00 Hz  Gain  -3.00 dB  Q  1.410\n"
+            "Filter  2: ON  LP       Fc  5000.00 Hz  Gain   0.00 dB  Q  0.707\n"
+            "Filter  3: ON  HP       Fc    50.00 Hz  Gain   0.00 dB  Q  0.707\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters = parser.parse_file(file)
+
+        assert len(filters) == 3
+        assert filters[0].type == "PEAK"
+        assert filters[1].type == "LP"
+        assert filters[1].frequency_hz == 5000.0
+        assert filters[2].type == "HP"
+        assert filters[2].frequency_hz == 50.0
+
+    def test_off_lp_maps_to_off(self, parser: REWParser, tmp_path: Path) -> None:
+        """Disabled LP filter maps to type='OFF'."""
+        content = (
+            "Equaliser: Parametric EQ\n"
+            "Filter  1: OFF LP       Fc   200.00 Hz  Gain   0.00 dB  Q  0.707\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters = parser.parse_file(file)
+
+        assert filters[0].type == "OFF"
+        assert filters[0].frequency_hz == 200.0
+
+
+class TestParseFilterSettingsLPHP:
+    """Tests for LP/HP parsing from REW HTTP API FilterSetting objects."""
+
+    def test_lp_api_filter(self, parser: REWParser) -> None:
+        """LP type in API settings maps to canonical 'LP'."""
+        settings = [
+            {"enabled": True, "type": "LP", "frequency": 5000.0, "gain": 0.0, "q": 0.707},
+        ]
+
+        filters = parser.parse_filter_settings(settings)
+
+        assert filters[0] == CanonicalFilter(
+            type="LP", frequency_hz=5000.0, gain_db=0.0, q=0.707
+        )
+
+    def test_hp_api_filter(self, parser: REWParser) -> None:
+        """HP type in API settings maps to canonical 'HP'."""
+        settings = [
+            {"enabled": True, "type": "HP", "frequency": 80.0, "gain": 0.0, "q": 0.707},
+        ]
+
+        filters = parser.parse_filter_settings(settings)
+
+        assert filters[0] == CanonicalFilter(
+            type="HP", frequency_hz=80.0, gain_db=0.0, q=0.707
+        )

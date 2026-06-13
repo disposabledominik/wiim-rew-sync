@@ -59,9 +59,10 @@ class TranslationEngine:
     @staticmethod
     def generate_wiim_band_array(
         filters: list[CanonicalFilter],
+        max_bands: int = 10,
     ) -> tuple[list[float], list[ValidationWarning]]:
         """Generate WiiM EQBand flat parameter array."""
-        return generate_wiim_band_array_fn(filters)
+        return generate_wiim_band_array_fn(filters, max_bands=max_bands)
 
     @staticmethod
     def migrate_profile(raw: dict[str, object]) -> dict[str, object]:

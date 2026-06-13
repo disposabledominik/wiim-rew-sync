@@ -61,9 +61,6 @@ class BackupManager:
 
         # Build the BackupRecord
         timestamp = datetime.now(UTC).isoformat()
-        channel_mode: Literal["stereo", "left", "right"] = (
-            "stereo" if settings.channel_mode == "stereo" else "left"
-        )
 
         # Map PEQSettings bands to BackupRecord filter fields
         if settings.channel_mode == "stereo":
@@ -71,9 +68,26 @@ class BackupManager:
             filters_l = None
             filters_r = None
         else:
+            # PEQSettings uses "lr" for dual-channel mode, but Profile/BackupRecord
+            # only accepts "stereo"/"left"/"right". We map "lr" -> "left" as a
+            # sentinel meaning "this backup contains L/R data" (the Profile model
+            # validator enforces that both filters_l and filters_r are present for
+            # any non-stereo channel_mode, so the data is always complete).
+            if not settings.bands_l or not settings.bands_r:
+                raise BackupError(
+                    "Cannot backup L/R mode settings: both bands_l and bands_r "
+                    "must be populated, but got "
+                    f"bands_l={len(settings.bands_l)} bands, "
+                    f"bands_r={len(settings.bands_r)} bands."
+                )
             filters = None
-            filters_l = settings.bands_l if settings.bands_l else None
-            filters_r = settings.bands_r if settings.bands_r else None
+            filters_l = settings.bands_l
+            filters_r = settings.bands_r
+
+        # Channel mode mapping: "stereo" -> "stereo", "lr" -> "left" (sentinel)
+        channel_mode: Literal["stereo", "left", "right"] = (
+            "stereo" if settings.channel_mode == "stereo" else "left"
+        )
 
         record = BackupRecord(
             name=f"backup_{device_uuid}_{timestamp}",

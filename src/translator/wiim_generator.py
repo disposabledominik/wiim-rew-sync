@@ -52,38 +52,41 @@ _MAX_BANDS: int = 10
 
 def generate_wiim_band_array(
     filters: list[CanonicalFilter],
+    max_bands: int = 10,
 ) -> tuple[list[float], list[ValidationWarning]]:
-    """Convert a list of CanonicalFilters to a WiiM 40-entry flat parameter array.
+    """Convert a list of CanonicalFilters to a WiiM flat parameter array.
 
     Parameters
     ----------
     filters:
-        List of 1-10 CanonicalFilter objects. If fewer than 10, remaining
-        bands are padded as OFF. If more than 10, truncated to 10 with a
+        List of CanonicalFilter objects. If fewer than max_bands, remaining
+        bands are padded as OFF. If more than max_bands, truncated with a
         logged WARNING.
+    max_bands:
+        Number of bands the device supports (default 10 for backward compat).
 
     Returns
     -------
     tuple[list[float], list[ValidationWarning]]
-        A tuple of (40-entry flat parameter list, list of validation warnings
-        for any clamping that occurred).
+        A tuple of (max_bands*4-entry flat parameter list, list of validation
+        warnings for any clamping that occurred).
     """
     warnings: list[ValidationWarning] = []
 
-    # Truncate if more than 10 filters
-    if len(filters) > _MAX_BANDS:
+    # Truncate if more filters than device supports
+    if len(filters) > max_bands:
         logger.warning(
-            "Received %d filters; truncating to %d bands", len(filters), _MAX_BANDS
+            "Received %d filters; truncating to %d bands", len(filters), max_bands
         )
         warnings.append(
             ValidationWarning(
                 field="filters",
-                message=f"Received {len(filters)} filters; truncated to {_MAX_BANDS} bands",
+                message=f"Received {len(filters)} filters; truncated to {max_bands} bands",
                 original_value=len(filters),
-                clamped_value=_MAX_BANDS,
+                clamped_value=max_bands,
             )
         )
-        filters = filters[:_MAX_BANDS]
+        filters = filters[:max_bands]
 
     result: list[float] = []
 
@@ -160,7 +163,7 @@ def generate_wiim_band_array(
         result.extend([mode, freq, gain, q])
 
     # Pad remaining bands as OFF
-    bands_to_pad = _MAX_BANDS - len(filters)
+    bands_to_pad = max_bands - len(filters)
     for _ in range(bands_to_pad):
         result.extend([float(_TYPE_TO_MODE["OFF"]), _OFF_FREQ, _OFF_GAIN, _OFF_Q])
 

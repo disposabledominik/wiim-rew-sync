@@ -11,6 +11,8 @@ _REVERSE_TYPE_MAP: dict[str, str] = {
     "PEAK": "PK",
     "LS": "LS",
     "HS": "HS",
+    "LP": "LP",
+    "HP": "HP",
 }
 
 HEADER = "Equaliser: Parametric EQ"

@@ -342,3 +342,82 @@ class TestTypeTokenMapping:
 
         content = out.read_text(encoding="utf-8")
         assert "ON  HS" in content
+
+
+# ---------------------------------------------------------------------------
+# LP/HP filter type support
+# ---------------------------------------------------------------------------
+
+
+class TestLPHPTypeMapping:
+    """Tests for LP and HP canonical types generating correct REW tokens."""
+
+    def test_lp_maps_to_lp(self, generator: REWGenerator, tmp_path: Path) -> None:
+        """LP canonical type maps to LP in output."""
+        filters = [
+            CanonicalFilter(type="LP", frequency_hz=5000.0, gain_db=0.0, q=0.707),
+        ]
+        out = tmp_path / "eq.txt"
+        generator.generate_file(filters, out)
+
+        content = out.read_text(encoding="utf-8")
+        assert "ON  LP" in content
+        assert "5000.00 Hz" in content
+
+    def test_hp_maps_to_hp(self, generator: REWGenerator, tmp_path: Path) -> None:
+        """HP canonical type maps to HP in output."""
+        filters = [
+            CanonicalFilter(type="HP", frequency_hz=80.0, gain_db=0.0, q=0.707),
+        ]
+        out = tmp_path / "eq.txt"
+        generator.generate_file(filters, out)
+
+        content = out.read_text(encoding="utf-8")
+        assert "ON  HP" in content
+        assert "80.00 Hz" in content
+
+    def test_mixed_filters_with_lp_hp(self, generator: REWGenerator, tmp_path: Path) -> None:
+        """A mix of PK, LP, HP filters all render correctly."""
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.41),
+            CanonicalFilter(type="LP", frequency_hz=5000.0, gain_db=0.0, q=0.707),
+            CanonicalFilter(type="HP", frequency_hz=50.0, gain_db=0.0, q=0.707),
+        ]
+        out = tmp_path / "eq.txt"
+        generator.generate_file(filters, out)
+
+        lines = out.read_text(encoding="utf-8").splitlines()
+        assert "ON  PK" in lines[1]
+        assert "ON  LP" in lines[2]
+        assert "ON  HP" in lines[3]
+
+
+# ---------------------------------------------------------------------------
+# LP/HP round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestLPHPRoundTrip:
+    """Round-trip: generate REW file with LP/HP then parse it back."""
+
+    def test_lp_hp_round_trip(self, generator: REWGenerator, tmp_path: Path) -> None:
+        """LP/HP filters survive generate → parse → compare."""
+        from src.translator.rew_parser import REWParser
+
+        original = [
+            CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-2.5, q=1.410),
+            CanonicalFilter(type="LP", frequency_hz=5000.0, gain_db=0.0, q=0.707),
+            CanonicalFilter(type="HP", frequency_hz=80.0, gain_db=0.0, q=0.707),
+        ]
+        out = tmp_path / "eq.txt"
+        generator.generate_file(original, out)
+
+        parser = REWParser()
+        parsed = parser.parse_file(out)
+
+        assert len(parsed) == len(original)
+        for orig, back in zip(original, parsed):
+            assert orig.type == back.type
+            assert orig.frequency_hz == pytest.approx(back.frequency_hz)
+            assert orig.gain_db == pytest.approx(back.gain_db)
+            assert orig.q == pytest.approx(back.q, abs=1e-3)

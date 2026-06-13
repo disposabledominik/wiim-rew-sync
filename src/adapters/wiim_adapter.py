@@ -280,8 +280,10 @@ class WiiMAdapter:
             bands = settings.bands_l if settings.bands_l else settings.bands
             channel_mode_wire = "L/R"
 
-        # Generate the WiiM 40-entry flat parameter array
-        band_array, _warnings = generate_wiim_band_array(bands)
+        # Generate the WiiM flat parameter array sized to device capability
+        band_array, _warnings = generate_wiim_band_array(
+            bands, max_bands=self._capabilities.max_filters
+        )
 
         if self._capabilities.supports_batch_write:
             await self._write_peq_batch(source_name, band_array, channel_mode_wire)
@@ -297,7 +299,8 @@ class WiiMAdapter:
         """Write all bands in a single EQSetLV2SourceBand payload."""
         # Build the EQBand parameter array from the flat band_array
         eq_band_params: list[dict[str, str | float]] = []
-        for i in range(10):
+        num_bands = self._capabilities.max_filters
+        for i in range(num_bands):
             offset = i * 4
             letter = _BAND_LETTERS[i]
             eq_band_params.append({"param_name": f"{letter}_mode", "value": band_array[offset]})
@@ -322,7 +325,8 @@ class WiiMAdapter:
         queue: WiiMCommandQueue | None,
     ) -> None:
         """Write bands one at a time via queue with 100ms inter-command delay."""
-        for i in range(10):
+        num_bands = self._capabilities.max_filters
+        for i in range(num_bands):
             offset = i * 4
             letter = _BAND_LETTERS[i]
 
@@ -347,7 +351,7 @@ class WiiMAdapter:
                 await self._client.command(command)
 
             # 100ms delay between sequential band writes
-            if i < 9:
+            if i < num_bands - 1:
                 await asyncio.sleep(0.1)
 
     # ------------------------------------------------------------------
@@ -404,11 +408,14 @@ class WiiMAdapter:
                 f"device has level {self._capabilities.roomfit_level}"
             )
 
-        band_array, _warnings = generate_wiim_band_array(filters)
+        band_array, _warnings = generate_wiim_band_array(
+            filters, max_bands=self._capabilities.max_filters
+        )
 
         # Build EQBand parameter array
         eq_band_params: list[dict[str, str | float]] = []
-        for i in range(10):
+        num_bands = self._capabilities.max_filters
+        for i in range(num_bands):
             offset = i * 4
             letter = _BAND_LETTERS[i]
             eq_band_params.append({"param_name": f"{letter}_mode", "value": band_array[offset]})

@@ -104,8 +104,9 @@ class CapabilityProber:
         # Step 6: GetMultiroomInfo — multiroom role
         await self._probe_multiroom(caps)
 
-        # max_filters for WiiM is always 10 (if PEQ is supported)
-        caps.max_filters = 10 if caps.supports_peq else 0
+        # max_filters is set dynamically by _probe_peq(); ensure 0 if PEQ unsupported
+        if not caps.supports_peq:
+            caps.max_filters = 0
 
         return caps
 
@@ -172,6 +173,16 @@ class CapabilityProber:
         # Requirement 2.3: determine supports_channel_peq from channelMode field
         # If channelMode field exists in response, device supports channel PEQ
         caps.supports_channel_peq = "channelMode" in resp
+
+        # Dynamically detect max_filters by counting distinct band letter prefixes
+        # in the EQBand response (e.g. a_mode, b_mode, ... l_mode → 12 bands).
+        eq_band: list[dict[str, object]] = resp.get("EQBand", [])  # type: ignore[assignment]
+        band_letters: set[str] = set()
+        for entry in eq_band:
+            pn = str(entry.get("param_name", ""))
+            if "_" in pn:
+                band_letters.add(pn.split("_")[0])
+        caps.max_filters = len(band_letters) if band_letters else 10
 
     async def _probe_batch_write(
         self, caps: DeviceCapabilities, status: dict[str, Any]

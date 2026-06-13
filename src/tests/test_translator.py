@@ -76,7 +76,7 @@ def test_rew_parse_generate_parse_round_trip(
 @st.composite
 def st_canonical_filter_wiim_safe(draw: st.DrawFn) -> CanonicalFilter:
     """Generate a CanonicalFilter within WiiM limits (no clipping needed for round-trip)."""
-    filter_type = draw(st.sampled_from(["PEAK", "LS", "HS", "OFF"]))
+    filter_type = draw(st.sampled_from(["PEAK", "LS", "HS", "LP", "HP", "OFF"]))
     freq = draw(st.floats(min_value=10.0, max_value=22000.0, allow_nan=False, allow_infinity=False))
     # Constrain gain and Q to WiiM limits so round-trip matches without clipping
     gain = draw(st.floats(min_value=-12.0, max_value=12.0, allow_nan=False, allow_infinity=False))
@@ -171,7 +171,7 @@ def st_canonical_filter_outside_wiim_limits(draw: st.DrawFn) -> CanonicalFilter:
 
     At least one of gain or Q will exceed the hardware bounds.
     """
-    filter_type = draw(st.sampled_from(["PEAK", "LS", "HS", "OFF"]))
+    filter_type = draw(st.sampled_from(["PEAK", "LS", "HS", "LP", "HP", "OFF"]))
     freq = draw(st.floats(min_value=10.0, max_value=22000.0, allow_nan=False, allow_infinity=False))
 
     # Generate gain outside [-12, 12] — either above +12 or below -12

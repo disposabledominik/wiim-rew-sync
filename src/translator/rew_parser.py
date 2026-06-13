@@ -28,6 +28,8 @@ _TYPE_MAP: dict[str, str] = {
     "PK": "PEAK",
     "LS": "LS",
     "HS": "HS",
+    "LP": "LP",
+    "HP": "HP",
 }
 
 # REW HTTP API type field → Canonical filter type (same mapping)
@@ -35,6 +37,8 @@ _API_TYPE_MAP: dict[str, str] = {
     "PK": "PEAK",
     "LS": "LS",
     "HS": "HS",
+    "LP": "LP",
+    "HP": "HP",
 }
 
 

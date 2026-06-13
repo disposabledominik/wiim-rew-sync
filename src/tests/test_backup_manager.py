@@ -121,6 +121,63 @@ class TestCreateBackup:
         assert len(data["filters_l"]) == 1
         assert len(data["filters_r"]) == 1
 
+    def test_lr_mode_both_channels_populated_roundtrips(
+        self,
+        backup_manager: BackupManager,
+        capabilities: DeviceCapabilities,
+    ) -> None:
+        """L/R backup with both channels populated validates and round-trips correctly."""
+        lr_settings = PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="lr",
+            bands_l=[
+                CanonicalFilter(type="PEAK", frequency_hz=250.0, gain_db=1.5, q=2.0),
+                CanonicalFilter(type="PEAK", frequency_hz=4000.0, gain_db=-2.0, q=1.0),
+            ],
+            bands_r=[
+                CanonicalFilter(type="PEAK", frequency_hz=800.0, gain_db=-3.0, q=0.5),
+            ],
+        )
+
+        path = backup_manager.create_backup(lr_settings, capabilities, "pre_write")
+        data = json.loads(path.read_text(encoding="utf-8"))
+
+        # Verify the BackupRecord is valid by re-parsing it
+        from src.models.profile import BackupRecord
+
+        record = BackupRecord(**data)
+
+        # Channel mode mapped to "left" as sentinel for L/R data
+        assert record.channel_mode == "left"
+        assert record.filters is None
+        assert record.filters_l is not None
+        assert record.filters_r is not None
+        assert len(record.filters_l) == 2
+        assert len(record.filters_r) == 1
+        # Round-trip: filter values preserved
+        assert record.filters_l[0].frequency_hz == 250.0
+        assert record.filters_r[0].frequency_hz == 800.0
+
+    def test_lr_mode_empty_bands_r_raises_backup_error(
+        self,
+        backup_manager: BackupManager,
+        capabilities: DeviceCapabilities,
+    ) -> None:
+        """L/R mode with empty bands_r raises BackupError."""
+        lr_settings = PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="lr",
+            bands_l=[
+                CanonicalFilter(type="PEAK", frequency_hz=500.0, gain_db=2.0, q=1.0),
+            ],
+            bands_r=[],
+        )
+
+        with pytest.raises(BackupError, match="both bands_l and bands_r must be populated"):
+            backup_manager.create_backup(lr_settings, capabilities, "pre_write")
+
 
 class TestRetentionPolicy:
     """Tests for the MAX 20 per device retention policy."""

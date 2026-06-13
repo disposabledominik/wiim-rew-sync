@@ -72,6 +72,17 @@ MULTIROOM_SOLO = {"role": 0}
 MULTIROOM_MASTER = {"role": 1}
 MULTIROOM_SLAVE = {"role": 2}
 
+# 12-band fixture response (letters a through l) for dynamic max_filters detection
+EQ_GET_LV2_BAND_12_RESPONSE = {
+    "EQStat": "On",
+    "channelMode": "Stereo",
+    "EQBand": [
+        {"param_name": f"{chr(ord('a') + i)}_{param}", "value": val}
+        for i in range(12)
+        for param, val in [("mode", 1.0), ("freq", 100.0 * (i + 1)), ("gain", 0.0), ("q", 1.41)]
+    ],
+}
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -478,6 +489,100 @@ class TestMultiroomRoleDetection:
         prober = CapabilityProber(client)
         caps = await prober.probe()
         assert caps.role == "solo"
+
+
+class TestDynamicMaxFilters:
+    """Test dynamic max_filters detection from EQGetLV2BandEx band count."""
+
+    @pytest.mark.asyncio
+    async def test_12_band_response_sets_max_filters_12(self) -> None:
+        """Device with 12 bands (a-l) in response → max_filters=12."""
+        client = _make_mock_client()
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return STATUS_EX_WIIM_PRO
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return EQ_GET_LV2_BAND_12_RESPONSE
+            if cmd.startswith("EQSetLV2Band:"):
+                return "OK"
+            if cmd.startswith("EQGetLV2List:"):
+                return EQ_GET_LV2_LIST_RESPONSE
+            if cmd == "getRoomFitStatus":
+                return "unknown command"
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_peq is True
+        assert caps.max_filters == 12
+
+    @pytest.mark.asyncio
+    async def test_10_band_response_sets_max_filters_10(self) -> None:
+        """Device with 10 bands (a-j) in response → max_filters=10."""
+        client = _make_mock_client()
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return STATUS_EX_WIIM_PRO
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return EQ_GET_LV2_BAND_RESPONSE
+            if cmd.startswith("EQSetLV2Band:"):
+                return "OK"
+            if cmd.startswith("EQGetLV2List:"):
+                return EQ_GET_LV2_LIST_RESPONSE
+            if cmd == "getRoomFitStatus":
+                return "unknown command"
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_peq is True
+        assert caps.max_filters == 10
+
+    @pytest.mark.asyncio
+    async def test_empty_eqband_defaults_to_10(self) -> None:
+        """Device with empty EQBand list → max_filters defaults to 10."""
+        client = _make_mock_client()
+
+        empty_band_response = {
+            "EQStat": "On",
+            "channelMode": "Stereo",
+            "EQBand": [],
+        }
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return STATUS_EX_WIIM_PRO
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return empty_band_response
+            if cmd.startswith("EQSetLV2Band:"):
+                return "OK"
+            if cmd.startswith("EQGetLV2List:"):
+                return EQ_GET_LV2_LIST_RESPONSE
+            if cmd == "getRoomFitStatus":
+                return "unknown command"
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_peq is True
+        assert caps.max_filters == 10
 
 
 class TestProbeNeverRaises:
