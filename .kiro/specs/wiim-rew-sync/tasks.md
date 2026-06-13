@@ -262,6 +262,31 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Ensure all existing tests still pass with LP/HP and 12-band changes
   - _Requirements: 2.10, 4.4, 4.5_
 
+- [ ] 52. Rewrite REW parser for real export format
+  - Rewrite `src/translator/rew_parser.py` to handle the actual REW "Filter Settings file" format (see `docs/rew_export_examples/`)
+  - Header handling: skip preamble lines until `Equaliser:` line is found; accept any equaliser type (Generic, Configurable PEQ, Parametric EQ, etc.)
+  - Filter line formats to support:
+    - `PK Fc <freq> Hz Gain <gain> dB Q <q>` — map to PEAK
+    - `HP Q Fc <freq> Hz Q <q>` — map to HP (no gain; set gain=0)
+    - `LP Q Fc <freq> Hz Q <q>` — map to LP (no gain; set gain=0)
+    - `LS Q Fc <freq> Hz Gain <gain> dB Q <q>` — map to LS
+    - `HS Q Fc <freq> Hz Gain <gain> dB Q <q>` — map to HS
+    - `HP Fc <freq> Hz` — map to HP (Butterworth, Q=0.707, gain=0)
+    - `LP Fc <freq> Hz` — map to LP (Butterworth, Q=0.707, gain=0)
+    - `LS Fc <freq> Hz Gain <gain> dB` — map to LS (fixed slope, Q=0.707)
+    - `HS Fc <freq> Hz Gain <gain> dB` — map to HS (fixed slope, Q=0.707)
+    - `LS 12dB Fc <freq> Hz Gain <gain> dB` — map to LS (Q=0.707)
+    - `HS 12dB Fc <freq> Hz Gain <gain> dB` — map to HS (Q=0.707)
+    - `None` — map to OFF
+  - Unsupported filter types (Modal, LP1, HP1, LS 6dB, HS 6dB, Notch, Notch Q, All-pass, L-T): emit a `ValidationWarning` and skip the band (do not crash)
+  - Handle `OFF` state prefix (same as before)
+  - Ignore duplicate filter sections at end of file (REW appends extra measurement filters)
+  - Frequency may be integer (`50 Hz`) or decimal (`50.00 Hz`) — handle both
+  - Flexible whitespace matching throughout
+  - Update unit tests with the three real export examples in `docs/rew_export_examples/`
+  - Preserve backward compatibility with the simple `Equaliser: Parametric EQ` format
+  - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
+
 - [ ] 32. CLI end-to-end hardware validation (phase gate)
   - Run all four CLI commands against physical WiiM hardware
   - Verify `get-filters` output matches WiiM app; verify `set-filters` filter change is visible in WiiM app
@@ -433,6 +458,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     { "wave": 14.6, "tasks": [46, 47] },
     { "wave": 14.7, "tasks": [51] },
     { "wave": 14.8, "tasks": [50] },
+    { "wave": 14.9, "tasks": [52] },
     { "wave": 15, "tasks": [32] },
     { "wave": 15.5, "tasks": [49] },
     { "wave": 16, "tasks": [33, 42] },

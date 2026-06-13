@@ -1,0 +1,19 @@
+Filter Settings file
+
+Room EQ V5.40 Beta 125
+Dated: 2026 Jun 13 21:52:08
+
+Notes:
+
+Equaliser: Configurable PEQ
+No measurement
+Filter  1: ON  None   
+Filter  2: ON  PK       Fc      50 Hz  Gain    3.0 dB  Q    3.0
+Filter  3: ON  None   
+Filter  4: ON  None   
+Filter  5: ON  PK       Fc     300 Hz  Gain   -6.0 dB  Q   10.0
+Filter  6: ON  None   
+Filter  7: ON  None   
+Filter  8: ON  None   
+Filter  9: ON  None   
+Filter 10: ON  None   
