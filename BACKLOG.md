@@ -6,18 +6,13 @@
 
 ## Priority: Before GUI Phase
 
-- [ ] **Test coverage for hardware-testing findings**: Add automated tests for all API behaviors discovered during manual hardware validation:
-  - LP (mode 3) and HP (mode 5) filter type parsing and generation
-  - 12-band devices (letters a-l, 48-entry arrays) alongside 10-band devices
-  - `Muzo_Mini` recognized as a valid WiiM device in capability prober
-  - mDNS enrichment (discovery calls `getStatusEx` to populate model/firmware)
-  - CLI L/R auto-detection (when device is in L/R mode and no `--channel` specified)
-  - CLI `list-sources` command output
-  - Source name case sensitivity behavior (uppercase = Stereo, lowercase = L/R)
+- [x] **Test coverage for hardware-testing findings**: Add automated tests for all API behaviors discovered during manual hardware validation (completed as Task 51).
 
 - [ ] **Rethink source discovery**: The WiiM API accepts any source name and returns valid PEQ data regardless of whether the physical input exists. Need a reliable mechanism to show only real inputs. Options to investigate:
   - Check if `getStatusEx` has model-specific input fields on other firmware versions
   - Try `GetAudioInputList` or similar undocumented endpoints on newer firmware
+
+- [ ] **HP/LP capability detection and write-time validation**: Add a `supports_hp_lp: bool` flag to `DeviceCapabilities`. During `_probe_peq()`, set it to `True` if mode 3 or 5 is seen in the EQBand response. In `dry-run-import`, warn if the import contains HP/LP filters targeting a device without support. The safe-write verify step already catches the mismatch at write time, but a pre-write warning improves UX. (WiiM Mini currently doesn't support HP/LP; newer firmware may add it.)
   - Maintain a model-to-inputs mapping table (fragile but functional)
   - Accept the limitation and let users configure which sources to show (per-device preference)
 
