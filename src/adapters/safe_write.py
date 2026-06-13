@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.models.canonical import CanonicalFilter
 from src.models.errors import WiiMSlaveTargetError
 from src.models.peq import PEQSettings
 from src.utils.fp_compare import band_matches
@@ -82,7 +83,7 @@ class SafeWrite:
         Raises:
             WiiMSlaveTargetError: If the device role is slave.
         """
-        capabilities = self._adapter._capabilities
+        capabilities = self._adapter.capabilities
 
         # Slave guard: refuse writes to slave nodes
         if capabilities.role == "slave":
@@ -132,8 +133,8 @@ class SafeWrite:
 
     def _compare_band_lists(
         self,
-        intended_bands: list,
-        read_back_bands: list,
+        intended_bands: list[CanonicalFilter],
+        read_back_bands: list[CanonicalFilter],
     ) -> bool:
         """Compare two band lists element by element using band_matches."""
         if len(intended_bands) != len(read_back_bands):
@@ -162,7 +163,7 @@ class SafeWrite:
         Returns:
             WriteResult with rollback status.
         """
-        capabilities = self._adapter._capabilities
+        capabilities = self._adapter.capabilities
 
         # Create pre_rollback backup of current (corrupted) state
         current_state = await self._adapter.read_peq(source_name)

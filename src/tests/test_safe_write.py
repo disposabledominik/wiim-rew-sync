@@ -100,7 +100,7 @@ def _slave_capabilities() -> DeviceCapabilities:
 def mock_adapter() -> AsyncMock:
     """Mocked WiiMAdapter."""
     adapter = AsyncMock(spec=WiiMAdapter)
-    adapter._capabilities = _solo_capabilities()
+    adapter.capabilities = _solo_capabilities()
     adapter.read_peq = AsyncMock()
     adapter.write_peq = AsyncMock()
     return adapter
@@ -388,7 +388,7 @@ class TestSlaveGuard:
     async def test_slave_raises_error(self, mock_backup_manager: MagicMock) -> None:
         """Writing to a slave device raises WiiMSlaveTargetError."""
         adapter = AsyncMock(spec=WiiMAdapter)
-        adapter._capabilities = _slave_capabilities()
+        adapter.capabilities = _slave_capabilities()
 
         sw = SafeWrite(adapter=adapter, backup_manager=mock_backup_manager)
         settings = _make_settings()
@@ -399,7 +399,7 @@ class TestSlaveGuard:
     async def test_slave_no_backup_created(self, mock_backup_manager: MagicMock) -> None:
         """Slave guard fires before any backup or write."""
         adapter = AsyncMock(spec=WiiMAdapter)
-        adapter._capabilities = _slave_capabilities()
+        adapter.capabilities = _slave_capabilities()
 
         sw = SafeWrite(adapter=adapter, backup_manager=mock_backup_manager)
         settings = _make_settings()

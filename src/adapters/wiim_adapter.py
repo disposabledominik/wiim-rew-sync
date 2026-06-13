@@ -90,6 +90,11 @@ class WiiMAdapter:
         self._client = http_client
         self._capabilities = capabilities
 
+    @property
+    def capabilities(self) -> DeviceCapabilities:
+        """Expose the device capabilities for external consumers (e.g. SafeWrite)."""
+        return self._capabilities
+
     # ------------------------------------------------------------------
     # PEQ Read
     # ------------------------------------------------------------------

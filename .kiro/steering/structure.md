@@ -21,14 +21,16 @@ src/
 ├── repository/      # Local JSON profile storage and backup management
 ├── tests/           # All tests (pytest + hypothesis)
 ├── translator/      # Translation engine (REW ↔ Canonical ↔ WiiM)
-│   ├── __init__.py     # TranslationEngine facade (stateless, all @staticmethod)
-│   ├── _warnings.py    # ValidationWarning dataclass
-│   ├── rew_parser.py   # REW text/API → Canonical
-│   ├── rew_generator.py # Canonical → REW text
-│   ├── wiim_parser.py  # WiiM API → Canonical
+│   ├── __init__.py       # TranslationEngine facade (stateless, all @staticmethod)
+│   ├── _warnings.py      # ValidationWarning dataclass
+│   ├── rew_parser.py     # REW text/API → Canonical
+│   ├── rew_generator.py  # Canonical → REW text
+│   ├── wiim_parser.py    # WiiM API → Canonical
 │   ├── wiim_generator.py # Canonical → WiiM API payload
 │   └── schema_migrator.py # Profile schema version migration
-└── utils/           # Shared utilities (fp_compare, etc.)
+└── utils/           # Shared utilities (fp_compare, app_dirs, etc.)
+    ├── fp_compare.py    # Floating-point tolerance predicates
+    └── app_dirs.py      # OS-appropriate data directory resolution
 
 docs/                # Project documentation (PRD, architecture, API notes, etc.)
 ```
@@ -48,6 +50,7 @@ The project follows a strict phased approach:
 1. **Models & Translator** — domain models and stateless translation (COMPLETE)
 2. **Network & Discovery** — HTTP clients, device discovery, capability probing (COMPLETE)
 3. **Adapters & Repository** — safe write protocol, backup manager, profile storage (COMPLETE)
-4. **CLI Proof of Concept** — full round-trip against real hardware (current phase)
-5. **GUI Layer** — PySide6 interface built on validated business logic
+4. **CLI Proof of Concept** — full round-trip against real hardware (COMPLETE — partial hardware validation done)
+5. **GUI Layer** — PySide6 interface built on validated business logic (BLOCKED by Task 32 phase gate)
 6. **Packaging** — PyInstaller single-file distribution
+7. **Integrity Fixes** — LP/HP in REW, dynamic max_filters, PBT strategy updates (Phase 10)

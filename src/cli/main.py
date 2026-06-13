@@ -199,7 +199,7 @@ def _has_custom_data(bands: list[dict[str, object]]) -> bool:
     """
     for entry in bands:
         param_name = str(entry.get("param_name", ""))
-        value = float(entry.get("value", 0.0))
+        value = float(str(entry.get("value", 0.0)))
         if param_name.endswith("_gain") and abs(value) > 0.001:
             return True
         if param_name.endswith("_mode") and value not in (-1.0, 1.0):

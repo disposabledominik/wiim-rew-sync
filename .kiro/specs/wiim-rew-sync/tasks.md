@@ -252,7 +252,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Exit code 0 on verified success, 1 on any failure
   - _Requirements: 5.1-5.10, 12.1-12.3_
 
-- [ ] 31b. Fix and test hardware-validation findings
+- [ ] 51. Fix and test hardware-validation findings
   - Update unit tests for LP (mode 3) and HP (mode 5) filter type parsing and generation in `test_wiim_parser.py` and `test_wiim_generator.py`
   - Update unit tests for 12-band devices (letters a-l, 48-entry arrays) in `test_wiim_generator.py`
   - Add `Muzo_Mini` test case in `test_capability_prober.py`
@@ -381,10 +381,11 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Add a unit test: verify that attempting to backup a PEQSettings with `channel_mode="lr"` and an empty `bands_r` raises `BackupError`
   - _Root cause: The mapping from PEQSettings `"lr"` to Profile `"left"` is lossy and fragile. If `read_peq` ever returns only one channel populated, BackupRecord construction raises a Pydantic validation error._
 
-- [ ] 49. Update `structure.md` to reflect actual project layout
+- [x] 49. Update `structure.md` to reflect actual project layout
   - Add `_warnings.py` to the translator section in `.kiro/steering/structure.md`
   - Verify all other listed files match what's on disk; remove any phantom entries
   - _Root cause: `ValidationWarning` was extracted to `src/translator/_warnings.py` but the steering file still implies it lives in `__init__.py`._
+  - _Resolution: Verified during integrity review (2026-06-13) — `_warnings.py` was already correctly listed in structure.md. Also added `app_dirs.py` to utils section and updated phase descriptions._
 
 - [ ] 50. Graceful handling of unknown filter types and extra bands (forward compatibility)
   - **Problem**: If WiiM firmware adds a new filter mode (e.g. mode 6 = "NOTCH") or new bands (e.g. a-n for 14 bands), the tool currently crashes on read with a `ValidationError`. The user can't even view their device state.
@@ -425,10 +426,12 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     { "wave": 12, "tasks": [23, 26, 27] },
     { "wave": 13, "tasks": [28, 29, 30] },
     { "wave": 14, "tasks": [31] },
+    { "wave": 14.5, "tasks": [45, 48] },
+    { "wave": 14.6, "tasks": [46, 47] },
+    { "wave": 14.7, "tasks": [51] },
+    { "wave": 14.8, "tasks": [50] },
     { "wave": 15, "tasks": [32] },
-    { "wave": 15.5, "tasks": [45, 48, 49] },
-    { "wave": 15.6, "tasks": [46, 47] },
-    { "wave": 15.7, "tasks": [50] },
+    { "wave": 15.5, "tasks": [49] },
     { "wave": 16, "tasks": [33, 42] },
     { "wave": 17, "tasks": [34] },
     { "wave": 18, "tasks": [35] },
@@ -451,3 +454,19 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 - Coverage target: ≥ 90% for `src/translator/`, ≥ 80% overall (`pytest --cov=src --cov-report=term-missing`)
 - `mypy` strict mode is enforced for `src/translator/` and `src/models/`; all other modules require at minimum zero mypy errors in default mode
 - The `docs/corrections.md` file should be updated whenever real-hardware testing reveals API behaviour that diverges from the documented spec
+
+## Integrity Review Log (2026-06-13)
+
+Findings from full codebase integrity review. Decisions documented here for future reference.
+
+### Resolved
+
+1. **SafeWrite accessing private `_capabilities`** — FIXED. Added a public `capabilities` property to `WiiMAdapter`. `SafeWrite` now uses `adapter.capabilities` instead of `adapter._capabilities`. Tests updated to match.
+
+2. **Task 49 (`structure.md` accuracy)** — CLOSED. Verified that `_warnings.py` was already correctly listed. Also added `app_dirs.py` to the utils section and updated phase descriptions during the review.
+
+### Intentionally Deferred (no action needed)
+
+3. **`src/utils/app_dirs.py` has no dedicated test file** — ACCEPTED. The module is pure platform-branching with no business logic. It's exercised implicitly by app startup and CLI usage. Not worth the overhead of mocking `platform.system()` across three OSes. If it breaks, it breaks loudly at startup.
+
+4. **mypy "unused section" warning for PySide6/respx/zeroconf overrides** — ACCEPTED. These `[[tool.mypy.overrides]]` entries pre-configure ignore rules for GUI-phase imports that don't exist yet. The warnings appear only when running mypy on the strict subset (`src/translator` + `src/models`). They will resolve naturally once Phase 7 (GUI) begins. No action needed.

@@ -19,6 +19,7 @@ from typing import Self
 
 import httpx
 
+from src.models.canonical import CanonicalFilter
 from src.models.errors import REWMeasurementNotFoundError, REWNotConnectedError
 from src.translator.rew_parser import REWParser
 
@@ -104,7 +105,7 @@ class REWHttpApiClient:
             )
         return summaries
 
-    async def get_filters(self, uuid: str) -> list:
+    async def get_filters(self, uuid: str) -> list[CanonicalFilter]:
         """Fetch filters for a specific measurement.
 
         Args:
