@@ -536,6 +536,30 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - **Integration with existing safe-write workflow**: The `set-filters` command currently writes to live DSP via SafeWrite (backup → write → verify). Adding `--save-as` simply calls `save_peq_profile()` AFTER the SafeWrite succeeds — it's a post-commit step, not part of the verification loop.
   - _Requirements: 2.5 (supports_profile_enumeration), 9.5 (profile library UX)_
 
+- [ ] 56. Add unit tests for hardware-testing fixes (channel mode, L/R write, RoomFit CLI)
+  - **Problem**: Several bugs were fixed during manual hardware testing (Task 32) but lack dedicated unit tests. The fixes work correctly but are only validated by the hardware tests, not by the automated suite.
+  - **Tests to add**:
+    1. In `src/tests/test_safe_write.py` — **channel mode adaptation**:
+       - Test: writing stereo settings to an L/R device calls `_set_channel_mode("Stereo")` before writing
+       - Test: writing L/R settings to a stereo device calls `_set_channel_mode("L/R")` before writing
+       - Test: matching modes (stereo→stereo) does not call `_set_channel_mode`
+    2. In `src/tests/test_safe_write.py` — **band count tolerance in verification**:
+       - Test: verification passes when device returns 12 bands but only 10 were written (extra bands ignored)
+       - Test: verification still fails if one of the first 10 bands doesn't match
+    3. In `src/tests/test_wiim_adapter.py` — **L/R write paths**:
+       - Test: `_write_peq_batch_lr` sends payload with `EQBandL` and `EQBandR` keys
+       - Test: `_write_peq_sequential_lr` enqueues 10 commands, each with `EQBandL` and `EQBandR`
+       - Test: `write_peq` with `channel_mode="lr"` and both `bands_l`/`bands_r` populated calls the L/R path
+    4. In `src/tests/test_cli.py` — **RoomFit CLI commands**:
+       - Test: `get-roomfit-filters` displays stereo table for stereo profile
+       - Test: `get-roomfit-filters` displays both L/R tables for L/R profile
+       - Test: `set-roomfit-filters` calls `write_roomfit` with correct args
+       - Test: `set-roomfit-filters` on unsupported device prints appropriate error
+    5. In `src/tests/test_wiim_adapter.py` — **EQSetLV2ChannelMode call**:
+       - Test: `_set_channel_mode("Stereo")` issues `EQSetLV2ChannelMode` with correct payload
+       - Test: `_set_channel_mode("L/R")` issues correct command
+  - _Rationale: All fixes confirmed working on real hardware (Task 32 passed) but need automated regression tests to prevent future breakage._
+
 ## Task Dependency Graph
 
 ```json
@@ -561,7 +585,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     { "wave": 14.8, "tasks": [50] },
     { "wave": 14.9, "tasks": [52, 53, 54, 55] },
     { "wave": 15, "tasks": [32] },
-    { "wave": 15.5, "tasks": [49] },
+    { "wave": 15.5, "tasks": [49, 56] },
     { "wave": 16, "tasks": [33, 42] },
     { "wave": 17, "tasks": [34] },
     { "wave": 18, "tasks": [35] },
