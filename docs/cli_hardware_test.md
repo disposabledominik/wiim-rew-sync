@@ -44,7 +44,7 @@ Name            | IP             | Model          | Firmware    | Role
 - [x] Your WiiM device appears in the table
 - [x] Name, IP, model, and firmware are all non-empty
 - [x] Model starts with "WiiM_" (e.g., WiiM_Pro, WiiM_Mini, WiiM_Ultra), except for WiiM Mini which is listed as "Muzo_Mini".
-[Tests performed on 12.06.2026.]
+[Tests performed on 12.06.2026., repeated on 14.06.2026.]
 
 **If no devices found:**
 - Try a longer timeout: `python3 -m src.cli.main --timeout 10 list-devices`
@@ -87,7 +87,7 @@ Band | Type | Frequency (Hz) | Gain (dB) | Q
 - [x] Frequency, gain, and Q are valid numbers
 - [x] Compare 2-3 active bands against what the WiiM app shows — values must match
 - [x] If device is in L/R mode, both "Left channel:" and "Right channel:" tables appear
-[Tests performed on 12.06.2026.]
+[Tests performed on 12.06.2026., repeated on 14.06.2026.]
 
 **Note on source names:** Source names are case-sensitive. Uppercase (e.g. `HDMI`) returns the Stereo PEQ slot. Lowercase (e.g. `hdmi`) returns the L/R slot. Use `list-sources` to find the correct spelling.
 
@@ -130,9 +130,10 @@ Band | Type | Frequency (Hz) | Gain (dB) | Q
 ```
 
 **Pass criteria:**
-- [ ] Values match the input file exactly
-- [ ] No "WiiM range warnings" section (all values in range)
-- [ ] Exit code 0 (no error message)
+- [x] Values match the input file exactly
+- [x] No "WiiM range warnings" section (all values in range)
+- [x] Exit code 0 (no error message)
+[Tests performed on 14.06.2026.]
 
 **Test clamping warning:**
 ```bash
@@ -154,7 +155,8 @@ python3 -m src.cli.main dry-run-import --file /tmp/hot_eq.txt
 
 **Expected:** Table shows gain 18.00 in the filter list, PLUS a "WiiM range warnings:" section showing gain will be clamped to +12.0 dB.
 
-- [ ] Warning message appears below the table
+- [x] Warning message appears below the table
+[Tests performed on 14.06.2026.]
 
 ---
 
@@ -179,9 +181,9 @@ Verified successfully.
 ```
 
 **Pass criteria:**
-- [ ] Exit code 0
-- [ ] "Verified successfully." is the final line
-- [ ] Open the WiiM app → EQ/PEQ settings → verify:
+- [x] Exit code 0
+- [x] "Verified successfully." is the final line
+- [x] Open the WiiM app → EQ/PEQ settings → verify:
   - Band 1: PK (Peak), 100 Hz, -3.5 dB, Q 1.41
   - Band 2: LS (Low Shelf), 80 Hz, +2.0 dB, Q 0.707
   - Band 3: HS (High Shelf), 10000 Hz, -1.5 dB, Q 0.5
@@ -192,6 +194,43 @@ Verified successfully.
 python3 -m src.cli.main get-filters --device <IP>
 ```
 - [ ] Output matches what was written
+
+**Test L/R write with two files:**
+```bash
+cat > /tmp/eq_left.txt << 'EOF'
+Equaliser: Parametric EQ
+Filter  1: ON  PK       Fc    50.00 Hz  Gain  -6.00 dB  Q  3.000
+Filter  2: ON  PK       Fc   200.00 Hz  Gain  -4.00 dB  Q  5.000
+Filter  3: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  4: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  5: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  6: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  7: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  8: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  9: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter 10: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+EOF
+cat > /tmp/eq_right.txt << 'EOF'
+Equaliser: Parametric EQ
+Filter  1: ON  PK       Fc    60.00 Hz  Gain  -5.00 dB  Q  2.500
+Filter  2: ON  PK       Fc   250.00 Hz  Gain  -3.00 dB  Q  4.000
+Filter  3: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  4: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  5: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  6: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  7: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  8: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter  9: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+Filter 10: OFF PK       Fc  1000.00 Hz  Gain   0.00 dB  Q  1.000
+EOF
+python3 -m src.cli.main set-filters --file /tmp/eq_left.txt --file-right /tmp/eq_right.txt --device <IP> --source <SOURCE>
+```
+
+**Pass criteria (L/R write):**
+- [ ] Exit code 0, "Verified successfully."
+- [ ] `get-filters` shows both "Left channel:" and "Right channel:" tables
+- [ ] Left band 1: PK 50 Hz, -6.0 dB, Q 3.0 | Right band 1: PK 60 Hz, -5.0 dB, Q 2.5
+- [ ] WiiM app shows L/R mode with different filters per channel
 
 **To restore original EQ:** Reset PEQ to flat in the WiiM app, or save your original settings before this test.
 

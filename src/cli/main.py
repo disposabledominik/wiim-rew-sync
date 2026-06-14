@@ -348,13 +348,23 @@ def cmd_dry_run_import(file: str) -> int:
 async def _set_filters(
     device: str, source: str | None, file: str, channel: str, timeout: float,
     save_as: str | None = None,
+    file_right: str | None = None,
 ) -> WriteResult:
-    """Parse REW file, probe device, run safe write protocol."""
+    """Parse REW file(s), probe device, run safe write protocol."""
     path = Path(file)
     filters = TranslationEngine.parse_rew_file(path)
 
     # Build PEQSettings from parsed filters based on channel mode
-    if channel in ("left", "right"):
+    if file_right is not None:
+        # L/R mode: --file is left channel, --file-right is right channel
+        filters_r = TranslationEngine.parse_rew_file(Path(file_right))
+        settings = PEQSettings(
+            source_name=source or _DEFAULT_SOURCE,
+            channel_mode="lr",
+            bands_l=filters,
+            bands_r=filters_r,
+        )
+    elif channel in ("left", "right"):
         settings = PEQSettings(
             source_name=source or _DEFAULT_SOURCE,
             channel_mode="lr",
@@ -419,6 +429,7 @@ async def _set_filters(
 def cmd_set_filters(
     device: str, source: str | None, file: str, channel: str, timeout: float,
     save_as: str | None = None,
+    file_right: str | None = None,
 ) -> int:
     """Write REW filters to a device using the safe-write protocol.
 
@@ -426,7 +437,10 @@ def cmd_set_filters(
     """
     try:
         result = asyncio.run(
-            _set_filters(device, source, file, channel, timeout, save_as=save_as)
+            _set_filters(
+                device, source, file, channel, timeout,
+                save_as=save_as, file_right=file_right,
+            )
         )
     except WiiMSlaveTargetError:
         print(
@@ -608,6 +622,16 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="save_as",
         help="Save the written filters as a named device preset after successful write.",
     )
+    set_filters.add_argument(
+        "--file-right",
+        default=None,
+        dest="file_right",
+        help=(
+            "Path to a REW EQ text file for the right channel. "
+            "When provided, --file is used for the left channel and the device "
+            "is switched to L/R mode. Overrides --channel."
+        ),
+    )
 
     list_roomfit = subparsers.add_parser(
         "list-roomfit-profiles",
@@ -642,6 +666,7 @@ def run(argv: list[str] | None = None) -> int:
         return cmd_set_filters(
             args.device, args.source, args.file, args.channel, args.timeout,
             save_as=args.save_as,
+            file_right=args.file_right,
         )
     if args.command == "list-roomfit-profiles":
         return cmd_list_roomfit_profiles(args.device, args.timeout)

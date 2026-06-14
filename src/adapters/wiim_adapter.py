@@ -276,23 +276,42 @@ class WiiMAdapter:
             bands = settings.bands
             channel_mode_wire = "Stereo"
         else:
-            # For L/R mode, write left bands (right handled separately if needed)
-            bands = settings.bands_l if settings.bands_l else settings.bands
             channel_mode_wire = "L/R"
 
         # Switch device channel mode explicitly before writing bands.
         # This ensures the device is in the correct mode to receive our data.
         await self._set_channel_mode(source_name, channel_mode_wire)
 
-        # Generate the WiiM flat parameter array sized to device capability
-        band_array, _warnings = generate_wiim_band_array(
-            bands, max_bands=self._capabilities.max_filters
-        )
-
-        if self._capabilities.supports_batch_write:
-            await self._write_peq_batch(source_name, band_array, channel_mode_wire)
+        if channel_mode_wire == "L/R":
+            # L/R mode: write both channels
+            bands_l = settings.bands_l if settings.bands_l else settings.bands
+            bands_r = settings.bands_r if settings.bands_r else bands_l
+            band_array_l, _warnings_l = generate_wiim_band_array(
+                bands_l, max_bands=self._capabilities.max_filters
+            )
+            band_array_r, _warnings_r = generate_wiim_band_array(
+                bands_r, max_bands=self._capabilities.max_filters
+            )
+            if self._capabilities.supports_batch_write:
+                await self._write_peq_batch_lr(
+                    source_name, band_array_l, band_array_r
+                )
+            else:
+                await self._write_peq_sequential_lr(
+                    source_name, band_array_l, band_array_r, queue
+                )
         else:
-            await self._write_peq_sequential(source_name, band_array, channel_mode_wire, queue)
+            # Stereo mode: single band array
+            bands = settings.bands
+            band_array, _warnings = generate_wiim_band_array(
+                bands, max_bands=self._capabilities.max_filters
+            )
+            if self._capabilities.supports_batch_write:
+                await self._write_peq_batch(source_name, band_array, channel_mode_wire)
+            else:
+                await self._write_peq_sequential(
+                    source_name, band_array, channel_mode_wire, queue
+                )
 
     async def _write_peq_batch(
         self,
@@ -376,6 +395,85 @@ class WiiMAdapter:
         })
         command = f"EQSetLV2ChannelMode:{quote(payload)}"
         await self._client.command(command)
+
+    async def _write_peq_batch_lr(
+        self,
+        source_name: str,
+        band_array_l: list[float],
+        band_array_r: list[float],
+    ) -> None:
+        """Write L/R bands in a single EQSetLV2SourceBand payload."""
+        num_bands = self._capabilities.max_filters
+
+        eq_band_l: list[dict[str, str | float]] = []
+        eq_band_r: list[dict[str, str | float]] = []
+        for i in range(num_bands):
+            offset = i * 4
+            letter = _BAND_LETTERS[i]
+            eq_band_l.append({"param_name": f"{letter}_mode", "value": band_array_l[offset]})
+            eq_band_l.append({"param_name": f"{letter}_freq", "value": band_array_l[offset + 1]})
+            eq_band_l.append({"param_name": f"{letter}_gain", "value": band_array_l[offset + 2]})
+            eq_band_l.append({"param_name": f"{letter}_q", "value": band_array_l[offset + 3]})
+            eq_band_r.append({"param_name": f"{letter}_mode", "value": band_array_r[offset]})
+            eq_band_r.append({"param_name": f"{letter}_freq", "value": band_array_r[offset + 1]})
+            eq_band_r.append({"param_name": f"{letter}_gain", "value": band_array_r[offset + 2]})
+            eq_band_r.append({"param_name": f"{letter}_q", "value": band_array_r[offset + 3]})
+
+        payload = json.dumps({
+            "pluginURI": _PLUGIN_URI,
+            "source_name": source_name,
+            "channelMode": "L/R",
+            "EQBandL": eq_band_l,
+            "EQBandR": eq_band_r,
+        })
+        command = f"EQSetLV2SourceBand:{quote(payload)}"
+        await self._client.command(command)
+
+    async def _write_peq_sequential_lr(
+        self,
+        source_name: str,
+        band_array_l: list[float],
+        band_array_r: list[float],
+        queue: WiiMCommandQueue | None,
+    ) -> None:
+        """Write L/R bands one at a time via queue with 100ms inter-command delay.
+
+        Each command writes one band's L+R params together.
+        """
+        num_bands = self._capabilities.max_filters
+        for i in range(num_bands):
+            offset = i * 4
+            letter = _BAND_LETTERS[i]
+
+            band_l: list[dict[str, str | float]] = [
+                {"param_name": f"{letter}_mode", "value": band_array_l[offset]},
+                {"param_name": f"{letter}_freq", "value": band_array_l[offset + 1]},
+                {"param_name": f"{letter}_gain", "value": band_array_l[offset + 2]},
+                {"param_name": f"{letter}_q", "value": band_array_l[offset + 3]},
+            ]
+            band_r: list[dict[str, str | float]] = [
+                {"param_name": f"{letter}_mode", "value": band_array_r[offset]},
+                {"param_name": f"{letter}_freq", "value": band_array_r[offset + 1]},
+                {"param_name": f"{letter}_gain", "value": band_array_r[offset + 2]},
+                {"param_name": f"{letter}_q", "value": band_array_r[offset + 3]},
+            ]
+
+            payload = json.dumps({
+                "pluginURI": _PLUGIN_URI,
+                "source_name": source_name,
+                "channelMode": "L/R",
+                "EQBandL": band_l,
+                "EQBandR": band_r,
+            })
+            command = f"EQSetLV2SourceBand:{quote(payload)}"
+
+            if queue is not None:
+                await queue.enqueue(command)
+            else:
+                await self._client.command(command)
+
+            if i < num_bands - 1:
+                await asyncio.sleep(0.1)
 
     # ------------------------------------------------------------------
     # PEQ Profile Management
