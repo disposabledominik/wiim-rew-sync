@@ -88,6 +88,37 @@ where JSON includes `"EQLevel": 2` alongside the band data.
 - The `Name` field shows the loaded RoomFit profile name
 - Band data uses the same param_name format (a_mode, a_freq, a_q, a_gain, etc.)
 
+### Profile Listing (discovered 2026-06-14)
+
+`EQv2GetNewList` with JSON payload returns profiles by level:
+
+```
+EQv2GetNewList:<url_encoded_json>
+```
+
+| Payload `EQLevel` | Returns |
+|---|---|
+| 1 | User PEQ profiles (Type: "Custom") |
+| 2 | RoomFit profiles (Type: "RC") |
+
+**Example response (EQLevel:2):**
+```json
+{
+  "custom": [
+    {
+      "Name": "My RoomFit Profile",
+      "channelMode": "L/R",
+      "Type": "RC",
+      "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
+      "UpdateAt": "1778180921516"
+    }
+  ],
+  "preset": []
+}
+```
+
+**Older list command:** `EQv2GetList:<pluginURI>` (plain URI, no JSON) — returns PEQ profiles only, without metadata (just names).
+
 ---
 
 ## EQ (Non-PEQ) Commands
