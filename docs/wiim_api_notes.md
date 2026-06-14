@@ -61,47 +61,70 @@ Source names used in `EQGetLV2SourceBandEx` / `EQSetLV2SourceBand` are model-dep
 
 ---
 
-## RoomFit / Room Correction API (discovered 2026-06-14)
+## RoomFit / Room Correction API (confirmed 2026-06-14)
 
 RoomFit uses the **same LV2 EQ commands** as user PEQ, differentiated by the `EQLevel` parameter:
 
-- `EQLevel: 1` = User PEQ (default, what `EQGetLV2SourceBandEx` returns without specifying)
+- `EQLevel: 1` (or omitted) = User PEQ
 - `EQLevel: 2` = RoomFit / Room Correction filters
+
+All RoomFit operations use standard LV2 PEQ commands with `"EQLevel": 2` added to the JSON payload. There are **no separate** `getRoomFitStatus`/`getRoomFitBands`/`setRoomFitBands` commands — those were initial assumptions that proved incorrect.
+
+### RoomFit Band Read/Write
 
 **Read RoomFit bands:**
 ```
 EQGetLV2SourceBandEx:<url_encoded_json>
 ```
-where JSON = `{"EQLevel": 2, "pluginURI": "http://moddevices.com/plugins/caps/EqNp", "source_name": "wifi"}`
+JSON payload:
+```json
+{
+  "EQLevel": 2,
+  "pluginURI": "http://moddevices.com/plugins/caps/EqNp",
+  "source_name": "wifi"
+}
+```
 
-**Response format:** Identical to PEQ — contains `channelMode`, `EQBandL`/`EQBandR` or `EQBand`, `Name` (profile name), `EQStat` (On/Off).
+**Response format:** Identical to PEQ — contains `channelMode`, `EQBandL`/`EQBandR` or `EQBand`, `Name` (loaded profile name), `EQStat` (On/Off).
 
-**Write RoomFit bands (probable, not yet tested):**
+**Write RoomFit bands (confirmed save, write untested):**
 ```
 EQSetLV2SourceBand:<url_encoded_json>
 ```
-where JSON includes `"EQLevel": 2` alongside the band data.
-
-**Key observations:**
-- RoomFit can be per-source (tested with `source_name: "wifi"`)
-- RoomFit supports L/R mode independently from user PEQ
-- The `Name` field shows the loaded RoomFit profile name
-- Band data uses the same param_name format (a_mode, a_freq, a_q, a_gain, etc.)
-
-### Profile Listing (discovered 2026-06-14)
-
-`EQv2GetNewList` with JSON payload returns profiles by level:
-
-```
-EQv2GetNewList:<url_encoded_json>
+JSON payload (same as PEQ write but with `"EQLevel": 2`):
+```json
+{
+  "EQLevel": 2,
+  "pluginURI": "http://moddevices.com/plugins/caps/EqNp",
+  "source_name": "wifi",
+  "channelMode": "L/R",
+  "EQBandL": [...],
+  "EQBandR": [...]
+}
 ```
 
-| Payload `EQLevel` | Returns |
-|---|---|
-| 1 | User PEQ profiles (Type: "Custom") |
-| 2 | RoomFit profiles (Type: "RC") |
+> ⚠️ Direct band write via `EQSetLV2SourceBand` + `EQLevel: 2` has not been tested. Profile save/load (below) is confirmed working.
 
-**Example response (EQLevel:2):**
+### RoomFit Profile CRUD (all confirmed 2026-06-14)
+
+| Operation | Command | Payload |
+|-----------|---------|---------|
+| List PEQ profiles | `EQv2GetNewList:<json>` | `{"pluginURI": "...EqNp", "EQLevel": 1}` |
+| List RoomFit profiles | `EQv2GetNewList:<json>` | `{"pluginURI": "...EqNp", "EQLevel": 2}` |
+| Save current as PEQ profile | `EQSourceSave:<json>` | `{"pluginURI": "...", "source_name": "...", "Name": "..."}` |
+| Save current as RC profile | `EQSourceSave:<json>` | `{"pluginURI": "...", "source_name": "...", "Name": "...", "EQLevel": 2}` |
+| Delete PEQ profile | `EQv2Delete:<json>` | `{"pluginURI": "...", "Name": "..."}` |
+| Delete RC profile | `EQv2Delete:<json>` | `{"pluginURI": "...", "Name": "...", "EQLevel": 2}` |
+| Load PEQ profile | `EQv2SourceLoad:<json>` | `{"pluginURI": "...", "source_name": "...", "Name": "..."}` (untested) |
+| Load RC profile | `EQv2SourceLoad:<json>` | `{"pluginURI": "...", "source_name": "...", "Name": "...", "EQLevel": 2}` (untested) |
+| Read active PEQ bands | `EQGetLV2SourceBandEx:<json>` | `{"pluginURI": "...", "source_name": "..."}` |
+| Read active RC bands | `EQGetLV2SourceBandEx:<json>` | `{"pluginURI": "...", "source_name": "...", "EQLevel": 2}` |
+| Write PEQ bands | `EQSetLV2SourceBand:<json>` | `{"pluginURI": "...", "source_name": "...", "EQBand": [...]}` |
+| Write RC bands | `EQSetLV2SourceBand:<json>` | `{"pluginURI": "...", "source_name": "...", "EQBand": [...], "EQLevel": 2}` (untested) |
+
+### Profile List Response
+
+**Example response (EQLevel: 2):**
 ```json
 {
   "custom": [
@@ -116,6 +139,42 @@ EQv2GetNewList:<url_encoded_json>
   "preset": []
 }
 ```
+
+**Profile metadata fields:**
+- `Name` — profile name
+- `channelMode` — "Stereo" or "L/R"
+- `Type` — "RC" for calibration-created profiles; "Custom" for user-saved profiles (both stored at EQLevel 2)
+- `rc_output` — output mode (e.g. `"AUDIO_OUTPUT_SPEAKER_MODE"`)
+- `UpdateAt` — timestamp (Unix millis, set by calibration process; absent if not provided during save)
+
+**Quirk:** Profiles saved via `EQSourceSave` with `EQLevel: 2` get `Type: "Custom"` instead of `"RC"`. The `EQLevel: 2` determines RoomFit placement (shown in WiiM app's RoomFit section), not the `Type` field. The "RC" type is reserved for profiles created by the device's own RoomFit calibration process.
+
+### RoomFit Key Observations
+
+- RoomFit is **per-source** — same source_name semantics as PEQ
+- RoomFit supports L/R mode independently from user PEQ
+- Band data uses the same param_name format (a_mode, a_freq, a_q, a_gain, etc.)
+- WiiM Mini (`Muzo_Mini`) has no RoomFit — `EQv2GetNewList` with `EQLevel: 2` returns empty `custom` list and reading bands shows `EQStat: Off`
+
+### Capability Detection (Confirmed)
+
+| Condition | Result |
+|-----------|--------|
+| `EQv2GetNewList` + `EQLevel: 2` returns non-empty `custom` list | Device has RoomFit profiles |
+| `EQGetLV2SourceBandEx` + `EQLevel: 2` returns band data | RoomFit readable |
+| `EQSourceSave` + `EQLevel: 2` succeeds | RoomFit profile save works |
+| `EQv2Delete` + `EQLevel: 2` succeeds | RoomFit profile delete works |
+| Empty list from `EQv2GetNewList` + `EQLevel: 2` AND `EQStat: Off` from band read | Device has no RoomFit (WiiM Mini) |
+
+### Revised Capability Probe Sequence
+
+| Level | Probe | Success Condition |
+|---|---|---|
+| 0 | (default) | No RoomFit |
+| 1 | `EQv2GetNewList:{"pluginURI":"...","EQLevel":2}` | Returns valid response (even if empty list) without "unknown command" |
+| 2 | `EQGetLV2SourceBandEx:{"pluginURI":"...","source_name":"wifi","EQLevel":2}` | Returns band data with `EQBand`/`EQBandL`/`EQBandR` |
+| 3 | (implicit from level 2) | Band data is parseable into CanonicalFilter list |
+| 4 | `EQSetLV2SourceBand:{"pluginURI":"...","source_name":"wifi","EQLevel":2,...}` | Write succeeds (NOT YET TESTED — use profile save as safer alternative) |
 
 **Older list command:** `EQv2GetList:<pluginURI>` (plain URI, no JSON) — returns PEQ profiles only, without metadata (just names).
 
@@ -310,47 +369,53 @@ Fallback strategy if mDNS yields no results: subnet scan on ports 80 and 443 wit
 
 | Device | `supports_peq` | `supports_channel_peq` | `supports_roomfit` | Notes |
 |---|---|---|---|---|
-| WiiM Ultra | ✅ True | ✅ True | ✅ True | 10-band per-input PEQ (stereo or L/R), dedicated 10-band RoomFit (stereo or L/R) |
-| WiiM Amp Ultra | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
+| WiiM Ultra | ✅ True | ✅ True | ✅ True | Per-input PEQ (stereo or L/R), dedicated RoomFit band set (stereo or L/R, per-source) |
+| WiiM Amp Ultra | ✅ True | ✅ True | ✅ True | Same as Ultra; 12 bands on firmware 20260409+ |
 | WiiM Amp Pro | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
 | WiiM Pro | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
 | WiiM Pro Plus | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
 | WiiM Amp | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
 | WiiM Sound | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
 | WiiM Sound Lite | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
-| WiiM Mini | ✅ True | ✅ True | ❌ False | 10-band per-input PEQ (stereo or L/R); **no separate RoomFit band set** |
+| WiiM Mini | ✅ True | ✅ True | ❌ False | Per-input PEQ (stereo or L/R); **no RoomFit** (empty profile list, EQStat: Off on band read) |
 | Generic LinkPlay | ❌ False | ❌ False | ❌ False | LV2 PEQ API unavailable |
 
 **Key distinctions:**
-- All WiiM devices except WiiM Mini support a **dedicated RoomFit band set** (separate from PEQ bands).
-- WiiM Mini supports the full 10-band per-input PEQ (including L/R channel mode) but has **no RoomFit capability**.
+- All WiiM devices except WiiM Mini support a **dedicated RoomFit band set** (separate from PEQ bands, accessed via `EQLevel: 2`).
+- RoomFit is **per-source** — same `source_name` semantics as PEQ.
+- WiiM Mini supports the full per-input PEQ (including L/R channel mode) but has **no RoomFit capability** (confirmed: empty profile list, bands show `EQStat: Off`).
+- Band count varies by device/firmware: 10 bands (a-j) standard, 12 bands (a-l) on WiiM Amp Ultra firmware 20260409+. Always probe dynamically.
 - Capability detection must still probe at runtime — firmware updates can change behaviour. Never hard-code capabilities by model name alone.
 
 **Batch Write:** Some firmware supports writing all 10 bands in a single `EQSetLV2Band` payload (standard). Sequential fallback via `WiiMCommandQueue` is still needed if a single-band variant is required by capability detection.
 
 ---
 
-## RoomFit API (Experimental)
+## RoomFit API — Implementation Reference
 
-RoomFit is partially undocumented. The following is based on community research and may be incomplete or firmware-specific.
+> The RoomFit API has been **confirmed via hardware testing** (2026-06-14). See "RoomFit / Room Correction API" section above for the complete, verified command reference.
 
-### Capability Probe Sequence
-
-Attempt each command in order. The highest level that succeeds determines the capability level:
+### Capability Probe Sequence (Confirmed)
 
 | Level | Probe command | Success condition |
 |---|---|---|
 | 0 | (no probe) | Device does not have RoomFit at all (WiiM Mini, generic LinkPlay) |
-| 1 | `getRoomFitStatus` or `getStatusEx` field | Returns a non-error response indicating RoomFit is present and active/inactive |
-| 2 | `getRoomFitBands` (or equivalent read command) | Returns readable filter data |
-| 3 | Attempt REW text export of the read data | Filter data is parseable and exportable |
-| 4 | `setRoomFitBands` or equivalent write command | Returns success without error |
+| 1 | `EQv2GetNewList:{"pluginURI":"...","EQLevel":2}` | Returns valid JSON response (not "unknown command") |
+| 2 | `EQGetLV2SourceBandEx:{"pluginURI":"...","source_name":"wifi","EQLevel":2}` | Returns readable band data |
+| 3 | (implicit from level 2) | Band data is parseable into CanonicalFilter list |
+| 4 | `EQSetLV2SourceBand:{"pluginURI":"...","source_name":"wifi","EQLevel":2,...}` | Write succeeds without error (NOT YET CONFIRMED — profile save/delete confirmed) |
 
-> ⚠️ **Assumption C applies here**: RoomFit API endpoints are not fully documented. During implementation, if any endpoint returns an unexpected response, stop, log the behaviour in `corrections.md`, set the capability to the last confirmed level, and continue.
+**Note:** The original assumptions about `getRoomFitStatus`, `getRoomFitBands`, and `setRoomFitBands` commands were incorrect. These commands do not exist. RoomFit uses the standard LV2 PEQ command family with `"EQLevel": 2` added to the payload. See `docs/corrections.md` for the full correction log.
 
-### RoomFit Data Format (Best-Known)
+### RoomFit Data Format
 
-When readable (Level 2+), RoomFit data is expected to return a filter array in the same band-parameter format as PEQ (`param_name`/`value` pairs). Treat it as a read-only Canonical filter set unless Level 4 is confirmed.
+RoomFit band data uses the **identical format** to PEQ bands:
+- Same `param_name`/`value` pair structure (a_mode, a_freq, a_q, a_gain, ...)
+- Same band letters (a-j or a-l depending on device)
+- Same `channelMode` semantics ("Stereo" / "L/R")
+- Same `EQStat` ("On" / "Off")
+
+This means `wiim_parser.py` and `wiim_generator.py` work unchanged for RoomFit data — only the adapter commands differ (adding `EQLevel: 2`).
 
 ---
 
@@ -358,14 +423,16 @@ When readable (Level 2+), RoomFit data is expected to return a filter array in t
 
 The `source_name` parameter used in PEQ commands corresponds to the device input source:
 
-| Source | `source_name` value |
-|---|---|
-| WiFi / Network | `"wifi"` |
-| Bluetooth | `"bluetooth"` |
-| Line In (Aux) | `"line-in"` |
-| Optical In | `"optical"` |
-| Coaxial In | `"coax"` |
-| USB | `"udisk"` |
+| Source | `source_name` value | Notes |
+|---|---|---|
+| WiFi / Network / Ethernet / USB disk | `"wifi"` | Shared across Wi-Fi, Ethernet, USB on Amp Ultra |
+| Bluetooth | `"bluetooth"` | |
+| Line In (Aux) | `"line-in"` | WiiM Mini, Amp Ultra |
+| Aux In | `"auxIn"` | WiiM Sound / Sound Lite (not "line-in") |
+| Optical In | `"optical"` | |
+| HDMI | `"HDMI"` | Case-sensitive: uppercase = Stereo slot |
+
+> See "PEQ Source Names" section above for the confirmed per-model breakdown.
 
 ---
 

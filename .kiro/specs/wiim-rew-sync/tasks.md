@@ -252,41 +252,6 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Exit code 0 on verified success, 1 on any failure
   - _Requirements: 5.1-5.10, 12.1-12.3_
 
-- [x] 51. Fix and test hardware-validation findings
-  - Update unit tests for LP (mode 3) and HP (mode 5) filter type parsing and generation in `test_wiim_parser.py` and `test_wiim_generator.py`
-  - Update unit tests for 12-band devices (letters a-l, 48-entry arrays) in `test_wiim_generator.py`
-  - Add `Muzo_Mini` test case in `test_capability_prober.py`
-  - Add mDNS enrichment test (discovery calls `getStatusEx`) in `test_discovery.py`
-  - Add CLI L/R auto-detection test and `list-sources` test in `test_cli.py`
-  - Investigate source discovery limitation and document findings
-  - Ensure all existing tests still pass with LP/HP and 12-band changes
-  - _Requirements: 2.10, 4.4, 4.5_
-
-- [ ] 52. Rewrite REW parser for real export format
-  - Rewrite `src/translator/rew_parser.py` to handle the actual REW "Filter Settings file" format (see `docs/rew_export_examples/`)
-  - Header handling: skip preamble lines until `Equaliser:` line is found; accept any equaliser type (Generic, Configurable PEQ, Parametric EQ, etc.)
-  - Filter line formats to support:
-    - `PK Fc <freq> Hz Gain <gain> dB Q <q>` — map to PEAK
-    - `HP Q Fc <freq> Hz Q <q>` — map to HP (no gain; set gain=0)
-    - `LP Q Fc <freq> Hz Q <q>` — map to LP (no gain; set gain=0)
-    - `LS Q Fc <freq> Hz Gain <gain> dB Q <q>` — map to LS
-    - `HS Q Fc <freq> Hz Gain <gain> dB Q <q>` — map to HS
-    - `HP Fc <freq> Hz` — map to HP (Butterworth, Q=0.707, gain=0)
-    - `LP Fc <freq> Hz` — map to LP (Butterworth, Q=0.707, gain=0)
-    - `LS Fc <freq> Hz Gain <gain> dB` — map to LS (fixed slope, Q=0.707)
-    - `HS Fc <freq> Hz Gain <gain> dB` — map to HS (fixed slope, Q=0.707)
-    - `LS 12dB Fc <freq> Hz Gain <gain> dB` — map to LS (Q=0.707)
-    - `HS 12dB Fc <freq> Hz Gain <gain> dB` — map to HS (Q=0.707)
-    - `None` — map to OFF
-  - Unsupported filter types (Modal, LP1, HP1, LS 6dB, HS 6dB, Notch, Notch Q, All-pass, L-T): emit a `ValidationWarning` and skip the band (do not crash)
-  - Handle `OFF` state prefix (same as before)
-  - Ignore duplicate filter sections at end of file (REW appends extra measurement filters)
-  - Frequency may be integer (`50 Hz`) or decimal (`50.00 Hz`) — handle both
-  - Flexible whitespace matching throughout
-  - Update unit tests with the three real export examples in `docs/rew_export_examples/`
-  - Preserve backward compatibility with the simple `Equaliser: Parametric EQ` format
-  - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
-
 - [ ] 32. CLI end-to-end hardware validation (phase gate)
   - Run all four CLI commands against physical WiiM hardware
   - Verify `get-filters` output matches WiiM app; verify `set-filters` filter change is visible in WiiM app
@@ -436,6 +401,70 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     - Integration test: A device with 14 bands (hypothetical) can be read without error; bands beyond the tool's write limit are displayed but not overwritten.
   - _Rationale: WiiM has already added LP (mode 3) and HP (mode 5) in recent firmware. Future firmware could add NOTCH, BANDPASS, ALL-PASS, or additional bands. The tool must degrade gracefully rather than crash on read._
 
+- [x] 51. Fix and test hardware-validation findings
+  - Update unit tests for LP (mode 3) and HP (mode 5) filter type parsing and generation in `test_wiim_parser.py` and `test_wiim_generator.py`
+  - Update unit tests for 12-band devices (letters a-l, 48-entry arrays) in `test_wiim_generator.py`
+  - Add `Muzo_Mini` test case in `test_capability_prober.py`
+  - Add mDNS enrichment test (discovery calls `getStatusEx`) in `test_discovery.py`
+  - Add CLI L/R auto-detection test and `list-sources` test in `test_cli.py`
+  - Investigate source discovery limitation and document findings
+  - Ensure all existing tests still pass with LP/HP and 12-band changes
+  - _Requirements: 2.10, 4.4, 4.5_
+
+- [ ] 52. Rewrite REW parser for real export format
+  - Rewrite `src/translator/rew_parser.py` to handle the actual REW "Filter Settings file" format (see `docs/rew_export_examples/`)
+  - Header handling: skip preamble lines until `Equaliser:` line is found; accept any equaliser type (Generic, Configurable PEQ, Parametric EQ, etc.)
+  - Filter line formats to support:
+    - `PK Fc <freq> Hz Gain <gain> dB Q <q>` — map to PEAK
+    - `HP Q Fc <freq> Hz Q <q>` — map to HP (no gain; set gain=0)
+    - `LP Q Fc <freq> Hz Q <q>` — map to LP (no gain; set gain=0)
+    - `LS Q Fc <freq> Hz Gain <gain> dB Q <q>` — map to LS
+    - `HS Q Fc <freq> Hz Gain <gain> dB Q <q>` — map to HS
+    - `HP Fc <freq> Hz` — map to HP (Butterworth, Q=0.707, gain=0)
+    - `LP Fc <freq> Hz` — map to LP (Butterworth, Q=0.707, gain=0)
+    - `LS Fc <freq> Hz Gain <gain> dB` — map to LS (fixed slope, Q=0.707)
+    - `HS Fc <freq> Hz Gain <gain> dB` — map to HS (fixed slope, Q=0.707)
+    - `LS 12dB Fc <freq> Hz Gain <gain> dB` — map to LS (Q=0.707)
+    - `HS 12dB Fc <freq> Hz Gain <gain> dB` — map to HS (Q=0.707)
+    - `None` — map to OFF
+  - Unsupported filter types (Modal, LP1, HP1, LS 6dB, HS 6dB, Notch, Notch Q, All-pass, L-T): emit a `ValidationWarning` and skip the band (do not crash)
+  - Handle `OFF` state prefix (same as before)
+  - Ignore duplicate filter sections at end of file (REW appends extra measurement filters)
+  - Frequency may be integer (`50 Hz`) or decimal (`50.00 Hz`) — handle both
+  - Flexible whitespace matching throughout
+  - Update unit tests with the three real export examples in `docs/rew_export_examples/`
+  - Preserve backward compatibility with the simple `Equaliser: Parametric EQ` format
+  - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
+
+- [ ] 53. Rewrite RoomFit probing and adapter to use real API commands
+  - **Problem**: The capability prober's `_probe_roomfit()` and `WiiMAdapter.read_roomfit()`/`write_roomfit()` use fictitious commands (`getRoomFitStatus`, `getRoomFitBands`, `setRoomFitBands`) that do not exist on WiiM devices. Hardware testing (2026-06-14) confirmed that RoomFit uses the standard LV2 PEQ commands with `EQLevel: 2` added to the JSON payload.
+  - **Changes required**:
+    1. In `src/adapters/capability_prober.py` — rewrite `_probe_roomfit()`:
+       - Level 1: `EQv2GetNewList` with `{"pluginURI": "...", "EQLevel": 2}` — returns valid JSON (not "unknown command")
+       - Level 2: `EQGetLV2SourceBandEx` with `{"pluginURI": "...", "source_name": "wifi", "EQLevel": 2}` — returns band data
+       - Level 3: implicit from level 2 (band data is parseable)
+       - Level 4: `EQSetLV2SourceBand` with `{"pluginURI": "...", "source_name": "wifi", "EQLevel": 2, ...}` — write succeeds (keep as untested/conservative: only set level 4 if profile save via `EQSourceSave` + `EQLevel: 2` succeeds)
+    2. In `src/adapters/wiim_adapter.py` — rewrite `read_roomfit()`:
+       - Use `EQGetLV2SourceBandEx` with `EQLevel: 2` (same as PEQ read but with EQLevel param)
+       - Accept `source_name` parameter (RoomFit is per-source, just like PEQ)
+       - Parse response identically to PEQ (same `EQBand`/`EQBandL`/`EQBandR` format)
+    3. In `src/adapters/wiim_adapter.py` — rewrite `write_roomfit()`:
+       - Use `EQSetLV2SourceBand` with `EQLevel: 2`
+       - Accept `source_name` parameter
+       - Same payload format as PEQ write but with `"EQLevel": 2` added
+    4. Update `src/tests/test_capability_prober.py`:
+       - Replace mock fixtures using old commands with ones using the real LV2 commands + EQLevel
+       - Test: device with RoomFit returns level 2+ (band data readable)
+       - Test: WiiM Mini (no RoomFit) returns level 0 (empty profile list or "unknown command")
+       - Test: profile save succeeds → level 4
+    5. Update `src/tests/test_wiim_adapter.py`:
+       - Replace `getRoomFitBands`/`setRoomFitBands` mock commands with `EQGetLV2SourceBandEx`/`EQSetLV2SourceBand` + `EQLevel: 2`
+       - Test: `read_roomfit("wifi")` issues correct command with EQLevel 2
+       - Test: `write_roomfit("wifi", filters)` issues correct command with EQLevel 2
+  - **Do NOT change**: The `roomfit_level` field semantics (0-4), `DeviceCapabilities` model, or `SafeWrite` integration — those remain the same.
+  - _Root cause: Original implementation was based on assumed/speculative command names. Hardware testing confirmed RoomFit is just another EQ level within the existing LV2 plugin architecture._
+  - _Requirements: 2.6, 11.1, 11.2, 11.3, 11.7_
+
 ## Task Dependency Graph
 
 ```json
@@ -459,7 +488,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     { "wave": 14.6, "tasks": [46, 47] },
     { "wave": 14.7, "tasks": [51] },
     { "wave": 14.8, "tasks": [50] },
-    { "wave": 14.9, "tasks": [52] },
+    { "wave": 14.9, "tasks": [52, 53] },
     { "wave": 15, "tasks": [32] },
     { "wave": 15.5, "tasks": [49] },
     { "wave": 16, "tasks": [33, 42] },

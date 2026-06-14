@@ -429,11 +429,11 @@ class WiiMAdapter:
         Raises WiiMSlaveTargetError if this adapter's device is a slave.
         """
 
-    async def read_roomfit(self) -> list[CanonicalFilter]:
+    async def read_roomfit(self, source_name: str) -> list[CanonicalFilter]:
         """Read RoomFit bands (requires roomfit_level >= 2). Returns CanonicalFilters."""
 
-    async def write_roomfit(self, filters: list[CanonicalFilter]) -> None:
-        """Write RoomFit bands (requires roomfit_level == 4)."""
+    async def write_roomfit(self, source_name: str, filters: list[CanonicalFilter]) -> None:
+        """Write RoomFit bands (requires roomfit_level >= 4)."""
 
     async def get_multiroom_master_ip(self) -> str | None:
         """Return master IP from GetMultiroomInfo, or None if solo/unreachable."""
