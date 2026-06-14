@@ -520,6 +520,105 @@ def cmd_list_roomfit_profiles(device: str, timeout: float) -> int:
 
 
 # ---------------------------------------------------------------------------
+# get-roomfit-filters — read RoomFit bands from a named profile
+# ---------------------------------------------------------------------------
+
+
+async def _get_roomfit_filters(
+    device: str, source: str, profile_name: str, timeout: float
+) -> list[CanonicalFilter]:
+    """Probe capabilities, load a RoomFit profile, and read its bands."""
+    client = WiiMHttpClient(device, timeout=timeout)
+    try:
+        capabilities = await CapabilityProber(client).probe()
+        adapter = WiiMAdapter(client, capabilities)
+        return await adapter.read_roomfit(source, profile_name)
+    finally:
+        await client.close()
+
+
+def cmd_get_roomfit_filters(
+    device: str, source: str, profile_name: str, timeout: float
+) -> int:
+    """Read RoomFit bands for a named profile. Exit 0 on success, 1 on error."""
+    try:
+        filters = asyncio.run(
+            _get_roomfit_filters(device, source, profile_name, timeout)
+        )
+    except (WiiMConnectionError, WiiMResponseError) as exc:
+        error_msg = str(exc)
+        if "roomfit_level >= 2" in error_msg:
+            print("RoomFit read not supported on this device.", file=sys.stderr)
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"RoomFit profile: {profile_name} | Source: {source}")
+    print()
+    print(_format_table(_FILTER_HEADERS, _filter_rows(filters)))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# set-roomfit-filters — write REW filters to a RoomFit profile
+# ---------------------------------------------------------------------------
+
+
+async def _set_roomfit_filters(
+    device: str,
+    source: str,
+    profile_name: str,
+    file: str,
+    timeout: float,
+) -> None:
+    """Parse REW file, probe device, write filters to a RoomFit profile."""
+    path = Path(file)
+    filters = TranslationEngine.parse_rew_file(path)
+
+    client = WiiMHttpClient(device, timeout=timeout)
+    try:
+        print("Probing device capabilities...")
+        capabilities = await CapabilityProber(client).probe()
+        adapter = WiiMAdapter(client, capabilities)
+
+        print(f"Writing to RoomFit profile '{profile_name}'...")
+        await adapter.write_roomfit(source, profile_name, filters)
+        print("Done!")
+    finally:
+        await client.close()
+
+
+def cmd_set_roomfit_filters(
+    device: str,
+    source: str,
+    profile_name: str,
+    file: str,
+    timeout: float,
+) -> int:
+    """Write REW filters to a RoomFit profile. Exit 0 on success, 1 on error."""
+    try:
+        asyncio.run(
+            _set_roomfit_filters(device, source, profile_name, file, timeout)
+        )
+    except (WiiMConnectionError, WiiMResponseError) as exc:
+        error_msg = str(exc)
+        if "roomfit_level >= 4" in error_msg:
+            print("RoomFit write not supported on this device.", file=sys.stderr)
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except (ParseError, ValidationError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"Error: cannot read file '{file}': {exc}", file=sys.stderr)
+        return 1
+
+    print(f"RoomFit profile '{profile_name}' saved successfully.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Argument parsing & dispatch
 # ---------------------------------------------------------------------------
 
@@ -639,6 +738,38 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     list_roomfit.add_argument("--device", required=True, help="Device IP address.")
 
+    get_roomfit = subparsers.add_parser(
+        "get-roomfit-filters",
+        help="Read RoomFit bands from a named profile on the device.",
+    )
+    get_roomfit.add_argument("--device", required=True, help="Device IP address.")
+    get_roomfit.add_argument(
+        "--source", default="wifi",
+        help="Audio input source (default: wifi).",
+    )
+    get_roomfit.add_argument(
+        "--profile", required=True,
+        help="Name of the RoomFit profile to read.",
+    )
+
+    set_roomfit = subparsers.add_parser(
+        "set-roomfit-filters",
+        help="Write REW filters to a RoomFit profile on the device.",
+    )
+    set_roomfit.add_argument("--device", required=True, help="Device IP address.")
+    set_roomfit.add_argument(
+        "--source", default="wifi",
+        help="Audio input source (default: wifi).",
+    )
+    set_roomfit.add_argument(
+        "--profile", required=True,
+        help="Name of the RoomFit profile to write to (new or existing).",
+    )
+    set_roomfit.add_argument(
+        "--file", required=True,
+        help="Path to a REW EQ text file.",
+    )
+
     return parser
 
 
@@ -670,6 +801,14 @@ def run(argv: list[str] | None = None) -> int:
         )
     if args.command == "list-roomfit-profiles":
         return cmd_list_roomfit_profiles(args.device, args.timeout)
+    if args.command == "get-roomfit-filters":
+        return cmd_get_roomfit_filters(
+            args.device, args.source, args.profile, args.timeout
+        )
+    if args.command == "set-roomfit-filters":
+        return cmd_set_roomfit_filters(
+            args.device, args.source, args.profile, args.file, args.timeout
+        )
 
     # argparse enforces a valid subcommand, so this is unreachable.
     parser.error(f"Unknown command: {args.command}")
