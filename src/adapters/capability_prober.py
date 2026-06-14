@@ -271,71 +271,130 @@ class CapabilityProber:
         Requirement 2.6: determine roomfit_level using a sequential probe
         sequence; the level is set to the highest confirmed level.
 
+        RoomFit uses the standard LV2 PEQ commands with EQLevel: 2 added to
+        the JSON payload. There are NO separate getRoomFitStatus/getRoomFitBands/
+        setRoomFitBands commands (see docs/corrections.md 2026-06-14).
+
         Level 0: no RoomFit at all (default)
-        Level 1: getRoomFitStatus returns non-error response
-        Level 2: getRoomFitBands returns readable filter data
-        Level 3: filter data is parseable (implicit from level 2 success)
-        Level 4: setRoomFitBands (write) succeeds
+        Level 1: EQv2GetNewList + EQLevel:2 returns valid JSON (not "unknown command")
+        Level 2: EQGetLV2SourceBandEx + EQLevel:2 returns band data with EQBand/EQBandL/EQBandR
+        Level 3: implicit from level 2 — band data is parseable (response is dict with bands)
+        Level 4: EQSetLV2SourceBand + EQSourceSave + EQLevel:2 both succeed (write + save)
         """
-        # ASSUMPTION: RoomFit API uses getRoomFitStatus, getRoomFitBands, and
-        # setRoomFitBands commands. These are partially undocumented (see
-        # docs/wiim_api_notes.md "RoomFit API (Experimental)" section).
+        import json
 
         caps.roomfit_level = 0
         caps.supports_roomfit = False
         caps.supports_roomfit_read = False
         caps.supports_roomfit_write = False
 
-        # Level 1: Check if RoomFit is present
+        # Level 1: EQv2GetNewList with EQLevel: 2
         try:
-            resp = await self._client.command("getRoomFitStatus")
+            list_payload = json.dumps({"pluginURI": PLUGIN_URI, "EQLevel": 2})
+            resp = await self._client.command(
+                f"EQv2GetNewList:{quote(list_payload)}"
+            )
             if isinstance(resp, str) and "unknown" in resp.lower():
                 # Device doesn't support RoomFit
                 return
-            # Non-error response -- level 1 at minimum
+            if not isinstance(resp, dict):
+                return
+            # Valid JSON response — level 1
             caps.roomfit_level = 1
             caps.supports_roomfit = True
         except Exception:
-            logger.info("RoomFit level 1 probe (getRoomFitStatus) failed.")
+            logger.info("RoomFit level 1 probe (EQv2GetNewList+EQLevel:2) failed.")
             return
 
-        # Level 2: Check if RoomFit bands are readable
+        # Level 2: EQGetLV2SourceBandEx with EQLevel: 2
         try:
-            resp = await self._client.command("getRoomFitBands")
-            if isinstance(resp, str) and "unknown" in resp.lower():
+            read_payload = json.dumps({
+                "pluginURI": PLUGIN_URI,
+                "source_name": "wifi",
+                "EQLevel": 2,
+            })
+            band_resp = await self._client.command(
+                f"EQGetLV2SourceBandEx:{quote(read_payload)}"
+            )
+            if not isinstance(band_resp, dict):
                 return
-            if isinstance(resp, dict):
-                caps.roomfit_level = 2
-                caps.supports_roomfit_read = True
-            else:
-                # Non-dict, non-error string — treat as success at level 2
-                # if it's not an error indicator
-                if isinstance(resp, str) and resp.strip():
-                    caps.roomfit_level = 2
-                    caps.supports_roomfit_read = True
+            # Check for band data keys
+            has_bands = (
+                "EQBand" in band_resp
+                or "EQBandL" in band_resp
+                or "EQBandR" in band_resp
+            )
+            if not has_bands:
+                return
+            caps.roomfit_level = 2
+            caps.supports_roomfit_read = True
         except Exception:
-            logger.info("RoomFit level 2 probe (getRoomFitBands) failed.")
+            logger.info(
+                "RoomFit level 2 probe (EQGetLV2SourceBandEx+EQLevel:2) failed."
+            )
             return
 
-        # Level 3: Data is parseable (implicit from level 2 success with dict)
-        if caps.roomfit_level >= 2 and isinstance(resp, dict):
-            caps.roomfit_level = 3
+        # Level 3: Implicit — band data is parseable (dict with band keys confirmed above)
+        caps.roomfit_level = 3
 
-        # Level 4: Write test — attempt setRoomFitBands with current data
+        # Level 4: Write test — EQSetLV2SourceBand + EQSourceSave with EQLevel: 2
+        # Write current read-back data unchanged, save to temp profile, then delete.
+        _PROBE_PROFILE_NAME = "__wiim_rew_sync_probe__"
         try:
-            # Read current data and write it back unchanged
-            if isinstance(resp, dict):
-                import json
+            # Extract existing band data for write-back
+            channel_mode = band_resp.get("channelMode", "Stereo")
+            write_payload: dict[str, Any] = {
+                "pluginURI": PLUGIN_URI,
+                "source_name": "wifi",
+                "channelMode": channel_mode,
+                "EQLevel": 2,
+            }
+            if "EQBand" in band_resp:
+                write_payload["EQBand"] = band_resp["EQBand"]
+            elif "EQBandL" in band_resp and "EQBandR" in band_resp:
+                write_payload["EQBandL"] = band_resp["EQBandL"]
+                write_payload["EQBandR"] = band_resp["EQBandR"]
 
-                payload = quote(json.dumps(resp))
-                write_resp = await self._client.command(f"setRoomFitBands:{payload}")
-                if isinstance(write_resp, str) and "unknown" in write_resp.lower():
-                    return
-                caps.roomfit_level = 4
-                caps.supports_roomfit_write = True
+            write_resp = await self._client.command(
+                f"EQSetLV2SourceBand:{quote(json.dumps(write_payload))}"
+            )
+            if isinstance(write_resp, str) and "unknown" in write_resp.lower():
+                return
+
+            # Save to temporary profile
+            save_payload = json.dumps({
+                "pluginURI": PLUGIN_URI,
+                "source_name": "wifi",
+                "Name": _PROBE_PROFILE_NAME,
+                "EQLevel": 2,
+            })
+            save_resp = await self._client.command(
+                f"EQSourceSave:{quote(save_payload)}"
+            )
+            if isinstance(save_resp, str) and "unknown" in save_resp.lower():
+                return
+
+            caps.roomfit_level = 4
+            caps.supports_roomfit_write = True
+
+            # Cleanup: delete the temporary probe profile (best-effort)
+            try:
+                delete_payload = json.dumps({
+                    "pluginURI": PLUGIN_URI,
+                    "Name": _PROBE_PROFILE_NAME,
+                    "EQLevel": 2,
+                })
+                await self._client.command(
+                    f"EQv2Delete:{quote(delete_payload)}"
+                )
+            except Exception:
+                logger.debug(
+                    "RoomFit probe cleanup (EQv2Delete) failed; non-critical."
+                )
+
         except Exception:
-            logger.info("RoomFit level 4 probe (setRoomFitBands) failed.")
-            # Keep at whatever level was last confirmed
+            logger.info("RoomFit level 4 probe (write+save) failed.")
+            # Keep at whatever level was last confirmed (level 3)
 
     async def _probe_multiroom(self, caps: DeviceCapabilities) -> None:
         """Probe GetMultiroomInfo for multiroom role.

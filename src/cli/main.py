@@ -146,6 +146,21 @@ async def _read_filters(
         await client.close()
 
 
+async def _list_peq_profiles(device: str, timeout: float) -> list[dict[str, str]]:
+    """Probe device and list PEQ profiles."""
+    client = WiiMHttpClient(device, timeout=timeout)
+    try:
+        capabilities = await CapabilityProber(client).probe()
+        if not capabilities.supports_profile_enumeration:
+            raise WiiMResponseError(
+                "Device does not support profile enumeration."
+            )
+        adapter = WiiMAdapter(client, capabilities)
+        return await adapter.list_peq_profiles(_DEFAULT_SOURCE)
+    finally:
+        await client.close()
+
+
 # Confirmed source names from hardware testing (2026-06-14).
 # These are the actual labels used when the associated source is selected.
 # NOTE: The API accepts any name — phantom sources return default data.
@@ -225,6 +240,26 @@ def cmd_list_devices(timeout: float) -> int:
         for device in devices
     ]
     print(_format_table(["Name", "IP", "Model", "Firmware", "Role"], rows))
+    return 0
+
+
+def cmd_list_peq_profiles(device: str, timeout: float) -> int:
+    """List PEQ profiles stored on a device. Exit 0 on success, 1 on error."""
+    try:
+        profiles = asyncio.run(_list_peq_profiles(device, timeout))
+    except (WiiMConnectionError, WiiMResponseError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if not profiles:
+        print("No PEQ profiles found on device.")
+        return 0
+
+    rows = [
+        [entry["Name"], entry["channelMode"]]
+        for entry in profiles
+    ]
+    print(_format_table(["Name", "Channel Mode"], rows))
     return 0
 
 
@@ -311,7 +346,8 @@ def cmd_dry_run_import(file: str) -> int:
 
 
 async def _set_filters(
-    device: str, source: str | None, file: str, channel: str, timeout: float
+    device: str, source: str | None, file: str, channel: str, timeout: float,
+    save_as: str | None = None,
 ) -> WriteResult:
     """Parse REW file, probe device, run safe write protocol."""
     path = Path(file)
@@ -361,6 +397,10 @@ async def _set_filters(
         if result.success:
             print("Verifying...")
             print("Done!")
+            # Save as device preset only after verified write
+            if save_as:
+                await adapter.save_peq_profile(resolved_source, save_as)
+                print(f"Saved as device preset: {save_as}")
         elif result.rollback_success is True:
             print("Verifying...")
             print("ROLLBACK: verification failed, original state restored.")
@@ -377,14 +417,17 @@ async def _set_filters(
 
 
 def cmd_set_filters(
-    device: str, source: str | None, file: str, channel: str, timeout: float
+    device: str, source: str | None, file: str, channel: str, timeout: float,
+    save_as: str | None = None,
 ) -> int:
     """Write REW filters to a device using the safe-write protocol.
 
     Exit code 0 on verified success, 1 on any failure.
     """
     try:
-        result = asyncio.run(_set_filters(device, source, file, channel, timeout))
+        result = asyncio.run(
+            _set_filters(device, source, file, channel, timeout, save_as=save_as)
+        )
     except WiiMSlaveTargetError:
         print(
             "Error: target is a slave device; write to the master node instead.",
@@ -416,6 +459,50 @@ def cmd_set_filters(
         file=sys.stderr,
     )
     return 1
+
+
+# ---------------------------------------------------------------------------
+# list-roomfit-profiles — list RoomFit profiles on device
+# ---------------------------------------------------------------------------
+
+
+async def _list_roomfit_profiles(device: str, timeout: float) -> list[dict[str, str]]:
+    """Probe capabilities and list RoomFit profiles."""
+    client = WiiMHttpClient(device, timeout=timeout)
+    try:
+        capabilities = await CapabilityProber(client).probe()
+        adapter = WiiMAdapter(client, capabilities)
+        return await adapter.list_roomfit_profiles("wifi")
+    finally:
+        await client.close()
+
+
+def cmd_list_roomfit_profiles(device: str, timeout: float) -> int:
+    """List RoomFit profiles on a device. Exit 0 on success, 1 on error."""
+    try:
+        profiles = asyncio.run(_list_roomfit_profiles(device, timeout))
+    except (WiiMConnectionError, WiiMResponseError) as exc:
+        error_msg = str(exc)
+        if "roomfit_level >= 1" in error_msg:
+            print("RoomFit not supported on this device.", file=sys.stderr)
+        else:
+            print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if not profiles:
+        print("No RoomFit profiles found.")
+        return 0
+
+    rows = [
+        [
+            p.get("Name", ""),
+            p.get("channelMode", ""),
+            p.get("Type", ""),
+        ]
+        for p in profiles
+    ]
+    print(_format_table(["Name", "Channel Mode", "Type"], rows))
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +550,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     list_sources.add_argument("--device", required=True, help="Device IP address.")
 
+    list_peq_profiles = subparsers.add_parser(
+        "list-peq-profiles",
+        help="List PEQ profiles stored on a device.",
+    )
+    list_peq_profiles.add_argument("--device", required=True, help="Device IP address.")
+
     get_filters = subparsers.add_parser(
         "get-filters",
         help="Read PEQ filters from a device.",
@@ -509,6 +602,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default="stereo",
         help="Channel mode to write (default: stereo).",
     )
+    set_filters.add_argument(
+        "--save-as",
+        default=None,
+        dest="save_as",
+        help="Save the written filters as a named device preset after successful write.",
+    )
+
+    list_roomfit = subparsers.add_parser(
+        "list-roomfit-profiles",
+        help="List RoomFit profiles stored on a device.",
+    )
+    list_roomfit.add_argument("--device", required=True, help="Device IP address.")
 
     return parser
 
@@ -527,14 +632,19 @@ def run(argv: list[str] | None = None) -> int:
         return cmd_list_devices(args.timeout)
     if args.command == "list-sources":
         return cmd_list_sources(args.device, args.timeout)
+    if args.command == "list-peq-profiles":
+        return cmd_list_peq_profiles(args.device, args.timeout)
     if args.command == "get-filters":
         return cmd_get_filters(args.device, args.source, args.channel, args.timeout)
     if args.command == "dry-run-import":
         return cmd_dry_run_import(args.file)
     if args.command == "set-filters":
         return cmd_set_filters(
-            args.device, args.source, args.file, args.channel, args.timeout
+            args.device, args.source, args.file, args.channel, args.timeout,
+            save_as=args.save_as,
         )
+    if args.command == "list-roomfit-profiles":
+        return cmd_list_roomfit_profiles(args.device, args.timeout)
 
     # argparse enforces a valid subcommand, so this is unreachable.
     parser.error(f"Unknown command: {args.command}")

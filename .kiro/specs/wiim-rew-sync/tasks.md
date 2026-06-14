@@ -412,7 +412,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Ensure all existing tests still pass with LP/HP and 12-band changes
   - _Requirements: 2.10, 4.4, 4.5_
 
-- [ ] 52. Rewrite REW parser for real export format
+- [x] 52. Rewrite REW parser for real export format
   - Rewrite `src/translator/rew_parser.py` to handle the actual REW "Filter Settings file" format (see `docs/rew_export_examples/`)
   - Header handling: skip preamble lines until `Equaliser:` line is found; accept any equaliser type (Generic, Configurable PEQ, Parametric EQ, etc.)
   - Filter line formats to support:
@@ -437,7 +437,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Preserve backward compatibility with the simple `Equaliser: Parametric EQ` format
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
 
-- [ ] 53. Rewrite RoomFit probing and adapter to use real API commands
+- [x] 53. Rewrite RoomFit probing and adapter to use real API commands
   - **Problem**: The capability prober's `_probe_roomfit()` and `WiiMAdapter.read_roomfit()`/`write_roomfit()` use fictitious commands (`getRoomFitStatus`, `getRoomFitBands`, `setRoomFitBands`) that do not exist on WiiM devices. Hardware testing (2026-06-14) confirmed that RoomFit uses the standard LV2 PEQ commands with `EQLevel: 2` added to the JSON payload.
   - **RoomFit is NOT experimental**: All WiiM devices except Mini support RoomFit reads and profile CRUD. Only direct band writes (level 4) remain unconfirmed. The default `roomfit_level` for recognised WiiM devices (excluding Mini) should be probed dynamically, not defaulted to 0.
   - **Changes required**:
@@ -482,7 +482,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - _Root cause: Original implementation was based on assumed/speculative command names. Hardware testing confirmed RoomFit is just another EQ level within the existing LV2 plugin architecture._
   - _Requirements: 2.6, 11.1, 11.2, 11.3, 11.7_
 
-- [ ] 54. Add unit tests for `src/utils/app_dirs.py`
+- [x] 54. Add unit tests for `src/utils/app_dirs.py`
   - Create `src/tests/test_app_dirs.py`
   - Test `get_app_data_dir()` returns correct paths for each platform by mocking `platform.system()`:
     - Windows mock → path contains `APPDATA` or `.wiim-rew-sync`
@@ -492,7 +492,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Test that missing `APPDATA` env var on Windows falls back to `~/.wiim-rew-sync`
   - _Rationale: Only utility module without dedicated tests. Simple platform-branching logic that should be verified before packaging phase._
 
-- [ ] 55. Add PEQ device profile management to WiiMAdapter and CLI
+- [x] 55. Add PEQ device profile management to WiiMAdapter and CLI
   - **Problem**: The tool currently writes directly to the live PEQ bands but has no way to list, save, or load named PEQ presets on the device. Users want to see what's on their device, save REW corrections as a device preset (persists across reboots/source switches), and load previous presets.
   - **PEQ profile workflow** (simpler than RoomFit — no buffer indirection):
     - PEQ reads/writes go directly to the live DSP state (no load-before-read needed)

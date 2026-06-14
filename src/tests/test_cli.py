@@ -590,3 +590,184 @@ def test_list_sources_shows_available_sources(
     assert "optical" in out
     assert "Stereo" in out
     assert "L/R" in out
+
+
+# ---------------------------------------------------------------------------
+# list-peq-profiles
+# ---------------------------------------------------------------------------
+
+
+def test_list_peq_profiles_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """list-peq-profiles shows table output with profile names and channel modes."""
+    mock_profiles = [
+        {"Name": "My Profile", "channelMode": "Stereo", "Type": "Custom"},
+        {"Name": "Bass Boost", "channelMode": "L/R", "Type": "Custom"},
+    ]
+
+    monkeypatch.setattr(
+        cli,
+        "_list_peq_profiles",
+        AsyncMock(return_value=mock_profiles),
+    )
+
+    code = cli.cmd_list_peq_profiles(device="192.168.1.50", timeout=5.0)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Name" in out
+    assert "Channel Mode" in out
+    assert "My Profile" in out
+    assert "Bass Boost" in out
+    assert "Stereo" in out
+    assert "L/R" in out
+
+
+def test_list_peq_profiles_empty(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """list-peq-profiles prints message when no profiles found."""
+    monkeypatch.setattr(
+        cli,
+        "_list_peq_profiles",
+        AsyncMock(return_value=[]),
+    )
+
+    code = cli.cmd_list_peq_profiles(device="192.168.1.50", timeout=5.0)
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "No PEQ profiles found" in out
+
+
+def test_list_peq_profiles_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """list-peq-profiles returns 1 on connection error."""
+    from src.models.errors import WiiMResponseError
+
+    monkeypatch.setattr(
+        cli,
+        "_list_peq_profiles",
+        AsyncMock(side_effect=WiiMResponseError("not supported")),
+    )
+
+    code = cli.cmd_list_peq_profiles(device="192.168.1.50", timeout=5.0)
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "not supported" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# set-filters --save-as
+# ---------------------------------------------------------------------------
+
+
+def test_set_filters_with_save_as(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """set-filters --save-as calls save_peq_profile after successful write."""
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
+
+    # Track save_peq_profile calls
+    save_calls: list[tuple[str, str]] = []
+
+    client_instance = MagicMock()
+    client_instance.close = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
+
+    caps = _make_caps()
+    prober_instance = MagicMock()
+    prober_instance.probe = AsyncMock(return_value=caps)
+    monkeypatch.setattr(cli, "CapabilityProber", MagicMock(return_value=prober_instance))
+
+    adapter_instance = MagicMock()
+    adapter_instance.save_peq_profile = AsyncMock(
+        side_effect=lambda src, name: save_calls.append((src, name))
+    )
+    monkeypatch.setattr(cli, "WiiMAdapter", MagicMock(return_value=adapter_instance))
+
+    monkeypatch.setattr(cli, "BackupManager", MagicMock())
+    monkeypatch.setattr(cli, "get_app_data_dir", MagicMock(return_value=tmp_path))
+
+    safe_write_instance = MagicMock()
+    safe_write_instance.execute = AsyncMock(
+        return_value=WriteResult(success=True, backup_path=tmp_path / "backup.json")
+    )
+    monkeypatch.setattr(cli, "SafeWrite", MagicMock(return_value=safe_write_instance))
+
+    queue_instance = MagicMock()
+    queue_instance.start = AsyncMock()
+    queue_instance.drain_and_stop = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMCommandQueue", MagicMock(return_value=queue_instance))
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.50",
+        source="wifi",
+        file=str(rew_file),
+        channel="stereo",
+        timeout=5.0,
+        save_as="REW Correction",
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Saved as device preset: REW Correction" in out
+    assert len(save_calls) == 1
+    assert save_calls[0] == ("wifi", "REW Correction")
+
+
+def test_set_filters_save_as_not_called_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """set-filters --save-as does NOT call save_peq_profile when write fails."""
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
+
+    client_instance = MagicMock()
+    client_instance.close = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
+
+    caps = _make_caps()
+    prober_instance = MagicMock()
+    prober_instance.probe = AsyncMock(return_value=caps)
+    monkeypatch.setattr(cli, "CapabilityProber", MagicMock(return_value=prober_instance))
+
+    adapter_instance = MagicMock()
+    adapter_instance.save_peq_profile = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMAdapter", MagicMock(return_value=adapter_instance))
+
+    monkeypatch.setattr(cli, "BackupManager", MagicMock())
+    monkeypatch.setattr(cli, "get_app_data_dir", MagicMock(return_value=tmp_path))
+
+    safe_write_instance = MagicMock()
+    safe_write_instance.execute = AsyncMock(
+        return_value=WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path=tmp_path / "backup.json",
+            error_message="Verification failed.",
+        )
+    )
+    monkeypatch.setattr(cli, "SafeWrite", MagicMock(return_value=safe_write_instance))
+
+    queue_instance = MagicMock()
+    queue_instance.start = AsyncMock()
+    queue_instance.drain_and_stop = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMCommandQueue", MagicMock(return_value=queue_instance))
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.50",
+        source="wifi",
+        file=str(rew_file),
+        channel="stereo",
+        timeout=5.0,
+        save_as="REW Correction",
+    )
+
+    assert code == 1
+    # save_peq_profile should NOT have been called
+    adapter_instance.save_peq_profile.assert_not_called()

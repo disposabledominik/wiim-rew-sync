@@ -121,11 +121,23 @@ class TestWiiMDeviceDetection:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
-                return {"status": "active"}
-            if cmd == "getRoomFitBands":
-                return {"bands": []}
-            if cmd.startswith("setRoomFitBands:"):
+            if cmd.startswith("EQv2GetNewList:"):
+                return {
+                    "custom": [{"Name": "RF1", "channelMode": "Stereo", "Type": "RC"}],
+                    "preset": [],
+                }
+            if cmd.startswith("EQGetLV2SourceBandEx:"):
+                return {"EQStat": "On", "channelMode": "Stereo", "EQBand": [
+                    {"param_name": "a_mode", "value": 1.0},
+                    {"param_name": "a_freq", "value": 80.0},
+                    {"param_name": "a_q", "value": 1.41},
+                    {"param_name": "a_gain", "value": -4.0},
+                ]}
+            if cmd.startswith("EQSetLV2SourceBand:"):
+                return "OK"
+            if cmd.startswith("EQSourceSave:"):
+                return "OK"
+            if cmd.startswith("EQv2Delete:"):
                 return "OK"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
@@ -162,7 +174,7 @@ class TestWiiMDeviceDetection:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
@@ -253,27 +265,57 @@ class TestConnectionFailure:
 
 
 class TestRoomFitLevelDetection:
-    """Test RoomFit level probing at different capability levels."""
+    """Test RoomFit level probing using real API commands (EQLevel: 2).
+
+    RoomFit uses standard LV2 PEQ commands with EQLevel: 2 in the payload.
+    See docs/corrections.md 2026-06-14 for context.
+    """
 
     @pytest.mark.asyncio
     async def test_roomfit_level_4_full_support(self) -> None:
         """Device with full RoomFit support → level 4."""
         client = _make_mock_client()
 
+        roomfit_band_response = {
+            "EQStat": "On",
+            "channelMode": "Stereo",
+            "Name": "My RoomFit",
+            "EQBand": [
+                {"param_name": "a_mode", "value": 1.0},
+                {"param_name": "a_freq", "value": 80.0},
+                {"param_name": "a_q", "value": 1.41},
+                {"param_name": "a_gain", "value": -4.0},
+            ],
+        }
+
         async def mock_command(cmd: str) -> dict | str:
             if cmd == "getStatusEx":
                 return STATUS_EX_WIIM_PRO
             if cmd.startswith("EQGetLV2BandEx:"):
+                # PEQ probe (no EQLevel) vs RoomFit probe (EQLevel: 2)
+                if "EQLevel" in cmd:
+                    return roomfit_band_response
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
+            if cmd.startswith("EQSetLV2SourceBand:"):
+                return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
-                return {"status": "active"}
-            if cmd == "getRoomFitBands":
-                return {"bands": [{"param_name": "a_mode", "value": 1.0}]}
-            if cmd.startswith("setRoomFitBands:"):
+            if cmd.startswith("EQv2GetNewList:"):
+                return {
+                    "custom": [
+                        {"Name": "My RoomFit", "channelMode": "Stereo", "Type": "RC"}
+                    ],
+                    "preset": [],
+                }
+            if cmd.startswith("EQGetLV2SourceBandEx:"):
+                if "EQLevel" in cmd:
+                    return roomfit_band_response
+                return EQ_GET_LV2_BAND_RESPONSE
+            if cmd.startswith("EQSourceSave:"):
+                return "OK"
+            if cmd.startswith("EQv2Delete:"):
                 return "OK"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
@@ -291,23 +333,40 @@ class TestRoomFitLevelDetection:
 
     @pytest.mark.asyncio
     async def test_roomfit_level_2_read_only(self) -> None:
-        """Device where RoomFit read works but write fails → level 2."""
+        """Device where RoomFit read works but write fails → level 3 (parseable)."""
         client = _make_mock_client()
+
+        roomfit_band_response = {
+            "EQStat": "On",
+            "channelMode": "Stereo",
+            "EQBand": [
+                {"param_name": "a_mode", "value": 1.0},
+                {"param_name": "a_freq", "value": 80.0},
+                {"param_name": "a_q", "value": 1.41},
+                {"param_name": "a_gain", "value": -4.0},
+            ],
+        }
 
         async def mock_command(cmd: str) -> dict | str:
             if cmd == "getStatusEx":
                 return STATUS_EX_WIIM_PRO
             if cmd.startswith("EQGetLV2BandEx:"):
+                if "EQLevel" in cmd:
+                    return roomfit_band_response
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
+            if cmd.startswith("EQSetLV2SourceBand:"):
+                # Write fails for RoomFit
+                return "unknown command"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
-                return {"status": "active"}
-            if cmd == "getRoomFitBands":
-                # Returns a string (non-dict) — level 2 but not 3
-                return "band_data_string"
+            if cmd.startswith("EQv2GetNewList:"):
+                return {"custom": [], "preset": []}
+            if cmd.startswith("EQGetLV2SourceBandEx:"):
+                if "EQLevel" in cmd:
+                    return roomfit_band_response
+                return EQ_GET_LV2_BAND_RESPONSE
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
             return "unknown command"
@@ -317,29 +376,37 @@ class TestRoomFitLevelDetection:
         prober = CapabilityProber(client)
         caps = await prober.probe()
 
-        assert caps.roomfit_level == 2
+        # Level 3 because bands are parseable (dict with EQBand key)
+        # but write returned "unknown command"
+        assert caps.roomfit_level == 3
         assert caps.supports_roomfit is True
         assert caps.supports_roomfit_read is True
         assert caps.supports_roomfit_write is False
 
     @pytest.mark.asyncio
     async def test_roomfit_level_1_status_only(self) -> None:
-        """Device where only RoomFit status works → level 1."""
+        """Device where EQv2GetNewList succeeds but band read fails → level 1."""
         client = _make_mock_client()
 
         async def mock_command(cmd: str) -> dict | str:
             if cmd == "getStatusEx":
                 return STATUS_EX_WIIM_PRO
             if cmd.startswith("EQGetLV2BandEx:"):
+                if "EQLevel" in cmd:
+                    # Band read fails — returns non-dict
+                    return "unknown command"
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
-                return {"status": "inactive"}
-            if cmd == "getRoomFitBands":
-                return "unknown command"
+            if cmd.startswith("EQv2GetNewList:"):
+                return {"custom": [], "preset": []}
+            if cmd.startswith("EQGetLV2SourceBandEx:"):
+                if "EQLevel" in cmd:
+                    # Returns non-dict (level 2 fails)
+                    return "error"
+                return EQ_GET_LV2_BAND_RESPONSE
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
             return "unknown command"
@@ -356,7 +423,7 @@ class TestRoomFitLevelDetection:
 
     @pytest.mark.asyncio
     async def test_roomfit_level_0_no_support(self) -> None:
-        """Device where RoomFit status returns 'unknown' → level 0."""
+        """Device where EQv2GetNewList returns 'unknown command' → level 0."""
         client = _make_mock_client()
 
         async def mock_command(cmd: str) -> dict | str:
@@ -368,7 +435,7 @@ class TestRoomFitLevelDetection:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
@@ -400,7 +467,7 @@ class TestMultiroomRoleDetection:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return {"role": 0}
@@ -426,7 +493,7 @@ class TestMultiroomRoleDetection:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return {"role": 1}
@@ -452,7 +519,7 @@ class TestMultiroomRoleDetection:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return {"role": 2}
@@ -478,7 +545,7 @@ class TestMultiroomRoleDetection:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 raise ConnectionError("Network error")
@@ -508,7 +575,7 @@ class TestDynamicMaxFilters:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
@@ -536,7 +603,7 @@ class TestDynamicMaxFilters:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
@@ -570,7 +637,7 @@ class TestDynamicMaxFilters:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
@@ -653,7 +720,7 @@ class TestMuzoMiniRecognition:
                 return "OK"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "getRoomFitStatus":
+            if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO

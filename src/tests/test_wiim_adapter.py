@@ -644,12 +644,183 @@ class TestWritePeqSlaveGuard:
 
 
 # ---------------------------------------------------------------------------
-# Tests: read_roomfit — Level gating
+# Tests: PEQ Profile Management
+# ---------------------------------------------------------------------------
+
+
+class TestListPeqProfiles:
+    """Test list_peq_profiles — profile enumeration."""
+
+    @pytest.fixture
+    def profile_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with profile enumeration support."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_profile_enumeration=True,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def no_profile_capabilities(self) -> DeviceCapabilities:
+        """Capabilities without profile enumeration support."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_profile_enumeration=False,
+            max_filters=10,
+            model="WiiM_Mini",
+            firmware="5.0.0.10",
+            role="solo",
+        )
+
+    async def test_list_peq_profiles_success(
+        self, mock_client: AsyncMock, profile_capabilities: DeviceCapabilities
+    ) -> None:
+        """list_peq_profiles returns parsed profile list from EQv2GetNewList."""
+        mock_client.command.return_value = {
+            "custom": [
+                {"Name": "My Profile", "channelMode": "Stereo", "Type": "Custom"},
+                {"Name": "Bass Boost", "channelMode": "L/R", "Type": "Custom"},
+            ],
+            "preset": [],
+        }
+        adapter = WiiMAdapter(http_client=mock_client, capabilities=profile_capabilities)
+
+        result = await adapter.list_peq_profiles("wifi")
+
+        assert len(result) == 2
+        assert result[0] == {"Name": "My Profile", "channelMode": "Stereo", "Type": "Custom"}
+        assert result[1] == {"Name": "Bass Boost", "channelMode": "L/R", "Type": "Custom"}
+
+    async def test_list_peq_profiles_empty(
+        self, mock_client: AsyncMock, profile_capabilities: DeviceCapabilities
+    ) -> None:
+        """Returns empty list when no custom profiles exist."""
+        mock_client.command.return_value = {"custom": [], "preset": []}
+        adapter = WiiMAdapter(http_client=mock_client, capabilities=profile_capabilities)
+
+        result = await adapter.list_peq_profiles("wifi")
+
+        assert result == []
+
+    async def test_list_peq_profiles_not_supported_raises(
+        self, mock_client: AsyncMock, no_profile_capabilities: DeviceCapabilities
+    ) -> None:
+        """Raises WiiMResponseError when supports_profile_enumeration is False."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=no_profile_capabilities
+        )
+
+        with pytest.raises(WiiMResponseError, match="profile enumeration"):
+            await adapter.list_peq_profiles("wifi")
+
+    async def test_list_peq_profiles_issues_correct_command(
+        self, mock_client: AsyncMock, profile_capabilities: DeviceCapabilities
+    ) -> None:
+        """Adapter issues EQv2GetNewList with EQLevel: 1."""
+        mock_client.command.return_value = {"custom": [], "preset": []}
+        adapter = WiiMAdapter(http_client=mock_client, capabilities=profile_capabilities)
+
+        await adapter.list_peq_profiles("wifi")
+
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQv2GetNewList:")
+        assert "EQLevel" in call_args
+        assert "EqNp" in call_args
+
+
+class TestSavePeqProfile:
+    """Test save_peq_profile — saving active PEQ as device preset."""
+
+    async def test_save_peq_profile_success(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """save_peq_profile issues EQSourceSave with correct payload."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.save_peq_profile("wifi", "My New Preset")
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQSourceSave:")
+        assert "My New Preset" in call_args or "My%20New%20Preset" in call_args
+        assert "wifi" in call_args
+        assert "EqNp" in call_args
+
+    async def test_save_peq_profile_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Connection errors propagate from save_peq_profile."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.save_peq_profile("wifi", "Test")
+
+
+class TestLoadPeqProfile:
+    """Test load_peq_profile — loading a saved preset into live DSP."""
+
+    async def test_load_peq_profile_success(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """load_peq_profile issues EQv2SourceLoad with correct payload."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.load_peq_profile("wifi", "Bass Boost")
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQv2SourceLoad:")
+        assert "Bass" in call_args
+        assert "wifi" in call_args
+        assert "EqNp" in call_args
+
+    async def test_load_peq_profile_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Connection errors propagate from load_peq_profile."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.load_peq_profile("wifi", "Test")
+
+
+class TestDeletePeqProfile:
+    """Test delete_peq_profile — deleting a saved preset."""
+
+    async def test_delete_peq_profile_success(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """delete_peq_profile issues EQv2Delete with correct payload."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.delete_peq_profile("Old Preset")
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQv2Delete:")
+        assert "Old" in call_args
+        assert "EqNp" in call_args
+
+    async def test_delete_peq_profile_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Connection errors propagate from delete_peq_profile."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.delete_peq_profile("Test")
+
+
+# ---------------------------------------------------------------------------
+# Tests: read_roomfit — Level gating and real API commands
 # ---------------------------------------------------------------------------
 
 
 class TestReadRoomfit:
-    """Test read_roomfit level gating and response parsing."""
+    """Test read_roomfit level gating and response parsing with real API commands."""
 
     @pytest.fixture
     def roomfit_read_capabilities(self) -> DeviceCapabilities:
@@ -686,7 +857,7 @@ class TestReadRoomfit:
         )
 
         with pytest.raises(WiiMResponseError, match="roomfit_level >= 2"):
-            await adapter.read_roomfit()
+            await adapter.read_roomfit("wifi", "My Profile")
 
     async def test_read_roomfit_insufficient_level_no_commands(
         self, mock_client: AsyncMock, low_roomfit_capabilities: DeviceCapabilities
@@ -697,18 +868,62 @@ class TestReadRoomfit:
         )
 
         with pytest.raises(WiiMResponseError):
-            await adapter.read_roomfit()
+            await adapter.read_roomfit("wifi", "My Profile")
 
         mock_client.command.assert_not_called()
 
+    async def test_read_roomfit_success(
+        self, mock_client: AsyncMock, roomfit_read_capabilities: DeviceCapabilities
+    ) -> None:
+        """read_roomfit loads profile then reads bands via real API commands."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_read_capabilities
+        )
+
+        # First call: EQv2SourceLoad (load profile into buffer)
+        # Second call: EQGetLV2SourceBandEx with EQLevel:2 (read bands)
+        letters = "abcdefghij"
+        bands: list[dict[str, str | float]] = []
+        bands.extend(_make_band_params("a", 1, 80.0, 1.41, -4.0))
+        for letter in letters[1:]:
+            bands.extend(_make_band_params(letter, -1, 1000.0, 1.0, 0.0))
+
+        mock_client.command.side_effect = [
+            "OK",  # EQv2SourceLoad response
+            {  # EQGetLV2SourceBandEx response
+                "EQStat": "On",
+                "channelMode": "Stereo",
+                "Name": "My RoomFit",
+                "EQBand": bands,
+            },
+        ]
+
+        result = await adapter.read_roomfit("wifi", "My RoomFit")
+
+        assert len(result) == 10
+        assert result[0].type == "PEAK"
+        assert result[0].frequency_hz == 80.0
+        assert result[0].gain_db == -4.0
+
+        # Verify the correct commands were issued
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 2
+        # First: load command
+        assert "EQv2SourceLoad:" in calls[0][0][0]
+        assert "EQLevel" in calls[0][0][0]
+        assert "My%20RoomFit" in calls[0][0][0]
+        # Second: read command
+        assert "EQGetLV2SourceBandEx:" in calls[1][0][0]
+        assert "EQLevel" in calls[1][0][0]
+
 
 # ---------------------------------------------------------------------------
-# Tests: write_roomfit — Level gating
+# Tests: write_roomfit — Level gating and real API commands
 # ---------------------------------------------------------------------------
 
 
 class TestWriteRoomfit:
-    """Test write_roomfit level gating."""
+    """Test write_roomfit level gating and real API commands."""
 
     @pytest.fixture
     def roomfit_write_capabilities(self) -> DeviceCapabilities:
@@ -751,7 +966,7 @@ class TestWriteRoomfit:
         filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
 
         with pytest.raises(WiiMResponseError, match="roomfit_level >= 4"):
-            await adapter.write_roomfit(filters)
+            await adapter.write_roomfit("wifi", "My Profile", filters)
 
     async def test_write_roomfit_insufficient_level_no_commands(
         self, mock_client: AsyncMock, insufficient_write_capabilities: DeviceCapabilities
@@ -765,6 +980,128 @@ class TestWriteRoomfit:
         filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
 
         with pytest.raises(WiiMResponseError):
-            await adapter.write_roomfit(filters)
+            await adapter.write_roomfit("wifi", "My Profile", filters)
 
         mock_client.command.assert_not_called()
+
+    async def test_write_roomfit_success(
+        self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """write_roomfit writes bands then saves to profile."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41),
+            CanonicalFilter(type="LS", frequency_hz=120.0, gain_db=2.0, q=0.71),
+        ]
+
+        mock_client.command.side_effect = [
+            "OK",  # EQSetLV2SourceBand response
+            "OK",  # EQSourceSave response
+        ]
+
+        await adapter.write_roomfit("wifi", "REW Export", filters)
+
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 2
+        # First: write to buffer with EQLevel: 2
+        assert "EQSetLV2SourceBand:" in calls[0][0][0]
+        assert "EQLevel" in calls[0][0][0]
+        assert "wifi" in calls[0][0][0]
+        # Second: save to profile
+        assert "EQSourceSave:" in calls[1][0][0]
+        assert "EQLevel" in calls[1][0][0]
+        assert "REW%20Export" in calls[1][0][0]
+
+
+# ---------------------------------------------------------------------------
+# Tests: list_roomfit_profiles
+# ---------------------------------------------------------------------------
+
+
+class TestListRoomfitProfiles:
+    """Test list_roomfit_profiles method."""
+
+    @pytest.fixture
+    def roomfit_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with roomfit_level >= 1 (profile listing supported)."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_roomfit=True,
+            roomfit_level=1,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def no_roomfit_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with roomfit_level 0 (RoomFit not supported)."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            roomfit_level=0,
+            max_filters=10,
+            model="WiiM_Mini",
+            firmware="5.0.0.10",
+            role="solo",
+        )
+
+    async def test_list_roomfit_profiles_success(
+        self, mock_client: AsyncMock, roomfit_capabilities: DeviceCapabilities
+    ) -> None:
+        """list_roomfit_profiles returns the custom profiles list."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_capabilities
+        )
+
+        mock_client.command.return_value = {
+            "custom": [
+                {"Name": "My RoomFit Profile", "channelMode": "L/R", "Type": "RC"},
+                {"Name": "User Profile", "channelMode": "Stereo", "Type": "Custom"},
+            ],
+            "preset": [],
+        }
+
+        result = await adapter.list_roomfit_profiles("wifi")
+
+        assert len(result) == 2
+        assert result[0]["Name"] == "My RoomFit Profile"
+        assert result[0]["channelMode"] == "L/R"
+        assert result[0]["Type"] == "RC"
+        assert result[1]["Name"] == "User Profile"
+
+        # Verify command contains EQLevel: 2
+        call_args = mock_client.command.call_args[0][0]
+        assert "EQv2GetNewList:" in call_args
+        assert "EQLevel" in call_args
+
+    async def test_list_roomfit_profiles_level_too_low(
+        self, mock_client: AsyncMock, no_roomfit_capabilities: DeviceCapabilities
+    ) -> None:
+        """list_roomfit_profiles raises when roomfit_level < 1."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=no_roomfit_capabilities
+        )
+
+        with pytest.raises(WiiMResponseError, match="roomfit_level >= 1"):
+            await adapter.list_roomfit_profiles("wifi")
+
+        mock_client.command.assert_not_called()
+
+    async def test_list_roomfit_profiles_empty(
+        self, mock_client: AsyncMock, roomfit_capabilities: DeviceCapabilities
+    ) -> None:
+        """list_roomfit_profiles returns empty list when no profiles exist."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_capabilities
+        )
+
+        mock_client.command.return_value = {"custom": [], "preset": []}
+
+        result = await adapter.list_roomfit_profiles("wifi")
+
+        assert result == []
