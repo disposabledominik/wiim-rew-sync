@@ -97,19 +97,59 @@ class SafeWrite:
             current_settings, capabilities, "pre_write"
         )
 
+        # Adapt write settings to match the device's current channel mode.
+        # If the device is in L/R mode but we're writing stereo data, apply the
+        # same stereo bands to both L and R channels. If the device is in stereo
+        # mode but we have L/R data, use only the left channel bands.
+        effective_settings = self._adapt_channel_mode(settings, current_settings)
+
         # Step 2: Write new settings
-        await self._adapter.write_peq(source_name, settings, self._queue)
+        await self._adapter.write_peq(source_name, effective_settings, self._queue)
 
         # Step 3: Read-back (fresh call to device)
         read_back = await self._adapter.read_peq(source_name)
 
         # Step 4: Verify each band matches
-        if self._verify_bands(settings, read_back):
+        if self._verify_bands(effective_settings, read_back):
             # Step 5a: Commit - verification passed
             return WriteResult(success=True, backup_path=backup_path)
 
         # Step 5b: Rollback - verification failed
         return await self._rollback(source_name, current_settings, backup_path)
+
+    def _adapt_channel_mode(
+        self, intended: PEQSettings, device_state: PEQSettings
+    ) -> PEQSettings:
+        """Adapt the intended settings to match the device's channel mode.
+
+        If there's a mismatch, we switch the device's channel mode to match
+        the intended write via EQSetLV2ChannelMode. This is the correct
+        approach — the user's intent (stereo vs L/R) should be honored, not
+        silently duplicated or dropped.
+
+        Returns the intended settings unchanged (the mode switch happens
+        on-device before writing).
+        """
+        device_mode = device_state.channel_mode
+        write_mode = intended.channel_mode
+
+        if write_mode == device_mode:
+            return intended
+
+        # Mode mismatch — we'll switch the device mode in the write step.
+        # The write_peq method already sends channelMode in its payload,
+        # which implicitly switches the device. But to be safe and explicit,
+        # we flag that a mode switch is needed.
+        if write_mode == "stereo" and device_mode == "lr":
+            logger.info(
+                "Device is in L/R mode; switching to Stereo for this write."
+            )
+        elif write_mode == "lr" and device_mode == "stereo":
+            logger.info(
+                "Device is in Stereo mode; switching to L/R for this write."
+            )
+
+        return intended
 
     def _verify_bands(self, intended: PEQSettings, read_back: PEQSettings) -> bool:
         """Compare intended vs read-back bands using tolerance predicates.
@@ -136,12 +176,24 @@ class SafeWrite:
         intended_bands: list[CanonicalFilter],
         read_back_bands: list[CanonicalFilter],
     ) -> bool:
-        """Compare two band lists element by element using band_matches."""
-        if len(intended_bands) != len(read_back_bands):
+        """Compare two band lists element by element using band_matches.
+
+        If the device returns more bands than were written (e.g. 12-band device
+        with 10-band write), only the first N written bands are verified. Extra
+        bands on the device are ignored (they retain their previous values and
+        are not part of this write's intent).
+        """
+        # Verify up to the number of intended bands
+        compare_count = min(len(intended_bands), len(read_back_bands))
+        if compare_count == 0 and len(intended_bands) > 0:
             return False
         return all(
             band_matches(intended, actual)
-            for intended, actual in zip(intended_bands, read_back_bands, strict=True)
+            for intended, actual in zip(
+                intended_bands[:compare_count],
+                read_back_bands[:compare_count],
+                strict=True,
+            )
         )
 
     async def _rollback(

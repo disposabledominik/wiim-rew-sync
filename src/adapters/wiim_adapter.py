@@ -252,9 +252,9 @@ class WiiMAdapter:
     ) -> None:
         """Write PEQ bands to the device for a given source.
 
-        Uses the batch path (single ``EQSetLV2SourceBand`` with full payload) when
-        ``supports_batch_write`` is True. Otherwise writes bands sequentially via
-        the queue with a 100 ms inter-command delay.
+        Switches the device's channel mode if needed, then writes bands using
+        the batch path (single ``EQSetLV2SourceBand``) when supported, or
+        sequentially via the queue otherwise.
 
         Args:
             source_name: Audio input source (e.g. "wifi", "bluetooth").
@@ -279,6 +279,10 @@ class WiiMAdapter:
             # For L/R mode, write left bands (right handled separately if needed)
             bands = settings.bands_l if settings.bands_l else settings.bands
             channel_mode_wire = "L/R"
+
+        # Switch device channel mode explicitly before writing bands.
+        # This ensures the device is in the correct mode to receive our data.
+        await self._set_channel_mode(source_name, channel_mode_wire)
 
         # Generate the WiiM flat parameter array sized to device capability
         band_array, _warnings = generate_wiim_band_array(
@@ -353,6 +357,25 @@ class WiiMAdapter:
             # 100ms delay between sequential band writes
             if i < num_bands - 1:
                 await asyncio.sleep(0.1)
+
+    async def _set_channel_mode(self, source_name: str, channel_mode: str) -> None:
+        """Switch the device's PEQ channel mode for a source.
+
+        Issues EQSetLV2ChannelMode to explicitly set Stereo or L/R before
+        writing bands. This ensures the device accepts band data in the
+        correct format.
+
+        Args:
+            source_name: Audio input source.
+            channel_mode: "Stereo" or "L/R" (wire format).
+        """
+        payload = json.dumps({
+            "pluginURI": _PLUGIN_URI,
+            "source_name": source_name,
+            "channelMode": channel_mode,
+        })
+        command = f"EQSetLV2ChannelMode:{quote(payload)}"
+        await self._client.command(command)
 
     # ------------------------------------------------------------------
     # PEQ Profile Management

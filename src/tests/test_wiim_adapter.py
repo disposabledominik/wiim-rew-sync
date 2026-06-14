@@ -454,15 +454,17 @@ class TestWritePeqBatch:
     async def test_batch_write_issues_single_command(
         self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """Batch write issues exactly one EQSetLV2SourceBand command."""
+        """Batch write issues EQSetLV2ChannelMode + one EQSetLV2SourceBand."""
         mock_client.command.return_value = "OK"
         settings = self._make_settings()
 
         await batch_adapter.write_peq("wifi", settings)
 
-        mock_client.command.assert_called_once()
-        call_args = mock_client.command.call_args[0][0]
-        assert call_args.startswith("EQSetLV2SourceBand:")
+        # Two calls: channel mode switch + batch write
+        assert mock_client.command.call_count == 2
+        calls = [c[0][0] for c in mock_client.command.call_args_list]
+        assert calls[0].startswith("EQSetLV2ChannelMode:")
+        assert calls[1].startswith("EQSetLV2SourceBand:")
 
     async def test_batch_write_payload_contains_source_and_plugin(
         self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
@@ -558,8 +560,8 @@ class TestWritePeqSequential:
 
         await seq_adapter.write_peq("wifi", settings, queue=None)
 
-        # 10 commands issued (one per band)
-        assert mock_client.command.call_count == 10
+        # 1 channel mode switch + 10 band writes = 11 commands
+        assert mock_client.command.call_count == 11
 
     async def test_sequential_write_commands_contain_single_band(
         self, seq_adapter: WiiMAdapter, mock_client: AsyncMock
