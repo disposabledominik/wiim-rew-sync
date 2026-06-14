@@ -146,12 +146,11 @@ async def _read_filters(
         await client.close()
 
 
-# Canonical source names to probe. These match what the WiiM app displays.
-# The API is case-sensitive: uppercase returns the Stereo slot,
-# lowercase returns the L/R slot. We probe uppercase (Stereo) first to get
-# the "real" source, then lowercase to check if L/R data exists too.
+# Confirmed source names from hardware testing (2026-06-14).
+# These are the actual labels used when the associated source is selected.
+# NOTE: The API accepts any name — phantom sources return default data.
 _CANONICAL_SOURCES = [
-    "wifi", "bluetooth", "line-in", "optical", "HDMI", "Ethernet", "coaxial", "USB",
+    "wifi", "bluetooth", "line-in", "optical", "HDMI", "auxIn",
 ]
 
 

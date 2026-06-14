@@ -42,6 +42,25 @@
 
 ---
 
+## PEQ Source Names (confirmed by hardware testing, 2026-06-14)
+
+Source names used in `EQGetLV2SourceBandEx` / `EQSetLV2SourceBand` are model-dependent:
+
+| Model | Sources | Notes |
+|-------|---------|-------|
+| WiiM Mini (`Muzo_Mini`) | `wifi`, `bluetooth`, `line-in` | |
+| WiiM Amp Ultra | `wifi`, `bluetooth`, `HDMI`, `line-in`, `optical` | `wifi` covers Wi-Fi, Ethernet AND USB disk |
+| WiiM Sound / Sound Lite | `wifi`, `bluetooth`, `auxIn` | `auxIn` (not `line-in`) |
+
+**Key findings:**
+- Source names are **case-sensitive**: `HDMI` (uppercase) returns Stereo slot; `hdmi` (lowercase) returns L/R slot
+- The API **accepts any source name** and returns valid-looking PEQ data even for non-existent inputs (returns default L/R template)
+- There is **no API command to enumerate valid source names** for a device
+- `wifi` source label is shared across Wi-Fi, Ethernet, and USB disk inputs on Amp Ultra
+- WiiM Mini appears to have **global PEQ** (all sources share the same EQ data)
+
+---
+
 ## EQ (Non-PEQ) Commands
 
 > ⚠️ **Out of scope for this application.** The following commands control the legacy graphic EQ and preset system. They are documented here for completeness only — this application uses exclusively the LV2 PEQ API (`EQGetLV2BandEx` family). Do not use these commands in implementation.

@@ -377,7 +377,8 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Execute all QA scenarios from `docs/qa.md` against real hardware
   - Run full test suite: confirm ≥ 90% coverage for `src/translator/`, ≥ 80% overall
   - Run `ruff check src/` and `mypy src/` with zero errors; document any deviations in `docs/corrections.md`
-  - ⚠️ Do not release until all QA scenarios pass
+  - Run `pip-audit` on dependencies to check for known vulnerabilities before distribution
+  - Do not release until all QA scenarios pass
 
 ### Phase 10: Integrity Fixes (Tech Debt from Review)
 
