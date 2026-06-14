@@ -337,31 +337,14 @@ class CapabilityProber:
         # Level 3: Implicit — band data is parseable (dict with band keys confirmed above)
         caps.roomfit_level = 3
 
-        # Level 4: Write test — EQSetLV2SourceBand + EQSourceSave with EQLevel: 2
-        # Write current read-back data unchanged, save to temp profile, then delete.
+        # Level 4: Write test — EQSourceSave with EQLevel: 2
+        # Instead of writing all bands back (which can exceed the device's URL
+        # length limit for L/R mode with 12 bands — HTTP 431), we only test
+        # that EQSourceSave works. The buffer already has data from our level 2
+        # read, so saving it to a temp profile name confirms write capability.
         _PROBE_PROFILE_NAME = "__wiim_rew_sync_probe__"
         try:
-            # Extract existing band data for write-back
-            channel_mode = band_resp.get("channelMode", "Stereo")
-            write_payload: dict[str, Any] = {
-                "pluginURI": PLUGIN_URI,
-                "source_name": "wifi",
-                "channelMode": channel_mode,
-                "EQLevel": 2,
-            }
-            if "EQBand" in band_resp:
-                write_payload["EQBand"] = band_resp["EQBand"]
-            elif "EQBandL" in band_resp and "EQBandR" in band_resp:
-                write_payload["EQBandL"] = band_resp["EQBandL"]
-                write_payload["EQBandR"] = band_resp["EQBandR"]
-
-            write_resp = await self._client.command(
-                f"EQSetLV2SourceBand:{quote(json.dumps(write_payload))}"
-            )
-            if isinstance(write_resp, str) and "unknown" in write_resp.lower():
-                return
-
-            # Save to temporary profile
+            # Save buffer contents to a temporary profile
             save_payload = json.dumps({
                 "pluginURI": PLUGIN_URI,
                 "source_name": "wifi",
@@ -393,7 +376,7 @@ class CapabilityProber:
                 )
 
         except Exception:
-            logger.info("RoomFit level 4 probe (write+save) failed.")
+            logger.info("RoomFit level 4 probe (EQSourceSave+EQLevel:2) failed.")
             # Keep at whatever level was last confirmed (level 3)
 
     async def _probe_multiroom(self, caps: DeviceCapabilities) -> None:

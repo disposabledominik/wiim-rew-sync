@@ -333,7 +333,7 @@ class TestRoomFitLevelDetection:
 
     @pytest.mark.asyncio
     async def test_roomfit_level_2_read_only(self) -> None:
-        """Device where RoomFit read works but write fails → level 3 (parseable)."""
+        """Device where RoomFit read works but save fails → level 3 (parseable)."""
         client = _make_mock_client()
 
         roomfit_band_response = {
@@ -356,9 +356,6 @@ class TestRoomFitLevelDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQSetLV2SourceBand:"):
-                # Write fails for RoomFit
-                return "unknown command"
             if cmd.startswith("EQGetLV2List:"):
                 return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
@@ -367,6 +364,9 @@ class TestRoomFitLevelDetection:
                 if "EQLevel" in cmd:
                     return roomfit_band_response
                 return EQ_GET_LV2_BAND_RESPONSE
+            if cmd.startswith("EQSourceSave:"):
+                # Save fails for RoomFit → level 4 not reached
+                return "unknown command"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
             return "unknown command"
