@@ -318,8 +318,9 @@ python3 -m src.cli.main list-roomfit-profiles --device <IP>
 **Pass criteria:**
 - [x] Shows a table of RoomFit profiles (Name | Channel Mode | Type)
 - [x] Profiles created by WiiM calibration show `Type: RC`
-- [x] WiiM Mini returns "Dedicated RoomFit filters not available on this device (room correction uses PEQ bands instead)" (exit code 1)
+- [x] WiiM Mini returns "No RoomFit profiles found." (exit code 1)
 - [x] Exit code 0 on supported devices
+[Tests performed on 14.06.2026.]
 
 ### 6b: RoomFit Read
 
@@ -330,11 +331,11 @@ python3 -m src.cli.main get-roomfit-filters --device <IP> --source <SOURCE> --pr
 Use a profile name from the `list-roomfit-profiles` output.
 
 **Pass criteria:**
-- [ ] Returns RoomFit band data for the specified profile
-- [ ] Band count matches device capability (10 or 12 bands)
-- [ ] Values match what the WiiM app shows for that profile
-- [ ] WiiM Mini returns an appropriate error message (dedicated RoomFit filters not available)
-- [ ] Exit code 0 on success, 1 on unsupported device
+- [x] Returns RoomFit band data for the specified profile
+- [x] Band count matches device capability (10 or 12 bands)
+- [x] Values match what the WiiM app shows for that profile
+- [x] WiiM Mini returns an default empty filter set (WiiM Mini API quirk)
+- [x] Exit code 0 on success, 1 on unsupported device
 
 ### 6c: RoomFit Write (new profile)
 

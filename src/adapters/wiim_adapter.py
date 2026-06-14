@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -691,12 +692,13 @@ class WiiMAdapter:
         })
         await self._client.command(f"EQSetLV2SourceBand:{quote(write_payload)}")
 
-        # Step 4: Save buffer to profile
+        # Step 4: Save buffer to profile (include timestamp so WiiM app shows date)
         save_payload = json.dumps({
             "pluginURI": _PLUGIN_URI,
             "source_name": source_name,
             "Name": profile_name,
             "EQLevel": 2,
+            "UpdateAt": str(int(time.time() * 1000)),
         })
         await self._client.command(f"EQSourceSave:{quote(save_payload)}")
 
