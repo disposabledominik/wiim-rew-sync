@@ -61,6 +61,35 @@ Source names used in `EQGetLV2SourceBandEx` / `EQSetLV2SourceBand` are model-dep
 
 ---
 
+## RoomFit / Room Correction API (discovered 2026-06-14)
+
+RoomFit uses the **same LV2 EQ commands** as user PEQ, differentiated by the `EQLevel` parameter:
+
+- `EQLevel: 1` = User PEQ (default, what `EQGetLV2SourceBandEx` returns without specifying)
+- `EQLevel: 2` = RoomFit / Room Correction filters
+
+**Read RoomFit bands:**
+```
+EQGetLV2SourceBandEx:<url_encoded_json>
+```
+where JSON = `{"EQLevel": 2, "pluginURI": "http://moddevices.com/plugins/caps/EqNp", "source_name": "wifi"}`
+
+**Response format:** Identical to PEQ — contains `channelMode`, `EQBandL`/`EQBandR` or `EQBand`, `Name` (profile name), `EQStat` (On/Off).
+
+**Write RoomFit bands (probable, not yet tested):**
+```
+EQSetLV2SourceBand:<url_encoded_json>
+```
+where JSON includes `"EQLevel": 2` alongside the band data.
+
+**Key observations:**
+- RoomFit can be per-source (tested with `source_name: "wifi"`)
+- RoomFit supports L/R mode independently from user PEQ
+- The `Name` field shows the loaded RoomFit profile name
+- Band data uses the same param_name format (a_mode, a_freq, a_q, a_gain, etc.)
+
+---
+
 ## EQ (Non-PEQ) Commands
 
 > ⚠️ **Out of scope for this application.** The following commands control the legacy graphic EQ and preset system. They are documented here for completeness only — this application uses exclusively the LV2 PEQ API (`EQGetLV2BandEx` family). Do not use these commands in implementation.
