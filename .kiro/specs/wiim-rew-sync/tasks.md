@@ -286,6 +286,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 - [ ] 36. Implement import and export dialogs
   - Create `src/gui/dialogs/import_dialog.py`: `.txt` file dialog; synchronous parse; preview table with `ValidationWarning` items highlighted in orange; inline warning banner with acknowledgement checkbox if `len(filters) > max_filters`
   - Create `src/gui/dialogs/export_dialog.py`: save-mode file dialog; L/R mode shows two path fields with `_L.txt` / `_R.txt` pre-fills
+  - **NOTE**: `REWGenerator.generate_file()` currently logs UNKNOWN-band skipping but does NOT return `ValidationWarning` objects to the caller. The export dialog needs to surface these warnings to the user. Refactor `generate_file()` to return `list[ValidationWarning]` (or accept a warnings accumulator) so the export dialog can display "N bands were omitted because their filter type is unknown."
   - _Requirements: 6.7, 6.8, 6.9, 6.10, 7.6, 14.2_
 
 - [ ] 37. Implement profile panel
@@ -438,20 +439,27 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 - [ ] 53. Rewrite RoomFit probing and adapter to use real API commands
   - **Problem**: The capability prober's `_probe_roomfit()` and `WiiMAdapter.read_roomfit()`/`write_roomfit()` use fictitious commands (`getRoomFitStatus`, `getRoomFitBands`, `setRoomFitBands`) that do not exist on WiiM devices. Hardware testing (2026-06-14) confirmed that RoomFit uses the standard LV2 PEQ commands with `EQLevel: 2` added to the JSON payload.
+  - **RoomFit is NOT experimental**: All WiiM devices except Mini support RoomFit reads and profile CRUD. Only direct band writes (level 4) remain unconfirmed. The default `roomfit_level` for recognised WiiM devices (excluding Mini) should be probed dynamically, not defaulted to 0.
   - **Changes required**:
     1. In `src/adapters/capability_prober.py` — rewrite `_probe_roomfit()`:
        - Level 1: `EQv2GetNewList` with `{"pluginURI": "...", "EQLevel": 2}` — returns valid JSON (not "unknown command")
        - Level 2: `EQGetLV2SourceBandEx` with `{"pluginURI": "...", "source_name": "wifi", "EQLevel": 2}` — returns band data
        - Level 3: implicit from level 2 (band data is parseable)
-       - Level 4: `EQSetLV2SourceBand` with `{"pluginURI": "...", "source_name": "wifi", "EQLevel": 2, ...}` — write succeeds (keep as untested/conservative: only set level 4 if profile save via `EQSourceSave` + `EQLevel: 2` succeeds)
+       - Level 4: `EQSetLV2SourceBand` with `{"pluginURI": "...", "source_name": "wifi", "EQLevel": 2, ...}` + `EQSourceSave` — buffer write + profile save both succeed (CONFIRMED 2026-06-14). Saving to active profile deactivates RoomFit; saving to new name does not. Probe: attempt `EQSourceSave` + `EQLevel: 2` to a temporary profile name, then delete it.
     2. In `src/adapters/wiim_adapter.py` — rewrite `read_roomfit()`:
-       - Use `EQGetLV2SourceBandEx` with `EQLevel: 2` (same as PEQ read but with EQLevel param)
-       - Accept `source_name` parameter (RoomFit is per-source, just like PEQ)
+       - Use `EQv2SourceLoad` first to load the target profile into the API buffer
+       - Then `EQGetLV2SourceBandEx` with `EQLevel: 2` to read the buffer
+       - Accept `source_name` and `profile_name` parameters (RoomFit is per-source and profile-based)
        - Parse response identically to PEQ (same `EQBand`/`EQBandL`/`EQBandR` format)
+       - Important: bare reads without a prior load return stale buffer data (persistent, device-global). Always load first.
     3. In `src/adapters/wiim_adapter.py` — rewrite `write_roomfit()`:
-       - Use `EQSetLV2SourceBand` with `EQLevel: 2`
-       - Accept `source_name` parameter
+       - Use `EQSetLV2SourceBand` with `EQLevel: 2` to write to the API buffer
+       - Then `EQSourceSave` with `EQLevel: 2` to persist the buffer to a named profile
+       - Accept `source_name` and `profile_name` parameters
        - Same payload format as PEQ write but with `"EQLevel": 2` added
+       - **Deactivation rule:** Saving to the currently-active profile name deactivates RoomFit (user must re-select). Saving to a new/different profile name does NOT deactivate — active profile remains applied.
+       - **Recommended UX:** Default to saving as a new profile name to avoid disruption. If user chooses to overwrite the active profile, warn about deactivation.
+       - Buffer is NOT cleared after save — retains the saved data with the new profile name.
     4. Update `src/tests/test_capability_prober.py`:
        - Replace mock fixtures using old commands with ones using the real LV2 commands + EQLevel
        - Test: device with RoomFit returns level 2+ (band data readable)
@@ -459,11 +467,57 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
        - Test: profile save succeeds → level 4
     5. Update `src/tests/test_wiim_adapter.py`:
        - Replace `getRoomFitBands`/`setRoomFitBands` mock commands with `EQGetLV2SourceBandEx`/`EQSetLV2SourceBand` + `EQLevel: 2`
-       - Test: `read_roomfit("wifi")` issues correct command with EQLevel 2
-       - Test: `write_roomfit("wifi", filters)` issues correct command with EQLevel 2
+       - Test: `read_roomfit("wifi", "ProfileName")` issues EQv2SourceLoad then EQGetLV2SourceBandEx with EQLevel 2
+       - Test: `write_roomfit("wifi", "NewProfile", filters)` issues EQSetLV2SourceBand then EQSourceSave with EQLevel 2
+       - Test: `list_roomfit_profiles()` issues EQv2GetNewList with EQLevel 2 and returns profile metadata
+    6. Add `list_roomfit_profiles()` to `WiiMAdapter`:
+       - Wraps `EQv2GetNewList` + `EQLevel: 2`
+       - Returns list of profile metadata (name, channelMode, type, updateAt)
+       - Used by GUI profile selector and CLI `list-roomfit-profiles` command
+    7. Add CLI command `list-roomfit-profiles --device <IP>`:
+       - Displays RoomFit profiles on the device (Name | Channel Mode | Type)
+       - Exit code 0 on success (even if empty list), 1 on error
+       - Gated by `roomfit_level >= 1`
   - **Do NOT change**: The `roomfit_level` field semantics (0-4), `DeviceCapabilities` model, or `SafeWrite` integration — those remain the same.
   - _Root cause: Original implementation was based on assumed/speculative command names. Hardware testing confirmed RoomFit is just another EQ level within the existing LV2 plugin architecture._
   - _Requirements: 2.6, 11.1, 11.2, 11.3, 11.7_
+
+- [ ] 54. Add unit tests for `src/utils/app_dirs.py`
+  - Create `src/tests/test_app_dirs.py`
+  - Test `get_app_data_dir()` returns correct paths for each platform by mocking `platform.system()`:
+    - Windows mock → path contains `APPDATA` or `.wiim-rew-sync`
+    - macOS mock → path contains `Library/Application Support/wiim-rew-sync`
+    - Linux mock (default) → path contains `.local/share/wiim-rew-sync`
+  - Test that `XDG_DATA_HOME` override is respected on Linux
+  - Test that missing `APPDATA` env var on Windows falls back to `~/.wiim-rew-sync`
+  - _Rationale: Only utility module without dedicated tests. Simple platform-branching logic that should be verified before packaging phase._
+
+- [ ] 55. Add PEQ device profile management to WiiMAdapter and CLI
+  - **Problem**: The tool currently writes directly to the live PEQ bands but has no way to list, save, or load named PEQ presets on the device. Users want to see what's on their device, save REW corrections as a device preset (persists across reboots/source switches), and load previous presets.
+  - **PEQ profile workflow** (simpler than RoomFit — no buffer indirection):
+    - PEQ reads/writes go directly to the live DSP state (no load-before-read needed)
+    - `EQSourceSave` saves the currently-active bands as a named preset
+    - `EQv2SourceLoad` loads a saved preset into the live DSP (immediate effect)
+    - No deactivation side effects (unlike RoomFit)
+  - **Changes required**:
+    1. Add `list_peq_profiles(source_name: str)` to `WiiMAdapter`:
+       - Wraps `EQv2GetNewList` + `{"pluginURI": "...", "EQLevel": 1}` (or omit EQLevel)
+       - Returns list of profile metadata (name, channelMode, type)
+    2. Add `save_peq_profile(source_name: str, profile_name: str)` to `WiiMAdapter`:
+       - Wraps `EQSourceSave` — saves the currently-active live bands as a named preset
+       - If profile_name already exists, it is overwritten
+    3. Add `load_peq_profile(source_name: str, profile_name: str)` to `WiiMAdapter`:
+       - Wraps `EQv2SourceLoad` — loads a saved preset into the live DSP
+       - Immediate effect on audio output (unlike RoomFit)
+    4. Add `delete_peq_profile(profile_name: str)` to `WiiMAdapter`:
+       - Wraps `EQv2Delete` — removes a saved preset
+    5. Add CLI commands:
+       - `list-peq-profiles --device <IP>` — displays PEQ presets on device (Name | Channel Mode)
+       - Update `set-filters` to accept optional `--save-as <PROFILE_NAME>` — after writing to live DSP, also saves as a device preset
+    6. Add unit tests with mocked HTTP client for all four adapter methods
+    7. Add CLI tests for `list-peq-profiles` and `--save-as` flag
+  - **Integration with existing safe-write workflow**: The `set-filters` command currently writes to live DSP via SafeWrite (backup → write → verify). Adding `--save-as` simply calls `save_peq_profile()` AFTER the SafeWrite succeeds — it's a post-commit step, not part of the verification loop.
+  - _Requirements: 2.5 (supports_profile_enumeration), 9.5 (profile library UX)_
 
 ## Task Dependency Graph
 
@@ -488,7 +542,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     { "wave": 14.6, "tasks": [46, 47] },
     { "wave": 14.7, "tasks": [51] },
     { "wave": 14.8, "tasks": [50] },
-    { "wave": 14.9, "tasks": [52, 53] },
+    { "wave": 14.9, "tasks": [52, 53, 54, 55] },
     { "wave": 15, "tasks": [32] },
     { "wave": 15.5, "tasks": [49] },
     { "wave": 16, "tasks": [33, 42] },
@@ -526,6 +580,6 @@ Findings from full codebase integrity review. Decisions documented here for futu
 
 ### Intentionally Deferred (no action needed)
 
-3. **`src/utils/app_dirs.py` has no dedicated test file** — ACCEPTED. The module is pure platform-branching with no business logic. It's exercised implicitly by app startup and CLI usage. Not worth the overhead of mocking `platform.system()` across three OSes. If it breaks, it breaks loudly at startup.
+3. **`src/utils/app_dirs.py` has no dedicated test file** — RESOLVED. Added as Task 54 in wave 14.9 (pre-packaging). Will be implemented alongside Tasks 52/53.
 
-4. **mypy "unused section" warning for PySide6/respx/zeroconf overrides** — ACCEPTED. These `[[tool.mypy.overrides]]` entries pre-configure ignore rules for GUI-phase imports that don't exist yet. The warnings appear only when running mypy on the strict subset (`src/translator` + `src/models`). They will resolve naturally once Phase 7 (GUI) begins. No action needed.
+4. **mypy "unused section" warning for PySide6/respx/zeroconf overrides** — RESOLVED. Set `warn_unused_configs = false` in pyproject.toml. These overrides exist for GUI-phase imports. The note was harmless but noisy.

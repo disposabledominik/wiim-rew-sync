@@ -390,7 +390,10 @@ class CapabilityProber:
           3. EQSetLV2Band (10 bands) → supports_batch_write
           4. EQGetLV2List → supports_profile_enumeration
           5. RoomFit sequential probe (levels 0–4) → roomfit_level, supports_roomfit*
-          6. max_filters = 10 if supports_peq else 0
+             Uses EQv2GetNewList + EQLevel:2 (level 1), EQGetLV2SourceBandEx + EQLevel:2 (level 2),
+             EQSourceSave + EQLevel:2 to temp profile then delete (level 4).
+             All WiiM devices except Mini reach level 4. Mini stays at level 0.
+          6. max_filters = dynamically probed from EQGetLV2BandEx band letter count (default 10)
         """
 ```
 
@@ -429,11 +432,19 @@ class WiiMAdapter:
         Raises WiiMSlaveTargetError if this adapter's device is a slave.
         """
 
-    async def read_roomfit(self, source_name: str) -> list[CanonicalFilter]:
-        """Read RoomFit bands (requires roomfit_level >= 2). Returns CanonicalFilters."""
+    async def read_roomfit(self, source_name: str, profile_name: str) -> list[CanonicalFilter]:
+        """Read RoomFit bands for a named profile (requires roomfit_level >= 2).
+        Loads the profile into the API buffer first, then reads bands.
+        Returns CanonicalFilters."""
 
-    async def write_roomfit(self, source_name: str, filters: list[CanonicalFilter]) -> None:
-        """Write RoomFit bands (requires roomfit_level >= 4)."""
+    async def write_roomfit(
+        self, source_name: str, profile_name: str, filters: list[CanonicalFilter]
+    ) -> None:
+        """Write RoomFit bands to a named profile (requires roomfit_level >= 4).
+        Writes to API buffer, then saves to profile_name.
+        WARNING: If profile_name is the currently-active profile, RoomFit will
+        deactivate in the WiiM app (user must re-select). Saving to a new name
+        is non-disruptive."""
 
     async def get_multiroom_master_ip(self) -> str | None:
         """Return master IP from GetMultiroomInfo, or None if solo/unreachable."""

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 import json
 from pathlib import Path
 
@@ -155,6 +154,6 @@ class ProfileRepository:
             profile.tags.remove(tag)
             self.save(profile)
 
-    def get_by_tag(self, tag: str) -> builtins.list[Profile]:
+    def get_by_tag(self, tag: str) -> list[Profile]:
         """Return all profiles that have the given tag."""
         return [p for p in self.list() if tag in p.tags]

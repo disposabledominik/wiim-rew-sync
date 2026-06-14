@@ -254,3 +254,137 @@ Document any differences between expected and actual API behavior here. These wi
 
 - If all tests PASS: Tell Kiro "All CLI hardware tests pass" and we proceed to the GUI phase.
 - If any test FAILS: Copy the exact error output and share it. We'll fix the issue and re-test.
+
+---
+
+## Test 6: RoomFit Read/Write (requires Task 53)
+
+> **Blocked until Task 53 is complete.** This test validates the RoomFit adapter rewrite against real hardware. Only applicable to devices that support RoomFit (all WiiM devices except Mini).
+
+**Prerequisite:** Task 53 must be merged. CLI commands for RoomFit must be available (e.g. `get-filters --eq-level roomfit`).
+
+### 6a: RoomFit Read
+
+**Command (expected interface after Task 53):**
+```bash
+python3 -m src.cli.main get-filters --device <IP> --source <SOURCE> --eq-level roomfit --profile <PROFILE_NAME>
+```
+
+**Pass criteria:**
+- [ ] Returns RoomFit band data for the specified profile
+- [ ] Band count matches device capability (10 or 12 bands)
+- [ ] Values match what the WiiM app shows for that profile
+- [ ] WiiM Mini returns an appropriate error message (RoomFit not supported)
+- [ ] Exit code 0 on success, 1 on unsupported device
+
+**Important:** RoomFit reads require an explicit `EQv2SourceLoad` first — unlike PEQ reads, bare reads return a persistent device-global buffer (not the DSP-active state).
+
+### 6b: RoomFit Write
+
+**Command (expected interface after Task 53):**
+```bash
+python3 -m src.cli.main set-filters --device <IP> --source <SOURCE> --eq-level roomfit --profile <NEW_PROFILE_NAME> --file /tmp/test_eq.txt
+```
+
+**Pass criteria:**
+- [ ] Saves REW filters to a new RoomFit profile name
+- [ ] Existing active RoomFit profile remains active and undisturbed
+- [ ] New profile appears in WiiM app → Room Correction → profile list
+- [ ] Selecting new profile in app shows the written EQ values
+- [ ] Exit code 0 on success
+
+**Overwrite active profile test (verify deactivation warning):**
+```bash
+python3 -m src.cli.main set-filters --device <IP> --source <SOURCE> --eq-level roomfit --profile <ACTIVE_PROFILE_NAME> --file /tmp/test_eq.txt
+```
+- [ ] Tool warns: "Overwriting the active RoomFit profile will deactivate Room Correction"
+- [ ] After write, RoomFit is deactivated in the app (expected behaviour)
+- [ ] Re-selecting the profile in the app shows updated values
+
+### 6c: Capability Detection
+
+```bash
+python3 -m src.cli.main list-devices
+```
+- [ ] Non-Mini devices: capability prober reports `roomfit_level >= 2`
+- [ ] WiiM Mini: `roomfit_level == 0`
+
+### RoomFit API Semantics (reference for test interpretation)
+
+- Reads return a persistent device-global buffer, NOT the DSP-active state
+- Must `EQv2SourceLoad` a profile before reading its bands
+- Writes go to the buffer; must `EQSourceSave` to persist to a named profile
+- Saving to a NEW name: safe, does not disrupt active profile
+- Saving to the ACTIVE profile name: deactivates RoomFit (user must re-select)
+- Buffer survives reboots and is harmless to the WiiM app
+
+---
+
+## Test 7: PEQ Device Profiles (requires Task 55)
+
+> **Blocked until Task 55 is complete.** Tests the PEQ preset list/save/load commands against real hardware.
+
+### 7a: List PEQ profiles
+
+**Command:**
+```bash
+python3 -m src.cli.main list-peq-profiles --device <IP>
+```
+
+**Pass criteria:**
+- [ ] Shows a table of PEQ presets stored on the device (Name | Channel Mode)
+- [ ] Factory presets (e.g. "Flat", "Rock") appear in output if present
+- [ ] Custom presets previously saved via WiiM app appear
+- [ ] Exit code 0 (even if list is empty)
+
+### 7b: Save active PEQ as device preset
+
+**Command:**
+```bash
+# First write some filters, then save as a named preset
+python3 -m src.cli.main set-filters --file /tmp/test_eq.txt --device <IP> --source <SOURCE> --save-as "_TestPreset_DeleteMe"
+```
+
+**Pass criteria:**
+- [ ] `set-filters` succeeds with "Verified successfully."
+- [ ] Post-save message confirms profile saved
+- [ ] `list-peq-profiles` now shows "_TestPreset_DeleteMe" in the list
+- [ ] WiiM app → EQ → Preset list shows "_TestPreset_DeleteMe"
+- [ ] Selecting "_TestPreset_DeleteMe" in the WiiM app loads the correct filter values
+
+### 7c: Verify PEQ save doesn't disrupt live state
+
+- [ ] After saving, the active EQ bands are unchanged (PEQ remains applied to audio)
+- [ ] No disconnect, no reloading, no deactivation (unlike RoomFit)
+
+### 7d: Cleanup
+
+```bash
+# Delete the test preset (or do manually in app if CLI delete not implemented)
+```
+- [ ] Test preset removed from device
+
+---
+
+## Test 8: RoomFit Profile List (requires Task 53)
+
+> **Blocked until Task 53 is complete.** Tests the RoomFit profile listing command.
+
+**Command:**
+```bash
+python3 -m src.cli.main list-roomfit-profiles --device <IP>
+```
+
+**Pass criteria:**
+- [ ] Shows a table of RoomFit profiles stored on the device (Name | Channel Mode | Type)
+- [ ] Profiles created by WiiM calibration show `Type: RC`
+- [ ] Profiles saved via API/tool show `Type: Custom`
+- [ ] WiiM Mini returns "RoomFit not supported on this device" (exit code 1)
+- [ ] Exit code 0 on supported devices
+
+---
+
+## Updated Task 32 Phase Gate Scope
+
+Tests 1–5 must pass before GUI work begins (original scope).
+Tests 6–8 are validated after Tasks 53/55 are complete but before final QA (Task 44).

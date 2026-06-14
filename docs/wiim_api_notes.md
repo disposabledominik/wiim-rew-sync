@@ -103,7 +103,34 @@ JSON payload (same as PEQ write but with `"EQLevel": 2`):
 }
 ```
 
-> ⚠️ Direct band write via `EQSetLV2SourceBand` + `EQLevel: 2` has not been tested. Profile save/load (below) is confirmed working.
+> ✅ Direct band write via `EQSetLV2SourceBand` + `EQLevel: 2` **confirmed working** (2026-06-14). Writes to the API working buffer (not directly to DSP). Must be followed by `EQSourceSave` to persist.
+>
+> ⚠️ **Side effect of saving to the ACTIVE profile:** `EQSourceSave` with `EQLevel: 2` and the currently-active profile name **deactivates RoomFit** and deselects the profile. Saving to a NEW/different profile name does NOT deactivate RoomFit — the active profile remains selected.
+
+### RoomFit Write Workflow (confirmed 2026-06-14)
+
+The complete write sequence is:
+1. `EQv2SourceLoad` — load target profile into API working buffer
+2. `EQSetLV2SourceBand` + `EQLevel: 2` — modify bands in the buffer
+3. `EQSourceSave` + `EQLevel: 2` + `Name: "<profile>"` — persist buffer to named profile
+4. **If saving to the active profile name:** RoomFit deactivates — user must re-select in app
+5. **If saving to a new/different name:** RoomFit stays active — user can switch at leisure
+
+**Buffer behaviour after save:** The buffer retains the saved data and adopts the saved profile name. It is NOT cleared. The buffer is device-global, persistent across connections, and survives reboots (stored in flash). It is only overwritten when a profile is actively edited or calibrated via the WiiM app. The app never reads the buffer for display — it uses its own internal state for profile selection and curve rendering. Leaving data in the buffer after our operations is safe and has no observable effect on the WiiM app.
+
+**Recommended UX strategies:**
+- Non-destructive: Save as a new profile name → tell user to switch in WiiM app when ready
+- Overwrite: Save to the active profile → warn "RoomFit will deactivate; re-select to apply"
+
+### RoomFit Three-Layer Architecture
+
+| Layer | Command | Behaviour |
+|-------|---------|-----------|
+| Profile storage | `EQv2GetNewList` / `EQSourceSave` / `EQv2Delete` | CRUD for saved profiles |
+| API working buffer | `EQv2SourceLoad` → `EQGetLV2SourceBandEx` / `EQSetLV2SourceBand` | Read/write bands of loaded profile |
+| DSP-active state | WiiM app only (no known API command) | What's actually applied to audio |
+
+**Key difference from PEQ:** For PEQ (EQLevel 1), `EQGetLV2SourceBandEx` returns the live DSP state without needing a prior load. For RoomFit (EQLevel 2), reads return the working buffer — which is device-global and persistent across connections (not session-scoped). Always `EQv2SourceLoad` before reading to ensure you're reading the intended profile.
 
 ### RoomFit Profile CRUD (all confirmed 2026-06-14)
 
@@ -174,10 +201,9 @@ JSON payload (same as PEQ write but with `"EQLevel": 2`):
 | 1 | `EQv2GetNewList:{"pluginURI":"...","EQLevel":2}` | Returns valid response (even if empty list) without "unknown command" |
 | 2 | `EQGetLV2SourceBandEx:{"pluginURI":"...","source_name":"wifi","EQLevel":2}` | Returns band data with `EQBand`/`EQBandL`/`EQBandR` |
 | 3 | (implicit from level 2) | Band data is parseable into CanonicalFilter list |
-| 4 | `EQSetLV2SourceBand:{"pluginURI":"...","source_name":"wifi","EQLevel":2,...}` | Write succeeds (NOT YET TESTED — use profile save as safer alternative) |
+| 4 | `EQSetLV2SourceBand` + `EQSourceSave` with `EQLevel: 2` | Buffer write + profile save both succeed (CONFIRMED 2026-06-14). Note: saving to the ACTIVE profile name deactivates RoomFit; saving to a new name does not. |
 
 **Older list command:** `EQv2GetList:<pluginURI>` (plain URI, no JSON) — returns PEQ profiles only, without metadata (just names).
-
 ---
 
 ## EQ (Non-PEQ) Commands
@@ -403,7 +429,7 @@ Fallback strategy if mDNS yields no results: subnet scan on ports 80 and 443 wit
 | 1 | `EQv2GetNewList:{"pluginURI":"...","EQLevel":2}` | Returns valid JSON response (not "unknown command") |
 | 2 | `EQGetLV2SourceBandEx:{"pluginURI":"...","source_name":"wifi","EQLevel":2}` | Returns readable band data |
 | 3 | (implicit from level 2) | Band data is parseable into CanonicalFilter list |
-| 4 | `EQSetLV2SourceBand:{"pluginURI":"...","source_name":"wifi","EQLevel":2,...}` | Write succeeds without error (NOT YET CONFIRMED — profile save/delete confirmed) |
+| 4 | `EQSetLV2SourceBand:{"pluginURI":"...","source_name":"wifi","EQLevel":2,...}` + `EQSourceSave` | Buffer write + profile save both succeed (CONFIRMED 2026-06-14). Saving to active profile name deactivates RoomFit; saving to new name does not. |
 
 **Note:** The original assumptions about `getRoomFitStatus`, `getRoomFitBands`, and `setRoomFitBands` commands were incorrect. These commands do not exist. RoomFit uses the standard LV2 PEQ command family with `"EQLevel": 2` added to the payload. See `docs/corrections.md` for the full correction log.
 
