@@ -902,10 +902,12 @@ class TestReadRoomfit:
 
         result = await adapter.read_roomfit("wifi", "My RoomFit")
 
-        assert len(result) == 10
-        assert result[0].type == "PEAK"
-        assert result[0].frequency_hz == 80.0
-        assert result[0].gain_db == -4.0
+        # Returns PEQSettings now
+        assert result.channel_mode == "stereo"
+        assert len(result.bands) == 10
+        assert result.bands[0].type == "PEAK"
+        assert result.bands[0].frequency_hz == 80.0
+        assert result.bands[0].gain_db == -4.0
 
         # Verify the correct commands were issued
         calls = mock_client.command.call_args_list

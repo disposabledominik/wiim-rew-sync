@@ -498,7 +498,11 @@ def cmd_list_roomfit_profiles(device: str, timeout: float) -> int:
     except (WiiMConnectionError, WiiMResponseError) as exc:
         error_msg = str(exc)
         if "roomfit_level >= 1" in error_msg:
-            print("RoomFit not supported on this device.", file=sys.stderr)
+            print(
+                "Dedicated RoomFit filters not available on this device "
+                "(room correction uses PEQ bands instead).",
+                file=sys.stderr,
+            )
         else:
             print(f"Error: {exc}", file=sys.stderr)
         return 1
@@ -526,7 +530,7 @@ def cmd_list_roomfit_profiles(device: str, timeout: float) -> int:
 
 async def _get_roomfit_filters(
     device: str, source: str, profile_name: str, timeout: float
-) -> list[CanonicalFilter]:
+) -> PEQSettings:
     """Probe capabilities, load a RoomFit profile, and read its bands."""
     client = WiiMHttpClient(device, timeout=timeout)
     try:
@@ -542,20 +546,32 @@ def cmd_get_roomfit_filters(
 ) -> int:
     """Read RoomFit bands for a named profile. Exit 0 on success, 1 on error."""
     try:
-        filters = asyncio.run(
+        settings = asyncio.run(
             _get_roomfit_filters(device, source, profile_name, timeout)
         )
     except (WiiMConnectionError, WiiMResponseError) as exc:
         error_msg = str(exc)
         if "roomfit_level >= 2" in error_msg:
-            print("RoomFit read not supported on this device.", file=sys.stderr)
+            print(
+                "Dedicated RoomFit filters not available on this device "
+                "(room correction uses PEQ bands instead).",
+                file=sys.stderr,
+            )
         else:
             print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"RoomFit profile: {profile_name} | Source: {source}")
+    print(f"RoomFit profile: {profile_name} | Source: {source} | Mode: {settings.channel_mode}")
     print()
-    print(_format_table(_FILTER_HEADERS, _filter_rows(filters)))
+
+    if settings.channel_mode == "lr":
+        print("Left channel:")
+        print(_format_table(_FILTER_HEADERS, _filter_rows(settings.bands_l)))
+        print()
+        print("Right channel:")
+        print(_format_table(_FILTER_HEADERS, _filter_rows(settings.bands_r)))
+    else:
+        print(_format_table(_FILTER_HEADERS, _filter_rows(settings.bands)))
     return 0
 
 
@@ -603,7 +619,11 @@ def cmd_set_roomfit_filters(
     except (WiiMConnectionError, WiiMResponseError) as exc:
         error_msg = str(exc)
         if "roomfit_level >= 4" in error_msg:
-            print("RoomFit write not supported on this device.", file=sys.stderr)
+            print(
+                "Dedicated RoomFit filters not available on this device "
+                "(room correction uses PEQ bands instead).",
+                file=sys.stderr,
+            )
         else:
             print(f"Error: {exc}", file=sys.stderr)
         return 1

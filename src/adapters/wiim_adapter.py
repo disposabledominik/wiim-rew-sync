@@ -586,7 +586,7 @@ class WiiMAdapter:
 
     async def read_roomfit(
         self, source_name: str, profile_name: str
-    ) -> list[CanonicalFilter]:
+    ) -> PEQSettings:
         """Read RoomFit bands for a named profile.
 
         Requires ``roomfit_level >= 2`` in device capabilities.
@@ -599,7 +599,7 @@ class WiiMAdapter:
             profile_name: Name of the RoomFit profile to load and read.
 
         Returns:
-            List of CanonicalFilter objects representing the RoomFit filters.
+            PEQSettings with parsed bands (stereo or L/R).
 
         Raises:
             WiiMResponseError: RoomFit read not supported (level < 2) or
@@ -636,21 +636,8 @@ class WiiMAdapter:
                 f"got: {type(response).__name__}"
             )
 
-        # Step 3: Parse response — same format as PEQ (EQBand / EQBandL / EQBandR)
-        eq_band_raw: list[dict[str, Any]] | None = response.get("EQBand")
-        if eq_band_raw is not None:
-            band_dicts = _params_to_band_dicts(eq_band_raw)
-            return parse_wiim_band_array(band_dicts, channel="stereo")
-
-        # Try L/R mode
-        eq_band_l_raw: list[dict[str, Any]] | None = response.get("EQBandL")
-        if eq_band_l_raw is not None:
-            band_dicts = _params_to_band_dicts(eq_band_l_raw)
-            return parse_wiim_band_array(band_dicts, channel="left")
-
-        raise WiiMResponseError(
-            "RoomFit response missing 'EQBand' or 'EQBandL'/'EQBandR' field"
-        )
+        # Step 3: Parse response using the same logic as PEQ reads
+        return self._parse_peq_response(response, source_name)
 
     async def write_roomfit(
         self, source_name: str, profile_name: str, filters: list[CanonicalFilter]
