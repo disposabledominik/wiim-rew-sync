@@ -252,7 +252,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Exit code 0 on verified success, 1 on any failure
   - _Requirements: 5.1-5.10, 12.1-12.3_
 
-- [ ] 32. CLI end-to-end hardware validation (phase gate)
+- [x] 32. CLI end-to-end hardware validation (phase gate)
   - Run all four CLI commands against physical WiiM hardware
   - Verify `get-filters` output matches WiiM app; verify `set-filters` filter change is visible in WiiM app
   - Document any API deviations in `docs/corrections.md`

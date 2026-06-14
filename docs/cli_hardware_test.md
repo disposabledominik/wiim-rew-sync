@@ -336,6 +336,7 @@ Use a profile name from the `list-roomfit-profiles` output.
 - [x] Values match what the WiiM app shows for that profile
 - [x] WiiM Mini returns an default empty filter set (WiiM Mini API quirk)
 - [x] Exit code 0 on success, 1 on unsupported device
+[Tests performed on 14.06.2026.]
 
 ### 6c: RoomFit Write (new profile)
 
@@ -345,15 +346,16 @@ python3 -m src.cli.main set-roomfit-filters --device <IP> --source <SOURCE> --pr
 ```
 
 **Pass criteria:**
-- [ ] Saves REW filters to a new RoomFit profile name
-- [ ] Existing active RoomFit profile remains active and undisturbed
-- [ ] New profile appears in `list-roomfit-profiles` output
-- [ ] New profile appears in WiiM app → Room Correction → profile list
-- [ ] Reading the new profile back shows the written EQ values:
+- [x] Saves REW filters to a new RoomFit profile name
+- [x] Existing active RoomFit profile remains active and undisturbed
+- [x] New profile appears in `list-roomfit-profiles` output
+- [x] New profile appears in WiiM app → Room Correction → profile list
+- [x] Reading the new profile back shows the written EQ values:
   ```bash
   python3 -m src.cli.main get-roomfit-filters --device <IP> --source <SOURCE> --profile "_TestRC_DeleteMe"
   ```
-- [ ] Exit code 0 on success
+- [x] Exit code 0 on success
+[Tests performed on 14.06.2026.]
 
 ### 6d: RoomFit API Semantics (reference for test interpretation)
 
@@ -377,10 +379,11 @@ python3 -m src.cli.main list-peq-profiles --device <IP>
 ```
 
 **Pass criteria:**
-- [ ] Shows a table of PEQ presets stored on the device (Name | Channel Mode)
-- [ ] Factory presets (e.g. "Flat", "Rock") appear in output if present
-- [ ] Custom presets previously saved via WiiM app appear
-- [ ] Exit code 0 (even if list is empty)
+- [x] Shows a table of PEQ presets stored on the device (Name | Channel Mode)
+- [x] Factory presets don't exist for PEQ (only GEQ)
+- [x] Custom presets previously saved via WiiM app appear
+- [x] Exit code 0 (even if list is empty)
+[Tests performed on 14.06.2026.]
 
 ### 7b: Save active PEQ as device preset
 
@@ -391,23 +394,26 @@ python3 -m src.cli.main set-filters --file /tmp/test_eq.txt --device <IP> --sour
 ```
 
 **Pass criteria:**
-- [ ] `set-filters` succeeds with "Verified successfully."
-- [ ] Post-save message confirms profile saved
-- [ ] `list-peq-profiles` now shows "_TestPreset_DeleteMe" in the list
-- [ ] WiiM app → EQ → Preset list shows "_TestPreset_DeleteMe"
-- [ ] Selecting "_TestPreset_DeleteMe" in the WiiM app loads the correct filter values
+- [x] `set-filters` succeeds with "Verified successfully."
+- [x] Post-save message confirms profile saved
+- [x] `list-peq-profiles` now shows "_TestPreset_DeleteMe" in the list
+- [x] WiiM app → EQ → Preset list shows "_TestPreset_DeleteMe"
+- [x] Selecting "_TestPreset_DeleteMe" in the WiiM app loads the correct filter values
+[Tests performed on 14.06.2026.]
 
 ### 7c: Verify PEQ save doesn't disrupt live state
 
-- [ ] After saving, the active EQ bands are unchanged (PEQ remains applied to audio)
-- [ ] No disconnect, no reloading, no deactivation (unlike RoomFit)
+- [x] After saving, PEQ remains applied to audio and the new preset is active.
+- [x] No disconnect, no reloading, no deactivation (unlike RoomFit)
+[Tests performed on 14.06.2026.]
 
 ### 7d: Cleanup
 
 ```bash
 # Delete the test preset (or do manually in app if CLI delete not implemented)
 ```
-- [ ] Test preset removed from device
+- [x] Test preset removed from device
+[Tests performed on 14.06.2026.]
 
 ---
 ---
