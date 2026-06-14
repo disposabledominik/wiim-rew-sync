@@ -559,6 +559,14 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
        - Test: `_set_channel_mode("Stereo")` issues `EQSetLV2ChannelMode` with correct payload
        - Test: `_set_channel_mode("L/R")` issues correct command
   - _Rationale: All fixes confirmed working on real hardware (Task 32 passed) but need automated regression tests to prevent future breakage._
+    6. In `src/tests/test_cli.py` — **`--file-right` L/R write via CLI**:
+       - Test: `set-filters --file left.txt --file-right right.txt` parses both files and writes L/R mode
+       - Test: `--file-right` without `--file` still requires `--file` (argparse enforces)
+    7. In `src/tests/test_safe_write.py` — **rollback with L/R data**:
+       - Test: rollback restores original L/R bands (not just stereo)
+    8. In `src/tests/test_capability_prober.py` — **RoomFit probe doesn't hit HTTP 431**:
+       - Test: probe with L/R 12-band response does NOT attempt `EQSetLV2SourceBand` (only `EQSourceSave`)
+       - Verify the probe payload stays small regardless of device band count/channel mode
 
 ## Task Dependency Graph
 
