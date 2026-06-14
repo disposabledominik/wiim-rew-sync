@@ -279,9 +279,17 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Source selector: populated from `capabilities.source_names`; no source pre-selected for write; currently active source pre-selected for display
   - Channel mode selector: disabled when `supports_channel_peq=False`
   - EQ type selector: PEQ tab always visible; RoomFit tab hidden when `roomfit_level == 0`
-  - Filter table: 10 rows × 5 columns; OFF bands shown in grey
-  - Pull button → `WiiMAdapter.read_peq()` via `AsyncBridge`; table updates on `peq_ready`
-  - _Requirements: 3.1, 3.2, 3.3, 3.5, 4.1, 11.1, 11.2, 11.3_
+  - Filter table: 10-12 rows × 5 columns (dynamic based on `max_filters`); OFF bands shown in grey; UNKNOWN bands greyed with tooltip
+  - **PEQ tab:**
+    - Pull button → `WiiMAdapter.read_peq()` via `AsyncBridge`; table updates on `peq_ready`
+  - **RoomFit tab (visible when `roomfit_level >= 1`):**
+    - Profile selector dropdown: populated from `WiiMAdapter.list_roomfit_profiles()`; refresh button
+    - When `roomfit_level == 1`: show "RoomFit Active" indicator, all controls disabled
+    - When `roomfit_level >= 2`: Pull button enabled → `WiiMAdapter.read_roomfit(source, profile_name)` loads selected profile and displays bands
+    - When `roomfit_level >= 4`: Push button enabled → `WiiMAdapter.write_roomfit(source, profile_name, filters)` writes to selected profile
+    - **Deactivation warning**: if the user pushes to the currently-active RoomFit profile, show a confirmation dialog: "Saving to the active profile will deactivate Room Correction. You'll need to re-select it in the WiiM app. Save to a new name instead?" with options [Save as new name...] [Overwrite anyway] [Cancel]
+    - New profile name input: text field appears when user chooses "Save as new name" or when no profile is selected
+  - _Requirements: 3.1, 3.2, 3.3, 3.5, 4.1, 11.1, 11.2, 11.3, 11.4, 11.5, 11.7_
 
 - [ ] 36. Implement import and export dialogs
   - Create `src/gui/dialogs/import_dialog.py`: `.txt` file dialog; synchronous parse; preview table with `ValidationWarning` items highlighted in orange; inline warning banner with acknowledgement checkbox if `len(filters) > max_filters`
@@ -291,9 +299,14 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 - [ ] 37. Implement profile panel
   - Create `src/gui/panels/profile_panel.py`
-  - All nine CRUD+tag operations accessible from the panel
-  - Loading a profile populates the filter table in the EQ panel
+  - **Local profiles tab**: All nine CRUD+tag operations accessible from the panel
+  - Loading a local profile populates the filter table in the EQ panel
   - Loading a Stereo profile onto an L/R device (or vice versa) shows a mode mismatch warning requiring explicit confirmation
+  - **Device profiles tab** (when device is selected and `supports_profile_enumeration=True`):
+    - Lists PEQ presets from device (`list_peq_profiles`)
+    - Load button: loads a device preset into the live DSP (`load_peq_profile`) and refreshes the EQ panel
+    - Delete button: removes a device preset (`delete_peq_profile`)
+    - Device presets are read-only in the table (editing happens via the PEQ filter table + Push)
   - _Requirements: 9.5, 9.11_
 
 - [ ] 38. Implement diagnostics panel
@@ -309,8 +322,12 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Gate buttons by device/source selection and capabilities
   - Dry Run toggle: "DRY RUN" label visible when active (e.g. red background); suppress all device writes, backup creation, and queue calls; display translated filters with validation warnings
   - Push: blocked with error dialog if no source selected
+  - **PEQ Push flow**: safe-write protocol (backup → write → verify → commit/rollback); optional "Save as device preset" checkbox + name field (calls `save_peq_profile()` after verified write)
+  - **RoomFit Push flow**: no safe-write (RoomFit writes go to a named profile, not live DSP). Flow: parse → write to buffer → save to profile name. If overwriting active profile → show deactivation warning first.
+  - **Export RoomFit**: when RoomFit tab is active, Export REW exports the currently-displayed RoomFit filters (not PEQ)
+  - **Import to RoomFit**: when RoomFit tab is active, Import REW → parse file → display in RoomFit filter table → user can Push to save as a profile
   - Wire all buttons to `AsyncBridge.run_async()` with progress indicator and Cancel support
-  - _Requirements: 3.2, 3.6, 5.11, 12.1, 12.2, 12.3, 12.4, 12.5, 17.2, 18.4, 18.5, 18.6_
+  - _Requirements: 3.2, 3.6, 5.11, 11.5, 12.1, 12.2, 12.3, 12.4, 12.5, 17.2, 18.4, 18.5, 18.6_
 
 - [ ] 40. Implement error dialog and all error handling paths
   - Create `src/gui/dialogs/error_dialog.py` with severity-specific icons
