@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.async_bridge import AsyncBridge
+from src.gui.dialogs.error_dialog import ErrorDialog
 from src.gui.panels.action_bar import ActionBar
 from src.gui.panels.device_panel import DevicePanel
 from src.gui.panels.diagnostics_panel import DiagnosticsPanel
@@ -813,14 +814,76 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_operation_error(self, error_type: str, message: str) -> None:
-        """Handle operation errors - show in status bar or message box.
+        """Handle operation errors - show ErrorDialog with appropriate severity.
+
+        Maps error_type to severity and title, then shows the ErrorDialog.
+        All errors are also logged at ERROR or CRITICAL level.
 
         Args:
             error_type: Exception type name.
             message: Human-readable error message.
         """
-        logger.error("Operation error [%s]: %s", error_type, message)
-        self.statusBar().showMessage(f"Error: {message}", 10000)
+        from src.gui.dialogs.error_dialog import Severity
+
+        # --- Error type mapping ---
+        _ERROR_MAP: dict[str, tuple[Severity, str]] = {
+            "WiiMConnectionError": ("ERROR", "Device Offline"),
+            "WiiMTimeoutError": ("ERROR", "Device Offline"),
+            "WiiMResponseError": ("ERROR", "Communication Error"),
+            "ParseError": ("ERROR", "Parse Error"),
+            "ValidationError": ("WARNING", "Validation Warning"),
+            "SchemaVersionError": ("ERROR", "Profile Incompatible"),
+            "ProfileNotFoundError": ("ERROR", "Profile Not Found"),
+            "BackupError": ("ERROR", "Backup Failed"),
+            "VerificationError": ("ERROR", "Write Verification Failed"),
+            "RollbackError": ("CRITICAL", "\u26a0 Critical: Device State May Be Incorrect"),
+            "REWNotConnectedError": ("WARNING", "REW Not Connected"),
+            "REWMeasurementNotFoundError": ("ERROR", "Measurement Not Found"),
+        }
+
+        severity: Severity
+        title: str
+        severity, title = _ERROR_MAP.get(error_type, ("ERROR", "Error"))
+
+        # Log at appropriate level
+        if severity == "CRITICAL":
+            logger.critical("Operation error [%s]: %s", error_type, message)
+        else:
+            logger.error("Operation error [%s]: %s", error_type, message)
+
+        # For RollbackError, extract backup path from message if present
+        backup_path: str | None = None
+        if error_type == "RollbackError":
+            backup_path = self._extract_backup_path(message)
+
+        # Show dialog
+        ErrorDialog.show_error(
+            severity,
+            title,
+            message,
+            backup_path=backup_path,
+            parent=self,
+        )
+
+    @staticmethod
+    def _extract_backup_path(message: str) -> str | None:
+        """Extract a file path from a RollbackError message.
+
+        Looks for common path patterns in the message string.
+
+        Args:
+            message: The error message that may contain a backup file path.
+
+        Returns:
+            Extracted path string, or None if not found.
+        """
+        import re
+
+        # Match Unix or Windows absolute paths
+        match = re.search(r'(/[\w./_-]+\.json|[A-Z]:\\[\w.\\_-]+\.json)', message)
+        if match:
+            return match.group(0)
+        return None
 
     # ------------------------------------------------------------------
     # Shutdown

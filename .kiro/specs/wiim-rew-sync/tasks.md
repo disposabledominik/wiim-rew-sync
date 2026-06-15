@@ -328,7 +328,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - Wire all buttons to `AsyncBridge.run_async()` with progress indicator and Cancel support
   - _Requirements: 3.2, 3.6, 11.5, 12.1, 12.2, 12.3, 12.4, 12.5, 18.4, 18.5, 18.6_
 
-- [ ] 40. Implement error dialog and all error handling paths
+- [x] 40. Implement error dialog and all error handling paths
   - Create `src/gui/dialogs/error_dialog.py` with severity-specific icons
   - Cover all failure modes: device offline, REW parse error, verify fail + rollback success, verify fail + rollback fail (copyable backup path + recovery steps), REW not connected, measurement not found, schema migration failure, malformed JSON, no-source write attempt, mode mismatch
   - All errors also written to `app.log` at ERROR or CRITICAL level
@@ -343,7 +343,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - On startup: auto-create `logs/` and profile storage directories; abort with specific error if creation fails
   - _Requirements: 9.1, 19.2_
 
-- [ ] 43. Create PyInstaller packaging configuration
+- [x] 43. Create PyInstaller packaging configuration
   - Create `packaging/` with platform-specific `.spec` files for Windows (`.exe`), macOS (`.app`), Linux (single binary)
   - Exclude unused Qt modules (QtWebEngine, Qt3D, QtMultimedia, QtQuick, QtQml, QtDesigner, QtTest) to reduce binary size (~20-30 MB savings)
   - Do NOT use UPX compression (causes antivirus false positives for non-technical users)
@@ -353,10 +353,11 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 - [ ] 44. Final QA sign-off (release gate)
   - Execute all QA scenarios from `docs/qa.md` against real hardware
-  - Run full test suite: confirm ≥ 90% coverage for `src/translator/`, ≥ 80% overall
-  - Run `ruff check src/` and `mypy src/` with zero errors; document any deviations in `docs/corrections.md`
-  - Run `pip-audit` on dependencies to check for known vulnerabilities before distribution
+  - Run full test suite: confirm ≥ 90% coverage for `src/translator/`, ≥ 80% overall ✅ (470 passed, 96.52%)
+  - Run `ruff check src/` and `mypy src/` with zero errors; document any deviations in `docs/corrections.md` ✅
+  - Run `pip-audit` on dependencies to check for known vulnerabilities before distribution ✅ (no direct-dep vulns)
   - Do not release until all QA scenarios pass
+  - ⚠️ **BLOCKED**: Hardware QA scenarios (11, 17-21, 23, 26-27, 29) require manual execution against real WiiM devices. See `docs/qa_signoff.md`.
 
 ### Phase 10: Integrity Fixes (Tech Debt from Review)
 
