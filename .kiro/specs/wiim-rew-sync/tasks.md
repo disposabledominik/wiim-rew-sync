@@ -531,7 +531,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - **Integration with existing safe-write workflow**: The `set-filters` command currently writes to live DSP via SafeWrite (backup → write → verify). Adding `--save-as` simply calls `save_peq_profile()` AFTER the SafeWrite succeeds — it's a post-commit step, not part of the verification loop.
   - _Requirements: 2.5 (supports_profile_enumeration), 9.5 (profile library UX)_
 
-- [ ] 56. Add unit tests for hardware-testing fixes (channel mode, L/R write, RoomFit CLI)
+- [x] 56. Add unit tests for hardware-testing fixes (channel mode, L/R write, RoomFit CLI)
   - **Problem**: Several bugs were fixed during manual hardware testing (Task 32) but lack dedicated unit tests. The fixes work correctly but are only validated by the hardware tests, not by the automated suite.
   - **Tests to add**:
     1. In `src/tests/test_safe_write.py` — **channel mode adaptation**:

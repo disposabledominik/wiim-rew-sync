@@ -395,3 +395,168 @@ class TestBatchVsSequential:
 
         call_args = mock_adapter.write_peq.call_args
         assert call_args[0][2] is None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Channel mode adaptation (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+class TestChannelModeAdaptation:
+    """Test _adapt_channel_mode behavior when device mode differs from write mode."""
+
+    async def test_stereo_write_to_lr_device_adapts_mode(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Writing stereo to an L/R device logs mode switch but passes stereo settings unchanged."""
+        intended = _make_settings(channel_mode="stereo")
+        # Device currently in L/R mode
+        lr_current = _make_settings(channel_mode="lr")
+
+        # read_peq returns L/R state first (backup), then stereo readback (verification)
+        mock_adapter.read_peq.side_effect = [lr_current, intended]
+
+        app_logger = logging.getLogger("wiim_rew_sync.app")
+        app_logger.propagate = True
+        try:
+            with caplog.at_level(logging.INFO, logger="wiim_rew_sync.app"):
+                result = await safe_write.execute("wifi", intended)
+
+            # write_peq is called with the original stereo settings (not mutated to L/R)
+            write_call = mock_adapter.write_peq.call_args
+            written_settings = write_call[0][1]
+            assert written_settings.channel_mode == "stereo"
+            assert written_settings.bands == intended.bands
+            assert result.success is True
+            # Log indicates mode switch
+            assert any("Stereo" in r.message for r in caplog.records)
+        finally:
+            app_logger.propagate = False
+
+    async def test_matching_modes_no_adaptation(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Writing stereo to a stereo device produces no mode-switch log messages."""
+        intended = _make_settings(channel_mode="stereo")
+        mock_adapter.read_peq.side_effect = [intended, intended]
+
+        app_logger = logging.getLogger("wiim_rew_sync.app")
+        app_logger.propagate = True
+        try:
+            with caplog.at_level(logging.INFO, logger="wiim_rew_sync.app"):
+                await safe_write.execute("wifi", intended)
+
+            mode_messages = [
+                r for r in caplog.records
+                if "switching" in r.message.lower() or "mode" in r.message.lower()
+            ]
+            assert mode_messages == []
+        finally:
+            app_logger.propagate = False
+
+
+# ---------------------------------------------------------------------------
+# Tests: Band count tolerance in verification (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+class TestBandCountTolerance:
+    """Test _compare_band_lists tolerance when device returns more bands than written."""
+
+    async def test_verify_passes_when_device_returns_more_bands(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """Intended 10 bands, device returns 12 (first 10 match, extra 2 OFF) -> success."""
+        intended_bands = _make_bands(freq=100.0, gain=-2.0, q=1.0)
+        assert len(intended_bands) == 10
+
+        # Read-back has 12 bands: first 10 match, last 2 are extra OFF bands
+        readback_bands = [
+            *intended_bands,
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+        ]
+        assert len(readback_bands) == 12
+
+        intended = _make_settings(bands=intended_bands)
+        readback = _make_settings(bands=readback_bands)
+
+        mock_adapter.read_peq.side_effect = [intended, readback]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is True
+
+    async def test_verify_fails_when_first_n_bands_mismatch(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, mock_backup_manager: MagicMock
+    ) -> None:
+        """Intended 10 bands, device returns 12 but band 1 has wrong gain -> triggers rollback."""
+        intended_bands = _make_bands(freq=100.0, gain=-2.0, q=1.0)
+        original_bands = _make_bands(freq=200.0, gain=0.0, q=1.5)
+
+        # Create readback with a mismatch at band index 0 (the active PEAK band)
+        readback_bands = list(intended_bands)
+        readback_bands[0] = CanonicalFilter(
+            type="PEAK", frequency_hz=100.0, gain_db=5.0, q=1.0  # wrong gain
+        )
+        # Add 2 extra bands to make it 12
+        readback_bands.extend([
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+        ])
+
+        intended = _make_settings(bands=intended_bands)
+        original = _make_settings(bands=original_bands)
+        bad_readback = _make_settings(bands=readback_bands)
+
+        mock_adapter.read_peq.side_effect = [
+            original,       # Step 1: current state for backup
+            bad_readback,   # Step 3: read-back does NOT match intended
+            bad_readback,   # Rollback: read current state for pre_rollback backup
+            original,       # Rollback verification: matches original
+        ]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is False
+        assert result.rollback_success is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: Rollback with L/R data (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+class TestRollbackLR:
+    """Test that rollback restores L/R settings correctly."""
+
+    async def test_rollback_restores_lr_bands(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, mock_backup_manager: MagicMock
+    ) -> None:
+        """Rollback restores original L/R settings (not just stereo bands)."""
+        intended = _make_settings(channel_mode="stereo")
+        # Device was originally in L/R mode
+        original = _make_settings(channel_mode="lr")
+        bad_readback = _make_settings(
+            bands=_make_bands(freq=999.0, gain=-10.0, q=0.5),
+            channel_mode="stereo",
+        )
+
+        mock_adapter.read_peq.side_effect = [
+            original,       # Step 1: current state (L/R)
+            bad_readback,   # Step 3: read-back mismatch
+            bad_readback,   # Rollback: read current for pre_rollback backup
+            original,       # Rollback verification: matches original
+        ]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is False
+        assert result.rollback_success is True
+
+        # Verify rollback wrote back the L/R original settings
+        rollback_call = mock_adapter.write_peq.call_args_list[1]
+        restored_settings = rollback_call[0][1]
+        assert restored_settings.channel_mode == "lr"
+        assert restored_settings.bands_l is not None
+        assert restored_settings.bands_r is not None

@@ -1043,3 +1043,215 @@ class TestListRoomfitProfiles:
         result = await adapter.list_roomfit_profiles("wifi")
 
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_peq — L/R batch path (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+class TestWritePeqLRBatch:
+    """Test PEQ L/R write via batch path (supports_batch_write=True)."""
+
+    @pytest.fixture
+    def lr_batch_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with batch write and channel PEQ support."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_batch_write=True,
+            supports_channel_peq=True,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def lr_batch_adapter(
+        self, mock_client: AsyncMock, lr_batch_capabilities: DeviceCapabilities
+    ) -> WiiMAdapter:
+        """Adapter configured for batch L/R write."""
+        return WiiMAdapter(http_client=mock_client, capabilities=lr_batch_capabilities)
+
+    def _make_lr_settings(self) -> PEQSettings:
+        """Create L/R PEQSettings for testing."""
+        from src.models.canonical import CanonicalFilter
+
+        bands_l = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.0),
+            CanonicalFilter(type="LS", frequency_hz=200.0, gain_db=2.0, q=0.71),
+        ]
+        bands_r = [
+            CanonicalFilter(type="PEAK", frequency_hz=150.0, gain_db=-2.0, q=1.2),
+            CanonicalFilter(type="HS", frequency_hz=8000.0, gain_db=1.5, q=0.5),
+        ]
+        return PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="lr",
+            bands_l=bands_l,
+            bands_r=bands_r,
+        )
+
+    async def test_write_peq_lr_batch_sends_both_channels(
+        self, lr_batch_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Batch L/R write payload contains both EQBandL and EQBandR keys."""
+        mock_client.command.return_value = "OK"
+        settings = self._make_lr_settings()
+
+        await lr_batch_adapter.write_peq("wifi", settings)
+
+        # Two calls: channel mode switch + batch write
+        assert mock_client.command.call_count == 2
+        batch_call = mock_client.command.call_args_list[1][0][0]
+        assert "EQSetLV2SourceBand:" in batch_call
+        assert "EQBandL" in batch_call
+        assert "EQBandR" in batch_call
+
+    async def test_write_peq_lr_calls_set_channel_mode_lr(
+        self, lr_batch_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Writing L/R mode calls EQSetLV2ChannelMode with 'L/R' before writing bands."""
+        mock_client.command.return_value = "OK"
+        settings = self._make_lr_settings()
+
+        await lr_batch_adapter.write_peq("wifi", settings)
+
+        first_call = mock_client.command.call_args_list[0][0][0]
+        assert "EQSetLV2ChannelMode:" in first_call
+        assert "L%2FR" in first_call or "L/R" in first_call
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_peq — L/R sequential path (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+class TestWritePeqLRSequential:
+    """Test PEQ L/R write via sequential path (supports_batch_write=False)."""
+
+    @pytest.fixture
+    def lr_seq_capabilities(self) -> DeviceCapabilities:
+        """Capabilities without batch write support."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_batch_write=False,
+            supports_channel_peq=True,
+            max_filters=10,
+            model="WiiM_Pro",
+            firmware="5.0.0.10",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def lr_seq_adapter(
+        self, mock_client: AsyncMock, lr_seq_capabilities: DeviceCapabilities
+    ) -> WiiMAdapter:
+        """Adapter configured for sequential L/R write."""
+        return WiiMAdapter(http_client=mock_client, capabilities=lr_seq_capabilities)
+
+    def _make_lr_settings(self) -> PEQSettings:
+        """Create L/R PEQSettings for testing."""
+        from src.models.canonical import CanonicalFilter
+
+        bands_l = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.0),
+        ]
+        bands_r = [
+            CanonicalFilter(type="PEAK", frequency_hz=150.0, gain_db=-2.0, q=1.2),
+        ]
+        return PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="lr",
+            bands_l=bands_l,
+            bands_r=bands_r,
+        )
+
+    async def test_write_peq_lr_sequential_sends_both_channels(
+        self, lr_seq_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Sequential L/R write: each command contains both EQBandL and EQBandR."""
+        mock_client.command.return_value = "OK"
+        settings = self._make_lr_settings()
+
+        await lr_seq_adapter.write_peq("wifi", settings, queue=None)
+
+        # 1 channel mode switch + 10 band writes = 11 commands
+        assert mock_client.command.call_count == 11
+        # Each band write (calls[1:]) should contain both L and R data
+        for call in mock_client.command.call_args_list[1:]:
+            cmd = call[0][0]
+            assert "EQBandL" in cmd
+            assert "EQBandR" in cmd
+
+
+# ---------------------------------------------------------------------------
+# Tests: _set_channel_mode (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+class TestSetChannelMode:
+    """Test that write_peq always sets the channel mode before writing."""
+
+    @pytest.fixture
+    def batch_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with batch write support."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_batch_write=True,
+            supports_channel_peq=True,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def batch_adapter(
+        self, mock_client: AsyncMock, batch_capabilities: DeviceCapabilities
+    ) -> WiiMAdapter:
+        """Adapter configured for batch write."""
+        return WiiMAdapter(http_client=mock_client, capabilities=batch_capabilities)
+
+    async def test_set_channel_mode_stereo(
+        self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Writing stereo settings sends EQSetLV2ChannelMode with 'Stereo' first."""
+        from src.models.canonical import CanonicalFilter
+
+        mock_client.command.return_value = "OK"
+        settings = PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="stereo",
+            bands=[CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)],
+        )
+
+        await batch_adapter.write_peq("wifi", settings)
+
+        first_call = mock_client.command.call_args_list[0][0][0]
+        assert "EQSetLV2ChannelMode:" in first_call
+        assert "Stereo" in first_call
+
+    async def test_set_channel_mode_lr(
+        self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Writing L/R settings sends EQSetLV2ChannelMode with 'L/R' first."""
+        from src.models.canonical import CanonicalFilter
+
+        mock_client.command.return_value = "OK"
+        settings = PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="lr",
+            bands_l=[CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.0)],
+            bands_r=[CanonicalFilter(type="PEAK", frequency_hz=150.0, gain_db=-2.0, q=1.2)],
+        )
+
+        await batch_adapter.write_peq("wifi", settings)
+
+        first_call = mock_client.command.call_args_list[0][0][0]
+        assert "EQSetLV2ChannelMode:" in first_call
+        assert "L%2FR" in first_call or "L/R" in first_call

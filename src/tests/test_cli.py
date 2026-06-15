@@ -747,3 +747,195 @@ def test_set_filters_save_as_not_called_on_failure(
     assert code == 1
     # save_peq_profile should NOT have been called
     adapter_instance.save_peq_profile.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get-roomfit-filters (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+def test_get_roomfit_filters_stereo(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """get-roomfit-filters with stereo PEQ displays a band table."""
+    stereo_settings = _make_settings("stereo")
+
+    monkeypatch.setattr(
+        cli,
+        "_get_roomfit_filters",
+        AsyncMock(return_value=stereo_settings),
+    )
+
+    code = cli.cmd_get_roomfit_filters(
+        device="192.168.1.50", source="wifi", profile_name="My RoomFit", timeout=5.0
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Band" in out
+    assert "Frequency (Hz)" in out
+    assert "PEAK" in out
+
+
+def test_get_roomfit_filters_lr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """get-roomfit-filters with L/R PEQ displays both channel headers."""
+    lr_settings = _make_settings("lr")
+
+    monkeypatch.setattr(
+        cli,
+        "_get_roomfit_filters",
+        AsyncMock(return_value=lr_settings),
+    )
+
+    code = cli.cmd_get_roomfit_filters(
+        device="192.168.1.50", source="wifi", profile_name="My RoomFit", timeout=5.0
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Left channel:" in out
+    assert "Right channel:" in out
+
+
+def test_set_roomfit_filters_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """set-roomfit-filters exits 0 and prints 'saved successfully' on success."""
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(
+        "Equaliser: Parametric EQ\nFilter  1: ON  PK Fc 100.0 Hz  Gain 3.0 dB  Q 2.0\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "_set_roomfit_filters",
+        AsyncMock(return_value=None),
+    )
+
+    code = cli.cmd_set_roomfit_filters(
+        device="192.168.1.50",
+        source="wifi",
+        profile_name="REW Export",
+        file=str(rew_file),
+        timeout=5.0,
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "saved successfully" in out
+
+
+def test_set_roomfit_filters_level_too_low(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """set-roomfit-filters shows specific error when device lacks roomfit_level >= 4."""
+    from src.models.errors import WiiMResponseError
+
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(
+        "Equaliser: Parametric EQ\nFilter  1: ON  PK Fc 100.0 Hz  Gain 3.0 dB  Q 2.0\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "_set_roomfit_filters",
+        AsyncMock(side_effect=WiiMResponseError("roomfit_level >= 4 required")),
+    )
+
+    code = cli.cmd_set_roomfit_filters(
+        device="192.168.1.50",
+        source="wifi",
+        profile_name="REW Export",
+        file=str(rew_file),
+        timeout=5.0,
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "not available" in captured.err or "roomfit_level >= 4" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# set-filters --file-right (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+_VALID_REW_LEFT = """Equaliser: Parametric EQ
+Filter  1: ON  PK Fc 100.0 Hz  Gain 3.0 dB  Q 2.0
+Filter  2: ON  PK Fc 500.0 Hz  Gain -2.0 dB  Q 1.5
+"""
+
+_VALID_REW_RIGHT = """Equaliser: Parametric EQ
+Filter  1: ON  PK Fc 200.0 Hz  Gain 1.5 dB  Q 1.0
+Filter  2: ON  PK Fc 1000.0 Hz  Gain -3.0 dB  Q 2.5
+"""
+
+
+def test_set_filters_file_right_parses_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--file-right provides L/R mode with both files parsed."""
+    left_file = tmp_path / "left.txt"
+    left_file.write_text(_VALID_REW_LEFT, encoding="utf-8")
+    right_file = tmp_path / "right.txt"
+    right_file.write_text(_VALID_REW_RIGHT, encoding="utf-8")
+
+    # Track the settings passed to _set_filters
+    captured_settings: list[PEQSettings] = []
+
+    async def mock_set_filters(
+        device: str,
+        source: str | None,
+        file: str,
+        channel: str,
+        timeout: float,
+        save_as: str | None = None,
+        file_right: str | None = None,
+    ) -> WriteResult:
+        # Parse the files to check our assertion
+        from src.translator import TranslationEngine
+
+        filters_l = TranslationEngine.parse_rew_file(Path(file))
+        settings: PEQSettings
+        if file_right is not None:
+            filters_r = TranslationEngine.parse_rew_file(Path(file_right))
+            settings = PEQSettings(
+                source_name=source or "wifi",
+                channel_mode="lr",
+                bands_l=filters_l,
+                bands_r=filters_r,
+            )
+        else:
+            settings = PEQSettings(
+                source_name=source or "wifi",
+                channel_mode="stereo",
+                bands=filters_l,
+            )
+        captured_settings.append(settings)
+        return WriteResult(success=True, backup_path=tmp_path / "backup.json")
+
+    monkeypatch.setattr(cli, "_set_filters", mock_set_filters)
+
+    code = cli.cmd_set_filters(
+        device="192.168.1.50",
+        source="wifi",
+        file=str(left_file),
+        channel="stereo",
+        timeout=5.0,
+        file_right=str(right_file),
+    )
+
+    assert code == 0
+    assert len(captured_settings) == 1
+    settings = captured_settings[0]
+    assert settings.channel_mode == "lr"
+    assert len(settings.bands_l) == 2
+    assert len(settings.bands_r) == 2
+    # Left channel first filter at 100 Hz
+    assert settings.bands_l[0].frequency_hz == 100.0
+    # Right channel first filter at 200 Hz
+    assert settings.bands_r[0].frequency_hz == 200.0

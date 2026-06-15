@@ -734,3 +734,109 @@ class TestMuzoMiniRecognition:
         assert caps.supports_peq is True
         assert caps.max_filters > 0
         assert caps.model == "Muzo_Mini"
+
+
+# ---------------------------------------------------------------------------
+# Test: RoomFit probe does not send EQSetLV2SourceBand (hardware testing regression)
+# ---------------------------------------------------------------------------
+
+
+class TestRoomFitProbeNoSourceBandWrite:
+    """Verify the RoomFit probe doesn't issue EQSetLV2SourceBand.
+
+    The original implementation tried to write bands back as part of the level 4
+    probe, which could hit HTTP 431 (request header too large) on 12-band L/R
+    devices. The fix uses only EQSourceSave to test write capability.
+    """
+
+    @pytest.mark.asyncio
+    async def test_roomfit_probe_does_not_send_eqsetlv2sourceband(self) -> None:
+        """12-band L/R RoomFit device: _probe_roomfit does NOT issue EQSetLV2SourceBand."""
+        client = _make_mock_client()
+
+        # 12-band L/R roomfit response
+        letters = "abcdefghijkl"
+        bands_l: list[dict[str, str | float]] = []
+        bands_r: list[dict[str, str | float]] = []
+        for i, letter in enumerate(letters):
+            bands_l.extend([
+                {"param_name": f"{letter}_mode", "value": 1.0},
+                {"param_name": f"{letter}_freq", "value": 100.0 * (i + 1)},
+                {"param_name": f"{letter}_q", "value": 1.41},
+                {"param_name": f"{letter}_gain", "value": -2.0},
+            ])
+            bands_r.extend([
+                {"param_name": f"{letter}_mode", "value": 1.0},
+                {"param_name": f"{letter}_freq", "value": 200.0 * (i + 1)},
+                {"param_name": f"{letter}_q", "value": 1.0},
+                {"param_name": f"{letter}_gain", "value": -1.5},
+            ])
+
+        roomfit_lr_response = {
+            "EQStat": "On",
+            "channelMode": "L/R",
+            "EQBandL": bands_l,
+            "EQBandR": bands_r,
+        }
+
+        issued_commands: list[str] = []
+
+        async def mock_command(cmd: str) -> dict | str:
+            issued_commands.append(cmd)
+            if cmd == "getStatusEx":
+                return STATUS_EX_WIIM_PRO
+            if cmd.startswith("EQGetLV2BandEx:"):
+                if "EQLevel" in cmd:
+                    return roomfit_lr_response
+                return EQ_GET_LV2_BAND_12_RESPONSE
+            if cmd.startswith("EQSetLV2Band:"):
+                return "OK"
+            if cmd.startswith("EQGetLV2List:"):
+                return EQ_GET_LV2_LIST_RESPONSE
+            if cmd.startswith("EQv2GetNewList:"):
+                return {
+                    "custom": [
+                        {"Name": "RF1", "channelMode": "L/R", "Type": "RC"},
+                    ],
+                    "preset": [],
+                }
+            if cmd.startswith("EQGetLV2SourceBandEx:"):
+                if "EQLevel" in cmd:
+                    return roomfit_lr_response
+                return EQ_GET_LV2_BAND_12_RESPONSE
+            if cmd.startswith("EQSetLV2SourceBand:"):
+                return "OK"
+            if cmd.startswith("EQSourceSave:"):
+                return "OK"
+            if cmd.startswith("EQv2Delete:"):
+                return "OK"
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        # Device should reach level 4 (full RoomFit support)
+        assert caps.roomfit_level == 4
+        assert caps.supports_roomfit_write is True
+
+        # The probe MUST NOT send EQSetLV2SourceBand with EQLevel in the payload
+        # (that's the command that would hit HTTP 431 on large L/R data)
+        roomfit_source_band_writes = [
+            cmd for cmd in issued_commands
+            if cmd.startswith("EQSetLV2SourceBand:") and "EQLevel" in cmd
+        ]
+        assert roomfit_source_band_writes == [], (
+            f"Probe sent EQSetLV2SourceBand with EQLevel (would hit HTTP 431): "
+            f"{roomfit_source_band_writes}"
+        )
+
+        # Verify that EQSourceSave IS used (the safe alternative)
+        roomfit_saves = [
+            cmd for cmd in issued_commands
+            if cmd.startswith("EQSourceSave:") and "EQLevel" in cmd
+        ]
+        assert len(roomfit_saves) >= 1, "Probe should use EQSourceSave for level 4 test"
