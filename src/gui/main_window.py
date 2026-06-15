@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from src.gui.async_bridge import AsyncBridge
 from src.gui.panels.device_panel import DevicePanel
+from src.gui.panels.diagnostics_panel import DiagnosticsPanel
 from src.gui.panels.eq_panel import EQPanel
 
 
@@ -151,13 +152,18 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(main_splitter)
 
+    @property
+    def diagnostics_panel(self) -> DiagnosticsPanel:
+        """Access the diagnostics panel widget."""
+        return self._diagnostics_panel
+
     def _setup_dock_widget(self) -> None:
         """Create the diagnostics dock widget (hidden by default)."""
         self._diagnostics_dock = QDockWidget("Diagnostics", self)
         self._diagnostics_dock.setObjectName("diagnostics_dock")
 
-        diagnostics_content = _make_placeholder("[Diagnostics Panel]")
-        self._diagnostics_dock.setWidget(diagnostics_content)
+        self._diagnostics_panel = DiagnosticsPanel()
+        self._diagnostics_dock.setWidget(self._diagnostics_panel)
 
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._diagnostics_dock)
         self._diagnostics_dock.setVisible(False)
@@ -197,6 +203,9 @@ class MainWindow(QMainWindow):
         # EQ panel wiring
         self._bridge.capabilities_ready.connect(self._eq_panel.on_capabilities_ready)
         self._bridge.peq_ready.connect(self._eq_panel.on_peq_ready)
+
+        # Diagnostics panel wiring
+        self._bridge.capabilities_ready.connect(self._diagnostics_panel.on_capabilities_ready)
 
     def _on_device_refresh_requested(self) -> None:
         """Handle device panel refresh request.
