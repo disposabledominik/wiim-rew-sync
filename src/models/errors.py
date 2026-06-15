@@ -20,10 +20,6 @@ class WiiMResponseError(WiiMREWSyncError):
     """Malformed or unexpected response from a WiiM device."""
 
 
-class WiiMSlaveTargetError(WiiMREWSyncError):
-    """Write attempted against a slave node in a multiroom group."""
-
-
 # --- Translation / parsing ---
 
 

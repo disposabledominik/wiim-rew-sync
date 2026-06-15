@@ -16,7 +16,6 @@ from src.models.errors import (
     WiiMConnectionError,
     WiiMResponseError,
     WiiMREWSyncError,
-    WiiMSlaveTargetError,
     WiiMTimeoutError,
 )
 from src.models.peq import PEQBand
@@ -270,9 +269,6 @@ class TestExceptionHierarchy:
 
     def test_response_error_inheritance(self) -> None:
         assert issubclass(WiiMResponseError, WiiMREWSyncError)
-
-    def test_slave_target_error_inheritance(self) -> None:
-        assert issubclass(WiiMSlaveTargetError, WiiMREWSyncError)
 
     def test_rew_not_connected_inheritance(self) -> None:
         assert issubclass(REWNotConnectedError, WiiMREWSyncError)

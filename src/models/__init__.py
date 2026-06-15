@@ -13,7 +13,6 @@ from src.models.errors import (
     WiiMConnectionError,
     WiiMResponseError,
     WiiMREWSyncError,
-    WiiMSlaveTargetError,
     WiiMTimeoutError,
 )
 from src.models.peq import PEQBand, PEQSettings
@@ -38,6 +37,5 @@ __all__ = [
     "WiiMConnectionError",
     "WiiMREWSyncError",
     "WiiMResponseError",
-    "WiiMSlaveTargetError",
     "WiiMTimeoutError",
 ]

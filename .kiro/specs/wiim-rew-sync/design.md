@@ -180,7 +180,6 @@ class WiiMSyncError(Exception): ...          # Base for all domain errors
 class WiiMConnectionError(WiiMSyncError): ...  # Device unreachable / timeout
 class WiiMTimeoutError(WiiMConnectionError): ...
 class WiiMResponseError(WiiMSyncError): ...    # Malformed or unexpected JSON response
-class WiiMSlaveTargetError(WiiMSyncError): ... # Reserved for future use (not currently raised)
 
 # Translation / parsing
 class ParseError(WiiMSyncError): ...           # REW file or WiiM response unparse-able
@@ -1170,7 +1169,6 @@ The PBT library for this project is **[Hypothesis](https://hypothesis.readthedoc
 |---|---|---|
 | `WiiMConnectionError` / `WiiMTimeoutError` | Network | Show "Device offline" dialog; log to `app.log` at ERROR |
 | `WiiMResponseError` | Network | Show generic communication error; log to `wiim_api.log` at ERROR |
-| `WiiMSlaveTargetError` | Reserved | Reserved for future use (not currently raised) |
 | `ParseError` | REW file parse | Show parse error with line number; block all device operations |
 | `ValidationError` | REW file / Canonical | Show validation warning; require acknowledgement before proceeding |
 | `SchemaVersionError` | Profile load | Show clear error; refuse to load profile |
