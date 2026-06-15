@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.async_bridge import AsyncBridge
+from src.gui.panels.device_panel import DevicePanel
 
 
 def _make_placeholder(label_text: str) -> QWidget:
@@ -91,16 +92,21 @@ class MainWindow(QMainWindow):
         """Access the async bridge instance."""
         return self._bridge
 
+    @property
+    def device_panel(self) -> DevicePanel:
+        """Access the device panel widget."""
+        return self._device_panel
+
     def _setup_central_widget(self) -> None:
         """Build the central widget with the vertical splitter layout."""
         # Top-level vertical splitter
         main_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # Device panel placeholder (fixed height ~120px)
-        device_panel = _make_placeholder("[Device Panel]")
-        device_panel.setMinimumHeight(100)
-        device_panel.setMaximumHeight(140)
-        main_splitter.addWidget(device_panel)
+        # Device panel (fixed height ~120px)
+        self._device_panel = DevicePanel()
+        self._device_panel.setMinimumHeight(100)
+        self._device_panel.setMaximumHeight(140)
+        main_splitter.addWidget(self._device_panel)
 
         # Horizontal splitter for source mode + EQ panel
         h_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -172,10 +178,22 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._diagnostics_action)
 
     def _connect_signals(self) -> None:
-        """Connect AsyncBridge signals to status bar indicators."""
+        """Connect AsyncBridge signals to status bar indicators and panels."""
         self._bridge.operation_started.connect(self._on_operation_started)
         self._bridge.operation_finished.connect(self._on_operation_finished)
         self._bridge.progress_update.connect(self._on_progress_update)
+
+        # Device panel wiring
+        self._bridge.discovery_complete.connect(self._device_panel.on_discovery_complete)
+        # TODO: Wire refresh_requested to actual discovery coroutine in a later task
+        self._device_panel.refresh_requested.connect(self._on_device_refresh_requested)
+
+    def _on_device_refresh_requested(self) -> None:
+        """Handle device panel refresh request.
+
+        TODO: Call self._bridge.run_async(discover_devices()) once discovery
+        is wired into the GUI layer.
+        """
 
     def _on_operation_started(self) -> None:
         """Show the progress bar when an operation starts."""
