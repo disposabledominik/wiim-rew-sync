@@ -267,9 +267,8 @@ class WiiMAdapter:
             WiiMConnectionError: Device unreachable.
         """
 
-        # Determine which bands to write based on channel mode
+        # Determine wire channel mode
         if settings.channel_mode == "stereo":
-            bands = settings.bands
             channel_mode_wire = "Stereo"
         else:
             channel_mode_wire = "L/R"

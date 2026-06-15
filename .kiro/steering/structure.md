@@ -50,7 +50,7 @@ The project follows a strict phased approach:
 1. **Models & Translator** — domain models and stateless translation (COMPLETE)
 2. **Network & Discovery** — HTTP clients, device discovery, capability probing (COMPLETE)
 3. **Adapters & Repository** — safe write protocol, backup manager, profile storage (COMPLETE)
-4. **CLI Proof of Concept** — full round-trip against real hardware (COMPLETE — partial hardware validation done)
-5. **GUI Layer** — PySide6 interface built on validated business logic (BLOCKED by Task 32 phase gate)
+4. **CLI Proof of Concept** — full round-trip against real hardware (COMPLETE — all hardware tests passed 2026-06-14)
+5. **GUI Layer** — PySide6 interface built on validated business logic (READY — Task 32 phase gate cleared)
 6. **Packaging** — PyInstaller single-file distribution
 7. **Integrity Fixes** — LP/HP in REW, dynamic max_filters, PBT strategy updates (Phase 10)
