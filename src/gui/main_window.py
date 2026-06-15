@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from src.gui.async_bridge import AsyncBridge
 from src.gui.panels.device_panel import DevicePanel
+from src.gui.panels.eq_panel import EQPanel
 
 
 def _make_placeholder(label_text: str) -> QWidget:
@@ -97,6 +98,11 @@ class MainWindow(QMainWindow):
         """Access the device panel widget."""
         return self._device_panel
 
+    @property
+    def eq_panel(self) -> EQPanel:
+        """Access the EQ panel widget."""
+        return self._eq_panel
+
     def _setup_central_widget(self) -> None:
         """Build the central widget with the vertical splitter layout."""
         # Top-level vertical splitter
@@ -116,8 +122,8 @@ class MainWindow(QMainWindow):
         source_mode_panel.setMaximumWidth(250)
         h_splitter.addWidget(source_mode_panel)
 
-        eq_panel = _make_placeholder("[EQ Panel]")
-        h_splitter.addWidget(eq_panel)
+        self._eq_panel = EQPanel()
+        h_splitter.addWidget(self._eq_panel)
 
         # Set stretch factors: source mode fixed, EQ fills
         h_splitter.setStretchFactor(0, 0)
@@ -187,6 +193,10 @@ class MainWindow(QMainWindow):
         self._bridge.discovery_complete.connect(self._device_panel.on_discovery_complete)
         # TODO: Wire refresh_requested to actual discovery coroutine in a later task
         self._device_panel.refresh_requested.connect(self._on_device_refresh_requested)
+
+        # EQ panel wiring
+        self._bridge.capabilities_ready.connect(self._eq_panel.on_capabilities_ready)
+        self._bridge.peq_ready.connect(self._eq_panel.on_peq_ready)
 
     def _on_device_refresh_requested(self) -> None:
         """Handle device panel refresh request.
