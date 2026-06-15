@@ -1,4 +1,4 @@
-"""OS-appropriate application data directory resolution."""
+"""OS-appropriate application data directory resolution and first-run setup."""
 
 from __future__ import annotations
 
@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 APP_NAME = "wiim-rew-sync"
+
+#: Subdirectories created during first-run setup.
+_SUBDIRECTORIES: tuple[str, ...] = ("logs", "profiles", "backups")
 
 
 def get_app_data_dir() -> Path:
@@ -40,3 +43,36 @@ def get_app_data_dir() -> Path:
             return Path(xdg_data) / APP_NAME
 
     return Path.home() / ".local" / "share" / APP_NAME
+
+
+def ensure_app_directories() -> Path:
+    """Create the application data directory and required subdirectories.
+
+    This function is intended to be called once at application startup
+    (first-run setup). It is idempotent — calling it when directories
+    already exist is a safe no-op.
+
+    Creates:
+        - ``<app_data>/logs/``     — rotating log files
+        - ``<app_data>/profiles/`` — saved user profiles
+        - ``<app_data>/backups/``  — automatic pre-write backups
+
+    Returns:
+        The base application data directory path.
+
+    Raises:
+        RuntimeError: If any directory cannot be created, with a message
+            describing the path and the underlying OS error (Requirement 19.2).
+    """
+    base_dir = get_app_data_dir()
+
+    for subdir_name in _SUBDIRECTORIES:
+        target = base_dir / subdir_name
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise RuntimeError(
+                f"Cannot create application directory '{target}': {exc}"
+            ) from exc
+
+    return base_dir
