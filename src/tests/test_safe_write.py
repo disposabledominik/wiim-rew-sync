@@ -4,9 +4,8 @@ Tests use AsyncMock for adapter and backup_manager to exercise:
 - Success path (backup -> write -> readback matches -> commit)
 - Verify failure triggers rollback (readback doesn't match -> rollback succeeds)
 - Rollback failure logs CRITICAL and returns rollback_success=False
-- Slave device raises WiiMSlaveTargetError
 
-Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11
+Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ from src.adapters.safe_write import SafeWrite
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
-from src.models.errors import WiiMSlaveTargetError
 from src.models.peq import PEQSettings
 from src.repository.backup_manager import BackupManager
 
@@ -75,19 +73,6 @@ def _solo_capabilities() -> DeviceCapabilities:
         firmware="6.0.1.20",
         uuid="test-uuid-1234",
         role="solo",
-    )
-
-
-def _slave_capabilities() -> DeviceCapabilities:
-    """Create slave device capabilities."""
-    return DeviceCapabilities(
-        supports_peq=True,
-        supports_batch_write=True,
-        max_filters=10,
-        model="WiiM_Ultra",
-        firmware="6.0.1.20",
-        uuid="test-uuid-1234",
-        role="slave",
     )
 
 
@@ -375,41 +360,6 @@ class TestRollbackFailure:
 
         assert result.error_message is not None
         assert "backup" in result.error_message.lower()
-
-
-# ---------------------------------------------------------------------------
-# Tests: Slave Guard
-# ---------------------------------------------------------------------------
-
-
-class TestSlaveGuard:
-    """Test that slave devices raise WiiMSlaveTargetError."""
-
-    async def test_slave_raises_error(self, mock_backup_manager: MagicMock) -> None:
-        """Writing to a slave device raises WiiMSlaveTargetError."""
-        adapter = AsyncMock(spec=WiiMAdapter)
-        adapter.capabilities = _slave_capabilities()
-
-        sw = SafeWrite(adapter=adapter, backup_manager=mock_backup_manager)
-        settings = _make_settings()
-
-        with pytest.raises(WiiMSlaveTargetError, match="slave"):
-            await sw.execute("wifi", settings)
-
-    async def test_slave_no_backup_created(self, mock_backup_manager: MagicMock) -> None:
-        """Slave guard fires before any backup or write."""
-        adapter = AsyncMock(spec=WiiMAdapter)
-        adapter.capabilities = _slave_capabilities()
-
-        sw = SafeWrite(adapter=adapter, backup_manager=mock_backup_manager)
-        settings = _make_settings()
-
-        with pytest.raises(WiiMSlaveTargetError):
-            await sw.execute("wifi", settings)
-
-        mock_backup_manager.create_backup.assert_not_called()
-        adapter.write_peq.assert_not_called()
-        adapter.read_peq.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

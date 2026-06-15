@@ -27,9 +27,6 @@ All PEQ commands must use the LV2 family: `EQGetLV2BandEx`, `EQSetLV2Band`, `EQG
 ### Rule 5 — URL-encode JSON payloads
 JSON payloads appended to `httpapi.asp?command=...` query strings must be URL-encoded. Flag any code that builds a WiiM command URL with raw (un-encoded) JSON.
 
-### Rule 6 — Master node targeting for writes
-Write operations (any EQ set/write command) must verify the device role via `GetMultiroomInfo` before sending. If the target is a slave, the code must resolve the master's IP. Flag write paths that skip this check.
-
 ### Rule 10 — Timeout handling
 Every network call (httpx request) must have an explicit timeout. The project default is 5 seconds. Flag any `httpx` call missing a `timeout` parameter or using `timeout=None`.
 

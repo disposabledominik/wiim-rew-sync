@@ -19,7 +19,7 @@
 17. **Given** the REW API is enabled locally, **When** queried, **Then** the user is forced to select a specific measurement ID rather than defaulting.
 18. **Given** RoomFit capabilities are Level 1, **When** the app connects, **Then** the UI shows "RoomFit Active" but disables export/write buttons.
 19. **Given** RoomFit capabilities are Level 4, **When** the app connects, **Then** the user can read, export, and overwrite the RoomFit slots.
-20. **Given** multiple WiiM devices in a multiroom group, **When** a push is executed, **Then** the API targets the master node's IP.
+20. **Given** multiple WiiM devices in a multiroom group, **When** a push is executed on a slave device, **Then** the write targets that specific device (PEQ is per-device, not per-group).
 21. **Given** two devices with identical friendly names, **When** discovered, **Then** they are distinctly identified by IP/MAC address in the UI.
 22. **Given** a push operation with a 0Hz / OFF filter, **When** translated, **Then** the WiiM API correctly disables that specific band.
 23. **Given** a developer needs to debug, **When** Diagnostics Mode is opened, **Then** raw HTTP requests and capability JSON dumps are visible.

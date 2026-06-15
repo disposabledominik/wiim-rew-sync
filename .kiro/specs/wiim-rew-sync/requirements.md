@@ -117,8 +117,6 @@ All data must flow through a Canonical Filter Model — direct REW-to-WiiM or Wi
 8. WHEN any band fails verification, THE Safe_Write component SHALL trigger rollback: write the backup state back to the device via the `WiiM_Command_Queue` and verify the rollback write.
 9. WHEN rollback succeeds, THE Safe_Write component SHALL notify the user that the write failed but the original state has been restored.
 10. WHEN rollback itself fails (e.g. due to network drop), THE Safe_Write component SHALL log a CRITICAL entry to `app.log` including the backup file path, and SHALL display an explicit user-facing message with the backup file path and manual recovery instructions.
-11. THE Safe_Write component SHALL NOT write to a slave node in a multiroom group; all writes SHALL target the master node's IP.
-12. WHEN a PEQ write targets a slave device, THE App SHALL warn the user and SHALL target the master device's IP instead.
 
 ---
 
@@ -304,16 +302,15 @@ All data must flow through a Canonical Filter Model — direct REW-to-WiiM or Wi
 
 ---
 
-### Requirement 17: Multiroom Safety
+### Requirement 17: Multiroom Device Display
 
-**User Story:** As a user with a WiiM multiroom group, I want the application to respect the master/slave topology, so that EQ changes are applied correctly to the master device.
+**User Story:** As a user with a WiiM multiroom group, I want to see each device's group role, so that I understand my network topology.
 
 #### Acceptance Criteria
 
-1. WHEN a device's `role` is `"slave"`, THE App SHALL NOT issue PEQ write commands directly to that device's IP.
-2. WHEN a slave device is selected for a PEQ write, THE App SHALL warn the user and SHALL redirect the write to the master node's IP; IF the master device cannot be identified or reached, THE App SHALL block the operation entirely and display an error message.
-3. WHEN displaying discovered devices, THE App SHALL indicate each device's multiroom role (solo, master, slave); THE App SHALL allow normal operation when no devices are being displayed.
-4. THE WiiM_Adapter SHALL obtain the master node's IP from the `GetMultiroomInfo` response before issuing any PEQ write for a non-solo device.
+1. WHEN displaying discovered devices, THE App SHALL indicate each device's multiroom role (solo, master, slave) as an informational badge.
+2. THE App SHALL allow PEQ and RoomFit read/write operations on any device regardless of its multiroom role (PEQ filters are per-device, not per-group).
+3. THE Capability_Prober SHALL determine the device's multiroom `role` by calling `GetMultiroomInfo` for display purposes only.
 
 ---
 

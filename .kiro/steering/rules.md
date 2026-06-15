@@ -16,8 +16,6 @@ These rules are mandatory for all work in this codebase. They encode hard-won le
 
 5. **JSON payloads in WiiM commands must be URL-encoded** before being appended to the `httpapi.asp?command=...` query string.
 
-6. **Always target the master node for EQ writes.** Check `role` from `GetMultiroomInfo` before writing. If the selected device is a slave, resolve the master's IP and target that instead.
-
 ---
 
 ## REW Rules

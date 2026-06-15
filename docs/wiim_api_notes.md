@@ -373,10 +373,11 @@ EQOff
 
 ## Multiroom
 
-- Check `player.role` from `GetMultiroomInfo`: `0`=solo, `1`=master, `2`=slave.
-- EQ changes must always target the **master node's IP**. Slave nodes may be on internal 10.10.10.x addresses (legacy WiFi Direct firmware < 4.2.8020) and unreachable from the LAN.
-- For modern firmware (≥ 4.2.8020), all nodes remain on the LAN with normal IPs.
-- Before issuing any PEQ write, confirm the target is not a slave.
+- `GetMultiroomInfo` returns the device's group role: `0`=solo, `1`=master, `2`=slave.
+- The multiroom role is **informational only** for this application.
+- PEQ and RoomFit filters are per-device — each device in a group has independent EQ settings.
+- There is no need to redirect writes to the master. Write directly to whichever device the user selected.
+- On older firmware (< 4.2.8020), slave nodes may use internal 10.10.10.x WiFi Direct addresses. Modern firmware keeps all nodes on the LAN with normal IPs.
 
 ---
 
@@ -470,7 +471,7 @@ The `source_name` parameter used in PEQ commands corresponds to the device input
 | Device offline | Connection timeout; catch `httpx.TimeoutException` |
 | Self-signed cert | Use `verify=False`; do not reject — expected behaviour |
 | Malformed JSON response | Log error, raise `WiiMResponseError`, return safe default |
-| Slave node targeted | EQ write will silently do nothing or return an error; always target master |
+| Slave node targeted | PEQ writes work directly on slave nodes (PEQ is per-device); no redirect needed |
 
 ---
 

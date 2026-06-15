@@ -36,7 +36,6 @@ from src.models.errors import (
     ValidationError,
     WiiMConnectionError,
     WiiMResponseError,
-    WiiMSlaveTargetError,
 )
 from src.models.peq import PEQSettings
 from src.repository.backup_manager import BackupManager
@@ -442,12 +441,6 @@ def cmd_set_filters(
                 save_as=save_as, file_right=file_right,
             )
         )
-    except WiiMSlaveTargetError:
-        print(
-            "Error: target is a slave device; write to the master node instead.",
-            file=sys.stderr,
-        )
-        return 1
     except (WiiMConnectionError, WiiMResponseError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

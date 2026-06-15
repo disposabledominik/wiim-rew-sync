@@ -160,10 +160,10 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
 - [x] 20. Implement WiiM adapter — PEQ write and RoomFit
-  - Add `write_peq(source_name, settings, queue)` to `WiiMAdapter`: batch path when `supports_batch_write=True`, queue path otherwise; raise `WiiMSlaveTargetError` if device role is slave
+  - Add `write_peq(source_name, settings, queue)` to `WiiMAdapter`: batch path when `supports_batch_write=True`, queue path otherwise
   - Add `read_roomfit()` and `write_roomfit(filters)` (gated by `roomfit_level`)
-  - Write unit tests: batch path, sequential path, slave guard
-  - _Requirements: 5.3, 5.4, 5.11, 17.1, 17.4_
+  - Write unit tests: batch path, sequential path
+  - _Requirements: 5.3, 5.4_
 
 - [x] 21. Implement WiiM command queue
   - Create `src/adapters/command_queue.py` implementing `WiiMCommandQueue`
@@ -187,9 +187,8 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - `execute()` implements the five-step sequence in order: (1) Backup, (2) Write, (3) Read-Back (fresh call), (4) Verify via `band_matches()`, (5a) Commit / (5b) Rollback
   - On rollback: create `"pre_rollback"` backup; write backup state via queue; verify rollback
   - Rollback failure: log CRITICAL to `app.log` with backup path; return `WriteResult(success=False, rollback_success=False)`
-  - Raise `WiiMSlaveTargetError` if target is slave
   - Write unit tests: success path, verify failure → rollback success, rollback failure → CRITICAL log, batch vs sequential branches
-  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11_
+  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10_
 
 ### Phase 5: REW Adapter & Repository
 
@@ -327,19 +326,15 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - **Export RoomFit**: when RoomFit tab is active, Export REW exports the currently-displayed RoomFit filters (not PEQ)
   - **Import to RoomFit**: when RoomFit tab is active, Import REW → parse file → display in RoomFit filter table → user can Push to save as a profile
   - Wire all buttons to `AsyncBridge.run_async()` with progress indicator and Cancel support
-  - _Requirements: 3.2, 3.6, 5.11, 11.5, 12.1, 12.2, 12.3, 12.4, 12.5, 17.2, 18.4, 18.5, 18.6_
+  - _Requirements: 3.2, 3.6, 11.5, 12.1, 12.2, 12.3, 12.4, 12.5, 18.4, 18.5, 18.6_
 
 - [ ] 40. Implement error dialog and all error handling paths
   - Create `src/gui/dialogs/error_dialog.py` with severity-specific icons
-  - Cover all failure modes: device offline, REW parse error, verify fail + rollback success, verify fail + rollback fail (copyable backup path + recovery steps), REW not connected, measurement not found, schema migration failure, malformed JSON, no-source write attempt, mode mismatch, slave redirect
+  - Cover all failure modes: device offline, REW parse error, verify fail + rollback success, verify fail + rollback fail (copyable backup path + recovery steps), REW not connected, measurement not found, schema migration failure, malformed JSON, no-source write attempt, mode mismatch
   - All errors also written to `app.log` at ERROR or CRITICAL level
   - _Requirements: 14.1–14.8, 5.9, 5.10_
 
-- [ ] 41. Implement multiroom write redirect
-  - In `WiiMAdapter.write_peq()` and `SafeWrite.execute()`: if target role is `"slave"`, call `get_multiroom_master_ip()` and redirect to master IP
-  - If master unreachable: raise `WiiMSlaveTargetError` and block operation
-  - In GUI Push handler: display redirect warning to user; block with error dialog if master unreachable
-  - _Requirements: 5.11, 17.1, 17.2, 17.4_
+- [x] 41. ~~Implement multiroom write redirect~~ CANCELLED — multiroom role is informational only; PEQ is per-device (see corrections.md 2026-06-14)
 
 ### Phase 9: Packaging & Final QA
 
@@ -599,7 +594,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     { "wave": 18, "tasks": [35] },
     { "wave": 19, "tasks": [36, 37, 38] },
     { "wave": 20, "tasks": [39] },
-    { "wave": 21, "tasks": [40, 41] },
+    { "wave": 21, "tasks": [40] },
     { "wave": 22, "tasks": [43] },
     { "wave": 23, "tasks": [44] }
   ]

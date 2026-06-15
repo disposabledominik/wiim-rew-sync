@@ -4,7 +4,7 @@ WiiM device adapter — PEQ read/write and multiroom operations.
 Wraps WiiMHttpClient with domain-aware methods that issue the correct LV2 PEQ
 commands, parse responses via ``wiim_parser``, and return typed domain objects.
 
-Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 5.3, 5.4, 5.11, 17.1, 17.4
+Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 5.3, 5.4, 17.3
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from urllib.parse import quote
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
-from src.models.errors import WiiMConnectionError, WiiMResponseError, WiiMSlaveTargetError
+from src.models.errors import WiiMConnectionError, WiiMResponseError
 from src.models.peq import PEQSettings
 from src.translator.wiim_generator import generate_wiim_band_array
 from src.translator.wiim_parser import parse_wiim_band_array
@@ -263,14 +263,9 @@ class WiiMAdapter:
             queue: Optional command queue for sequential writes.
 
         Raises:
-            WiiMSlaveTargetError: Device role is slave (writes not allowed).
             WiiMResponseError: Device returned an error response.
             WiiMConnectionError: Device unreachable.
         """
-        if self._capabilities.role == "slave":
-            raise WiiMSlaveTargetError(
-                "Cannot write PEQ to a slave device; target the master node instead"
-            )
 
         # Determine which bands to write based on channel mode
         if settings.channel_mode == "stereo":

@@ -180,7 +180,7 @@ class WiiMSyncError(Exception): ...          # Base for all domain errors
 class WiiMConnectionError(WiiMSyncError): ...  # Device unreachable / timeout
 class WiiMTimeoutError(WiiMConnectionError): ...
 class WiiMResponseError(WiiMSyncError): ...    # Malformed or unexpected JSON response
-class WiiMSlaveTargetError(WiiMSyncError): ... # Write attempted against a slave node
+class WiiMSlaveTargetError(WiiMSyncError): ... # Reserved for future use (not currently raised)
 
 # Translation / parsing
 class ParseError(WiiMSyncError): ...           # REW file or WiiM response unparse-able
@@ -429,7 +429,6 @@ class WiiMAdapter:
         """
         Write PEQ bands using the queue (sequential) or batch path.
         Uses EQSetLV2SourceBand.
-        Raises WiiMSlaveTargetError if this adapter's device is a slave.
         """
 
     async def read_roomfit(self, source_name: str, profile_name: str) -> list[CanonicalFilter]:
@@ -669,7 +668,6 @@ class SafeWrite:
               c. Verify rollback write
               d. If rollback succeeds → return WriteResult(success=False, rollback_success=True)
               e. If rollback fails → log CRITICAL, return WriteResult(success=False, rollback_success=False)
-        Raises WiiMSlaveTargetError if target is a slave node.
         """
 ```
 
@@ -1172,7 +1170,7 @@ The PBT library for this project is **[Hypothesis](https://hypothesis.readthedoc
 |---|---|---|
 | `WiiMConnectionError` / `WiiMTimeoutError` | Network | Show "Device offline" dialog; log to `app.log` at ERROR |
 | `WiiMResponseError` | Network | Show generic communication error; log to `wiim_api.log` at ERROR |
-| `WiiMSlaveTargetError` | Write guard | Show warning + redirect to master IP; block if master unreachable |
+| `WiiMSlaveTargetError` | Reserved | Reserved for future use (not currently raised) |
 | `ParseError` | REW file parse | Show parse error with line number; block all device operations |
 | `ValidationError` | REW file / Canonical | Show validation warning; require acknowledgement before proceeding |
 | `SchemaVersionError` | Profile load | Show clear error; refuse to load profile |

@@ -8,7 +8,7 @@ Implements the mandatory safety protocol for all PEQ device writes:
 4. Verify via band_matches()
 5a. Commit on success / 5b. Rollback on failure
 
-Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11
+Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.models.canonical import CanonicalFilter
-from src.models.errors import WiiMSlaveTargetError
 from src.models.peq import PEQSettings
 from src.utils.fp_compare import band_matches
 
@@ -79,17 +78,8 @@ class SafeWrite:
 
         Returns:
             WriteResult indicating success/failure and rollback status.
-
-        Raises:
-            WiiMSlaveTargetError: If the device role is slave.
         """
         capabilities = self._adapter.capabilities
-
-        # Slave guard: refuse writes to slave nodes
-        if capabilities.role == "slave":
-            raise WiiMSlaveTargetError(
-                "Cannot write PEQ to a slave device; target the master node instead"
-            )
 
         # Step 1: Backup current device state
         current_settings = await self._adapter.read_peq(source_name)

@@ -11,7 +11,7 @@ from src.adapters.safe_write import WriteResult
 from src.cli import main as cli
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
-from src.models.errors import WiiMConnectionError, WiiMSlaveTargetError
+from src.models.errors import WiiMConnectionError
 from src.models.peq import PEQSettings
 
 # ---------------------------------------------------------------------------
@@ -503,30 +503,6 @@ def test_set_filters_via_main_exits_zero_on_success(
         cli.main(["set-filters", "--file", str(rew_file), "--device", "192.168.1.50"])
 
     assert exc_info.value.code == 0
-
-
-def test_set_filters_slave_target_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    rew_file = tmp_path / "filters.txt"
-    rew_file.write_text(_VALID_REW_FOR_SET, encoding="utf-8")
-
-    _patch_set_filters_stack(
-        monkeypatch,
-        execute_side_effect=WiiMSlaveTargetError("Cannot write to slave"),
-    )
-
-    code = cli.cmd_set_filters(
-        device="192.168.1.50",
-        source=None,
-        file=str(rew_file),
-        channel="stereo",
-        timeout=5.0,
-    )
-
-    captured = capsys.readouterr()
-    assert code == 1
-    assert "slave device" in captured.err
 
 
 # ---------------------------------------------------------------------------
