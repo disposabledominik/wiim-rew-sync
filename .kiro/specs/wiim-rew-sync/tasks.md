@@ -259,21 +259,21 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 7: GUI Implementation
 
-- [ ] 33. Implement async bridge and main window scaffold
+- [x] 33. Implement async bridge and main window scaffold
   - Create `src/gui/async_bridge.py` implementing `AsyncBridge` with `start()`, `run_async()`, `shutdown()` and all signals from design
   - Wrap all async operations with `operation_started` / `operation_finished` / `progress_update` signals
   - Create `src/gui/main_window.py` with the layout from design (vertical splitter, device panel, EQ panel, action bar, profile tab widget, diagnostics dock widget)
   - Connect `closeEvent` to `AsyncBridge.shutdown()`
   - _Requirements: 18.1, 18.2, 18.3, 18.4_
 
-- [ ] 34. Implement device panel
+- [x] 34. Implement device panel
   - Create `src/gui/panels/device_panel.py`
   - `QListWidget` showing: friendly name, IP, model, firmware, role badge, capability icons
   - Refresh button triggers non-blocking discovery; "No devices found" state shown when list is empty
   - On device selection: trigger `CapabilityProber.probe()` via `AsyncBridge`; emit `capabilities_ready`
   - _Requirements: 1.5, 2.1, 17.3, 18.4, 18.6_
 
-- [ ] 35. Implement EQ panel and source selector
+- [x] 35. Implement EQ panel and source selector
   - Create `src/gui/panels/eq_panel.py`
   - Source selector: populated from `capabilities.source_names`; no source pre-selected for write; currently active source pre-selected for display
   - Channel mode selector: disabled when `supports_channel_peq=False`
@@ -290,13 +290,13 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     - New profile name input: text field appears when user chooses "Save as new name" or when no profile is selected
   - _Requirements: 3.1, 3.2, 3.3, 3.5, 4.1, 11.1, 11.2, 11.3, 11.4, 11.5, 11.7_
 
-- [ ] 36. Implement import and export dialogs
+- [x] 36. Implement import and export dialogs
   - Create `src/gui/dialogs/import_dialog.py`: `.txt` file dialog; synchronous parse; preview table with `ValidationWarning` items highlighted in orange; inline warning banner with acknowledgement checkbox if `len(filters) > max_filters`
   - Create `src/gui/dialogs/export_dialog.py`: save-mode file dialog; L/R mode shows two path fields with `_L.txt` / `_R.txt` pre-fills
   - **NOTE**: `REWGenerator.generate_file()` currently logs UNKNOWN-band skipping but does NOT return `ValidationWarning` objects to the caller. The export dialog needs to surface these warnings to the user. Refactor `generate_file()` to return `list[ValidationWarning]` (or accept a warnings accumulator) so the export dialog can display "N bands were omitted because their filter type is unknown."
   - _Requirements: 6.7, 6.8, 6.9, 6.10, 7.6, 14.2_
 
-- [ ] 37. Implement profile panel
+- [x] 37. Implement profile panel
   - Create `src/gui/panels/profile_panel.py`
   - **Local profiles tab**: All nine CRUD+tag operations accessible from the panel
   - Loading a local profile populates the filter table in the EQ panel
@@ -308,7 +308,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
     - Device presets are read-only in the table (editing happens via the PEQ filter table + Push)
   - _Requirements: 9.5, 9.11_
 
-- [ ] 38. Implement diagnostics panel
+- [x] 38. Implement diagnostics panel
   - Create `src/gui/panels/diagnostics_panel.py` as hidden `QDockWidget`
   - Header: `"⚠ Developer Diagnostics — Not for production use"`
   - Raw command input with explicit Send button (no background polling); response display; capability dump; `wiim_api.log` tail (last 100 lines)
@@ -316,7 +316,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 8: Action Bar, Error Handling & Polish
 
-- [ ] 39. Implement action bar and wire async operations
+- [x] 39. Implement action bar and wire async operations
   - Create the `ActionBar` widget with Import REW, Export REW, Pull, Push, Dry Run buttons
   - Gate buttons by device/source selection and capabilities
   - Dry Run toggle: "DRY RUN" label visible when active (e.g. red background); suppress all device writes, backup creation, and queue calls; display translated filters with validation warnings
@@ -338,7 +338,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 
 ### Phase 9: Packaging & Final QA
 
-- [ ] 42. Implement OS-appropriate directory resolution and first-run setup
+- [x] 42. Implement OS-appropriate directory resolution and first-run setup
   - Create `src/utils/app_dirs.py` returning correct app data directory per OS
   - On startup: auto-create `logs/` and profile storage directories; abort with specific error if creation fails
   - _Requirements: 9.1, 19.2_
