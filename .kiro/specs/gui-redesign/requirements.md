@@ -195,10 +195,12 @@ The GUI Redesign replaces the current panel-based layout of the WiiM ↔ REW PEQ
 #### Acceptance Criteria
 
 1. WHEN the connected device has `roomfit_level` of 0, THE App SHALL hide all RoomFit UI elements entirely.
-2. WHEN the connected device has `roomfit_level` of 1 or higher, THE App SHALL display a "RoomFit" section in the Source step indicating RoomFit is available on this device.
-3. WHEN `roomfit_level` is 2 or higher, THE App SHALL allow the user to pull RoomFit filters as an option alongside PEQ pull in the Filters step.
-4. WHEN `roomfit_level` is 4, THE App SHALL allow the user to push filters to a RoomFit slot, offering a RoomFit profile picker during the Review step.
+2. WHEN the connected device has `roomfit_level` of 1 or higher, THE App SHALL display a "RoomFit" section in the Device Library indicating RoomFit is available on this device.
+3. WHEN `roomfit_level` is 2 or higher, THE App SHALL allow the user to pull RoomFit filters as an option in the Filters step.
+4. WHEN `roomfit_level` is 4, THE App SHALL allow the user to push filters to a RoomFit profile slot, offering a profile name picker during the Review step.
 5. THE App SHALL visually distinguish RoomFit operations from PEQ operations using a label or badge so the user always knows which filter type is being modified.
+6. WHEN the user is in a RoomFit workflow (pull, push, browse, or export), THE App SHALL NOT display a source/input selector; RoomFit filters apply globally to all inputs on the device. The source step SHALL be skipped entirely for RoomFit operations.
+7. WHEN the wizard detects that the user's selected action targets RoomFit (e.g. browsing RoomFit profiles, pushing to a RoomFit slot), THE Step_Indicator SHALL show the RoomFit-specific sequence: Connect → Filters → Review → Name Profile → Push (no Source step).
 
 ---
 

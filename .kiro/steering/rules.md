@@ -26,6 +26,12 @@ These rules are mandatory for all work in this codebase. They encode hard-won le
 
 ---
 
+## RoomFit Rules
+
+6. **RoomFit filters are global — not per-input.** Unlike PEQ which applies per source (wifi, HDMI, etc.), RoomFit profiles apply to all audio inputs on the device. The UI must never show a source/input selector for RoomFit operations. The API uses a `source_name` parameter internally, but from the user's perspective RoomFit is device-wide.
+
+---
+
 ## Safety & Write Protocol
 
 9. **Every device write requires backup and verification.** No exceptions. Follow the strict 5-step protocol in `docs/architecture.md`: Backup → Write → Read Back → Verify → Commit/Rollback.
