@@ -311,7 +311,99 @@ The GUI Redesign replaces the current panel-based layout of the WiiM ↔ REW PEQ
 
 ---
 
-### Requirement 18: Log File Accessibility
+### Requirement 18: Undo Last Push (Restore Previous State)
+
+**User Story:** As a user who just pushed new filters that don't sound right, I want to quickly revert to what was on the device before, so that I can undo my change without technical knowledge of backup files.
+
+#### Acceptance Criteria
+
+1. AFTER a successful push, THE App SHALL display a prominent "Undo" action in the success state that remains available until the user starts a new workflow or closes the App.
+2. WHEN the user clicks "Undo", THE App SHALL restore the device's PEQ state from the most recent backup record created during the push operation (the "pre_write" backup).
+3. THE Undo operation SHALL follow the same Safe_Write_Protocol as a normal push (backup current state → write backup data → verify → commit/rollback), ensuring the undo itself is also safe and verified.
+4. WHEN the Undo completes successfully, THE App SHALL display "Previous filters restored" in the Status_Banner.
+5. THE App SHALL also provide access to older backups via a "Restore from Backup" option in the Settings or Device Library view, listing recent backups by date and time with the source name and device.
+6. THE App SHALL NOT require the user to know about JSON backup files, file paths, or the file system to perform an undo.
+
+---
+
+### Requirement 19: Compare Before/After Filters
+
+**User Story:** As an audiophile tweaking my room correction, I want to see what changed between my current device state and what I'm about to push, so that I can verify my adjustments before committing.
+
+#### Acceptance Criteria
+
+1. WHEN the user reaches the Review step and the device already has PEQ data loaded (from a prior pull), THE App SHALL offer a "Compare with device" toggle that shows a side-by-side or diff view of the current device state vs. the filters about to be pushed.
+2. THE comparison view SHALL highlight differences per band: changed values shown in a distinct color, unchanged bands shown dimmed or with a "no change" indicator.
+3. THE comparison view SHALL show gain differences (e.g. "+2.5 dB") to make changes immediately understandable.
+4. WHEN there is no prior device state available (e.g. user imported a file without pulling first), THE App SHALL show the comparison toggle as disabled with a tooltip: "Pull current device filters first to enable comparison."
+5. THE comparison view SHALL NOT block the push flow — it is informational only, and the user can dismiss it and proceed.
+
+---
+
+### Requirement 20: Copy PEQ Filters to Another Source
+
+**User Story:** As a user who wants the same room correction on multiple audio inputs (e.g. wifi and optical), I want to quickly copy my PEQ filters to another source without repeating the entire wizard.
+
+#### Acceptance Criteria
+
+1. AFTER a successful PEQ push (or when viewing pulled PEQ filters), THE App SHALL offer a "Copy to another source" action.
+2. WHEN the user clicks "Copy to another source", THE App SHALL display a list of the device's other available sources (excluding the current source) as selectable targets.
+3. THE user SHALL be able to select one or more target sources for the copy operation.
+4. FOR EACH selected target source, THE App SHALL execute the Safe_Write_Protocol independently (backup target source → write → verify → commit/rollback per source).
+5. THE App SHALL display per-source progress and results (e.g. "wifi ✓, optical ✓, HDMI ✗ — rollback succeeded").
+6. THIS feature applies to PEQ only. RoomFit is device-global and does not need per-source copying.
+
+---
+
+### Requirement 21: Apply Filters to Multiple Devices
+
+**User Story:** As a user with multiple WiiM devices, I want to apply the same REW room correction file to several devices at once, so that I don't have to repeat the workflow for each room.
+
+#### Acceptance Criteria
+
+1. WHEN the user reaches the Review step, THE App SHALL offer an "Apply to multiple devices" option if more than one device was found during discovery.
+2. WHEN the user selects "Apply to multiple devices", THE App SHALL display all discovered devices as checkboxes; the currently connected device SHALL be pre-checked.
+3. FOR EACH selected device, THE user SHALL be able to specify the target source (since PEQ is per-source per-device).
+4. THE App SHALL execute the push sequentially per device (connect → probe → write → verify) and display per-device progress and results.
+5. WHEN a push fails on one device, THE App SHALL report the failure for that device, rollback that device, and continue with the remaining devices (no all-or-nothing).
+6. THE App SHALL display a summary after all devices are processed: "3 of 4 devices updated successfully. 1 failed (see details)."
+
+---
+
+### Requirement 22: PEQ and RoomFit Enable/Disable Toggle
+
+**User Story:** As an audiophile, I want to quickly enable or disable PEQ or RoomFit on my device with one click, so that I can A/B test with and without EQ while listening.
+
+#### Acceptance Criteria
+
+1. WHEN a device is connected and PEQ is supported, THE App SHALL display a clearly visible PEQ on/off toggle in the device status area (visible in all workflow steps).
+2. THE PEQ toggle SHALL reflect the current device state: ON when `EQStat` is "On", OFF when "Off".
+3. WHEN the user toggles PEQ ON, THE App SHALL send the `EQChangeSourceFX` command with the selected source and pluginURI to enable PEQ on that source.
+4. WHEN the user toggles PEQ OFF, THE App SHALL send the `EQSourceOff` command with the selected source and pluginURI to disable PEQ on that source.
+5. WHEN the connected device has `roomfit_level >= 1`, THE App SHALL display a separate RoomFit on/off toggle alongside the PEQ toggle.
+6. THE RoomFit toggle SHALL use the appropriate API mechanism to enable/disable RoomFit. IF no dedicated RoomFit toggle command is confirmed in the API, THE App SHALL use the Uncertainty Protocol: log the gap in `docs/corrections.md`, disable the RoomFit toggle in the UI with a tooltip "RoomFit toggle not yet supported — use the WiiM Home app", and implement when the API mechanism is confirmed.
+7. THE toggle actions SHALL NOT require backup or safe-write (they do not modify filter data, only the enabled/disabled state).
+8. THE toggle state change SHALL provide immediate visual feedback (toggle animates, Status_Banner shows "PEQ enabled" or "PEQ disabled") with the actual device state confirmed via a read-back within 1 second.
+
+---
+
+### Requirement 23: First-Run Onboarding
+
+**User Story:** As a first-time user who has never used a PEQ sync tool, I want a brief introduction explaining what this app does and how to get started, so that I'm not overwhelmed by an unfamiliar interface.
+
+#### Acceptance Criteria
+
+1. WHEN the App is launched for the first time (no settings file exists), THE App SHALL display a welcome overlay with a brief explanation of what the app does: "Transfer room correction filters between REW and your WiiM device."
+2. THE onboarding overlay SHALL present 3 key capabilities as simple icons + one-sentence descriptions: (1) Import filters from REW, (2) Push to your WiiM device safely, (3) Save and manage presets.
+3. THE onboarding overlay SHALL include a "Get Started" button that dismisses the overlay and begins the wizard at the Connect step.
+4. THE onboarding overlay SHALL include a "Skip" link for returning users on a fresh install.
+5. THE App SHALL NOT show the onboarding overlay on subsequent launches.
+6. THE App SHALL auto-enable Dry Run mode for first-time users (Requirement 12.4) as an additional safety net.
+7. THE Settings view SHALL include a "Show onboarding again" option for users who want a refresher.
+
+---
+
+### Requirement 24: Log File Accessibility
 
 **User Story:** As a user experiencing issues, I want to easily find and share log files, so that I or a support contact can diagnose problems.
 
@@ -325,7 +417,7 @@ The GUI Redesign replaces the current panel-based layout of the WiiM ↔ REW PEQ
 
 ---
 
-### Requirement 19: Windows 11 Fluent Design Alignment
+### Requirement 25: Windows 11 Fluent Design Alignment
 
 **User Story:** As a Windows 11 user, I want the application to look and feel like a modern Windows app, so that it integrates visually with my desktop environment.
 
@@ -343,7 +435,7 @@ The GUI Redesign replaces the current panel-based layout of the WiiM ↔ REW PEQ
 
 ---
 
-### Requirement 20: Accessibility and Usability
+### Requirement 26: Accessibility and Usability
 
 **User Story:** As a user who may have vision or motor impairments, I want the application to be usable with keyboard navigation and screen readers, so that the tool is accessible to all audiophiles.
 
