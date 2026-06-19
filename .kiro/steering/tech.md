@@ -117,6 +117,15 @@ pip3 install -e ".[dev]"
 - **Shared interfaces:** When Task A creates a module that Task B calls, specify exact method names/signatures in both prompts.
 - **Verify after:** Run full test suite to catch interface mismatches.
 
+## Testing Policy
+
+- **Every module requires comprehensive unit tests.** No production module is considered complete without a matching `test_<module>.py` covering its public API, edge cases, and error paths.
+- **Every bug fix must include a regression test.** The test should fail before the fix and pass after. This proves the fix works and prevents regressions.
+- **Every new feature must include tests.** Feature code and its tests are delivered together — never ship functionality without test coverage.
+- **Property-based tests (Hypothesis) for stateful logic.** State machines, translation engines, and data pipelines get PBT in addition to unit tests.
+- **GUI components use pytest-qt (qtbot).** Test signal emission, state transitions, and user interactions. Mock AsyncBridge — no real network in GUI tests.
+- **Test tasks are never optional.** All test-related tasks in specs are required, not skippable.
+
 ## Task Completion Quality Gate
 
 1. `python3 -m pytest src/tests/test_<module>.py -v --no-cov` — task's own tests pass
