@@ -659,6 +659,13 @@ class WiiMAdapter:
     # RoomFit
     # ------------------------------------------------------------------
 
+    # TODO: RoomFit toggle — no HTTP API command found to enable/disable the
+    # RoomFit DSP-active state. Tested EQSourceOff+EQLevel:2, EQChangeSourceFX+
+    # EQLevel:2, setRoomCorrection, MCURoomCorrection, EQSetRoomFit, and
+    # EQSetLV2Stat — none affect the DSP. The WiiM app controls this internally.
+    # Revisit if future firmware or community research reveals a mechanism.
+    # See docs/corrections.md (2026-06-15) for full test results.
+
     async def read_roomfit(
         self, source_name: str, profile_name: str
     ) -> PEQSettings:

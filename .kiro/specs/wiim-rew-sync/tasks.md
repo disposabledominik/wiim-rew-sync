@@ -652,8 +652,9 @@ Findings from full codebase integrity review. Decisions documented here for futu
   - _API commands confirmed in `docs/wiim_api_notes.md`: `EQChangeSourceFX` (enable) and `EQSourceOff` (disable)_
   - _Prerequisite for GUI Redesign Requirement 22 (PEQ/RoomFit toggle)_
 
-- [ ] 58. Investigate and document RoomFit enable/disable mechanism
+- [x] 58. Investigate and document RoomFit enable/disable mechanism
   - **Goal**: Determine whether RoomFit can be toggled on/off independently via the WiiM HTTP API, and if so, implement the adapter method.
+  - **Result**: NOT CONFIRMED — no API command toggles RoomFit DSP state (2026-06-15). Uncertainty Protocol applied.
   - **Investigation steps**:
     1. Test `EQSourceOff` with `EQLevel: 2` against a RoomFit-capable device — does this disable RoomFit without affecting PEQ?
     2. Test `EQChangeSourceFX` with `EQLevel: 2` — does this re-enable RoomFit?

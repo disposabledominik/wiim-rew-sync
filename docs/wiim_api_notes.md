@@ -128,9 +128,25 @@ The complete write sequence is:
 |-------|---------|-----------|
 | Profile storage | `EQv2GetNewList` / `EQSourceSave` / `EQv2Delete` | CRUD for saved profiles |
 | API working buffer | `EQv2SourceLoad` → `EQGetLV2SourceBandEx` / `EQSetLV2SourceBand` | Read/write bands of loaded profile |
-| DSP-active state | WiiM app only (no known API command) | What's actually applied to audio |
+| DSP-active state | WiiM app only (**no API command exists** — confirmed 2026-06-15) | What's actually applied to audio |
 
 **Key difference from PEQ:** For PEQ (EQLevel 1), `EQGetLV2SourceBandEx` returns the live DSP state without needing a prior load. For RoomFit (EQLevel 2), reads return the working buffer — which is device-global and persistent across connections (not session-scoped). Always `EQv2SourceLoad` before reading to ensure you're reading the intended profile.
+
+### RoomFit DSP Toggle — NOT POSSIBLE (confirmed 2026-06-15)
+
+There is **no HTTP API command** to enable or disable RoomFit processing on the DSP. The following were tested against a WiiM device with RoomFit active:
+
+| Command | Response | Effect on DSP |
+|---------|----------|---------------|
+| `EQSourceOff` + `EQLevel: 2` + pluginURI | `{'status': 'OK'}` | None |
+| `EQChangeSourceFX` + `EQLevel: 2` + pluginURI | `{'status': 'OK'}` | None |
+| `EQSourceOff` + `EQLevel: 2` (no pluginURI) | `{'status': 'Failed'}` | None |
+| `setRoomCorrection:0` | `OK` (readable via `getRoomCorrection` → `0`) | None — unrelated to LV2 RoomFit |
+| `MCURoomCorrection:0` | `unknown command` | N/A |
+| `EQSetRoomFit:Off` | `{'status': 'Failed'}` | N/A |
+| `EQSetLV2Stat` + `EQLevel: 2` + `EQStat: Off` | `{'status': 'Failed'}` | N/A |
+
+**Conclusion:** The DSP-active state (which RoomFit profile is applied to audio) is controlled exclusively by the WiiM app's internal logic. The HTTP API can read/write/save profiles but cannot activate or deactivate them on the DSP.
 
 ### RoomFit Profile CRUD (all confirmed 2026-06-14)
 
