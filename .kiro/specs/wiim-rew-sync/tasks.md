@@ -628,3 +628,67 @@ Findings from full codebase integrity review. Decisions documented here for futu
 3. **`src/utils/app_dirs.py` has no dedicated test file** — RESOLVED. Added as Task 54 in wave 14.9 (pre-packaging). Will be implemented alongside Tasks 52/53.
 
 4. **mypy "unused section" warning for PySide6/respx/zeroconf overrides** — RESOLVED. Set `warn_unused_configs = false` in pyproject.toml. These overrides exist for GUI-phase imports. The note was harmless but noisy.
+
+- [ ] 57. Implement PEQ enable/disable toggle in WiiMAdapter
+  - Add `enable_peq(source_name: str)` method to `WiiMAdapter`:
+    - Issues `EQChangeSourceFX` with JSON `{"source_name": "<source>", "pluginURI": "http://moddevices.com/plugins/caps/EqNp"}`
+    - Returns None on success, raises `WiiMResponseError` on failure
+  - Add `disable_peq(source_name: str)` method to `WiiMAdapter`:
+    - Issues `EQSourceOff` with JSON `{"source_name": "<source>", "pluginURI": "http://moddevices.com/plugins/caps/EqNp"}`
+    - Returns None on success, raises `WiiMResponseError` on failure
+  - Add `get_peq_enabled(source_name: str)` method to `WiiMAdapter`:
+    - Issues `EQGetLV2SourceBandEx` and reads the `EQStat` field ("On" / "Off")
+    - Returns `bool` (True = enabled)
+  - Add unit tests in `src/tests/test_wiim_adapter.py`:
+    - Test: `enable_peq("wifi")` sends correct command with pluginURI
+    - Test: `disable_peq("wifi")` sends correct `EQSourceOff` command
+    - Test: `get_peq_enabled()` returns True when response has `EQStat: "On"`, False for `"Off"`
+    - Test: command failure raises `WiiMResponseError`
+  - Add CLI command `peq-toggle --device <IP> --source <source> --state <on|off>`:
+    - Calls `enable_peq()` or `disable_peq()` based on `--state`
+    - Prints confirmation: "PEQ enabled on wifi" / "PEQ disabled on wifi"
+    - Exit code 0 on success, 1 on error
+  - **Does NOT require safe-write**: toggling enable/disable does not modify filter data, only the active state
+  - _API commands confirmed in `docs/wiim_api_notes.md`: `EQChangeSourceFX` (enable) and `EQSourceOff` (disable)_
+  - _Prerequisite for GUI Redesign Requirement 22 (PEQ/RoomFit toggle)_
+
+- [ ] 58. Investigate and document RoomFit enable/disable mechanism
+  - **Goal**: Determine whether RoomFit can be toggled on/off independently via the WiiM HTTP API, and if so, implement the adapter method.
+  - **Investigation steps**:
+    1. Test `EQSourceOff` with `EQLevel: 2` against a RoomFit-capable device — does this disable RoomFit without affecting PEQ?
+    2. Test `EQChangeSourceFX` with `EQLevel: 2` — does this re-enable RoomFit?
+    3. Test `EQv2SourceLoad` with an empty/null profile name — does this deactivate RoomFit?
+    4. Check if there's a separate `RoomFit` toggle in `getStatusEx` response or `setProperty`-style commands
+    5. Check `pywiim` source and WiiM community forums for any documented toggle mechanism
+  - **If mechanism is confirmed**:
+    - Add `enable_roomfit()` / `disable_roomfit()` / `get_roomfit_enabled()` to `WiiMAdapter`
+    - Add unit tests
+    - Add CLI command `roomfit-toggle --device <IP> --state <on|off>`
+    - Update `docs/wiim_api_notes.md` with the confirmed commands
+  - **If mechanism is NOT confirmed (Uncertainty Protocol)**:
+    - Document the finding in `docs/corrections.md` as an open issue
+    - Add a `# TODO: RoomFit toggle` comment in `wiim_adapter.py`
+    - The GUI redesign (Req 22.6) will show the RoomFit toggle as disabled with tooltip "RoomFit toggle not yet supported — use the WiiM Home app"
+  - **This task requires access to real WiiM hardware** and cannot be fully completed without manual testing
+  - _Prerequisite for GUI Redesign Requirement 22 (PEQ/RoomFit toggle)_
+
+- [ ] 59. Implement global crash handler and support bundle generator
+  - **Global crash handler** (`src/logging/setup.py` or entry point):
+    - Install `sys.excepthook` that writes full traceback to `app.log` at CRITICAL level
+    - Include: timestamp, exception type, message, full stack trace
+    - Must work even if the GUI event loop has crashed
+    - Add unit test: simulate unhandled exception → verify it appears in app.log
+  - **Support bundle generator** (`src/utils/support_bundle.py`):
+    - `generate_support_bundle(output_path: Path) -> Path`: creates a timestamped `.zip` containing:
+      - All three log files (current + most recent `.1` archive if it exists)
+      - The app's settings/config file (if it exists)
+      - A `device_info.json` with last-known device capabilities (if available)
+      - A `version.txt` with the app version string
+    - SHALL NOT include user filter data, profiles, or backup files (privacy)
+    - Zip named `wiim-rew-sync-support-YYYY-MM-DD-HHMMSS.zip`
+    - Add unit tests: verify zip contents, verify no profile data leaks, verify graceful handling when log files don't exist
+  - **Configurable log path** (`src/utils/app_dirs.py`):
+    - Add `get_log_dir() -> Path` that checks settings file for a custom path override before falling back to the default OS-specific path
+    - Update `src/logging/setup.py` to use `get_log_dir()` instead of hardcoded path construction
+    - Add unit test: verify custom path override works, verify fallback to default
+  - _Prerequisite for GUI Redesign Requirement 24 (Log Accessibility and Crash Handling)_
