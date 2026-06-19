@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.utils.app_dirs import APP_NAME, ensure_app_directories, get_app_data_dir
+from src.utils.app_dirs import APP_NAME, ensure_app_directories, get_app_data_dir, get_log_dir
 
 
 class TestWindowsPath:
@@ -130,3 +130,37 @@ class TestEnsureAppDirectories:
             with patch.object(Path, "mkdir", side_effect=OSError("Permission denied")):
                 with pytest.raises(RuntimeError, match=str(tmp_path)):
                     ensure_app_directories()
+
+
+class TestGetLogDir:
+    """Tests for get_log_dir() with optional settings override."""
+
+    def test_returns_override_path_when_valid_directory(self, tmp_path: Path) -> None:
+        """A valid, existing directory override is returned directly."""
+        custom_dir = tmp_path / "custom_logs"
+        custom_dir.mkdir()
+        result = get_log_dir(settings_override=str(custom_dir))
+        assert result == custom_dir
+
+    def test_falls_back_to_default_when_override_is_none(self) -> None:
+        """None override returns the default logs path."""
+        result = get_log_dir(settings_override=None)
+        expected = get_app_data_dir() / "logs"
+        assert result == expected
+
+    def test_falls_back_to_default_when_override_is_empty_string(self) -> None:
+        """Empty string override returns the default logs path."""
+        result = get_log_dir(settings_override="")
+        expected = get_app_data_dir() / "logs"
+        assert result == expected
+
+    def test_falls_back_to_default_when_override_path_does_not_exist(self) -> None:
+        """Non-existent override path returns the default logs path."""
+        result = get_log_dir(settings_override="/nonexistent/path/to/logs")
+        expected = get_app_data_dir() / "logs"
+        assert result == expected
+
+    def test_default_path_ends_with_logs(self) -> None:
+        """The default log directory is always named 'logs'."""
+        result = get_log_dir()
+        assert result.name == "logs"

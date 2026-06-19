@@ -632,6 +632,40 @@ def cmd_set_roomfit_filters(
 
 
 # ---------------------------------------------------------------------------
+# peq-toggle — enable or disable PEQ on a source
+# ---------------------------------------------------------------------------
+
+
+async def _peq_toggle(device: str, source: str, state: str, timeout: float) -> None:
+    """Enable or disable PEQ on a source."""
+    client = WiiMHttpClient(device, timeout=timeout)
+    try:
+        capabilities = await CapabilityProber(client).probe()
+        adapter = WiiMAdapter(client, capabilities)
+        if state == "on":
+            await adapter.enable_peq(source)
+        else:
+            await adapter.disable_peq(source)
+    finally:
+        await client.close()
+
+
+def cmd_peq_toggle(device: str, source: str, state: str, timeout: float) -> int:
+    """Enable or disable PEQ on a source. Exit 0 on success, 1 on error."""
+    try:
+        asyncio.run(_peq_toggle(device, source, state, timeout))
+    except (WiiMConnectionError, WiiMResponseError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if state == "on":
+        print(f"PEQ enabled on {source}")
+    else:
+        print(f"PEQ disabled on {source}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Argument parsing & dispatch
 # ---------------------------------------------------------------------------
 
@@ -783,6 +817,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to a REW EQ text file.",
     )
 
+    peq_toggle = subparsers.add_parser(
+        "peq-toggle",
+        help="Enable or disable PEQ on a specific source.",
+    )
+    peq_toggle.add_argument("--device", required=True, help="Device IP address.")
+    peq_toggle.add_argument(
+        "--source", default="wifi",
+        help="Audio input source (default: wifi).",
+    )
+    peq_toggle.add_argument(
+        "--state", required=True, choices=["on", "off"],
+        help="Desired PEQ state: 'on' to enable, 'off' to disable.",
+    )
+
     return parser
 
 
@@ -822,6 +870,8 @@ def run(argv: list[str] | None = None) -> int:
         return cmd_set_roomfit_filters(
             args.device, args.source, args.profile, args.file, args.timeout
         )
+    if args.command == "peq-toggle":
+        return cmd_peq_toggle(args.device, args.source, args.state, args.timeout)
 
     # argparse enforces a valid subcommand, so this is unreachable.
     parser.error(f"Unknown command: {args.command}")

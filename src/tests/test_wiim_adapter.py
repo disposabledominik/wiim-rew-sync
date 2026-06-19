@@ -1255,3 +1255,163 @@ class TestSetChannelMode:
         first_call = mock_client.command.call_args_list[0][0][0]
         assert "EQSetLV2ChannelMode:" in first_call
         assert "L%2FR" in first_call or "L/R" in first_call
+
+
+# ---------------------------------------------------------------------------
+# Tests: PEQ Enable/Disable Toggle
+# ---------------------------------------------------------------------------
+
+
+class TestEnablePeq:
+    """Test enable_peq — enabling PEQ on a source via EQChangeSourceFX."""
+
+    async def test_enable_peq_sends_correct_command(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """enable_peq issues EQChangeSourceFX with source_name and pluginURI."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.enable_peq("wifi")
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQChangeSourceFX:")
+        assert "wifi" in call_args
+        assert "EqNp" in call_args
+
+    async def test_enable_peq_returns_none_on_success(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """enable_peq returns None on successful call."""
+        mock_client.command.return_value = "OK"
+
+        result = await adapter.enable_peq("wifi")
+
+        assert result is None
+
+    async def test_enable_peq_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """WiiMConnectionError propagates from enable_peq."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.enable_peq("wifi")
+
+    async def test_enable_peq_response_error_on_failure(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """enable_peq raises WiiMResponseError when response contains error."""
+        mock_client.command.side_effect = WiiMResponseError("HTTP 500")
+
+        with pytest.raises(WiiMResponseError):
+            await adapter.enable_peq("wifi")
+
+
+class TestDisablePeq:
+    """Test disable_peq — disabling PEQ on a source via EQSourceOff."""
+
+    async def test_disable_peq_sends_correct_command(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """disable_peq issues EQSourceOff with source_name and pluginURI."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.disable_peq("wifi")
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQSourceOff:")
+        assert "wifi" in call_args
+        assert "EqNp" in call_args
+
+    async def test_disable_peq_returns_none_on_success(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """disable_peq returns None on successful call."""
+        mock_client.command.return_value = "OK"
+
+        result = await adapter.disable_peq("wifi")
+
+        assert result is None
+
+    async def test_disable_peq_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """WiiMConnectionError propagates from disable_peq."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.disable_peq("wifi")
+
+    async def test_disable_peq_response_error_on_failure(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """disable_peq raises WiiMResponseError when device returns error."""
+        mock_client.command.side_effect = WiiMResponseError("HTTP 500")
+
+        with pytest.raises(WiiMResponseError):
+            await adapter.disable_peq("wifi")
+
+
+class TestGetPeqEnabled:
+    """Test get_peq_enabled — reading PEQ enabled state from EQStat field."""
+
+    async def test_get_peq_enabled_returns_true_when_on(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """get_peq_enabled returns True when EQStat is 'On'."""
+        mock_client.command.return_value = {
+            "EQStat": "On",
+            "channelMode": "Stereo",
+            "EQBand": [],
+        }
+
+        result = await adapter.get_peq_enabled("wifi")
+
+        assert result is True
+
+    async def test_get_peq_enabled_returns_false_when_off(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """get_peq_enabled returns False when EQStat is 'Off'."""
+        mock_client.command.return_value = {
+            "EQStat": "Off",
+            "channelMode": "Stereo",
+            "EQBand": [],
+        }
+
+        result = await adapter.get_peq_enabled("wifi")
+
+        assert result is False
+
+    async def test_get_peq_enabled_returns_false_when_missing(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """get_peq_enabled returns False when EQStat field is missing."""
+        mock_client.command.return_value = {
+            "channelMode": "Stereo",
+            "EQBand": [],
+        }
+
+        result = await adapter.get_peq_enabled("wifi")
+
+        assert result is False
+
+    async def test_get_peq_enabled_non_dict_raises(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """get_peq_enabled raises WiiMResponseError for non-dict response."""
+        mock_client.command.return_value = "unknown command"
+
+        with pytest.raises(WiiMResponseError, match="Expected JSON dict"):
+            await adapter.get_peq_enabled("wifi")
+
+    async def test_get_peq_enabled_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """WiiMConnectionError propagates from get_peq_enabled."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.get_peq_enabled("wifi")

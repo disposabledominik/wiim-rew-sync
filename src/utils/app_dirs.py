@@ -12,6 +12,22 @@ APP_NAME = "wiim-rew-sync"
 _SUBDIRECTORIES: tuple[str, ...] = ("logs", "profiles", "backups")
 
 
+def get_log_dir(settings_override: str | None = None) -> Path:
+    """Return the directory where log files are stored.
+
+    Args:
+        settings_override: If a non-empty string pointing to an existing
+            directory, that path is returned directly.  Otherwise the
+            default ``get_app_data_dir() / "logs"`` is used.
+
+    Returns:
+        A :class:`Path` to the log directory.
+    """
+    if settings_override and Path(settings_override).is_dir():
+        return Path(settings_override)
+    return get_app_data_dir() / "logs"
+
+
 def get_app_data_dir() -> Path:
     """Return the OS-appropriate application data directory.
 

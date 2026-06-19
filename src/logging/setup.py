@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import logging
 import sys
+import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from types import TracebackType
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -102,6 +104,51 @@ def configure_logging(logs_dir: Path, level: int = logging.DEBUG) -> None:
         root.addHandler(stderr_handler)
 
     root.setLevel(level)
+
+
+def install_crash_handler(log_dir: Path) -> None:
+    """Install a global crash handler via :func:`sys.excepthook`.
+
+    The hook writes the full traceback to ``app.log`` at CRITICAL level
+    including: timestamp, exception type, message, and full stack trace.
+    Works even if the GUI event loop has crashed because it writes directly
+    to the app logger's handlers.
+
+    Preserves the original ``sys.excepthook`` by calling it after logging.
+
+    Args:
+        log_dir: Directory containing the log files.  Used to ensure the
+            app logger has a handler configured (calls :func:`configure_logging`
+            if necessary).
+    """
+    original_hook = sys.excepthook
+
+    def _crash_hook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        # Format the full traceback
+        tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+        tb_text = "".join(tb_lines)
+
+        # Log at CRITICAL level to app.log
+        logger = logging.getLogger(LOGGER_APP)
+        logger.critical(
+            "Unhandled exception: %s: %s\n%s",
+            exc_type.__name__,
+            exc_value,
+            tb_text,
+        )
+
+        # Flush all handlers to ensure the crash is persisted
+        for handler in logger.handlers:
+            handler.flush()
+
+        # Preserve original hook behaviour
+        original_hook(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _crash_hook
 
 
 # ---------------------------------------------------------------------------

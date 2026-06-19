@@ -214,6 +214,86 @@ class WiiMAdapter:
         )
 
     # ------------------------------------------------------------------
+    # PEQ Enable/Disable
+    # ------------------------------------------------------------------
+
+    async def enable_peq(self, source_name: str) -> None:
+        """Enable PEQ on a specific source by switching to the LV2 EqNp plugin.
+
+        Issues ``EQChangeSourceFX`` with the source name and plugin URI.
+
+        Args:
+            source_name: The audio input source (e.g. "wifi", "bluetooth").
+
+        Returns:
+            None on success.
+
+        Raises:
+            WiiMResponseError: Device returned an error response.
+            WiiMConnectionError: Device unreachable (propagated from http_client).
+        """
+        payload = json.dumps({"source_name": source_name, "pluginURI": _PLUGIN_URI})
+        command = f"EQChangeSourceFX:{quote(payload)}"
+        response = await self._client.command(command)
+
+        # WiiM typically returns "OK" or a JSON dict on success.
+        # A WiiMResponseError from the HTTP layer (non-200) is raised automatically.
+        if isinstance(response, dict) and response.get("error"):
+            raise WiiMResponseError(
+                f"EQChangeSourceFX failed for source '{source_name}': {response}"
+            )
+
+    async def disable_peq(self, source_name: str) -> None:
+        """Disable PEQ on a specific source.
+
+        Issues ``EQSourceOff`` with the source name and plugin URI.
+
+        Args:
+            source_name: The audio input source (e.g. "wifi", "bluetooth").
+
+        Returns:
+            None on success.
+
+        Raises:
+            WiiMResponseError: Device returned an error response.
+            WiiMConnectionError: Device unreachable (propagated from http_client).
+        """
+        payload = json.dumps({"source_name": source_name, "pluginURI": _PLUGIN_URI})
+        command = f"EQSourceOff:{quote(payload)}"
+        response = await self._client.command(command)
+
+        if isinstance(response, dict) and response.get("error"):
+            raise WiiMResponseError(
+                f"EQSourceOff failed for source '{source_name}': {response}"
+            )
+
+    async def get_peq_enabled(self, source_name: str) -> bool:
+        """Check whether PEQ is enabled on a specific source.
+
+        Issues ``EQGetLV2SourceBandEx`` and reads the ``EQStat`` field.
+
+        Args:
+            source_name: The audio input source (e.g. "wifi", "bluetooth").
+
+        Returns:
+            True if PEQ is enabled ("On"), False otherwise ("Off").
+
+        Raises:
+            WiiMResponseError: Response missing required fields or non-dict.
+            WiiMConnectionError: Device unreachable (propagated from http_client).
+        """
+        payload = json.dumps({"source_name": source_name, "pluginURI": _PLUGIN_URI})
+        command = f"EQGetLV2SourceBandEx:{quote(payload)}"
+        response = await self._client.command(command)
+
+        if not isinstance(response, dict):
+            raise WiiMResponseError(
+                f"Expected JSON dict from EQGetLV2SourceBandEx, got: {type(response).__name__}"
+            )
+
+        return response.get("EQStat", "Off") == "On"
+
+    # ------------------------------------------------------------------
     # Multiroom
     # ------------------------------------------------------------------
 

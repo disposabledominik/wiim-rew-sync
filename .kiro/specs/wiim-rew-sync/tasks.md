@@ -629,7 +629,7 @@ Findings from full codebase integrity review. Decisions documented here for futu
 
 4. **mypy "unused section" warning for PySide6/respx/zeroconf overrides** — RESOLVED. Set `warn_unused_configs = false` in pyproject.toml. These overrides exist for GUI-phase imports. The note was harmless but noisy.
 
-- [ ] 57. Implement PEQ enable/disable toggle in WiiMAdapter
+- [x] 57. Implement PEQ enable/disable toggle in WiiMAdapter
   - Add `enable_peq(source_name: str)` method to `WiiMAdapter`:
     - Issues `EQChangeSourceFX` with JSON `{"source_name": "<source>", "pluginURI": "http://moddevices.com/plugins/caps/EqNp"}`
     - Returns None on success, raises `WiiMResponseError` on failure
@@ -672,7 +672,7 @@ Findings from full codebase integrity review. Decisions documented here for futu
   - **This task requires access to real WiiM hardware** and cannot be fully completed without manual testing
   - _Prerequisite for GUI Redesign Requirement 22 (PEQ/RoomFit toggle)_
 
-- [ ] 59. Implement global crash handler and support bundle generator
+- [x] 59. Implement global crash handler and support bundle generator
   - **Global crash handler** (`src/logging/setup.py` or entry point):
     - Install `sys.excepthook` that writes full traceback to `app.log` at CRITICAL level
     - Include: timestamp, exception type, message, full stack trace

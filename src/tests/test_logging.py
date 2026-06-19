@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from unittest.mock import patch
@@ -32,6 +33,7 @@ from src.logging.setup import (
     LOGGER_WIIM_API,
     configure_logging,
     ensure_logs_directory,
+    install_crash_handler,
 )
 
 # ---------------------------------------------------------------------------
@@ -452,4 +454,90 @@ class TestHandlerConfiguration:
                     f"Logger '{name}' points to {handler_path}, expected {expected_path}"
                 )
         finally:
+            _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)
+
+
+# ---------------------------------------------------------------------------
+# 8. install_crash_handler() — global crash handler
+# ---------------------------------------------------------------------------
+
+
+class TestInstallCrashHandler:
+    def test_unhandled_exception_appears_in_app_log(self, tmp_path: Path) -> None:
+        """Simulating an unhandled exception writes it to app.log at CRITICAL."""
+        _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)
+        original_hook = sys.excepthook
+        try:
+            configure_logging(tmp_path)
+            install_crash_handler(tmp_path)
+
+            # Simulate an unhandled exception by calling sys.excepthook directly
+            try:
+                raise ValueError("test-crash-message-42")
+            except ValueError:
+                exc_type, exc_value, exc_tb = sys.exc_info()
+                sys.excepthook(exc_type, exc_value, exc_tb)
+
+            # Flush handlers
+            for h in logging.getLogger(LOGGER_APP).handlers:
+                h.flush()
+
+            content = (tmp_path / "app.log").read_text(encoding="utf-8")
+            assert "CRITICAL" in content
+            assert "ValueError" in content
+            assert "test-crash-message-42" in content
+        finally:
+            sys.excepthook = original_hook
+            _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)
+
+    def test_crash_handler_includes_traceback(self, tmp_path: Path) -> None:
+        """The logged crash entry includes the full traceback."""
+        _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)
+        original_hook = sys.excepthook
+        try:
+            configure_logging(tmp_path)
+            install_crash_handler(tmp_path)
+
+            try:
+                raise RuntimeError("traceback-check")
+            except RuntimeError:
+                exc_type, exc_value, exc_tb = sys.exc_info()
+                sys.excepthook(exc_type, exc_value, exc_tb)
+
+            for h in logging.getLogger(LOGGER_APP).handlers:
+                h.flush()
+
+            content = (tmp_path / "app.log").read_text(encoding="utf-8")
+            assert "Traceback" in content
+            assert "traceback-check" in content
+        finally:
+            sys.excepthook = original_hook
+            _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)
+
+    def test_crash_handler_preserves_original_hook(self, tmp_path: Path) -> None:
+        """The original sys.excepthook is called after logging."""
+        _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)
+        original_hook = sys.excepthook
+        called = []
+
+        def mock_original_hook(
+            exc_type: object, exc_value: object, exc_tb: object
+        ) -> None:
+            called.append((exc_type, exc_value))
+
+        try:
+            sys.excepthook = mock_original_hook
+            configure_logging(tmp_path)
+            install_crash_handler(tmp_path)
+
+            try:
+                raise TypeError("preserve-test")
+            except TypeError:
+                exc_type, exc_value, exc_tb = sys.exc_info()
+                sys.excepthook(exc_type, exc_value, exc_tb)
+
+            assert len(called) == 1
+            assert called[0][0] is TypeError
+        finally:
+            sys.excepthook = original_hook
             _cleanup_loggers(LOGGER_APP, LOGGER_WIIM_API, LOGGER_REW_API)
