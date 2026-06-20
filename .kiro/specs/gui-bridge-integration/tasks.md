@@ -128,7 +128,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Guard with concurrent operation check
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-  - [~] 4.3 Write unit tests for push and export handlers
+  - [x] 4.3 Write unit tests for push and export handlers
     - Test push success, rollback success, critical rollback failure, progress updates
     - Test export happy path, warnings, dialog cancel, I/O error
     - Use mocked SafeWrite/TranslationEngine
@@ -199,38 +199,38 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - On failure: emit `copy_to_device_complete(False, error_message)`
     - _Requirements: 15.3, 15.4, 15.5, 15.6_
 
-  - [~] 7.6 Write property test for copy-to-sources fault isolation (Property 3)
+  - [x] 7.6 Write property test for copy-to-sources fault isolation (Property 3)
     - **Property 3: Copy-to-sources fault isolation**
     - **Validates: Requirements 9.3, 9.6, 9.7**
     - Generate non-empty source lists + failure bitmaps
     - Assert: every source attempted, exactly one SourceCopyResult per source, success field accurate
 
-  - [~] 7.7 Write property test for multi-device push fault isolation (Property 4)
+  - [x] 7.7 Write property test for multi-device push fault isolation (Property 4)
     - **Property 4: Multi-device push fault isolation**
     - **Validates: Requirements 10.3, 10.6, 10.7**
     - Generate non-empty device lists + failure bitmaps
     - Assert: every device attempted, exactly one DevicePushResult per device, success field accurate
 
 - [ ] 8. Wire picker dialogs into MainWindow handlers
-  - [~] 8.1 Wire `_on_copy_to_source_requested` with SourcePickerDialog
+  - [x] 8.1 Wire `_on_copy_to_source_requested` with SourcePickerDialog
     - Replace TODO: open SourcePickerDialog with available sources (exclude current)
     - On cancel: return with no action
     - On confirm: call `self._secondary_workflows.copy_to_sources(filters, targets)`
     - _Requirements: 9.1, 9.2_
 
-  - [~] 8.2 Wire `_on_multi_device_requested` with DevicePickerDialog
+  - [x] 8.2 Wire `_on_multi_device_requested` with DevicePickerDialog
     - Replace TODO: open DevicePickerDialog with discovered devices (exclude current)
     - On cancel: return with no action
     - On confirm: build MultiDeviceRequest and call `self._secondary_workflows.apply_to_devices(filters, request)`
     - _Requirements: 10.1, 10.2_
 
-  - [~] 8.3 Wire `_on_copy_to_device_requested` with DevicePickerDialog
+  - [x] 8.3 Wire `_on_copy_to_device_requested` with DevicePickerDialog
     - Replace TODO: open DevicePickerDialog for single target device selection
     - On cancel: return with no action
     - On confirm: call `self._secondary_workflows.copy_preset_to_device(preset_filters, target_ip, source)`
     - _Requirements: 15.1, 15.2_
 
-  - [~] 8.4 Wire `_on_rew_api_pull_requested` result handler with MeasurementPickerDialog
+  - [x] 8.4 Wire `_on_rew_api_pull_requested` result handler with MeasurementPickerDialog
     - After measurements are listed, open MeasurementPickerDialog
     - On cancel: no action
     - On selection: trigger `_do_rew_get_filters(uuid)` via bridge

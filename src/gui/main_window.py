@@ -45,7 +45,10 @@ from src.gui.components.status_banner import StatusBanner
 from src.gui.components.step_indicator import StepIndicator
 from src.gui.constants import MAX_CONTENT_WIDTH, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH
 from src.gui.dialogs.crash_dialog import CrashDialog
+from src.gui.dialogs.device_picker import DevicePickerDialog
+from src.gui.dialogs.measurement_picker import MeasurementPickerDialog
 from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
+from src.gui.dialogs.source_picker import SourcePickerDialog
 from src.gui.dialogs.unsaved_changes_dialog import UnsavedChangesDialog
 from src.gui.operation_feedback import OperationFeedbackManager
 from src.gui.pages.connect_page import ConnectPage
@@ -58,6 +61,7 @@ from src.gui.pages.source_page import SourcePage
 from src.gui.panels.diagnostics_panel import DiagnosticsPanel
 from src.gui.secondary_workflows import (
     DevicePushResult,
+    MultiDeviceRequest,
     SecondaryWorkflowManager,
     SourceCopyResult,
 )
@@ -67,6 +71,7 @@ from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetsDeviceView
 from src.gui.views.settings_view import SettingsView
 from src.gui.wizard_controller import FlowType, WizardController, WizardStep
+from src.models.capabilities import DeviceInfo
 from src.models.errors import (
     ParseError,
     REWNotConnectedError,
@@ -180,6 +185,9 @@ class MainWindow(QMainWindow):
         self._capability_prober: CapabilityProber | None = None
         self._wiim_adapter: WiiMAdapter | None = None
         self._safe_write: SafeWrite | None = None
+
+        # Discovered devices cache (populated by discovery, used by device picker)
+        self._discovered_devices: list[DeviceInfo] = []
 
         # --- Window properties ---
         self.setWindowTitle("WiiM \u2194 REW PEQ Sync")
@@ -522,6 +530,8 @@ class MainWindow(QMainWindow):
         self._bridge.write_complete.connect(self._on_write_complete)
         self._bridge.operation_error.connect(self._on_operation_error)
         self._bridge.progress_update.connect(self._on_progress_update)
+        self._bridge.rew_measurements_ready.connect(self._on_measurements_listed)
+        self._bridge.rew_filters_ready.connect(self._on_rew_filters_ready)
 
         # --- 4. Navigation ---
         self._step_indicator.step_clicked.connect(self._on_step_indicator_clicked)
@@ -930,6 +940,49 @@ class MainWindow(QMainWindow):
         """
         self._status_banner.show_progress(message)
 
+    @Slot(list)
+    def _on_measurements_listed(self, measurements: list) -> None:
+        """Handle REW measurements listed — open picker dialog for user selection.
+
+        After the bridge emits rew_measurements_ready with the measurement list,
+        this handler opens MeasurementPickerDialog for the user to choose one.
+        On selection, triggers _do_rew_get_filters via the bridge.
+
+        Requirements: 5.2, 5.7.
+
+        Args:
+            measurements: List of MeasurementSummary objects from REW API.
+        """
+        # Open the measurement picker dialog
+        measurement = MeasurementPickerDialog.get_measurement(self, measurements)
+
+        # User cancelled the dialog
+        if measurement is None:
+            return
+
+        # Fetch filters for the selected measurement
+        self._bridge.run_async(
+            self._bridge_wrapper("rew_filters", self._do_rew_get_filters(measurement.uuid))
+        )
+        logger.info("REW measurement selected: %s", measurement.name)
+
+    @Slot(list)
+    def _on_rew_filters_ready(self, filters: list) -> None:
+        """Handle REW filters fetched — store in wizard state and populate FiltersPage.
+
+        Args:
+            filters: List of CanonicalFilter objects from the REW measurement.
+        """
+        self._wizard_controller.state.current_filters = filters
+        self._bridge.peq_ready.emit(filters)
+
+        if filters:
+            self._status_banner.show_success(
+                f"{len(filters)} filters loaded from REW measurement"
+            )
+        else:
+            self._status_banner.show_info("No filters found in REW measurement")
+
     # ------------------------------------------------------------------
     # Error mapping & bridge wrapper (Req 12.1-12.4)
     # ------------------------------------------------------------------
@@ -1013,6 +1066,8 @@ class MainWindow(QMainWindow):
         into a dict with keys "name", "ip", "model" for the ConnectPage.
         """
         devices = await self._discovery_module.discover()
+        # Cache raw DeviceInfo objects for device picker dialogs
+        self._discovered_devices = devices
         device_list = [
             {"name": d.name, "ip": d.ip, "model": d.model}
             for d in devices
@@ -1531,11 +1586,9 @@ class MainWindow(QMainWindow):
         Opens a source picker (multi-select) showing all device sources
         except the currently selected one, then triggers copy_to_sources.
 
-        Requirement 20.1: Offer "Copy to another source" action.
-        Requirement 20.2: Display other available sources as selectable targets.
+        Requirement 9.1: Offer "Copy to another source" action.
+        Requirement 9.2: Display other available sources as selectable targets.
         """
-        # TODO: Open a source picker dialog (multi-select) showing available sources
-        # For now, log and emit placeholder via workflow manager
         state = self._wizard_controller.state
         current_source = state.selected_source
         filters = state.current_filters
@@ -1544,35 +1597,42 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error("No filters loaded to copy")
             return
 
-        logger.info(
-            "Copy-to-source requested (current source: '%s', %d filters)",
-            current_source,
-            len(filters),
+        # Get available sources from device capabilities
+        if self._wiim_adapter is None:
+            self._status_banner.show_error("No device connected")
+            return
+
+        available_sources = self._wiim_adapter.capabilities.source_names
+        if not available_sources:
+            self._status_banner.show_error("No sources available on device")
+            return
+
+        # Open source picker dialog (excludes current source)
+        target_sources = SourcePickerDialog.get_sources(
+            self, available_sources, current_source
         )
 
-        # TODO: Show source picker dialog, collect target_sources from user
-        # target_sources = SourcePickerDialog.get_sources(
-        #     parent=self,
-        #     available_sources=state.available_sources,
-        #     exclude=[current_source],
-        # )
-        # if target_sources:
-        #     self._secondary_workflows.copy_to_sources(filters, target_sources)
-        self._status_banner.show_info(
-            "Copy to another source: source picker not yet implemented"
+        # User cancelled the dialog
+        if target_sources is None:
+            return
+
+        logger.info(
+            "Copy-to-source: copying %d filters to %s",
+            len(filters),
+            target_sources,
         )
+        self._secondary_workflows.copy_to_sources(filters, target_sources)
 
     @Slot()
     def _on_multi_device_requested(self) -> None:
         """Handle ReviewPage "Apply to multiple devices" button click.
 
-        Opens a device picker (multi-select, pre-checking current device),
-        then for each device opens a source picker, then triggers
-        apply_to_devices with sequential push.
+        Opens a device picker (multi-select) showing discovered devices
+        (excluding the current one), then triggers apply_to_devices with
+        each selected device mapped to all its available sources.
 
-        Requirement 21.1: Offer option only when >1 device discovered.
-        Requirement 21.2: Display all discovered devices as checkboxes.
-        Requirement 21.3: User specifies target source per device.
+        Requirement 10.1: Offer option only when >1 device discovered.
+        Requirement 10.2: Display all discovered devices as checkboxes.
         """
         state = self._wizard_controller.state
         filters = state.current_filters
@@ -1581,30 +1641,54 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error("No filters loaded to push")
             return
 
-        logger.info(
-            "Multi-device push requested (%d filters)",
-            len(filters),
+        # Get current device IP to exclude from picker
+        current_ip = state.selected_device or ""
+
+        # Need discovered devices for the picker
+        if not self._discovered_devices:
+            self._status_banner.show_error("No other devices discovered")
+            return
+
+        # Open device picker dialog (excludes current device)
+        selected_devices = DevicePickerDialog.get_devices(
+            self, self._discovered_devices, current_ip
         )
 
-        # TODO: Show device picker dialog (multi-select)
-        # Then for each selected device, show source picker
-        # request = MultiDeviceRequest(
-        #     device_source_map={...},
-        #     device_names={...},
-        # )
-        # self._secondary_workflows.apply_to_devices(filters, request)
-        self._status_banner.show_info(
-            "Apply to multiple devices: device picker not yet implemented"
+        # User cancelled the dialog
+        if selected_devices is None:
+            return
+
+        # Build MultiDeviceRequest: each selected device → current source as default
+        current_source = state.selected_source
+        device_source_map: dict[str, list[str]] = {}
+        device_names: dict[str, str] = {}
+
+        for device in selected_devices:
+            # Use current source as the target source for each device
+            device_source_map[device.ip] = [current_source] if current_source else []
+            device_names[device.ip] = device.name
+
+        request = MultiDeviceRequest(
+            device_source_map=device_source_map,
+            device_names=device_names,
         )
+
+        logger.info(
+            "Multi-device push: %d devices selected, %d filters",
+            len(selected_devices),
+            len(filters),
+        )
+        self._secondary_workflows.apply_to_devices(filters, request)
 
     @Slot(list)
     def _on_copy_to_device_requested(self, items: list) -> None:
         """Handle PresetsDeviceView "Copy to Another Device" action.
 
-        Opens a device picker for the target device, then a source picker
-        (for PEQ), then executes copy_preset_to_device per item.
+        Opens a device picker for the target device selection, then
+        executes copy_preset_to_device for each selected item.
 
-        Requirement 17.3: Copy Preset to Another Device guided flow.
+        Requirement 15.1: User selects target device from discovered list.
+        Requirement 15.2: Copy preset filters to the selected target device.
 
         Args:
             items: List of PresetItem objects selected for copying.
@@ -1612,22 +1696,44 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
-        logger.info(
-            "Copy-to-device requested: %d items selected",
-            len(items),
+        # Get current device IP to exclude from picker
+        state = self._wizard_controller.state
+        current_ip = state.selected_device or ""
+
+        # Need discovered devices for the picker
+        if not self._discovered_devices:
+            self._status_banner.show_error("No other devices discovered")
+            return
+
+        # Open device picker dialog for single target device selection
+        selected_devices = DevicePickerDialog.get_devices(
+            self, self._discovered_devices, current_ip
         )
 
-        # TODO: Show device picker dialog for target device selection
-        # target_device_ip = DevicePickerDialog.get_device(parent=self, ...)
-        # target_source = SourcePickerDialog.get_source(parent=self, ...)
-        # For each item:
-        #   preset_filters = fetch/extract filters from item
-        #   self._secondary_workflows.copy_preset_to_device(
-        #       preset_filters, target_device_ip, target_source
-        #   )
-        self._status_banner.show_info(
-            "Copy to another device: device picker not yet implemented"
+        # User cancelled the dialog
+        if selected_devices is None:
+            return
+
+        # Use the first selected device as the target
+        target_device = selected_devices[0]
+        target_ip = target_device.ip
+        # Use current source as default for PEQ target
+        target_source = state.selected_source
+
+        logger.info(
+            "Copy-to-device: %d items to %s (%s)",
+            len(items),
+            target_device.name,
+            target_ip,
         )
+
+        # For each selected item, extract filters and copy to target device
+        for item in items:
+            preset_filters = getattr(item, "filters", [])
+            if preset_filters:
+                self._secondary_workflows.copy_preset_to_device(
+                    preset_filters, target_ip, target_source
+                )
 
     @Slot(object)
     def _on_profile_load_requested(self, profile: object) -> None:
