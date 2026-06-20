@@ -1,0 +1,156 @@
+"""Theme manager for loading and applying QSS stylesheets.
+
+Supports light, dark, and system-detected themes with dynamic switching.
+QSS files are loaded from ``src/gui/assets/styles/``.
+"""
+
+from __future__ import annotations
+
+import logging
+import platform
+import subprocess
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QApplication
+
+logger = logging.getLogger(__name__)
+
+# Resolve the assets/styles directory relative to this module.
+_STYLES_DIR = Path(__file__).resolve().parent / "assets" / "styles"
+
+ThemeMode = Literal["light", "dark", "system"]
+
+
+class ThemeManager:
+    """Loads and applies QSS stylesheets based on OS preference or user override.
+
+    Parameters
+    ----------
+    app : QApplication
+        The application instance to apply stylesheets to.
+
+    """
+
+    def __init__(self, app: QApplication) -> None:
+        self._app = app
+        self._current_mode: ThemeMode = "system"
+
+    @property
+    def current_mode(self) -> ThemeMode:
+        """Return the currently active theme mode."""
+        return self._current_mode
+
+    def apply_theme(self, mode: ThemeMode) -> None:
+        """Load and apply the appropriate QSS stylesheet.
+
+        Parameters
+        ----------
+        mode : ThemeMode
+            One of ``"light"``, ``"dark"``, or ``"system"``.
+            When ``"system"`` is specified, the OS preference is detected
+            automatically via :meth:`detect_system_theme`.
+
+        """
+        self._current_mode = mode
+
+        if mode == "system":
+            resolved = self.detect_system_theme()
+        else:
+            resolved = mode
+
+        qss_filename = f"fluent_{resolved}.qss"
+        qss_path = _STYLES_DIR / qss_filename
+
+        stylesheet = self._load_stylesheet(qss_path)
+        self._app.setStyleSheet(stylesheet)
+        logger.info("Applied theme: %s (resolved from mode=%s)", resolved, mode)
+
+    def detect_system_theme(self) -> Literal["light", "dark"]:
+        """Detect the operating system dark/light mode preference.
+
+        Returns
+        -------
+        Literal["light", "dark"]
+            The detected system theme. Falls back to ``"light"`` when
+            detection is unavailable or fails.
+
+        """
+        system = platform.system()
+
+        if system == "Windows":
+            return self._detect_windows_theme()
+        if system == "Darwin":
+            return self._detect_macos_theme()
+
+        # Linux / other: fall back to light
+        return "light"
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _load_stylesheet(path: Path) -> str:
+        """Read a QSS file from disk.
+
+        Returns an empty string if the file does not exist yet (graceful
+        handling during development when stylesheets haven't been created).
+        """
+        if not path.exists():
+            logger.warning(
+                "QSS stylesheet not found: %s. Applying empty stylesheet.", path
+            )
+            return ""
+
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            logger.exception("Failed to read stylesheet: %s", path)
+            return ""
+
+    @staticmethod
+    def _detect_windows_theme() -> Literal["light", "dark"]:
+        """Check Windows registry for ``AppsUseLightTheme``.
+
+        Key: ``HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize``
+        Value: ``AppsUseLightTheme`` (DWORD) -- 0 means dark, 1 means light.
+        """
+        if sys.platform != "win32":
+            return "light"
+
+        try:
+            import winreg
+
+            key_path = (
+                r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+            )
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+                value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+                return "light" if value == 1 else "dark"
+        except (ImportError, OSError):
+            logger.debug("Windows theme detection failed, defaulting to light.")
+            return "light"
+
+    @staticmethod
+    def _detect_macos_theme() -> Literal["light", "dark"]:
+        """Check macOS defaults for dark mode via ``defaults read``.
+
+        Reads ``NSGlobalDomain AppleInterfaceStyle``. If the key is absent
+        or has a value other than ``"Dark"``, light mode is assumed.
+        """
+        try:
+            result = subprocess.run(
+                ["/usr/bin/defaults", "read", "-g", "AppleInterfaceStyle"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and "dark" in result.stdout.strip().lower():
+                return "dark"
+        except (OSError, subprocess.TimeoutExpired):
+            logger.debug("macOS theme detection failed, defaulting to light.")
+
+        return "light"

@@ -1,4 +1,10 @@
-"""GUI dialogs sub-package."""
+"""GUI dialogs sub-package.
+
+Modal dialogs for push confirmation, onboarding, crash reporting,
+unsaved changes, and legacy import/export operations.
+"""
+
+from __future__ import annotations
 
 from src.gui.dialogs.error_dialog import ErrorDialog
 from src.gui.dialogs.export_dialog import ExportDialog

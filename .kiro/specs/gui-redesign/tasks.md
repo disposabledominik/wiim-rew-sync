@@ -6,44 +6,44 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
 
 ## Tasks
 
-- [ ] 1. Set up project structure, constants, and theme system
-  - [ ] 1.1 Create `src/gui/constants.py` with colors, typography, spacing, and sizing constants
+- [x] 1. Set up project structure, constants, and theme system
+  - [x] 1.1 Create `src/gui/constants.py` with colors, typography, spacing, and sizing constants
     - Define ACCENT_COLOR, SUCCESS_COLOR, ERROR_COLOR, WARNING_COLOR
     - Define FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_HEADING, FONT_SIZE_CAPTION
     - Define SPACING_SM, SPACING_MD, SPACING_LG, CARD_RADIUS, BUTTON_RADIUS, MAX_CONTENT_WIDTH
     - Define SIDEBAR_EXPANDED, SIDEBAR_COLLAPSED, MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT, LIST_ITEM_HEIGHT
     - _Requirements: 10.2, 10.4, 10.6, 10.8, 10.10, 25.1, 25.5_
 
-  - [ ] 1.2 Create `src/gui/theme.py` with ThemeManager class
+  - [x] 1.2 Create `src/gui/theme.py` with ThemeManager class
     - Implement `apply_theme(mode)` to load and apply QSS stylesheets
     - Implement `detect_system_theme()` for Windows registry / macOS defaults detection
     - Support light, dark, and system modes with dynamic switching
     - _Requirements: 25.4, 25.9_
 
-  - [ ] 1.3 Create `src/gui/assets/styles/fluent_light.qss` stylesheet
+  - [x] 1.3 Create `src/gui/assets/styles/fluent_light.qss` stylesheet
     - Define widget-level selectors for all common Qt widgets (QPushButton, QLabel, QFrame, etc.)
     - Apply rounded corners, Fluent spacing, accent colors for light mode
     - Define property-based variants for primary/secondary/ghost button styles
     - _Requirements: 25.1, 25.2, 25.3, 25.5, 25.6, 25.7, 25.8_
 
-  - [ ] 1.4 Create `src/gui/assets/styles/fluent_dark.qss` stylesheet
+  - [x] 1.4 Create `src/gui/assets/styles/fluent_dark.qss` stylesheet
     - Mirror light stylesheet structure with dark-mode color values
     - Maintain same layout/spacing, adjust backgrounds, text colors, and border colors
     - _Requirements: 25.4_
 
-  - [ ] 1.5 Create directory structure and `__init__.py` files
+  - [x] 1.5 Create directory structure and `__init__.py` files
     - Create `src/gui/components/__init__.py`, `src/gui/pages/__init__.py`, `src/gui/views/__init__.py`, `src/gui/dialogs/__init__.py`, `src/gui/assets/icons/`, `src/gui/assets/help/`
     - _Requirements: 14.2_
 
 - [ ] 2. Implement shared components
-  - [ ] 2.1 Create `src/gui/components/status_banner.py`
+  - [x] 2.1 Create `src/gui/components/status_banner.py`
     - Implement StatusBanner widget with show_info, show_success, show_error, show_progress, clear methods
     - Color-coded backgrounds (info=neutral, success=green, error=red, progress=spinner)
     - Auto-dismiss timer for success messages (5 seconds)
     - Dismissed signal, non-technical plain-language messages
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
 
-  - [ ] 2.2 Create `src/gui/components/step_indicator.py`
+  - [x] 2.2 Create `src/gui/components/step_indicator.py`
     - Implement StepIndicator widget with horizontal breadcrumb bar
     - Support set_steps, set_current, set_completed (with summary text), invalidate_from
     - Emit step_clicked signal for backward navigation on completed steps
@@ -51,7 +51,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Adapt labels dynamically based on FlowType
     - _Requirements: 1.3, 1.4, 1.5, 11.8_
 
-  - [ ] 2.3 Create `src/gui/components/sidebar_nav.py`
+  - [x] 2.3 Create `src/gui/components/sidebar_nav.py`
     - Implement SidebarNav collapsible navigation rail
     - Items: Home, Presets on Device, My Saved Presets, Settings, Help
     - Emit navigation_requested signal with view key
@@ -60,7 +60,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Hover tooltips in collapsed mode
     - _Requirements: 8.1, 8.2, 8.8, 2.10, 9.5_
 
-  - [ ] 2.4 Create `src/gui/components/filter_table.py`
+  - [x] 2.4 Create `src/gui/components/filter_table.py`
     - Implement FilterTable widget with fixed column widths (Band 40px, Type 70px, Freq 100px, Gain 90px, Q 70px)
     - Support set_filters with optional clamping_map for indicators
     - Support set_lr_filters for L/R tabbed display
@@ -69,20 +69,12 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Max table width ~400px, centered in available space
     - _Requirements: 5.1, 5.2, 5.3, 5.5, 19.2, 19.3_
 
-  - [ ] 2.5 Create `src/gui/components/device_card.py`
+  - [x] 2.5 Create `src/gui/components/device_card.py`
     - Implement DeviceCard widget showing device name, model, IP, firmware, multiroom role badge
     - States: idle (neutral border), connecting (pulsing accent), connected (filled accent strip), error (red strip + error + retry)
     - Emit clicked signal for device selection
     - Rounded card (8px radius), 16px padding
     - _Requirements: 2.3, 2.7, 2.9_
-
-  - [ ] 2.6 Create `src/gui/components/peq_toggle.py`
-    - Implement PEQToggle widget with PEQ on/off toggle
-    - Optional RoomFit toggle (visible based on roomfit_level)
-    - Emit peq_toggled and roomfit_toggled signals
-    - Disable RoomFit toggle if API not confirmed (Uncertainty Protocol)
-    - Immediate visual feedback on toggle
-    - _Requirements: 22.1, 22.2, 22.5, 22.6, 22.8_
 
   - [ ] 2.7 Write unit tests for shared components
     - Test StatusBanner message display, auto-dismiss, state colors
@@ -90,8 +82,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Test SidebarNav collapse/expand, navigation signals
     - Test FilterTable column rendering, clamping indicators, L/R tabs
     - Test DeviceCard states (idle/connecting/connected/error)
-    - Test PEQToggle signal emission and state management
-    - _Requirements: 7.1-7.6, 1.3-1.4, 8.1-8.2, 5.1-5.5, 2.3, 22.1-22.8_
+    - _Requirements: 7.1-7.6, 1.3-1.4, 8.1-8.2, 5.1-5.5, 2.3_
 
 - [ ] 3. Checkpoint - Ensure shared components build correctly
   - Ensure all tests pass, ask the user if questions arise.
@@ -315,7 +306,6 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Connect StepIndicator.step_clicked to WizardController.go_to_step
     - Connect SidebarNav.navigation_requested to QStackedWidget page switching
     - Implement auto-advance logic (single device auto-select, PEQ-only device skip)
-    - Wire PEQToggle signals to AsyncBridge EQ enable/disable commands
     - _Requirements: 14.1, 14.3, 14.6, 1.5, 2.4, 2.8, 9.1, 9.2_
 
   - [ ] 11.3 Implement responsive operation feedback and button state management
@@ -415,7 +405,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
   "waves": [
     { "id": 0, "tasks": ["1.1", "1.2", "1.5"] },
     { "id": 1, "tasks": ["1.3", "1.4"] },
-    { "id": 2, "tasks": ["2.1", "2.2", "2.3", "2.4", "2.5", "2.6"] },
+    { "id": 2, "tasks": ["2.1", "2.2", "2.3", "2.4", "2.5"] },
     { "id": 3, "tasks": ["2.7"] },
     { "id": 4, "tasks": ["4.1", "4.2", "4.3", "4.4", "4.5", "4.6", "4.7", "6.1"] },
     { "id": 5, "tasks": ["4.8", "6.2", "6.3", "6.4", "6.5", "6.6", "6.7"] },
