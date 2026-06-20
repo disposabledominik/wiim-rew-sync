@@ -87,7 +87,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
 - [~] 3. Checkpoint - Ensure shared components build correctly
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 4. Implement wizard pages
+- [x] 4. Implement wizard pages
   - [x] 4.1 Create `src/gui/pages/connect_page.py`
     - Implement ConnectPage with scanning animation, device card display, empty state
     - Auto-trigger discovery on show
@@ -146,7 +146,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Dry Run mode: show translation result without network operations
     - _Requirements: 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 18.1_
 
-  - [~] 4.8 Write unit tests for wizard pages
+  - [x] 4.8 Write unit tests for wizard pages
     - Test ConnectPage: discovery trigger, auto-select, empty state
     - Test EQTypePage: selection signals
     - Test SourcePage: source list population, channel mode visibility
@@ -158,7 +158,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
 - [~] 5. Checkpoint - Ensure wizard pages build correctly
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 6. Implement WizardController state machine
+- [x] 6. Implement WizardController state machine
   - [x] 6.1 Create `src/gui/wizard_controller.py`
     - Implement WizardStep enum and FlowType enum
     - Implement WizardState dataclass with all state fields
@@ -171,7 +171,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Wire to AsyncBridge signals for capability/discovery/write results
     - _Requirements: 1.2, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 14.1_
 
-  - [~] 6.2 Write property test: Flow step sequence correctness (Property 1)
+  - [x] 6.2 Write property test: Flow step sequence correctness (Property 1)
     - **Property 1: Flow step sequence correctness**
     - For any valid FlowType and device capabilities, steps_for_flow() returns the exact documented sequence
     - PEQ → [CONNECT, EQ_TYPE, SOURCE, FILTERS, REVIEW, PUSH]
@@ -180,31 +180,31 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - No SOURCE for RoomFit, no EQ_TYPE for PEQ-only, NAME_PROFILE only for RoomFit
     - **Validates: Requirements 1.2, 1.9, 1.10, 1.11**
 
-  - [~] 6.3 Write property test: Step classification invariant (Property 2)
+  - [x] 6.3 Write property test: Step classification invariant (Property 2)
     - **Property 2: Step classification invariant**
     - For any valid wizard state, every step is classified as exactly one of: completed, active, or upcoming
     - No step in two categories simultaneously; active step is always exactly one
     - **Validates: Requirements 1.3**
 
-  - [~] 6.4 Write property test: Forward advancement preserves sequence order (Property 3)
+  - [x] 6.4 Write property test: Forward advancement preserves sequence order (Property 3)
     - **Property 3: Forward advancement preserves sequence order**
     - For any non-final step, advance() moves to next step in sequence
     - Previous step added to completed set; new step not in completed set
     - **Validates: Requirements 1.5**
 
-  - [~] 6.5 Write property test: Back-navigation invalidates subsequent steps (Property 4)
+  - [x] 6.5 Write property test: Back-navigation invalidates subsequent steps (Property 4)
     - **Property 4: Back-navigation invalidates all subsequent steps**
     - Navigating backward removes all steps after target from completed set
     - Preserves steps before target (inclusive); current step becomes target
     - **Validates: Requirements 1.6**
 
-  - [~] 6.6 Write property test: Push prerequisites predicate (Property 5)
+  - [x] 6.6 Write property test: Push prerequisites predicate (Property 5)
     - **Property 5: Push prerequisites predicate**
     - Push enabled iff: device connected, source selected (or RoomFit), filters non-empty, dry_run is False
     - If any condition not met, push is disabled
     - **Validates: Requirements 12.1**
 
-  - [~] 6.7 Write unit tests for WizardController
+  - [x] 6.7 Write unit tests for WizardController
     - Test flow branching based on roomfit_level (0 → PEQ-only, >=2 → EQ_TYPE shown)
     - Test advance/back-navigation/reset behavior
     - Test signal emission (step_changed, flow_type_changed, wizard_reset)

@@ -1,0 +1,341 @@
+"""Property-based tests for WizardController.
+
+Tests the core state-machine logic of the wizard flow: step sequencing,
+classification, advancement, back-navigation, and push prerequisites.
+"""
+
+from __future__ import annotations
+
+import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
+
+from src.gui.wizard_controller import (
+    FlowType,
+    WizardController,
+    WizardStep,
+    steps_for_flow,
+)
+from src.models.canonical import CanonicalFilter
+
+# ---------------------------------------------------------------------------
+# Strategies
+# ---------------------------------------------------------------------------
+
+st_flow_type = st.sampled_from(list(FlowType))
+st_wizard_step = st.sampled_from(list(WizardStep))
+
+
+@st.composite
+def st_advancement_index(draw: st.DrawFn) -> tuple[FlowType, int]:
+    """Generate a (flow_type, step_index) where step_index is NOT the final step."""
+    flow = draw(st_flow_type)
+    seq = steps_for_flow(flow)
+    # Pick any index except the last
+    idx = draw(st.integers(min_value=0, max_value=len(seq) - 2))
+    return (flow, idx)
+
+
+@st.composite
+def st_back_nav_scenario(draw: st.DrawFn) -> tuple[FlowType, int, int]:
+    """Generate (flow_type, advance_count, back_target_idx).
+
+    advance_count: how many times to advance from the start (at least 2).
+    back_target_idx: where to navigate back to (< advance_count).
+    """
+    flow = draw(st_flow_type)
+    seq = steps_for_flow(flow)
+    max_advances = len(seq) - 1  # can advance at most (len-1) times
+    advance_count = draw(st.integers(min_value=2, max_value=max_advances))
+    back_target_idx = draw(st.integers(min_value=0, max_value=advance_count - 1))
+    return (flow, advance_count, back_target_idx)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _ensure_qapp():
+    """Ensure a QApplication exists for WizardController (QObject) tests."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
+
+
+# ---------------------------------------------------------------------------
+# Property 1: Flow step sequence correctness
+# **Validates: Requirements 1.2, 1.9, 1.10, 1.11**
+# ---------------------------------------------------------------------------
+
+EXPECTED_SEQUENCES = {
+    FlowType.PEQ: [
+        WizardStep.CONNECT,
+        WizardStep.EQ_TYPE,
+        WizardStep.SOURCE,
+        WizardStep.FILTERS,
+        WizardStep.REVIEW,
+        WizardStep.PUSH,
+    ],
+    FlowType.ROOMFIT: [
+        WizardStep.CONNECT,
+        WizardStep.EQ_TYPE,
+        WizardStep.FILTERS,
+        WizardStep.REVIEW,
+        WizardStep.NAME_PROFILE,
+        WizardStep.PUSH,
+    ],
+    FlowType.PEQ_ONLY: [
+        WizardStep.CONNECT,
+        WizardStep.SOURCE,
+        WizardStep.FILTERS,
+        WizardStep.REVIEW,
+        WizardStep.PUSH,
+    ],
+}
+
+
+@given(flow_type=st_flow_type)
+@settings(max_examples=100)
+def test_flow_step_sequence_correctness(flow_type: FlowType) -> None:
+    """**Validates: Requirements 1.2, 1.9, 1.10, 1.11**
+
+    For any valid FlowType, steps_for_flow() returns the exact documented
+    sequence. No SOURCE for RoomFit, no EQ_TYPE for PEQ-only, NAME_PROFILE
+    only for RoomFit.
+    """
+    result = steps_for_flow(flow_type)
+
+    # Exact sequence match
+    assert result == EXPECTED_SEQUENCES[flow_type]
+
+    # Structural invariants
+    if flow_type == FlowType.ROOMFIT:
+        assert WizardStep.SOURCE not in result
+        assert WizardStep.NAME_PROFILE in result
+    elif flow_type == FlowType.PEQ_ONLY:
+        assert WizardStep.EQ_TYPE not in result
+        assert WizardStep.NAME_PROFILE not in result
+    else:  # PEQ
+        assert WizardStep.NAME_PROFILE not in result
+        assert WizardStep.SOURCE in result
+        assert WizardStep.EQ_TYPE in result
+
+    # All sequences start with CONNECT and end with PUSH
+    assert result[0] == WizardStep.CONNECT
+    assert result[-1] == WizardStep.PUSH
+
+
+# ---------------------------------------------------------------------------
+# Property 2: Step classification invariant
+# **Validates: Requirements 1.3**
+# ---------------------------------------------------------------------------
+
+
+@given(data=st.data())
+@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_step_classification_invariant(data: st.DataObject, _ensure_qapp) -> None:
+    """**Validates: Requirements 1.3**
+
+    For any valid wizard state, every step in the flow is classified as
+    exactly one of: completed, active, or upcoming. No step can be in two
+    categories simultaneously, and exactly one step is active.
+    """
+    flow_type = data.draw(st_flow_type)
+    sequence = steps_for_flow(flow_type)
+
+    # Pick how far we've advanced (0 = still on first step, max = last step)
+    advance_count = data.draw(st.integers(min_value=0, max_value=len(sequence) - 1))
+
+    ctrl = WizardController()
+    ctrl.set_flow_type(flow_type)
+    ctrl._state.current_step = sequence[0]
+
+    # Advance the controller the specified number of times
+    for i in range(advance_count):
+        ctrl.advance(summary=f"step {i}")
+
+    # Classify all steps
+    current = ctrl.current_step
+    completed = set(ctrl.completed_steps.keys())
+    upcoming = set()
+
+    current_idx = sequence.index(current)
+    for idx, step in enumerate(sequence):
+        if idx > current_idx:
+            upcoming.add(step)
+
+    # Assertions
+    # Exactly one active step
+    assert current in sequence
+
+    # No overlap between categories
+    assert current not in completed, "Active step should not be in completed"
+    assert current not in upcoming, "Active step should not be in upcoming"
+    assert completed.isdisjoint(upcoming), "Completed and upcoming must not overlap"
+
+    # Every step is in exactly one category
+    for step in sequence:
+        in_completed = step in completed
+        is_active = step == current
+        in_upcoming = step in upcoming
+        categories = sum([in_completed, is_active, in_upcoming])
+        assert categories == 1, (
+            f"Step {step} is in {categories} categories "
+            f"(completed={in_completed}, active={is_active}, upcoming={in_upcoming})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Property 3: Forward advancement preserves sequence order
+# **Validates: Requirements 1.5**
+# ---------------------------------------------------------------------------
+
+
+@given(scenario=st_advancement_index())
+@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_forward_advancement_preserves_sequence_order(
+    scenario: tuple[FlowType, int], _ensure_qapp
+) -> None:
+    """**Validates: Requirements 1.5**
+
+    For any non-final step, advance() moves to the next step in sequence.
+    The previous step is added to the completed set; the new step is not
+    in the completed set.
+    """
+    flow_type, target_idx = scenario
+    sequence = steps_for_flow(flow_type)
+
+    ctrl = WizardController()
+    ctrl.set_flow_type(flow_type)
+    ctrl._state.current_step = sequence[0]
+
+    # Advance to the target index
+    for i in range(target_idx):
+        ctrl.advance(summary=f"step {i}")
+
+    # Now we should be at sequence[target_idx]
+    assert ctrl.current_step == sequence[target_idx]
+    step_before_advance = ctrl.current_step
+
+    # Perform one more advance
+    ctrl.advance(summary="advancing")
+
+    # After advance: current should be the next step in sequence
+    expected_next = sequence[target_idx + 1]
+    assert ctrl.current_step == expected_next
+
+    # Previous step should now be in completed set
+    assert step_before_advance in ctrl.completed_steps
+
+    # New current step should NOT be in completed set
+    assert expected_next not in ctrl.completed_steps
+
+
+# ---------------------------------------------------------------------------
+# Property 4: Back-navigation invalidates subsequent steps
+# **Validates: Requirements 1.6**
+# ---------------------------------------------------------------------------
+
+
+@given(scenario=st_back_nav_scenario())
+@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_back_navigation_invalidates_subsequent_steps(
+    scenario: tuple[FlowType, int, int], _ensure_qapp
+) -> None:
+    """**Validates: Requirements 1.6**
+
+    Navigating backward removes all steps after target from completed set.
+    Preserves steps before target (exclusive of target); current step becomes target.
+    """
+    flow_type, advance_count, back_target_idx = scenario
+    sequence = steps_for_flow(flow_type)
+
+    ctrl = WizardController()
+    ctrl.set_flow_type(flow_type)
+    ctrl._state.current_step = sequence[0]
+
+    # Advance multiple times to build up completed steps
+    for i in range(advance_count):
+        ctrl.advance(summary=f"step {i}")
+
+    # Navigate back to target
+    target_step = sequence[back_target_idx]
+    ctrl.go_to_step(target_step)
+
+    # Current step should be the target
+    assert ctrl.current_step == target_step
+
+    # All steps from target onward should NOT be in completed set
+    target_idx_in_seq = sequence.index(target_step)
+    for step in sequence[target_idx_in_seq:]:
+        assert step not in ctrl.completed_steps, (
+            f"Step {step} at or after target should not be in completed set"
+        )
+
+    # Steps before target should still be in completed set
+    for step in sequence[:target_idx_in_seq]:
+        assert step in ctrl.completed_steps, (
+            f"Step {step} before target should remain in completed set"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Property 5: Push prerequisites predicate
+# **Validates: Requirements 12.1**
+# ---------------------------------------------------------------------------
+
+
+@given(
+    flow_type=st_flow_type,
+    has_device=st.booleans(),
+    has_source=st.booleans(),
+    has_filters=st.booleans(),
+    dry_run=st.booleans(),
+)
+@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_push_prerequisites_predicate(
+    flow_type: FlowType,
+    has_device: bool,
+    has_source: bool,
+    has_filters: bool,
+    dry_run: bool,
+    _ensure_qapp,
+) -> None:
+    """**Validates: Requirements 12.1**
+
+    Push enabled iff: device connected, source selected (or RoomFit),
+    filters non-empty, dry_run is False. If any condition not met, push
+    is disabled.
+    """
+    ctrl = WizardController()
+    ctrl._state.flow_type = flow_type
+
+    # Set up state
+    ctrl._state.selected_device = "WiiM Pro" if has_device else None
+    ctrl._state.selected_source = "wifi" if has_source else ""
+    ctrl._state.current_filters = (
+        [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=0.0, q=1.0)]
+        if has_filters
+        else []
+    )
+    ctrl._state.dry_run = dry_run
+
+    result = ctrl.can_push()
+
+    # Compute expected result
+    device_ok = has_device
+    source_ok = has_source or (flow_type == FlowType.ROOMFIT)
+    filters_ok = has_filters
+    no_dry_run = not dry_run
+
+    expected = device_ok and source_ok and filters_ok and no_dry_run
+    assert result == expected, (
+        f"can_push()={result} but expected={expected} "
+        f"(device={has_device}, source={has_source}, filters={has_filters}, "
+        f"dry_run={dry_run}, flow={flow_type})"
+    )
