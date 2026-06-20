@@ -25,6 +25,9 @@ _LONG_OPERATION_THRESHOLD_MS = 3000
 # Threshold before showing Cancel button (ms)
 _CANCEL_THRESHOLD_MS = 2000
 
+# Absolute safety net — force-finish after this duration (ms)
+_HARD_TIMEOUT_MS = 30000
+
 
 class OperationFeedbackManager(QObject):
     """Manages responsive operation feedback and button state.
@@ -71,6 +74,12 @@ class OperationFeedbackManager(QObject):
         self._cancel_timer.setInterval(_CANCEL_THRESHOLD_MS)
         self._cancel_timer.timeout.connect(self._on_cancel_available)
 
+        # Hard timeout timer -- absolute safety net (Req 13.5)
+        self._timeout_timer = QTimer(self)
+        self._timeout_timer.setSingleShot(True)
+        self._timeout_timer.setInterval(_HARD_TIMEOUT_MS)
+        self._timeout_timer.timeout.connect(self._on_timeout)
+
         # Cancel button (created lazily, inserted into StatusBanner layout)
         self._cancel_button: QPushButton | None = None
 
@@ -108,6 +117,7 @@ class OperationFeedbackManager(QObject):
         # Start timers for long-operation and cancel thresholds
         self._long_op_timer.start()
         self._cancel_timer.start()
+        self._timeout_timer.start()
 
         logger.debug("Operation started: %s", message)
 
@@ -122,6 +132,7 @@ class OperationFeedbackManager(QObject):
         # Stop timers
         self._long_op_timer.stop()
         self._cancel_timer.stop()
+        self._timeout_timer.stop()
 
         # Re-enable buttons
         for btn in self._action_buttons:
@@ -182,3 +193,21 @@ class OperationFeedbackManager(QObject):
         logger.info("Operation cancel requested by user")
         self.cancel_requested.emit()
         self.finish_operation()
+
+    def _on_timeout(self) -> None:
+        """Handle hard timeout (30s) -- force-finish with error message.
+
+        This is an absolute safety net. If an operation hasn't completed
+        after 30 seconds, the UI is forced back to an interactive state
+        with an error displayed (Req 13.5).
+        """
+        if self._is_active:
+            logger.warning("Operation hard timeout after 30s")
+            self._status_banner.show_error("Operation timed out")
+            # Force finish -- re-enable buttons, clear state
+            self._is_active = False
+            self._long_op_timer.stop()
+            self._cancel_timer.stop()
+            for btn in self._action_buttons:
+                btn.setEnabled(True)
+            self._hide_cancel_button()

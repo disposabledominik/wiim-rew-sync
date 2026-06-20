@@ -240,7 +240,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 10. Operation feedback timeout integration
-  - [~] 10.1 Add 30-second hard timeout to OperationFeedbackManager
+  - [x] 10.1 Add 30-second hard timeout to OperationFeedbackManager
     - Add a QTimer(`_timeout_timer`) with 30-second interval started on `start_operation()`
     - On timeout: show error "Operation timed out" in StatusBanner, re-enable buttons, set `is_active = False`
     - Stop timeout timer on `finish_operation()`
