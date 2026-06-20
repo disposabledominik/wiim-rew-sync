@@ -214,7 +214,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
 - [x] 7. Checkpoint - Ensure WizardController logic is correct
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 8. Implement secondary views
+- [x] 8. Implement secondary views
   - [x] 8.1 Create `src/gui/views/presets_device_view.py`
     - Implement PresetsDeviceView with two sections: PEQ Presets and RoomFit Profiles
     - Fetch via list_peq_profiles() and list_roomfit_profiles()
@@ -251,7 +251,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Navigate to section via help icon "?" on wizard steps
     - _Requirements: 27.1, 27.2, 27.3, 27.4, 27.5, 27.6, 27.7, 27.8, 27.9, 27.10_
 
-  - [~] 8.5 Write unit tests for secondary views
+  - [x] 8.5 Write unit tests for secondary views
     - Test PresetsDeviceView: section display, multi-select, empty state
     - Test MyPresetsView: CRUD signals, search filtering, load signal
     - Test SettingsView: theme toggle, path validation, settings persistence
@@ -351,7 +351,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - _Requirements: 1.2-1.12, 11.1-11.8, 14.1-14.6_
 
 - [ ] 12. Implement settings persistence and first-run logic
-  - [~] 12.1 Create AppSettings dataclass and settings file I/O
+  - [x] 12.1 Create AppSettings dataclass and settings file I/O
     - Implement AppSettings dataclass (theme, log_directory, presets_directory, etc.)
     - Load/save from settings.json in app data directory
     - Auto-reconnect to last-used device on launch
@@ -365,8 +365,8 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Show onboarding overlay when first_run_complete is False
     - _Requirements: 23.1, 23.5, 24.15, 25.4_
 
-- [ ] 13. Create help content assets
-  - [~] 13.1 Create bundled help Markdown files in `src/gui/assets/help/`
+- [x] 13. Create help content assets
+  - [x] 13.1 Create bundled help Markdown files in `src/gui/assets/help/`
     - getting-started.md (mirrors onboarding content)
     - import-and-push.md (primary workflow guide)
     - pull-and-export.md

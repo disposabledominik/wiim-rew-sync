@@ -393,5 +393,5 @@ def _count_bands(profile: Profile) -> tuple[int, int]:
         filters = filters_l + filters_r
 
     total = len(filters)
-    active = sum(1 for f in filters if f.gain != 0.0)
+    active = sum(1 for f in filters if f.gain_db != 0.0)
     return active, total
