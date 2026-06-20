@@ -1,76 +1,115 @@
-"""Main application window for WiiM <-> REW PEQ Sync.
+"""Main application window — wizard-driven single-pane interface.
 
-Provides the top-level layout with real panels, a diagnostics dock,
-status bar with progress indicator, connection to the AsyncBridge, and
-controller logic that wires all async operations together.
+Replaces the old splitter-based MainWindow. Serves as the application shell
+with SidebarNav, StepIndicator, QStackedWidget content area, StatusBanner,
+and a diagnostics dock widget.
+
+Requirements referenced: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6.
 """
 
 from __future__ import annotations
 
 import logging
+import sys
+import traceback
+from typing import Literal
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QDockWidget,
-    QLabel,
+    QHBoxLayout,
     QMainWindow,
-    QMessageBox,
-    QProgressBar,
-    QSplitter,
-    QTabWidget,
+    QMenuBar,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.app_settings import AppSettings
 from src.gui.async_bridge import AsyncBridge
-from src.gui.dialogs.error_dialog import ErrorDialog
-from src.gui.panels.action_bar import ActionBar
-from src.gui.panels.device_panel import DevicePanel
+from src.gui.components.sidebar_nav import SidebarNav
+from src.gui.components.status_banner import StatusBanner
+from src.gui.components.step_indicator import StepIndicator
+from src.gui.constants import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH
+from src.gui.dialogs.crash_dialog import CrashDialog
+from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
+from src.gui.dialogs.unsaved_changes_dialog import UnsavedChangesDialog
+from src.gui.pages.connect_page import ConnectPage
+from src.gui.pages.eq_type_page import EQTypePage
+from src.gui.pages.filters_page import FiltersPage
+from src.gui.pages.name_profile_page import NameProfilePage
+from src.gui.pages.push_page import PushPage
+from src.gui.pages.review_page import ReviewPage
+from src.gui.pages.source_page import SourcePage
 from src.gui.panels.diagnostics_panel import DiagnosticsPanel
-from src.gui.panels.eq_panel import EQPanel
-from src.gui.panels.profile_panel import ProfilePanel
-from src.models.canonical import CanonicalFilter
-from src.models.capabilities import DeviceCapabilities, DeviceInfo
+from src.gui.theme import ThemeManager
+from src.gui.views.help_view import HelpView
+from src.gui.views.my_presets_view import MyPresetsView
+from src.gui.views.presets_device_view import PresetsDeviceView
+from src.gui.views.settings_view import SettingsView
+from src.gui.wizard_controller import WizardController
+from src.utils.app_dirs import get_log_dir
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
+# Page/view indices in the QStackedWidget
+PAGE_INDICES: dict[str, int] = {
+    "connect": 0,
+    "eq_type": 1,
+    "source": 2,
+    "filters": 3,
+    "review": 4,
+    "name_profile": 5,
+    "push": 6,
+    "presets_device": 7,
+    "my_presets": 8,
+    "settings": 9,
+    "help": 10,
+}
 
-def _make_placeholder(label_text: str) -> QWidget:
-    """Create a placeholder QWidget with a centered label.
 
-    Args:
-        label_text: Text to display in the placeholder.
+def _crash_handler(
+    exc_type: type[BaseException],
+    exc_value: BaseException,
+    exc_tb: object,
+) -> None:
+    """Global exception handler installed via sys.excepthook.
 
-    Returns:
-        A QWidget containing a centered QLabel.
+    Logs the unhandled exception and shows the CrashDialog (Req 24.6).
     """
-    widget = QWidget()
-    layout = QVBoxLayout(widget)
-    label = QLabel(label_text)
-    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    layout.addWidget(label)
-    return widget
+    # Format traceback for logging
+    tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+    logger.critical("Unhandled exception:\n%s", "".join(tb_lines))
+
+    log_path = str(get_log_dir() / "app.log")
+    error_message = f"{exc_type.__name__}: {exc_value}"
+
+    try:
+        CrashDialog.show_crash(
+            parent=None,
+            error_message=error_message,
+            log_path=log_path,
+        )
+    except Exception:
+        # If crash dialog itself fails, at least we logged it above
+        logger.debug("Crash dialog display failed (app may be in unstable state)")
 
 
 class MainWindow(QMainWindow):
-    """Main application window.
+    """Application shell: sidebar + content stack + status banner.
 
     Layout:
         QMainWindow
-        +-- QSplitter (vertical)
-            +-- DevicePanel (fixed height ~120px)
-            +-- QSplitter (horizontal)
-            |   +-- SourceModePanel placeholder (fixed width ~200px)
-            |   +-- EQPanel (fills remaining)
-            +-- ActionBar (fixed height ~50px)
-            +-- QTabWidget
-                +-- ProfilePanel tab
-
-    Also includes:
-        - QDockWidget for diagnostics (hidden by default, toggle via View menu)
-        - Status bar with indeterminate QProgressBar
-        - Controller logic for all async operations
+        +-- MenuBar (File, View, Help)
+        +-- Central Widget (QHBoxLayout)
+        |   +-- SidebarNav (left, collapsible)
+        |   +-- QVBoxLayout (right content area)
+        |       +-- StepIndicator (top, fixed height)
+        |       +-- QStackedWidget (center, fills)
+        |       +-- StatusBanner (bottom, fixed height)
+        +-- QDockWidget (Diagnostics, hidden by default)
     """
 
     def __init__(self, async_bridge: AsyncBridge | None = None) -> None:
@@ -82,29 +121,44 @@ class MainWindow(QMainWindow):
         """
         super().__init__()
 
-        # --- Async bridge ---
+        # --- Install global crash handler (Req 24.6) ---
+        sys.excepthook = _crash_handler
+
+        # --- Load settings ---
+        self._settings = AppSettings.load()
+
+        # --- Async bridge (dependency injection) ---
         if async_bridge is None:
             self._bridge = AsyncBridge(self)
             self._bridge.start()
         else:
             self._bridge = async_bridge
 
-        # --- Controller state ---
-        self._selected_device: DeviceInfo | None = None
-        self._capabilities: DeviceCapabilities | None = None
-        self._current_filters: list[CanonicalFilter] = []
-        self._dry_run_mode: bool = False
-
         # --- Window properties ---
         self.setWindowTitle("WiiM \u2194 REW PEQ Sync")
-        self.resize(1200, 800)
+        self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        self.resize(1000, 700)
+
+        # --- Create controller ---
+        self._wizard_controller = WizardController(self)
 
         # --- Build UI ---
         self._setup_central_widget()
         self._setup_dock_widget()
-        self._setup_status_bar()
         self._setup_menus()
-        self._connect_signals()
+
+        # --- Apply initial settings state ---
+        self._apply_settings()
+
+        # --- Wire settings signals ---
+        self._connect_settings_signals()
+
+        # --- Wire onboarding signals ---
+        self._connect_onboarding_signals()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     @property
     def bridge(self) -> AsyncBridge:
@@ -112,77 +166,178 @@ class MainWindow(QMainWindow):
         return self._bridge
 
     @property
-    def device_panel(self) -> DevicePanel:
-        """Access the device panel widget."""
-        return self._device_panel
+    def wizard_controller(self) -> WizardController:
+        """Access the wizard controller."""
+        return self._wizard_controller
 
     @property
-    def eq_panel(self) -> EQPanel:
-        """Access the EQ panel widget."""
-        return self._eq_panel
+    def stacked_widget(self) -> QStackedWidget:
+        """Access the central stacked widget."""
+        return self._stacked_widget
 
     @property
-    def action_bar(self) -> ActionBar:
-        """Access the action bar widget."""
-        return self._action_bar
+    def sidebar_nav(self) -> SidebarNav:
+        """Access the sidebar navigation widget."""
+        return self._sidebar_nav
 
     @property
-    def profile_panel(self) -> ProfilePanel:
-        """Access the profile panel widget."""
-        return self._profile_panel
+    def step_indicator(self) -> StepIndicator:
+        """Access the step indicator widget."""
+        return self._step_indicator
+
+    @property
+    def status_banner(self) -> StatusBanner:
+        """Access the status banner widget."""
+        return self._status_banner
+
+    @property
+    def settings(self) -> AppSettings:
+        """Access the loaded application settings."""
+        return self._settings
+
+    # ------------------------------------------------------------------
+    # Page / View accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def connect_page(self) -> ConnectPage:
+        """Access the connect page."""
+        return self._connect_page
+
+    @property
+    def eq_type_page(self) -> EQTypePage:
+        """Access the EQ type page."""
+        return self._eq_type_page
+
+    @property
+    def source_page(self) -> SourcePage:
+        """Access the source page."""
+        return self._source_page
+
+    @property
+    def filters_page(self) -> FiltersPage:
+        """Access the filters page."""
+        return self._filters_page
+
+    @property
+    def review_page(self) -> ReviewPage:
+        """Access the review page."""
+        return self._review_page
+
+    @property
+    def name_profile_page(self) -> NameProfilePage:
+        """Access the name profile page."""
+        return self._name_profile_page
+
+    @property
+    def push_page(self) -> PushPage:
+        """Access the push page."""
+        return self._push_page
+
+    @property
+    def presets_device_view(self) -> PresetsDeviceView:
+        """Access the presets on device view."""
+        return self._presets_device_view
+
+    @property
+    def my_presets_view(self) -> MyPresetsView:
+        """Access the my presets view."""
+        return self._my_presets_view
+
+    @property
+    def settings_view(self) -> SettingsView:
+        """Access the settings view."""
+        return self._settings_view
+
+    @property
+    def help_view(self) -> HelpView:
+        """Access the help view."""
+        return self._help_view
+
+    @property
+    def onboarding_overlay(self) -> OnboardingOverlay:
+        """Access the onboarding overlay."""
+        return self._onboarding_overlay
+
+    # ------------------------------------------------------------------
+    # UI Setup
+    # ------------------------------------------------------------------
 
     def _setup_central_widget(self) -> None:
-        """Build the central widget with the vertical splitter layout."""
-        # Top-level vertical splitter
-        main_splitter = QSplitter(Qt.Orientation.Vertical)
+        """Build the central widget: sidebar + content area."""
+        central = QWidget()
+        self.setCentralWidget(central)
 
-        # Device panel (fixed height ~120px)
-        self._device_panel = DevicePanel()
-        self._device_panel.setMinimumHeight(100)
-        self._device_panel.setMaximumHeight(140)
-        main_splitter.addWidget(self._device_panel)
+        root_layout = QHBoxLayout(central)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        # Horizontal splitter for source mode + EQ panel
-        h_splitter = QSplitter(Qt.Orientation.Horizontal)
+        # --- Sidebar (left) ---
+        self._sidebar_nav = SidebarNav()
+        root_layout.addWidget(self._sidebar_nav)
 
-        source_mode_panel = _make_placeholder("[Source Mode Panel]")
-        source_mode_panel.setMinimumWidth(180)
-        source_mode_panel.setMaximumWidth(250)
-        h_splitter.addWidget(source_mode_panel)
+        # --- Content area (right) ---
+        content_layout = QVBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
 
-        self._eq_panel = EQPanel()
-        h_splitter.addWidget(self._eq_panel)
+        # Step indicator (top)
+        self._step_indicator = StepIndicator()
+        content_layout.addWidget(self._step_indicator)
 
-        # Set stretch factors: source mode fixed, EQ fills
-        h_splitter.setStretchFactor(0, 0)
-        h_splitter.setStretchFactor(1, 1)
+        # Stacked widget (center, stretch)
+        self._stacked_widget = QStackedWidget()
+        content_layout.addWidget(self._stacked_widget, stretch=1)
 
-        main_splitter.addWidget(h_splitter)
+        # Status banner (bottom)
+        self._status_banner = StatusBanner()
+        content_layout.addWidget(self._status_banner)
 
-        # Action bar (fixed height ~50px)
-        self._action_bar = ActionBar()
-        self._action_bar.setMinimumHeight(40)
-        self._action_bar.setMaximumHeight(60)
-        main_splitter.addWidget(self._action_bar)
+        root_layout.addLayout(content_layout, stretch=1)
 
-        # Tab widget for profiles
-        tab_widget = QTabWidget()
-        self._profile_panel = ProfilePanel()
-        tab_widget.addTab(self._profile_panel, "Profiles")
-        main_splitter.addWidget(tab_widget)
+        # --- Instantiate and register all pages/views ---
+        self._create_pages()
+        self._register_pages()
 
-        # Set stretch factors: device + action fixed, middle + tabs fill
-        main_splitter.setStretchFactor(0, 0)
-        main_splitter.setStretchFactor(1, 1)
-        main_splitter.setStretchFactor(2, 0)
-        main_splitter.setStretchFactor(3, 1)
+        # --- Onboarding overlay (parented to central widget) ---
+        self._onboarding_overlay = OnboardingOverlay(central)
+        self._onboarding_overlay.setVisible(False)
 
-        self.setCentralWidget(main_splitter)
+    def _create_pages(self) -> None:
+        """Instantiate all wizard pages and secondary views."""
+        # Wizard pages
+        self._connect_page = ConnectPage()
+        self._eq_type_page = EQTypePage()
+        self._source_page = SourcePage()
+        self._filters_page = FiltersPage()
+        self._review_page = ReviewPage()
+        self._name_profile_page = NameProfilePage()
+        self._push_page = PushPage()
 
-    @property
-    def diagnostics_panel(self) -> DiagnosticsPanel:
-        """Access the diagnostics panel widget."""
-        return self._diagnostics_panel
+        # Secondary views
+        self._presets_device_view = PresetsDeviceView()
+        self._my_presets_view = MyPresetsView()
+        self._settings_view = SettingsView()
+        self._help_view = HelpView()
+
+    def _register_pages(self) -> None:
+        """Add all pages/views to the QStackedWidget in PAGE_INDICES order."""
+        # Order MUST match PAGE_INDICES values (0-10)
+        pages: list[QWidget] = [
+            self._connect_page,       # 0: connect
+            self._eq_type_page,       # 1: eq_type
+            self._source_page,        # 2: source
+            self._filters_page,       # 3: filters
+            self._review_page,        # 4: review
+            self._name_profile_page,  # 5: name_profile
+            self._push_page,          # 6: push
+            self._presets_device_view,  # 7: presets_device
+            self._my_presets_view,     # 8: my_presets
+            self._settings_view,      # 9: settings
+            self._help_view,          # 10: help
+        ]
+        for page in pages:
+            self._stacked_widget.addWidget(page)
 
     def _setup_dock_widget(self) -> None:
         """Create the diagnostics dock widget (hidden by default)."""
@@ -192,708 +347,222 @@ class MainWindow(QMainWindow):
         self._diagnostics_panel = DiagnosticsPanel()
         self._diagnostics_dock.setWidget(self._diagnostics_panel)
 
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._diagnostics_dock)
+        self.addDockWidget(
+            Qt.DockWidgetArea.BottomDockWidgetArea, self._diagnostics_dock
+        )
         self._diagnostics_dock.setVisible(False)
 
-    def _setup_status_bar(self) -> None:
-        """Set up the status bar with an indeterminate progress bar."""
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setRange(0, 0)  # Indeterminate mode
-        self._progress_bar.setMaximumWidth(200)
-        self._progress_bar.setVisible(False)
-
-        self.statusBar().addPermanentWidget(self._progress_bar)
-
     def _setup_menus(self) -> None:
-        """Create the menu bar with a View menu."""
-        view_menu = self.menuBar().addMenu("&View")
+        """Create the menu bar: File, View, Help."""
+        menu_bar: QMenuBar = self.menuBar()
+
+        # --- File menu ---
+        file_menu = menu_bar.addMenu("&File")
+
+        import_action = QAction("&Import...", self)
+        import_action.setShortcut("Ctrl+O")
+        file_menu.addAction(import_action)
+
+        export_action = QAction("&Export...", self)
+        file_menu.addAction(export_action)
+
+        file_menu.addSeparator()
+
+        quit_action = QAction("&Quit", self)
+        quit_action.setShortcut("Ctrl+Q")
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
+        # --- View menu ---
+        view_menu = menu_bar.addMenu("&View")
 
         self._diagnostics_action = QAction("&Diagnostics", self)
         self._diagnostics_action.setCheckable(True)
         self._diagnostics_action.setChecked(False)
         self._diagnostics_action.toggled.connect(self._diagnostics_dock.setVisible)
-        self._diagnostics_dock.visibilityChanged.connect(self._diagnostics_action.setChecked)
-
+        self._diagnostics_dock.visibilityChanged.connect(
+            self._diagnostics_action.setChecked
+        )
         view_menu.addAction(self._diagnostics_action)
 
-    def _connect_signals(self) -> None:
-        """Connect all signals: bridge, panels, and action bar."""
-        # --- AsyncBridge -> status bar ---
-        self._bridge.operation_started.connect(self._on_operation_started)
-        self._bridge.operation_finished.connect(self._on_operation_finished)
-        self._bridge.progress_update.connect(self._on_progress_update)
+        # --- Help menu ---
+        help_menu = menu_bar.addMenu("&Help")
 
-        # --- AsyncBridge -> panels ---
-        self._bridge.discovery_complete.connect(self._device_panel.on_discovery_complete)
-        self._bridge.capabilities_ready.connect(self._on_capabilities_ready)
-        self._bridge.peq_ready.connect(self._on_peq_ready)
-        self._bridge.write_complete.connect(self._on_write_complete)
-        self._bridge.operation_error.connect(self._on_operation_error)
+        about_action = QAction("&About", self)
+        help_menu.addAction(about_action)
 
-        # --- DevicePanel signals ---
-        self._device_panel.refresh_requested.connect(self._on_device_refresh_requested)
-        self._device_panel.device_selected.connect(self._on_device_selected)
-
-        # --- EQPanel signals ---
-        self._eq_panel.pull_requested.connect(self._on_eq_pull_requested)
-        self._eq_panel.roomfit_pull_requested.connect(self._on_roomfit_pull_requested)
-        self._eq_panel.roomfit_push_requested.connect(self._on_roomfit_push_requested)
-
-        # --- ActionBar signals ---
-        self._action_bar.import_requested.connect(self._on_import_requested)
-        self._action_bar.export_requested.connect(self._on_export_requested)
-        self._action_bar.pull_requested.connect(self._on_action_pull_requested)
-        self._action_bar.push_requested.connect(self._on_push_requested)
-        self._action_bar.dry_run_toggled.connect(self._on_dry_run_toggled)
-
-        # --- ProfilePanel signals ---
-        self._profile_panel.profile_save_requested.connect(self._on_profile_save_requested)
-        self._profile_panel.profile_load_requested.connect(self._on_profile_load_requested)
+        user_guide_action = QAction("&User Guide", self)
+        user_guide_action.setShortcut("F1")
+        user_guide_action.triggered.connect(self._on_user_guide_triggered)
+        help_menu.addAction(user_guide_action)
 
     # ------------------------------------------------------------------
-    # Status Bar Handlers
+    # Settings Wiring
     # ------------------------------------------------------------------
 
-    def _on_operation_started(self) -> None:
-        """Show the progress bar when an operation starts."""
-        self._progress_bar.setVisible(True)
+    def _apply_settings(self) -> None:
+        """Apply saved settings on startup.
 
-    def _on_operation_finished(self) -> None:
-        """Hide the progress bar when an operation finishes."""
-        self._progress_bar.setVisible(False)
-        self.statusBar().clearMessage()
-
-    def _on_progress_update(self, message: str) -> None:
-        """Display a progress message in the status bar.
-
-        Args:
-            message: Human-readable status message.
+        1. Theme via ThemeManager
+        2. Sidebar collapsed state
+        3. Dry Run default on ReviewPage
+        4. Onboarding overlay when first_run_complete is False
+        5. Populate SettingsView with current values
         """
-        self.statusBar().showMessage(message)
+        # 1. Apply theme (Req 25.4)
+        app = QApplication.instance()
+        if app is not None:
+            self._theme_manager = ThemeManager(app)  # type: ignore[arg-type]
+            theme_mode = self._settings.theme.lower()
+            if theme_mode not in ("light", "dark", "system"):
+                theme_mode = "system"
+            self._theme_manager.apply_theme(theme_mode)  # type: ignore[arg-type]
 
-    # ------------------------------------------------------------------
-    # Discovery Flow
-    # ------------------------------------------------------------------
+        # 2. Sidebar collapsed state
+        self._sidebar_nav.set_collapsed(self._settings.sidebar_collapsed)
 
-    def _on_device_refresh_requested(self) -> None:
-        """Handle device panel refresh request - run discovery via bridge."""
-        self._bridge.run_async(self._do_discover())
+        # 3. Set Dry Run default from settings (Req 24.15)
+        self._review_page.set_dry_run(self._settings.dry_run_default)
 
-    async def _do_discover(self) -> None:
-        """Run device discovery and emit results.
+        # 4. Show onboarding overlay when first_run_complete is False (Req 23.1, 23.5)
+        if not self._settings.first_run_complete:
+            self._onboarding_overlay.setVisible(True)
+            self._onboarding_overlay.raise_()
 
-        Creates a DiscoveryModule, runs discover(), and emits
-        discovery_complete with the results.
-        """
-        try:
-            from src.discovery.discovery_module import DiscoveryModule
+        # 5. Populate SettingsView with current settings
+        self._settings_view.set_settings({
+            "theme": self._settings.theme,
+            "log_directory": self._settings.log_directory,
+            "presets_directory": self._settings.presets_directory,
+            "rew_export_folder": self._settings.rew_export_folder,
+            "discovery_timeout": self._settings.discovery_timeout,
+            "dry_run_default": self._settings.dry_run_default,
+            "last_device": self._settings.last_device,
+        })
 
-            module = DiscoveryModule(timeout=5.0)
-            devices = await module.discover()
-            self._bridge.discovery_complete.emit(devices)
-        except Exception as exc:
-            self._bridge.operation_error.emit(type(exc).__name__, str(exc))
+    def _connect_settings_signals(self) -> None:
+        """Connect SettingsView signals to persistence logic."""
+        # Theme change: apply immediately + persist
+        self._settings_view.theme_changed.connect(self._on_theme_changed)
 
-    # ------------------------------------------------------------------
-    # Device Selection Flow
-    # ------------------------------------------------------------------
+        # General settings change: update fields + persist
+        self._settings_view.settings_changed.connect(self._on_settings_changed)
 
-    def _on_device_selected(self, device_info: object) -> None:
-        """Handle device selection - probe capabilities via bridge.
-
-        Args:
-            device_info: The selected DeviceInfo object.
-        """
-        if not isinstance(device_info, DeviceInfo):
-            return
-
-        self._selected_device = device_info
-        self._action_bar.set_device_selected(True)
-        self._bridge.run_async(self._do_probe(device_info))
-
-    async def _do_probe(self, device_info: DeviceInfo) -> None:
-        """Probe device capabilities and emit results.
-
-        Args:
-            device_info: Device to probe.
-        """
-        try:
-            from src.adapters.capability_prober import CapabilityProber
-            from src.adapters.wiim_http import WiiMHttpClient
-
-            client = WiiMHttpClient(device_info.ip, timeout=5.0)
-            try:
-                prober = CapabilityProber(client)
-                capabilities = await prober.probe()
-                self._bridge.capabilities_ready.emit(capabilities)
-            finally:
-                await client.close()
-        except Exception as exc:
-            self._bridge.operation_error.emit(type(exc).__name__, str(exc))
-
-    def _on_capabilities_ready(self, capabilities: object) -> None:
-        """Handle capabilities ready - update all panels.
-
-        Args:
-            capabilities: The probed DeviceCapabilities object.
-        """
-        if not isinstance(capabilities, DeviceCapabilities):
-            return
-
-        self._capabilities = capabilities
-
-        # Update panels
-        self._eq_panel.on_capabilities_ready(capabilities)
-        self._profile_panel.on_capabilities_ready(capabilities)
-        self._action_bar.set_capabilities(capabilities)
-        self._action_bar.set_source_selected(False)
-        self._diagnostics_panel.on_capabilities_ready(capabilities)
-
-    # ------------------------------------------------------------------
-    # Pull Flow
-    # ------------------------------------------------------------------
-
-    def _on_eq_pull_requested(self, source: str, channel: str) -> None:
-        """Handle EQ panel pull request.
-
-        Args:
-            source: Source name (e.g. "wifi").
-            channel: Channel mode string.
-        """
-        self._action_bar.set_source_selected(True)
-        self._bridge.run_async(self._do_pull(source, channel))
-
-    def _on_action_pull_requested(self) -> None:
-        """Handle action bar pull request - use current EQ panel source."""
-        source = self._eq_panel._source_combo.currentText()
-        channel = self._eq_panel._channel_combo.currentText()
-        if not source:
-            self._bridge.operation_error.emit("ValueError", "No source selected")
-            return
-        self._action_bar.set_source_selected(True)
-        self._bridge.run_async(self._do_pull(source, channel))
-
-    async def _do_pull(self, source: str, channel: str) -> None:
-        """Read PEQ from device and emit results.
-
-        Args:
-            source: Source name (e.g. "wifi").
-            channel: Channel mode string (for future L/R support).
-        """
-        try:
-            from src.adapters.wiim_adapter import WiiMAdapter
-            from src.adapters.wiim_http import WiiMHttpClient
-
-            if self._selected_device is None or self._capabilities is None:
-                self._bridge.operation_error.emit("ValueError", "No device selected")
-                return
-
-            client = WiiMHttpClient(self._selected_device.ip, timeout=5.0)
-            try:
-                adapter = WiiMAdapter(client, self._capabilities)
-                settings = await adapter.read_peq(source)
-                self._bridge.peq_ready.emit(settings)
-            finally:
-                await client.close()
-        except Exception as exc:
-            self._bridge.operation_error.emit(type(exc).__name__, str(exc))
-
-    def _on_peq_ready(self, settings: object) -> None:
-        """Handle PEQ settings received - update EQ panel and state.
-
-        Args:
-            settings: The PEQSettings object from the device.
-        """
-        from src.models.peq import PEQSettings
-
-        if not isinstance(settings, PEQSettings):
-            return
-
-        self._eq_panel.on_peq_ready(settings)
-        self._current_filters = settings.bands if settings.bands else []
-        self._action_bar.set_filters_loaded(len(self._current_filters) > 0)
-
-    # ------------------------------------------------------------------
-    # Push Flow
-    # ------------------------------------------------------------------
-
-    def _on_push_requested(self) -> None:
-        """Handle push request - write PEQ to device via safe write."""
-        if self._dry_run_mode:
-            self._do_dry_run_push()
-            return
-
-        source = self._eq_panel._source_combo.currentText()
-        if not source:
-            self._bridge.operation_error.emit("ValueError", "No source selected")
-            return
-
-        if not self._current_filters:
-            self._bridge.operation_error.emit("ValueError", "No filters to push")
-            return
-
-        from src.models.peq import PEQSettings
-
-        settings = PEQSettings(
-            source_name=source,
-            enabled=True,
-            channel_mode="stereo",
-            bands=self._current_filters,
-        )
-        self._bridge.run_async(self._do_push(source, settings))
-
-    def _do_dry_run_push(self) -> None:
-        """Execute dry-run push - generate band array and show warnings.
-
-        No safe-write, no backup, no network. Displays clamping warnings
-        in a QMessageBox.
-        """
-        from src.translator import TranslationEngine
-
-        if not self._current_filters:
-            QMessageBox.information(self, "Dry Run", "No filters loaded.")
-            return
-
-        max_bands = 10
-        if self._capabilities is not None:
-            max_bands = self._capabilities.max_filters or 10
-
-        _band_array, warnings = TranslationEngine.generate_wiim_band_array(
-            self._current_filters, max_bands=max_bands
+        # Show onboarding again from Settings support section
+        self._settings_view.show_onboarding_requested.connect(
+            self._on_show_onboarding_requested
         )
 
-        if warnings:
-            warning_lines = [f"- {w.field}: {w.message}" for w in warnings]
-            msg = "Dry Run completed with clamping warnings:\n\n" + "\n".join(warning_lines)
-        else:
-            msg = (
-                f"Dry Run completed successfully.\n\n"
-                f"{len(self._current_filters)} filter(s) would be written "
-                f"to the device with no clamping."
-            )
-
-        QMessageBox.information(self, "Dry Run Result", msg)
-
-    async def _do_push(self, source: str, settings: object) -> None:
-        """Execute safe write protocol and emit results.
-
-        Args:
-            source: Source name (e.g. "wifi").
-            settings: PEQ settings to write.
-        """
-        try:
-            from src.adapters.safe_write import SafeWrite
-            from src.adapters.wiim_adapter import WiiMAdapter
-            from src.adapters.wiim_http import WiiMHttpClient
-            from src.models.peq import PEQSettings
-            from src.repository.backup_manager import BackupManager
-            from src.utils.app_dirs import get_app_data_dir
-
-            if self._selected_device is None or self._capabilities is None:
-                self._bridge.operation_error.emit("ValueError", "No device selected")
-                return
-
-            if not isinstance(settings, PEQSettings):
-                self._bridge.operation_error.emit("TypeError", "Invalid settings type")
-                return
-
-            client = WiiMHttpClient(self._selected_device.ip, timeout=5.0)
-            try:
-                adapter = WiiMAdapter(client, self._capabilities)
-                backup_mgr = BackupManager(get_app_data_dir())
-                safe_write = SafeWrite(adapter, backup_mgr)
-                result = await safe_write.execute(source, settings)
-                self._bridge.write_complete.emit(result)
-            finally:
-                await client.close()
-        except Exception as exc:
-            self._bridge.operation_error.emit(type(exc).__name__, str(exc))
-
-    def _on_write_complete(self, result: object) -> None:
-        """Handle write completion - show success/failure notification.
-
-        Args:
-            result: The WriteResult object.
-        """
-        from src.adapters.safe_write import WriteResult
-
-        if not isinstance(result, WriteResult):
-            return
-
-        if result.success:
-            self.statusBar().showMessage("Push successful", 5000)
-            self._action_bar.enable_preset_save(True)
-
-            # If user requested preset save, do it now
-            if self._action_bar.preset_save_requested and self._action_bar.preset_name:
-                self._save_as_preset(self._action_bar.preset_name)
-        else:
-            msg = result.error_message or "Write failed"
-            if result.rollback_success:
-                msg += "\n\nOriginal state has been restored."
-            elif result.rollback_success is False:
-                msg += "\n\nROLLBACK ALSO FAILED. Manual recovery required."
-            QMessageBox.critical(self, "Push Failed", msg)
-
-    def _save_as_preset(self, preset_name: str) -> None:
-        """Save current PEQ state as a named device preset.
-
-        Args:
-            preset_name: Name for the device preset.
-        """
-        source = self._eq_panel._source_combo.currentText()
-        if not source or self._selected_device is None:
-            return
-        self._bridge.run_async(self._do_save_preset(source, preset_name))
-
-    async def _do_save_preset(self, source: str, preset_name: str) -> None:
-        """Save PEQ as device preset via adapter.
-
-        Args:
-            source: Source name.
-            preset_name: Preset name to save as.
-        """
-        try:
-            from src.adapters.wiim_adapter import WiiMAdapter
-            from src.adapters.wiim_http import WiiMHttpClient
-
-            if self._selected_device is None or self._capabilities is None:
-                return
-
-            client = WiiMHttpClient(self._selected_device.ip, timeout=5.0)
-            try:
-                adapter = WiiMAdapter(client, self._capabilities)
-                await adapter.save_peq_profile(source, preset_name)
-                self.statusBar().showMessage(f"Preset '{preset_name}' saved", 5000)
-            finally:
-                await client.close()
-        except Exception as exc:
-            self._bridge.operation_error.emit(type(exc).__name__, str(exc))
-
-    # ------------------------------------------------------------------
-    # Import Flow
-    # ------------------------------------------------------------------
-
-    def _on_import_requested(self) -> None:
-        """Handle import request - open ImportDialog."""
-        from src.gui.dialogs.import_dialog import ImportDialog
-
-        max_filters = 10
-        if self._capabilities is not None and self._capabilities.max_filters > 0:
-            max_filters = self._capabilities.max_filters
-
-        filters = ImportDialog.get_filters(max_filters=max_filters, parent=self)
-        if filters is not None:
-            self._current_filters = filters
-            self._action_bar.set_filters_loaded(True)
-
-            # Update EQ panel with imported filters
-            from src.models.peq import PEQSettings
-
-            source = self._eq_panel._source_combo.currentText() or "imported"
-            settings = PEQSettings(
-                source_name=source,
-                enabled=True,
-                channel_mode="stereo",
-                bands=filters,
-            )
-            self._eq_panel.on_peq_ready(settings)
-            self.statusBar().showMessage(
-                f"Imported {len(filters)} filter(s)", 5000
-            )
-
-    # ------------------------------------------------------------------
-    # Export Flow
-    # ------------------------------------------------------------------
-
-    def _on_export_requested(self) -> None:
-        """Handle export request - open ExportDialog and write file."""
-        from src.gui.dialogs.export_dialog import ExportDialog
-        from src.translator import TranslationEngine
-
-        if not self._current_filters:
-            QMessageBox.information(self, "Export", "No filters to export.")
-            return
-
-        channel_mode = "stereo"
-        if self._capabilities is not None and self._capabilities.supports_channel_peq:
-            channel = self._eq_panel._channel_combo.currentText()
-            if channel in ("Left", "Right"):
-                channel_mode = "lr"
-
-        paths = ExportDialog.get_paths(channel_mode=channel_mode, parent=self)
-        if paths is None:
-            return
-
-        max_filters = 10
-        if self._capabilities is not None and self._capabilities.max_filters > 0:
-            max_filters = self._capabilities.max_filters
-
-        try:
-            if isinstance(paths, tuple):
-                # L/R export
-                TranslationEngine.generate_rew_file(
-                    self._current_filters, paths[0], max_filters=max_filters
-                )
-                TranslationEngine.generate_rew_file(
-                    self._current_filters, paths[1], max_filters=max_filters
-                )
-            else:
-                TranslationEngine.generate_rew_file(
-                    self._current_filters, paths, max_filters=max_filters
-                )
-            self.statusBar().showMessage("Export complete", 5000)
-        except Exception as exc:
-            QMessageBox.critical(self, "Export Error", str(exc))
-
-    # ------------------------------------------------------------------
-    # RoomFit Flows
-    # ------------------------------------------------------------------
-
-    def _on_roomfit_pull_requested(self, source: str, profile: str) -> None:
-        """Handle RoomFit pull request.
-
-        Args:
-            source: Source name.
-            profile: RoomFit profile name.
-        """
-        self._bridge.run_async(self._do_roomfit_pull(source, profile))
-
-    async def _do_roomfit_pull(self, source: str, profile: str) -> None:
-        """Read RoomFit from device and emit results.
-
-        Args:
-            source: Source name.
-            profile: RoomFit profile name.
-        """
-        try:
-            from src.adapters.wiim_adapter import WiiMAdapter
-            from src.adapters.wiim_http import WiiMHttpClient
-
-            if self._selected_device is None or self._capabilities is None:
-                self._bridge.operation_error.emit("ValueError", "No device selected")
-                return
-
-            client = WiiMHttpClient(self._selected_device.ip, timeout=5.0)
-            try:
-                adapter = WiiMAdapter(client, self._capabilities)
-                settings = await adapter.read_roomfit(source, profile)
-                self._bridge.peq_ready.emit(settings)
-            finally:
-                await client.close()
-        except Exception as exc:
-            self._bridge.operation_error.emit(type(exc).__name__, str(exc))
-
-    def _on_roomfit_push_requested(self, source: str, profile: str) -> None:
-        """Handle RoomFit push request.
-
-        Args:
-            source: Source name.
-            profile: RoomFit profile name.
-        """
-        if not self._current_filters:
-            self._bridge.operation_error.emit("ValueError", "No filters to push to RoomFit")
-            return
-        self._bridge.run_async(
-            self._do_roomfit_push(source, profile, self._current_filters)
+    def _connect_onboarding_signals(self) -> None:
+        """Connect OnboardingOverlay signals to settings persistence."""
+        self._onboarding_overlay.get_started_clicked.connect(
+            self._on_onboarding_get_started
         )
+        self._onboarding_overlay.skip_clicked.connect(self._on_onboarding_skip)
 
-    async def _do_roomfit_push(
-        self, source: str, profile: str, filters: list[CanonicalFilter]
-    ) -> None:
-        """Write RoomFit to device.
-
-        Args:
-            source: Source name.
-            profile: RoomFit profile name.
-            filters: Filters to write.
-        """
-        try:
-            from src.adapters.wiim_adapter import WiiMAdapter
-            from src.adapters.wiim_http import WiiMHttpClient
-
-            if self._selected_device is None or self._capabilities is None:
-                self._bridge.operation_error.emit("ValueError", "No device selected")
-                return
-
-            client = WiiMHttpClient(self._selected_device.ip, timeout=5.0)
-            try:
-                adapter = WiiMAdapter(client, self._capabilities)
-                await adapter.write_roomfit(source, profile, filters)
-                self.statusBar().showMessage(
-                    f"RoomFit '{profile}' written successfully", 5000
-                )
-            finally:
-                await client.close()
-        except Exception as exc:
-            self._bridge.operation_error.emit(type(exc).__name__, str(exc))
-
-    # ------------------------------------------------------------------
-    # Profile Flows
-    # ------------------------------------------------------------------
-
-    def _on_profile_save_requested(self, name: str) -> None:
-        """Handle profile save request.
+    @Slot(str)
+    def _on_theme_changed(self, theme: str) -> None:
+        """Apply theme change and persist to settings.
 
         Args:
-            name: Profile name to save as.
+            theme: Theme name from SettingsView ("Light", "Dark", "System").
         """
-        if not self._current_filters:
-            QMessageBox.information(self, "Save Profile", "No filters to save.")
-            return
+        theme_mode = theme.lower()
+        if theme_mode not in ("light", "dark", "system"):
+            theme_mode = "system"
+        if hasattr(self, "_theme_manager"):
+            self._theme_manager.apply_theme(theme_mode)  # type: ignore[arg-type]
+        self._settings.theme = theme
+        self._settings.save()
 
-        try:
-            from src.models.profile import Profile
-            from src.repository.profile_repository import ProfileRepository
-            from src.utils.app_dirs import get_app_data_dir
-
-            profile = Profile(
-                name=name,
-                channel_mode="stereo",
-                filters=self._current_filters,
-            )
-            repo = ProfileRepository(get_app_data_dir())
-            repo.save(profile)
-            self._refresh_profile_list()
-            self.statusBar().showMessage(f"Profile '{name}' saved", 5000)
-        except Exception as exc:
-            QMessageBox.critical(self, "Save Error", str(exc))
-
-    def _on_profile_load_requested(self, profile: object) -> None:
-        """Handle profile load request - populate EQ panel.
+    @Slot(dict)
+    def _on_settings_changed(self, settings_dict: dict) -> None:
+        """Update AppSettings fields from SettingsView and persist.
 
         Args:
-            profile: The Profile object to load.
+            settings_dict: Dict of current settings values from the view.
         """
-        from src.models.peq import PEQSettings
-        from src.models.profile import Profile
-
-        if not isinstance(profile, Profile):
-            return
-
-        filters = profile.filters or []
-        self._current_filters = filters
-        self._action_bar.set_filters_loaded(len(filters) > 0)
-
-        source = self._eq_panel._source_combo.currentText() or profile.name
-        settings = PEQSettings(
-            source_name=source,
-            enabled=True,
-            channel_mode="stereo",
-            bands=filters,
+        self._settings.log_directory = settings_dict.get(
+            "log_directory", self._settings.log_directory
         )
-        self._eq_panel.on_peq_ready(settings)
-        self.statusBar().showMessage(f"Profile '{profile.name}' loaded", 5000)
-
-    def _refresh_profile_list(self) -> None:
-        """Refresh the profile panel's list from the repository."""
-        try:
-            from src.repository.profile_repository import ProfileRepository
-            from src.utils.app_dirs import get_app_data_dir
-
-            repo = ProfileRepository(get_app_data_dir())
-            profiles = repo.list()
-            self._profile_panel.on_profiles_updated(profiles)
-        except Exception as exc:
-            logger.warning("Failed to refresh profiles: %s", exc)
-
-    # ------------------------------------------------------------------
-    # Dry Run
-    # ------------------------------------------------------------------
-
-    def _on_dry_run_toggled(self, active: bool) -> None:
-        """Handle dry run toggle.
-
-        Args:
-            active: Whether dry run is now active.
-        """
-        self._dry_run_mode = active
-
-    # ------------------------------------------------------------------
-    # Error Handling
-    # ------------------------------------------------------------------
-
-    def _on_operation_error(self, error_type: str, message: str) -> None:
-        """Handle operation errors - show ErrorDialog with appropriate severity.
-
-        Maps error_type to severity and title, then shows the ErrorDialog.
-        All errors are also logged at ERROR or CRITICAL level.
-
-        Args:
-            error_type: Exception type name.
-            message: Human-readable error message.
-        """
-        from src.gui.dialogs.error_dialog import Severity
-
-        # --- Error type mapping ---
-        _ERROR_MAP: dict[str, tuple[Severity, str]] = {
-            "WiiMConnectionError": ("ERROR", "Device Offline"),
-            "WiiMTimeoutError": ("ERROR", "Device Offline"),
-            "WiiMResponseError": ("ERROR", "Communication Error"),
-            "ParseError": ("ERROR", "Parse Error"),
-            "ValidationError": ("WARNING", "Validation Warning"),
-            "SchemaVersionError": ("ERROR", "Profile Incompatible"),
-            "ProfileNotFoundError": ("ERROR", "Profile Not Found"),
-            "BackupError": ("ERROR", "Backup Failed"),
-            "VerificationError": ("ERROR", "Write Verification Failed"),
-            "RollbackError": ("CRITICAL", "\u26a0 Critical: Device State May Be Incorrect"),
-            "REWNotConnectedError": ("WARNING", "REW Not Connected"),
-            "REWMeasurementNotFoundError": ("ERROR", "Measurement Not Found"),
-        }
-
-        severity: Severity
-        title: str
-        severity, title = _ERROR_MAP.get(error_type, ("ERROR", "Error"))
-
-        # Log at appropriate level
-        if severity == "CRITICAL":
-            logger.critical("Operation error [%s]: %s", error_type, message)
-        else:
-            logger.error("Operation error [%s]: %s", error_type, message)
-
-        # For RollbackError, extract backup path from message if present
-        backup_path: str | None = None
-        if error_type == "RollbackError":
-            backup_path = self._extract_backup_path(message)
-
-        # Show dialog
-        ErrorDialog.show_error(
-            severity,
-            title,
-            message,
-            backup_path=backup_path,
-            parent=self,
+        self._settings.presets_directory = settings_dict.get(
+            "presets_directory", self._settings.presets_directory
         )
+        self._settings.rew_export_folder = settings_dict.get(
+            "rew_export_folder", self._settings.rew_export_folder
+        )
+        self._settings.discovery_timeout = settings_dict.get(
+            "discovery_timeout", self._settings.discovery_timeout
+        )
+        self._settings.dry_run_default = settings_dict.get(
+            "dry_run_default", self._settings.dry_run_default
+        )
+        self._settings.save()
 
-    @staticmethod
-    def _extract_backup_path(message: str) -> str | None:
-        """Extract a file path from a RollbackError message.
+    @Slot()
+    def _on_show_onboarding_requested(self) -> None:
+        """Show the onboarding overlay again (from Settings > Support)."""
+        self._onboarding_overlay.setVisible(True)
+        self._onboarding_overlay.raise_()
 
-        Looks for common path patterns in the message string.
+    @Slot()
+    def _on_onboarding_get_started(self) -> None:
+        """Handle onboarding Get Started: mark complete, save, navigate to connect."""
+        self._settings.first_run_complete = True
+        self._settings.save()
+        # Navigate to connect page (first wizard step)
+        self._stacked_widget.setCurrentIndex(PAGE_INDICES["connect"])
 
-        Args:
-            message: The error message that may contain a backup file path.
+    @Slot()
+    def _on_onboarding_skip(self) -> None:
+        """Handle onboarding Skip: mark complete and save settings."""
+        self._settings.first_run_complete = True
+        self._settings.save()
 
-        Returns:
-            Extracted path string, or None if not found.
-        """
-        import re
-
-        # Match Unix or Windows absolute paths
-        match = re.search(r'(/[\w./_-]+\.json|[A-Z]:\\[\w.\\_-]+\.json)', message)
-        if match:
-            return match.group(0)
-        return None
+    @Slot()
+    def _on_user_guide_triggered(self) -> None:
+        """Switch stacked widget to help view (Help > User Guide)."""
+        self._stacked_widget.setCurrentIndex(PAGE_INDICES["help"])
 
     # ------------------------------------------------------------------
-    # Shutdown
+    # Close Event
     # ------------------------------------------------------------------
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Handle window close by shutting down the async bridge.
+        """Handle window close: check unsaved changes and shutdown bridge.
 
-        Args:
-            event: The close event.
+        If the wizard has modified filter state, prompt the user before
+        closing. Always shuts down the AsyncBridge on close.
         """
+        # Check for unsaved changes
+        if self._has_unsaved_changes():
+            choice: Literal["save", "discard", "cancel"] = (
+                UnsavedChangesDialog.confirm_discard(self)
+            )
+            if choice == "cancel":
+                event.ignore()
+                return
+            # "save" or "discard" - proceed with close
+            # (save logic would be handled by task 11.2 wiring)
+
+        # Save sidebar collapse state
+        self._settings.sidebar_collapsed = self._sidebar_nav.collapsed
+        self._settings.save()
+
+        # Shutdown the async bridge
         self._bridge.shutdown()
-        super().closeEvent(event)
+
+        logger.info("Application closed.")
+        event.accept()
+
+    def _has_unsaved_changes(self) -> bool:
+        """Check if there are unsaved filter changes in the wizard.
+
+        Returns:
+            True if the wizard controller has filters that haven't been
+            pushed/saved, False otherwise.
+        """
+        # The wizard state has filters loaded but not yet pushed/saved
+        state = self._wizard_controller.state
+        return len(state.current_filters) > 0
+

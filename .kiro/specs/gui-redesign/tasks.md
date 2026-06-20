@@ -289,7 +289,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 11. Implement MainWindow and wire everything together
-  - [~] 11.1 Create `src/gui/main_window.py`
+  - [x] 11.1 Create `src/gui/main_window.py`
     - Implement MainWindow(QMainWindow) shell with sidebar + QStackedWidget + StatusBanner
     - Layout: MenuBar → Central Widget (QHBoxLayout: SidebarNav + QVBoxLayout: StepIndicator + QStackedWidget + StatusBanner)
     - QDockWidget for Diagnostics (hidden, View → Diagnostics toggle)
@@ -350,7 +350,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Test sidebar navigation preserves wizard state
     - _Requirements: 1.2-1.12, 11.1-11.8, 14.1-14.6_
 
-- [ ] 12. Implement settings persistence and first-run logic
+- [x] 12. Implement settings persistence and first-run logic
   - [x] 12.1 Create AppSettings dataclass and settings file I/O
     - Implement AppSettings dataclass (theme, log_directory, presets_directory, etc.)
     - Load/save from settings.json in app data directory
@@ -358,7 +358,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Auto-enable Dry Run for first-time users
     - _Requirements: 9.2, 12.4, 23.6, 24.15_
 
-  - [~] 12.2 Wire settings to MainWindow and components
+  - [x] 12.2 Wire settings to MainWindow and components
     - Apply theme on startup based on saved preference
     - Set sidebar collapsed state from settings
     - Set Dry Run default from settings
