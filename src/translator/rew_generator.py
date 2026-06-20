@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from src.models.canonical import CanonicalFilter
+from src.translator._warnings import ValidationWarning
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
@@ -59,7 +60,7 @@ class REWGenerator:
         filters: list[CanonicalFilter],
         path: Path,
         max_filters: int = 10,
-    ) -> None:
+    ) -> list[ValidationWarning]:
         """Write a REW-compatible EQ text file.
 
         First line: 'Equaliser: Parametric EQ'
@@ -70,11 +71,15 @@ class REWGenerator:
             filters: List of CanonicalFilter objects to write.
             path: Output file path.
             max_filters: Maximum number of bands to write (default 10).
+
+        Returns:
+            List of ValidationWarning for each skipped UNKNOWN band.
         """
         # Truncate to max_filters
         bands = filters[:max_filters]
 
         lines: list[str] = [HEADER]
+        warnings: list[ValidationWarning] = []
         band_index = 1
         for f in bands:
             if f.type == "UNKNOWN":
@@ -84,11 +89,22 @@ class REWGenerator:
                     f.raw_mode,
                     f.frequency_hz,
                 )
+                warnings.append(
+                    ValidationWarning(
+                        field="type",
+                        message=(
+                            f"Skipped UNKNOWN filter (raw_mode={f.raw_mode}, "
+                            f"freq={f.frequency_hz:.1f} Hz) during REW export"
+                        ),
+                        original_value=f.raw_mode,
+                    )
+                )
                 continue
             lines.append(_format_filter_line(band_index, f))
             band_index += 1
 
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return warnings
 
     def generate_lr_files(
         self,
@@ -96,7 +112,7 @@ class REWGenerator:
         filters_r: list[CanonicalFilter],
         base_path: Path,
         max_filters: int = 10,
-    ) -> tuple[Path, Path]:
+    ) -> tuple[Path, Path, list[ValidationWarning]]:
         """Write two REW files for L/R mode.
 
         Generates two files with '_L' and '_R' suffixes appended to the base_path stem.
@@ -109,12 +125,12 @@ class REWGenerator:
             max_filters: Maximum number of bands per file (default 10).
 
         Returns:
-            Tuple of (left_path, right_path).
+            Tuple of (left_path, right_path, warnings).
         """
         left_path = base_path.parent / f"{base_path.stem}_L.txt"
         right_path = base_path.parent / f"{base_path.stem}_R.txt"
 
-        self.generate_file(filters_l, left_path, max_filters=max_filters)
-        self.generate_file(filters_r, right_path, max_filters=max_filters)
+        warnings_l = self.generate_file(filters_l, left_path, max_filters=max_filters)
+        warnings_r = self.generate_file(filters_r, right_path, max_filters=max_filters)
 
-        return (left_path, right_path)
+        return (left_path, right_path, warnings_l + warnings_r)

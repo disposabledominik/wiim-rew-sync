@@ -666,6 +666,59 @@ def cmd_peq_toggle(device: str, source: str, state: str, timeout: float) -> int:
 
 
 # ---------------------------------------------------------------------------
+# load-preset — load a PEQ preset onto one or more sources
+# ---------------------------------------------------------------------------
+
+
+async def _load_preset(
+    device: str, preset: str, sources: list[str], timeout: float
+) -> dict[str, bool]:
+    """Load a PEQ preset onto each source. Returns {source: success} mapping.
+
+    Does NOT use Safe_Write_Protocol — loading a preset is a single atomic API
+    call (EQv2SourceLoad), not a raw band write.
+
+    Domain rule: PEQ presets are global and loadable onto any source (rules.md rule 7).
+    """
+    client = WiiMHttpClient(device, timeout=timeout)
+    results: dict[str, bool] = {}
+    try:
+        capabilities = await CapabilityProber(client).probe()
+        adapter = WiiMAdapter(client, capabilities)
+
+        for source in sources:
+            try:
+                await adapter.load_peq_profile(source, preset)
+                results[source] = True
+            except (WiiMConnectionError, WiiMResponseError) as exc:
+                logger.debug("load_peq_profile failed for source %s: %s", source, exc)
+                results[source] = False
+    finally:
+        await client.close()
+    return results
+
+
+def cmd_load_preset(device: str, preset: str, sources: list[str], timeout: float) -> int:
+    """Load a PEQ preset onto one or more sources.
+
+    Exit code 0 if all sources succeed, 1 if any fail (but all are attempted).
+    """
+    try:
+        results = asyncio.run(_load_preset(device, preset, sources, timeout))
+    except (WiiMConnectionError, WiiMResponseError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    parts: list[str] = []
+    for source, success in results.items():
+        parts.append(f"{source} \u2713" if success else f"{source} \u2717")
+
+    print(f"Loaded '{preset}' onto {', '.join(parts)}")
+
+    return 0 if all(results.values()) else 1
+
+
+# ---------------------------------------------------------------------------
 # Argument parsing & dispatch
 # ---------------------------------------------------------------------------
 
@@ -831,6 +884,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Desired PEQ state: 'on' to enable, 'off' to disable.",
     )
 
+    load_preset = subparsers.add_parser(
+        "load-preset",
+        help="Load a PEQ preset onto one or more sources.",
+    )
+    load_preset.add_argument("--device", required=True, help="Device IP address.")
+    load_preset.add_argument(
+        "--preset", required=True,
+        help="Name of the PEQ preset to load.",
+    )
+    load_preset.add_argument(
+        "--source", required=True,
+        help="Comma-separated list of source names (e.g. wifi,optical,HDMI).",
+    )
+
     return parser
 
 
@@ -872,6 +939,9 @@ def run(argv: list[str] | None = None) -> int:
         )
     if args.command == "peq-toggle":
         return cmd_peq_toggle(args.device, args.source, args.state, args.timeout)
+    if args.command == "load-preset":
+        sources = [s.strip() for s in args.source.split(",")]
+        return cmd_load_preset(args.device, args.preset, sources, args.timeout)
 
     # argparse enforces a valid subcommand, so this is unreachable.
     parser.error(f"Unknown command: {args.command}")

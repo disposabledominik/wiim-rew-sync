@@ -694,7 +694,7 @@ Findings from full codebase integrity review. Decisions documented here for futu
     - Add unit test: verify custom path override works, verify fallback to default
   - _Prerequisite for GUI Redesign Requirement 24 (Log Accessibility and Crash Handling)_
 
-- [ ] 60. Add CLI command to load a PEQ preset onto one or more sources
+- [x] 60. Add CLI command to load a PEQ preset onto one or more sources
   - Add `load-preset --device <IP> --preset <name> --source <source1,source2,...>` CLI command
   - For each specified source, call `WiiMAdapter.load_peq_profile(source, preset_name)`
   - Print per-source result: "Loaded 'Living Room EQ' onto wifi ✓, optical ✓, HDMI ✓"
@@ -706,7 +706,7 @@ Findings from full codebase integrity review. Decisions documented here for futu
 
 ### Phase 11: Code Hygiene (from integrity review)
 
-- [ ] 61. REWGenerator warning propagation and dead code cleanup
+- [x] 61. REWGenerator warning propagation and dead code cleanup
   - **Refactor `REWGenerator.generate_file()` to return `list[ValidationWarning]`:**
     - Currently the method logs UNKNOWN-band skipping but discards the information
     - Change return type from `None` to `list[ValidationWarning]`

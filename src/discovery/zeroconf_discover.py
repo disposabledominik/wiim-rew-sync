@@ -11,15 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 
 from zeroconf import ServiceStateChange, Zeroconf
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo, AsyncZeroconf
 
 from src.models.capabilities import DeviceInfo
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger("wiim_rew_sync.discovery")
 

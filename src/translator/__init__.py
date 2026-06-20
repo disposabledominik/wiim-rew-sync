@@ -33,9 +33,13 @@ class TranslationEngine:
     @staticmethod
     def generate_rew_file(
         filters: list[CanonicalFilter], path: Path, max_filters: int = 10
-    ) -> None:
-        """Generate a REW EQ text file."""
-        REWGenerator().generate_file(filters, path, max_filters=max_filters)
+    ) -> list[ValidationWarning]:
+        """Generate a REW EQ text file.
+
+        Returns:
+            List of ValidationWarning for each skipped UNKNOWN band.
+        """
+        return REWGenerator().generate_file(filters, path, max_filters=max_filters)
 
     @staticmethod
     def generate_rew_lr_files(
@@ -43,8 +47,12 @@ class TranslationEngine:
         filters_r: list[CanonicalFilter],
         base_path: Path,
         max_filters: int = 10,
-    ) -> tuple[Path, Path]:
-        """Generate L/R REW text files."""
+    ) -> tuple[Path, Path, list[ValidationWarning]]:
+        """Generate L/R REW text files.
+
+        Returns:
+            Tuple of (left_path, right_path, warnings).
+        """
         return REWGenerator().generate_lr_files(
             filters_l, filters_r, base_path, max_filters=max_filters
         )

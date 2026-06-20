@@ -939,3 +939,173 @@ def test_set_filters_file_right_parses_both(
     assert settings.bands_l[0].frequency_hz == 100.0
     # Right channel first filter at 200 Hz
     assert settings.bands_r[0].frequency_hz == 200.0
+
+
+# ---------------------------------------------------------------------------
+# load-preset
+# ---------------------------------------------------------------------------
+
+
+def _patch_load_preset_stack(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    caps: DeviceCapabilities | None = None,
+    load_side_effects: dict[str, Exception | None] | None = None,
+) -> MagicMock:
+    """Patch the stack for load-preset tests. Returns the adapter mock."""
+    if caps is None:
+        caps = _make_caps()
+
+    client_instance = MagicMock()
+    client_instance.close = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
+
+    prober_instance = MagicMock()
+    prober_instance.probe = AsyncMock(return_value=caps)
+    monkeypatch.setattr(cli, "CapabilityProber", MagicMock(return_value=prober_instance))
+
+    adapter_instance = MagicMock()
+
+    if load_side_effects is not None:
+        async def load_peq_profile(source: str, preset: str) -> None:
+            effect = load_side_effects.get(source)
+            if effect is not None:
+                raise effect
+        adapter_instance.load_peq_profile = AsyncMock(side_effect=load_peq_profile)
+    else:
+        adapter_instance.load_peq_profile = AsyncMock(return_value=None)
+
+    monkeypatch.setattr(cli, "WiiMAdapter", MagicMock(return_value=adapter_instance))
+    return adapter_instance
+
+
+class TestLoadPreset:
+    """Tests for the load-preset CLI command."""
+
+    def test_load_preset_all_sources_succeed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """load-preset returns 0 and prints checkmarks when all sources succeed."""
+        adapter = _patch_load_preset_stack(monkeypatch)
+
+        code = cli.cmd_load_preset(
+            device="192.168.1.50",
+            preset="Living Room EQ",
+            sources=["wifi", "optical", "HDMI"],
+            timeout=5.0,
+        )
+
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "Living Room EQ" in out
+        assert "wifi \u2713" in out
+        assert "optical \u2713" in out
+        assert "HDMI \u2713" in out
+        # Verify each source had load_peq_profile called
+        assert adapter.load_peq_profile.call_count == 3
+
+    def test_load_preset_partial_failure(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """load-preset returns 1 when some sources fail, but all are attempted."""
+        from src.models.errors import WiiMResponseError
+
+        _patch_load_preset_stack(
+            monkeypatch,
+            load_side_effects={
+                "wifi": None,
+                "optical": WiiMResponseError("source not found"),
+                "HDMI": None,
+            },
+        )
+
+        code = cli.cmd_load_preset(
+            device="192.168.1.50",
+            preset="Bass Boost",
+            sources=["wifi", "optical", "HDMI"],
+            timeout=5.0,
+        )
+
+        out = capsys.readouterr().out
+        assert code == 1
+        assert "wifi \u2713" in out
+        assert "optical \u2717" in out
+        assert "HDMI \u2713" in out
+
+    def test_load_preset_all_fail(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """load-preset returns 1 when all sources fail."""
+        _patch_load_preset_stack(
+            monkeypatch,
+            load_side_effects={
+                "wifi": WiiMConnectionError("timeout"),
+                "optical": WiiMConnectionError("timeout"),
+            },
+        )
+
+        code = cli.cmd_load_preset(
+            device="192.168.1.50",
+            preset="Test",
+            sources=["wifi", "optical"],
+            timeout=5.0,
+        )
+
+        out = capsys.readouterr().out
+        assert code == 1
+        assert "wifi \u2717" in out
+        assert "optical \u2717" in out
+
+    def test_load_preset_each_source_gets_load_peq_profile_called(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Each specified source receives a load_peq_profile call with correct args."""
+        adapter = _patch_load_preset_stack(monkeypatch)
+
+        cli.cmd_load_preset(
+            device="192.168.1.50",
+            preset="My Preset",
+            sources=["wifi", "bluetooth", "line-in"],
+            timeout=5.0,
+        )
+
+        calls = adapter.load_peq_profile.call_args_list
+        assert len(calls) == 3
+        assert calls[0].args == ("wifi", "My Preset")
+        assert calls[1].args == ("bluetooth", "My Preset")
+        assert calls[2].args == ("line-in", "My Preset")
+
+    def test_load_preset_single_source(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """load-preset works with a single source."""
+        adapter = _patch_load_preset_stack(monkeypatch)
+
+        code = cli.cmd_load_preset(
+            device="192.168.1.50",
+            preset="Night Mode",
+            sources=["wifi"],
+            timeout=5.0,
+        )
+
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "Night Mode" in out
+        assert "wifi \u2713" in out
+        adapter.load_peq_profile.assert_called_once_with("wifi", "Night Mode")
+
+    def test_load_preset_via_main_parses_comma_separated_sources(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """load-preset --source wifi,optical,HDMI is parsed into a list."""
+        _patch_load_preset_stack(monkeypatch)
+
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main([
+                "load-preset",
+                "--device", "192.168.1.50",
+                "--preset", "My EQ",
+                "--source", "wifi,optical,HDMI",
+            ])
+
+        assert exc_info.value.code == 0

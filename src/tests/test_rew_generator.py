@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.models.canonical import CanonicalFilter
+from src.translator._warnings import ValidationWarning
 from src.translator.rew_generator import REWGenerator
 
 
@@ -209,7 +210,7 @@ class TestLRSuffixNaming:
         ]
         base = tmp_path / "my_eq"
 
-        left_path, right_path = generator.generate_lr_files(filters_l, filters_r, base)
+        left_path, right_path, _warnings = generator.generate_lr_files(filters_l, filters_r, base)
 
         assert left_path.name == "my_eq_L.txt"
         assert right_path.name == "my_eq_R.txt"
@@ -224,7 +225,7 @@ class TestLRSuffixNaming:
         ]
         base = tmp_path / "export"
 
-        left_path, right_path = generator.generate_lr_files(filters_l, filters_r, base)
+        left_path, right_path, _warnings = generator.generate_lr_files(filters_l, filters_r, base)
 
         assert left_path.exists()
         assert right_path.exists()
@@ -241,7 +242,7 @@ class TestLRSuffixNaming:
         ]
         base = tmp_path / "export"
 
-        left_path, right_path = generator.generate_lr_files(filters_l, filters_r, base)
+        left_path, right_path, _warnings = generator.generate_lr_files(filters_l, filters_r, base)
 
         left_content = left_path.read_text(encoding="utf-8")
         right_content = right_path.read_text(encoding="utf-8")
@@ -250,7 +251,7 @@ class TestLRSuffixNaming:
         assert "200.00 Hz" in right_content
 
     def test_lr_returns_path_tuple(self, generator: REWGenerator, tmp_path: Path) -> None:
-        """generate_lr_files returns a tuple of (left_path, right_path)."""
+        """generate_lr_files returns a tuple of (left_path, right_path, warnings)."""
         filters_l = [
             CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=0.0, q=1.0),
         ]
@@ -262,9 +263,10 @@ class TestLRSuffixNaming:
         result = generator.generate_lr_files(filters_l, filters_r, base)
 
         assert isinstance(result, tuple)
-        assert len(result) == 2
+        assert len(result) == 3
         assert isinstance(result[0], Path)
         assert isinstance(result[1], Path)
+        assert isinstance(result[2], list)
 
 
 # ---------------------------------------------------------------------------
@@ -487,3 +489,77 @@ class TestUnknownFilterSkipping:
         lines = out.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 1
         assert lines[0] == "Equaliser: Parametric EQ"
+
+    def test_unknown_band_returns_warning(
+        self, generator: REWGenerator, tmp_path: Path
+    ) -> None:
+        """Each skipped UNKNOWN band produces a ValidationWarning."""
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.41),
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=500.0, gain_db=0.0, q=1.0, raw_mode=99
+            ),
+            CanonicalFilter(type="HS", frequency_hz=8000.0, gain_db=-1.5, q=0.71),
+        ]
+        out = tmp_path / "eq.txt"
+        warnings = generator.generate_file(filters, out)
+
+        assert len(warnings) == 1
+        assert isinstance(warnings[0], ValidationWarning)
+        assert warnings[0].field == "type"
+        assert warnings[0].original_value == 99
+        assert "raw_mode=99" in warnings[0].message
+        assert "500.0 Hz" in warnings[0].message
+
+    def test_multiple_unknown_bands_return_multiple_warnings(
+        self, generator: REWGenerator, tmp_path: Path
+    ) -> None:
+        """Multiple UNKNOWN bands produce one warning per skipped band."""
+        filters = [
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=500.0, gain_db=0.0, q=1.0, raw_mode=99
+            ),
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=1000.0, gain_db=0.0, q=1.0, raw_mode=6
+            ),
+        ]
+        out = tmp_path / "eq.txt"
+        warnings = generator.generate_file(filters, out)
+
+        assert len(warnings) == 2
+        assert warnings[0].original_value == 99
+        assert warnings[1].original_value == 6
+
+    def test_no_unknown_returns_empty_warnings(
+        self, generator: REWGenerator, tmp_path: Path
+    ) -> None:
+        """When there are no UNKNOWN bands, an empty list is returned."""
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.41),
+        ]
+        out = tmp_path / "eq.txt"
+        warnings = generator.generate_file(filters, out)
+
+        assert warnings == []
+
+    def test_lr_files_aggregate_warnings(
+        self, generator: REWGenerator, tmp_path: Path
+    ) -> None:
+        """generate_lr_files aggregates warnings from both channels."""
+        filters_l = [
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=500.0, gain_db=0.0, q=1.0, raw_mode=99
+            ),
+        ]
+        filters_r = [
+            CanonicalFilter(
+                type="UNKNOWN", frequency_hz=1000.0, gain_db=0.0, q=1.0, raw_mode=6
+            ),
+        ]
+        base = tmp_path / "export"
+
+        _left, _right, warnings = generator.generate_lr_files(filters_l, filters_r, base)
+
+        assert len(warnings) == 2
+        assert warnings[0].original_value == 99
+        assert warnings[1].original_value == 6
