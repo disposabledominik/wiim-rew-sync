@@ -381,5 +381,5 @@ def test_list_sort_order_invariant(names: list[str], tmp_path: object) -> None:
 
     listed = repo.list()
     listed_names = [p.name for p in listed]
-    expected = sorted(names, key=lambda n: n.lower())
+    expected = sorted(names, key=lambda n: (n.lower(), n))
     assert listed_names == expected

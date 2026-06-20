@@ -132,7 +132,9 @@ class TestLoad:
         # No attribute error, and other fields keep defaults
         assert settings.discovery_timeout == 5
 
-    def test_logs_warning_on_corrupt_file(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def test_logs_warning_on_corrupt_file(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """A warning is logged when the settings file is corrupt."""
         (tmp_path / "settings.json").write_text("{invalid", encoding="utf-8")
 

@@ -80,7 +80,7 @@ class ProfileRepository:
             except (json.JSONDecodeError, ValueError, KeyError):
                 # Skip invalid profile files
                 continue
-        profiles.sort(key=lambda p: p.name.lower())
+        profiles.sort(key=lambda p: (p.name.lower(), p.name))
         return profiles
 
     def delete(self, name: str) -> None:
