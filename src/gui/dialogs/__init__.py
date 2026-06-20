@@ -6,8 +6,20 @@ unsaved changes, and legacy import/export operations.
 
 from __future__ import annotations
 
+from src.gui.dialogs.crash_dialog import CrashDialog
 from src.gui.dialogs.error_dialog import ErrorDialog
 from src.gui.dialogs.export_dialog import ExportDialog
 from src.gui.dialogs.import_dialog import ImportDialog
+from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
+from src.gui.dialogs.push_confirmation import PushConfirmation
+from src.gui.dialogs.unsaved_changes_dialog import UnsavedChangesDialog
 
-__all__ = ["ErrorDialog", "ExportDialog", "ImportDialog"]
+__all__ = [
+    "CrashDialog",
+    "ErrorDialog",
+    "ExportDialog",
+    "ImportDialog",
+    "OnboardingOverlay",
+    "PushConfirmation",
+    "UnsavedChangesDialog",
+]

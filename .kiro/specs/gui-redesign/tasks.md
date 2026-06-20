@@ -84,7 +84,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Test DeviceCard states (idle/connecting/connected/error)
     - _Requirements: 7.1-7.6, 1.3-1.4, 8.1-8.2, 5.1-5.5, 2.3_
 
-- [~] 3. Checkpoint - Ensure shared components build correctly
+- [x] 3. Checkpoint - Ensure shared components build correctly
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 4. Implement wizard pages
@@ -155,7 +155,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Test PushPage: progress stages, success/failure display
     - _Requirements: 2.1-2.9, 1.9, 3.1-3.6, 4.1-4.12, 5.1-5.7, 6.2-6.8_
 
-- [~] 5. Checkpoint - Ensure wizard pages build correctly
+- [x] 5. Checkpoint - Ensure wizard pages build correctly
   - Ensure all tests pass, ask the user if questions arise.
 
 - [x] 6. Implement WizardController state machine
@@ -211,11 +211,11 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Test step summary updates via step_summary_updated signal
     - _Requirements: 1.2-1.12, 11.1-11.8_
 
-- [~] 7. Checkpoint - Ensure WizardController logic is correct
+- [x] 7. Checkpoint - Ensure WizardController logic is correct
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 8. Implement secondary views
-  - [~] 8.1 Create `src/gui/views/presets_device_view.py`
+  - [x] 8.1 Create `src/gui/views/presets_device_view.py`
     - Implement PresetsDeviceView with two sections: PEQ Presets and RoomFit Profiles
     - Fetch via list_peq_profiles() and list_roomfit_profiles()
     - Each item: name, channel mode badge, PEQ/RoomFit badge
@@ -225,7 +225,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Search/filter field when > 10 items
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9, 15.10, 15.11, 15.12, 8.5, 8.6, 10.9_
 
-  - [~] 8.2 Create `src/gui/views/my_presets_view.py`
+  - [x] 8.2 Create `src/gui/views/my_presets_view.py`
     - Implement MyPresetsView with local preset library CRUD
     - List items: name, channel mode badge (Stereo/L/R), active band count
     - Inline rename (double-click), context menu (Load, Rename, Duplicate, Delete)
@@ -233,7 +233,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Emit load_requested signal to populate wizard Review step
     - _Requirements: 8.3, 8.4, 10.9_
 
-  - [~] 8.3 Create `src/gui/views/settings_view.py`
+  - [x] 8.3 Create `src/gui/views/settings_view.py`
     - Implement SettingsView with sections: Appearance, Paths, Behavior, Logs, Support
     - Appearance: Light/Dark/System theme toggle
     - Paths: Log dir, Presets dir, Default REW export folder (with browse + validation)
@@ -243,7 +243,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - All settings persist via settings.json
     - _Requirements: 24.1, 24.2, 24.5, 24.9, 24.10, 24.11, 24.12, 24.14, 24.15, 25.4_
 
-  - [~] 8.4 Create `src/gui/views/help_view.py`
+  - [x] 8.4 Create `src/gui/views/help_view.py`
     - Implement HelpView as side panel overlay (does not replace current view)
     - Render bundled Markdown from assets/help/
     - Searchable table of contents sidebar
@@ -258,8 +258,8 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Test HelpView: contextual navigation, section rendering
     - _Requirements: 15.1-15.12, 8.3-8.6, 24.1-24.15, 27.1-27.10_
 
-- [ ] 9. Implement dialogs
-  - [~] 9.1 Create `src/gui/dialogs/push_confirmation.py`
+- [x] 9. Implement dialogs
+  - [x] 9.1 Create `src/gui/dialogs/push_confirmation.py`
     - Implement PushConfirmation modal dialog with static confirm() method
     - Display: device name, source, channel mode, band count, dry run state
     - Include clamping summary when applicable
@@ -267,20 +267,20 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Consolidate sequential confirmations into single summary
     - _Requirements: 6.1, 12.2, 12.3, 12.6_
 
-  - [~] 9.2 Create `src/gui/dialogs/onboarding_overlay.py`
+  - [x] 9.2 Create `src/gui/dialogs/onboarding_overlay.py`
     - Implement OnboardingOverlay for first-run welcome
     - 3 capability cards: Import filters, Push safely, Save presets
     - "Get Started" button (dismiss + start wizard) and "Skip" link
     - Only shown when first_run_complete is False in settings
     - _Requirements: 23.1, 23.2, 23.3, 23.4, 23.5, 23.7_
 
-  - [~] 9.3 Create `src/gui/dialogs/crash_dialog.py`
+  - [x] 9.3 Create `src/gui/dialogs/crash_dialog.py`
     - Implement CrashDialog with static show_crash() method
     - Display "The app encountered an unexpected error" + log file path
     - Include "View Logs" link and "Generate Support Bundle" button
     - _Requirements: 24.6, 24.7, 24.13_
 
-  - [~] 9.4 Create `src/gui/dialogs/unsaved_changes_dialog.py`
+  - [x] 9.4 Create `src/gui/dialogs/unsaved_changes_dialog.py`
     - Implement unsaved changes confirmation dialog
     - Triggered on close or navigate-away when filter changes exist
     - _Requirements: 12.5_

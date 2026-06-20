@@ -110,6 +110,8 @@ pip3 install -e ".[dev]"
 
 6. **Hypothesis imports go at top of file** alongside other imports. Never mid-file. (E402)
 
+7. **Full-suite Qt test ERRORs are a known WSL/coverage artifact — not real failures.** When running the full test suite with coverage enabled, Qt-based tests (GUI pages, wizard controller, dialogs, help view) show as `ERROR` during pytest-cov's parallel data combine step. This is because pytest-cov uses SQLite to combine `.coverage.*` files, and SQLite on WSL2's Windows filesystem (`/mnt/c/`) encounters I/O errors or "unable to open database file" failures. **These are not test failures.** The tests pass cleanly when run individually with `--no-cov`. Do NOT investigate or attempt to fix these ERRORs — they are infrastructure noise. The meaningful signal is the `X passed, Y failed` line (ignore ERROR count).
+
 ## Parallel Task Execution
 
 - **Same file → batch into one subagent call.** Last writer wins otherwise.
