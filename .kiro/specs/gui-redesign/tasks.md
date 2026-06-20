@@ -300,7 +300,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Handle closeEvent (unsaved changes check, bridge shutdown)
     - _Requirements: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6_
 
-  - [~] 11.2 Wire WizardController to page signals and AsyncBridge
+  - [x] 11.2 Wire WizardController to page signals and AsyncBridge
     - Connect page signals (device_selected, eq_type_selected, source_selected, etc.) to WizardController
     - Connect AsyncBridge signals (discovery_complete, capabilities_ready, peq_ready, write_complete, operation_error, progress_update) to controller handlers
     - Connect StepIndicator.step_clicked to WizardController.go_to_step
@@ -308,7 +308,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Implement auto-advance logic (single device auto-select, PEQ-only device skip)
     - _Requirements: 14.1, 14.3, 14.6, 1.5, 2.4, 2.8, 9.1, 9.2_
 
-  - [~] 11.3 Implement responsive operation feedback and button state management
+  - [x] 11.3 Implement responsive operation feedback and button state management
     - Disable action buttons immediately on click (prevent double-submit)
     - Show loading state within 100ms of user action
     - Display "This may take a moment..." for operations > 3 seconds
@@ -316,14 +316,14 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Ensure main thread never blocks (all I/O via AsyncBridge)
     - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6_
 
-  - [~] 11.4 Implement layout stability and progressive disclosure
+  - [x] 11.4 Implement layout stability and progressive disclosure
     - Anchor action buttons, navigation, step indicators, and status banner positions
     - Reserve content area space with skeleton placeholders during loading
     - MAX_CONTENT_WIDTH constraint with centered alignment on large screens
     - Progressive disclosure: channel mode, RoomFit, dry run as secondary/expandable controls
     - _Requirements: 10.11, 10.12, 10.13, 10.5_
 
-  - [~] 11.5 Implement keyboard navigation and accessibility
+  - [x] 11.5 Implement keyboard navigation and accessibility
     - Full Tab/Shift+Tab/Enter/Escape navigation through all steps
     - Logical tab order following visual reading order
     - Visible focus indicators (3:1 contrast ratio)

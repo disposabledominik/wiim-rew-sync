@@ -1,0 +1,184 @@
+"""Operation feedback manager — responsive UI feedback for async operations.
+
+Manages button disabling, loading states, long-operation messages, and
+cancellation support for all AsyncBridge-driven operations.
+
+Requirements referenced: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtWidgets import QPushButton, QWidget
+
+if TYPE_CHECKING:
+    from src.gui.components.status_banner import StatusBanner
+
+logger = logging.getLogger("wiim_rew_sync.app")
+
+# Threshold before showing "This may take a moment..." (ms)
+_LONG_OPERATION_THRESHOLD_MS = 3000
+
+# Threshold before showing Cancel button (ms)
+_CANCEL_THRESHOLD_MS = 2000
+
+
+class OperationFeedbackManager(QObject):
+    """Manages responsive operation feedback and button state.
+
+    Coordinates:
+    - Disabling action buttons on operation start (prevents double-submit)
+    - Showing loading state in StatusBanner within 100ms
+    - Displaying "This may take a moment..." for operations > 3 seconds
+    - Providing Cancel button for operations > 2 seconds
+
+    Signals:
+        cancel_requested: Emitted when the user clicks Cancel on a
+            long-running operation.
+    """
+
+    cancel_requested = Signal()
+
+    def __init__(
+        self,
+        status_banner: StatusBanner,
+        parent: QObject | None = None,
+    ) -> None:
+        """Initialize the feedback manager.
+
+        Args:
+            status_banner: The StatusBanner widget to display messages in.
+            parent: Optional Qt parent object.
+        """
+        super().__init__(parent)
+        self._status_banner = status_banner
+        self._action_buttons: list[QWidget] = []
+        self._is_active = False
+        self._current_message = ""
+
+        # Timer for showing "This may take a moment..." after 3 seconds
+        self._long_op_timer = QTimer(self)
+        self._long_op_timer.setSingleShot(True)
+        self._long_op_timer.setInterval(_LONG_OPERATION_THRESHOLD_MS)
+        self._long_op_timer.timeout.connect(self._on_long_operation)
+
+        # Timer for showing Cancel button after 2 seconds
+        self._cancel_timer = QTimer(self)
+        self._cancel_timer.setSingleShot(True)
+        self._cancel_timer.setInterval(_CANCEL_THRESHOLD_MS)
+        self._cancel_timer.timeout.connect(self._on_cancel_available)
+
+        # Cancel button (created lazily, inserted into StatusBanner layout)
+        self._cancel_button: QPushButton | None = None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def register_action_buttons(self, buttons: list[QWidget]) -> None:
+        """Register action buttons to be disabled during operations.
+
+        Args:
+            buttons: List of QPushButton or similar widgets to manage.
+        """
+        self._action_buttons = list(buttons)
+
+    def start_operation(self, message: str = "Working...") -> None:
+        """Signal that an async operation has started.
+
+        Disables registered action buttons immediately and shows a loading
+        indicator in the StatusBanner.
+
+        Args:
+            message: Description of the operation shown in the banner.
+        """
+        self._is_active = True
+        self._current_message = message
+
+        # Req 13.1: Disable buttons immediately (prevent double-submit)
+        for btn in self._action_buttons:
+            btn.setEnabled(False)
+
+        # Req 13.2: Show loading state in banner
+        self._status_banner.show_progress(message)
+
+        # Start timers for long-operation and cancel thresholds
+        self._long_op_timer.start()
+        self._cancel_timer.start()
+
+        logger.debug("Operation started: %s", message)
+
+    def finish_operation(self) -> None:
+        """Signal that the async operation has completed.
+
+        Re-enables action buttons, stops timers, hides cancel button,
+        and clears the progress banner.
+        """
+        self._is_active = False
+
+        # Stop timers
+        self._long_op_timer.stop()
+        self._cancel_timer.stop()
+
+        # Re-enable buttons
+        for btn in self._action_buttons:
+            btn.setEnabled(True)
+
+        # Hide cancel button if visible
+        self._hide_cancel_button()
+
+        # Clear the progress banner
+        self._status_banner.clear()
+
+        logger.debug("Operation finished")
+
+    @property
+    def is_active(self) -> bool:
+        """Whether an operation is currently in progress."""
+        return self._is_active
+
+    # ------------------------------------------------------------------
+    # Private slots
+    # ------------------------------------------------------------------
+
+    def _on_long_operation(self) -> None:
+        """Handle long-operation threshold (3s) — show supplementary message."""
+        if self._is_active:
+            self._status_banner.show_progress(
+                f"{self._current_message} \u2014 This may take a moment..."
+            )
+
+    def _on_cancel_available(self) -> None:
+        """Handle cancel threshold (2s) — show Cancel button in banner."""
+        if self._is_active:
+            self._show_cancel_button()
+
+    def _show_cancel_button(self) -> None:
+        """Insert a Cancel button into the StatusBanner layout."""
+        if self._cancel_button is None:
+            self._cancel_button = QPushButton("Cancel")
+            self._cancel_button.setObjectName("OperationCancelButton")
+            self._cancel_button.setFixedHeight(24)
+            self._cancel_button.clicked.connect(self._on_cancel_clicked)
+
+        # Insert before the close button in the banner layout
+        layout = self._status_banner.layout()
+        if layout is not None and self._cancel_button.parent() is None:
+            # Insert at position before last widget (close button)
+            layout.insertWidget(layout.count() - 1, self._cancel_button)
+
+        self._cancel_button.setVisible(True)
+
+    def _hide_cancel_button(self) -> None:
+        """Hide the Cancel button from the banner."""
+        if self._cancel_button is not None:
+            self._cancel_button.setVisible(False)
+
+    def _on_cancel_clicked(self) -> None:
+        """Handle Cancel button click."""
+        logger.info("Operation cancel requested by user")
+        self.cancel_requested.emit()
+        self.finish_operation()
