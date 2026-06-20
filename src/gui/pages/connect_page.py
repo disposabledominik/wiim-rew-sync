@@ -125,7 +125,9 @@ class ConnectPage(QWidget):
     def showEvent(self, event) -> None:  # noqa: ANN001
         """Auto-trigger discovery when the page becomes visible."""
         super().showEvent(event)
-        self.refresh_requested.emit()
+        # Only auto-discover if no devices are currently shown (avoid re-scanning on back-nav)
+        if not self._device_cards:
+            self.refresh_requested.emit()
 
     # ------------------------------------------------------------------
     # Private helpers

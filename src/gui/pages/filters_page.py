@@ -609,8 +609,14 @@ class FiltersPage(QWidget):
 
     @Slot()
     def _on_retry(self) -> None:
-        """Retry after error — re-trigger import or pull depending on context."""
+        """Retry after error — reset page to initial state so user can choose again."""
         self._error_section.setVisible(False)
+        # Re-show option cards and drop zone so user can pick an import method again
+        self._import_card.setVisible(True)
+        self._import_card.setEnabled(True)
+        self._pull_card.setVisible(True)
+        self._pull_card.setEnabled(True)
+        self._drop_zone.setVisible(not self._roomfit_mode)
 
     # ------------------------------------------------------------------
     # Private: Helpers

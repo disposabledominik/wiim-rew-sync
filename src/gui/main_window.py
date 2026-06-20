@@ -543,6 +543,9 @@ class MainWindow(QMainWindow):
         self._step_indicator.step_clicked.connect(self._on_step_indicator_clicked)
         self._sidebar_nav.navigation_requested.connect(self._on_navigation_requested)
 
+        # --- 5. HelpView close button ---
+        self._help_view.close_requested.connect(self._on_help_close_requested)
+
     # ------------------------------------------------------------------
     # Page → Controller handlers
     # ------------------------------------------------------------------
@@ -645,6 +648,7 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error("No source selected")
             return
 
+        self._status_banner.show_progress("Pulling filters from device...")
         self._bridge.run_async(
             self._bridge_wrapper("device_pull", self._do_device_pull())
         )
@@ -656,6 +660,7 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             return
 
+        self._status_banner.show_progress("Connecting to REW...")
         self._bridge.run_async(
             self._bridge_wrapper("rew_list", self._do_rew_list_measurements())
         )
@@ -702,6 +707,7 @@ class MainWindow(QMainWindow):
 
         # User cancelled the dialog
         if not path:
+            logger.debug("Export cancelled by user")
             return
 
         # Gather filters from wizard state
@@ -956,7 +962,10 @@ class MainWindow(QMainWindow):
             )
         else:
             QTimer.singleShot(
-                50, lambda: self._status_banner.show_info("Device has no active filters")
+                50, lambda: self._status_banner.show_info(
+                    "Device has no active filters. Try importing from a REW file instead.",
+                    auto_dismiss=0,
+                )
             )
 
         logger.info("PEQ data ready: %d filters", count)
@@ -1019,6 +1028,7 @@ class MainWindow(QMainWindow):
 
         # User cancelled the dialog
         if measurement is None:
+            self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
             return
 
         # Fetch filters for the selected measurement
@@ -1318,6 +1328,11 @@ class MainWindow(QMainWindow):
         if 0 <= index < len(sequence):
             target_step = sequence[index]
             self._wizard_controller.go_to_step(target_step)
+
+    @Slot()
+    def _on_help_close_requested(self) -> None:
+        """Handle HelpView close button — navigate back to the current wizard step."""
+        self._on_step_changed(self._wizard_controller.current_step)
 
     @Slot(str)
     def _on_navigation_requested(self, view_key: str) -> None:
