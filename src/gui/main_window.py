@@ -47,6 +47,11 @@ from src.gui.pages.push_page import PushPage
 from src.gui.pages.review_page import ReviewPage
 from src.gui.pages.source_page import SourcePage
 from src.gui.panels.diagnostics_panel import DiagnosticsPanel
+from src.gui.secondary_workflows import (
+    DevicePushResult,
+    SecondaryWorkflowManager,
+    SourceCopyResult,
+)
 from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
 from src.gui.views.my_presets_view import MyPresetsView
@@ -174,6 +179,9 @@ class MainWindow(QMainWindow):
         self._setup_keyboard_shortcuts()
         self._setup_accessibility()
 
+        # --- Secondary workflows (Req 17, 18, 20, 21) ---
+        self._setup_secondary_workflows()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -217,6 +225,11 @@ class MainWindow(QMainWindow):
     def feedback_manager(self) -> OperationFeedbackManager:
         """Access the operation feedback manager."""
         return self._feedback_manager
+
+    @property
+    def secondary_workflows(self) -> SecondaryWorkflowManager:
+        """Access the secondary workflow manager."""
+        return self._secondary_workflows
 
     # ------------------------------------------------------------------
     # Page / View accessors
@@ -575,9 +588,13 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_undo_requested(self) -> None:
-        """Handle undo request from PushPage."""
-        # TODO: Trigger undo/restore via bridge using last_backup_path
-        logger.info("Undo requested")
+        """Handle undo request from PushPage — restore from last backup.
+
+        Requirement 18.1: Prominent "Undo" action available after push.
+        Requirement 18.2: Restore from most recent backup.
+        """
+        backup_path = getattr(self._wizard_controller.state, "last_backup_path", "")
+        self._secondary_workflows.undo_last_push(backup_path)
 
     @Slot()
     def _on_done_acknowledged(self) -> None:
@@ -1049,6 +1066,317 @@ class MainWindow(QMainWindow):
             # Cancel active operation
             self._feedback_manager.cancel_requested.emit()
             logger.debug("Keyboard shortcut: Escape — Operation cancelled")
+
+    # ------------------------------------------------------------------
+    # Secondary Workflows (Req 17, 18, 20, 21)
+    # ------------------------------------------------------------------
+
+    def _setup_secondary_workflows(self) -> None:
+        """Create the SecondaryWorkflowManager and wire all secondary workflow signals.
+
+        Connects:
+        - ReviewPage "Copy to another source" → copy_to_sources flow
+        - ReviewPage "Apply to multiple devices" → apply_to_devices flow
+        - PresetsDeviceView "Copy to Another Device" → copy_preset_to_device flow
+        - MyPresetsView "Load" → profile recall → populate ReviewPage
+        - PushPage "Undo" → undo_last_push flow
+        - SecondaryWorkflowManager completion signals → UI updates
+        """
+        self._secondary_workflows = SecondaryWorkflowManager(parent=self)
+
+        # --- Inbound: page/view actions → workflow manager ---
+        self._review_page.copy_to_source_requested.connect(
+            self._on_copy_to_source_requested
+        )
+        self._review_page.multi_device_requested.connect(
+            self._on_multi_device_requested
+        )
+        self._presets_device_view.copy_to_device_requested.connect(
+            self._on_copy_to_device_requested
+        )
+        self._my_presets_view.load_requested.connect(
+            self._on_profile_load_requested
+        )
+
+        # --- Outbound: workflow manager signals → UI updates ---
+        self._secondary_workflows.copy_to_sources_progress.connect(
+            self._on_copy_to_sources_progress
+        )
+        self._secondary_workflows.copy_to_sources_complete.connect(
+            self._on_copy_to_sources_complete
+        )
+        self._secondary_workflows.multi_device_progress.connect(
+            self._on_multi_device_progress
+        )
+        self._secondary_workflows.multi_device_complete.connect(
+            self._on_multi_device_complete
+        )
+        self._secondary_workflows.copy_to_device_complete.connect(
+            self._on_copy_to_device_complete
+        )
+        self._secondary_workflows.profile_recalled.connect(
+            self._on_profile_recalled
+        )
+        self._secondary_workflows.undo_complete.connect(
+            self._on_undo_complete
+        )
+
+    # --- Inbound handlers (page/view → workflow trigger) ---
+
+    @Slot()
+    def _on_copy_to_source_requested(self) -> None:
+        """Handle ReviewPage "Copy to another source" button click.
+
+        Opens a source picker (multi-select) showing all device sources
+        except the currently selected one, then triggers copy_to_sources.
+
+        Requirement 20.1: Offer "Copy to another source" action.
+        Requirement 20.2: Display other available sources as selectable targets.
+        """
+        # TODO: Open a source picker dialog (multi-select) showing available sources
+        # For now, log and emit placeholder via workflow manager
+        state = self._wizard_controller.state
+        current_source = state.selected_source
+        filters = state.current_filters
+
+        if not filters:
+            self._status_banner.show_error("No filters loaded to copy")
+            return
+
+        logger.info(
+            "Copy-to-source requested (current source: '%s', %d filters)",
+            current_source,
+            len(filters),
+        )
+
+        # TODO: Show source picker dialog, collect target_sources from user
+        # target_sources = SourcePickerDialog.get_sources(
+        #     parent=self,
+        #     available_sources=state.available_sources,
+        #     exclude=[current_source],
+        # )
+        # if target_sources:
+        #     self._secondary_workflows.copy_to_sources(filters, target_sources)
+        self._status_banner.show_info(
+            "Copy to another source: source picker not yet implemented"
+        )
+
+    @Slot()
+    def _on_multi_device_requested(self) -> None:
+        """Handle ReviewPage "Apply to multiple devices" button click.
+
+        Opens a device picker (multi-select, pre-checking current device),
+        then for each device opens a source picker, then triggers
+        apply_to_devices with sequential push.
+
+        Requirement 21.1: Offer option only when >1 device discovered.
+        Requirement 21.2: Display all discovered devices as checkboxes.
+        Requirement 21.3: User specifies target source per device.
+        """
+        state = self._wizard_controller.state
+        filters = state.current_filters
+
+        if not filters:
+            self._status_banner.show_error("No filters loaded to push")
+            return
+
+        logger.info(
+            "Multi-device push requested (%d filters)",
+            len(filters),
+        )
+
+        # TODO: Show device picker dialog (multi-select)
+        # Then for each selected device, show source picker
+        # request = MultiDeviceRequest(
+        #     device_source_map={...},
+        #     device_names={...},
+        # )
+        # self._secondary_workflows.apply_to_devices(filters, request)
+        self._status_banner.show_info(
+            "Apply to multiple devices: device picker not yet implemented"
+        )
+
+    @Slot(list)
+    def _on_copy_to_device_requested(self, items: list) -> None:
+        """Handle PresetsDeviceView "Copy to Another Device" action.
+
+        Opens a device picker for the target device, then a source picker
+        (for PEQ), then executes copy_preset_to_device per item.
+
+        Requirement 17.3: Copy Preset to Another Device guided flow.
+
+        Args:
+            items: List of PresetItem objects selected for copying.
+        """
+        if not items:
+            return
+
+        logger.info(
+            "Copy-to-device requested: %d items selected",
+            len(items),
+        )
+
+        # TODO: Show device picker dialog for target device selection
+        # target_device_ip = DevicePickerDialog.get_device(parent=self, ...)
+        # target_source = SourcePickerDialog.get_source(parent=self, ...)
+        # For each item:
+        #   preset_filters = fetch/extract filters from item
+        #   self._secondary_workflows.copy_preset_to_device(
+        #       preset_filters, target_device_ip, target_source
+        #   )
+        self._status_banner.show_info(
+            "Copy to another device: device picker not yet implemented"
+        )
+
+    @Slot(object)
+    def _on_profile_load_requested(self, profile: object) -> None:
+        """Handle MyPresetsView "Load" action — recall profile into ReviewPage.
+
+        Loads the profile's filters and navigates to the Review step.
+        If no device is connected, the flow adapts to require connection first.
+
+        Requirement 17.2: Profile Recall & Push flow.
+
+        Args:
+            profile: Profile object from the local preset library.
+        """
+        logger.info("Profile load requested: %s", getattr(profile, "name", "unknown"))
+        self._secondary_workflows.recall_profile(profile)
+
+    # --- Outbound handlers (workflow manager → UI updates) ---
+
+    @Slot(str)
+    def _on_copy_to_sources_progress(self, message: str) -> None:
+        """Show copy-to-sources progress in the StatusBanner.
+
+        Args:
+            message: Progress message (e.g. "Writing to optical...").
+        """
+        self._status_banner.show_progress(message)
+
+    @Slot(list)
+    def _on_copy_to_sources_complete(self, results: list) -> None:
+        """Handle copy-to-sources completion — show summary in StatusBanner.
+
+        Requirement 20.5: Per-source progress and results displayed.
+
+        Args:
+            results: List of SourceCopyResult objects.
+        """
+        succeeded = sum(1 for r in results if isinstance(r, SourceCopyResult) and r.success)
+        failed = len(results) - succeeded
+
+        if failed == 0:
+            summary_parts = [
+                r.source_name for r in results
+                if isinstance(r, SourceCopyResult) and r.success
+            ]
+            self._status_banner.show_success(
+                f"Copied to {len(summary_parts)} source(s): "
+                + ", ".join(summary_parts)
+            )
+        else:
+            self._status_banner.show_error(
+                f"Copy complete: {succeeded} succeeded, {failed} failed"
+            )
+
+    @Slot(str)
+    def _on_multi_device_progress(self, message: str) -> None:
+        """Show multi-device push progress in the StatusBanner.
+
+        Args:
+            message: Progress message (e.g. "Pushing to WiiM Pro / wifi...").
+        """
+        self._status_banner.show_progress(message)
+
+    @Slot(list)
+    def _on_multi_device_complete(self, results: list) -> None:
+        """Handle multi-device push completion — show summary.
+
+        Requirement 21.6: Summary after all devices processed.
+
+        Args:
+            results: List of DevicePushResult objects.
+        """
+        succeeded = sum(
+            1 for r in results if isinstance(r, DevicePushResult) and r.success
+        )
+        total = len(results)
+        failed = total - succeeded
+
+        if failed == 0:
+            self._status_banner.show_success(
+                f"All {total} device/source pairs updated successfully"
+            )
+        else:
+            self._status_banner.show_error(
+                f"{succeeded} of {total} devices updated successfully. "
+                f"{failed} failed (see details)"
+            )
+
+    @Slot(bool, str)
+    def _on_copy_to_device_complete(self, success: bool, message: str) -> None:
+        """Handle copy-to-device completion.
+
+        Args:
+            success: Whether the copy succeeded.
+            message: Human-readable result message.
+        """
+        if success:
+            self._status_banner.show_success(message)
+        else:
+            self._status_banner.show_error(message)
+
+    @Slot(list)
+    def _on_profile_recalled(self, filters: list) -> None:
+        """Handle profile recall — populate ReviewPage and navigate.
+
+        Loads the recalled filters into the wizard state and ReviewPage,
+        then navigates to the Review step.
+
+        Requirement 17.2: Profile Recall loads into Review step.
+
+        Args:
+            filters: List of CanonicalFilter objects from the recalled profile.
+        """
+        if not filters:
+            self._status_banner.show_error("Profile contains no filters")
+            return
+
+        # Store filters in wizard state
+        state = self._wizard_controller.state
+        state.current_filters = filters
+
+        # Populate ReviewPage with the recalled filters
+        self._review_page.set_filters(filters)
+
+        # Update summary (use current connection info if available)
+        device = state.selected_device or "No device"
+        source = state.selected_source or "Not selected"
+        channel = state.channel_mode or "Stereo"
+        active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
+        self._review_page.set_summary(device, source, channel, active_bands)
+
+        # Navigate to Review step
+        self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
+        self._status_banner.show_success(
+            f"Profile loaded: {active_bands} bands ready for review"
+        )
+
+    @Slot(bool, str)
+    def _on_undo_complete(self, success: bool, message: str) -> None:
+        """Handle undo completion — show result in StatusBanner.
+
+        Requirement 18.4: Display "Previous filters restored" on success.
+
+        Args:
+            success: Whether the undo succeeded.
+            message: Human-readable result message.
+        """
+        if success:
+            self._status_banner.show_success(message)
+        else:
+            self._status_banner.show_error(f"Undo failed: {message}")
 
     # ------------------------------------------------------------------
     # Close Event

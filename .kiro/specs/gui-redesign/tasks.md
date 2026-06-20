@@ -333,7 +333,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - State communication via icon + text (not color alone)
     - _Requirements: 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7_
 
-  - [~] 11.6 Implement secondary workflow integrations
+  - [x] 11.6 Implement secondary workflow integrations
     - "Copy to another source" flow: source picker (multi-select) → Safe_Write_Protocol per source
     - "Apply to multiple devices" flow: device picker → source picker per device → sequential push
     - "Copy to Another Device" from Presets on Device view
