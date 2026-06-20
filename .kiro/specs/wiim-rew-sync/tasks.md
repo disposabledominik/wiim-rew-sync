@@ -693,3 +693,13 @@ Findings from full codebase integrity review. Decisions documented here for futu
     - Update `src/logging/setup.py` to use `get_log_dir()` instead of hardcoded path construction
     - Add unit test: verify custom path override works, verify fallback to default
   - _Prerequisite for GUI Redesign Requirement 24 (Log Accessibility and Crash Handling)_
+
+- [ ] 60. Add CLI command to load a PEQ preset onto one or more sources
+  - Add `load-preset --device <IP> --preset <name> --source <source1,source2,...>` CLI command
+  - For each specified source, call `WiiMAdapter.load_peq_profile(source, preset_name)`
+  - Print per-source result: "Loaded 'Living Room EQ' onto wifi ✓, optical ✓, HDMI ✓"
+  - Exit code 0 if all sources succeed, 1 if any fail (but continue attempting remaining sources)
+  - Does NOT use Safe_Write_Protocol (loading a preset is a single atomic API call, not a raw band write)
+  - Add unit test with mocked adapter verifying each source gets `load_peq_profile` called
+  - _Domain rule: PEQ presets are global and loadable onto any source (rules.md rule 7)_
+  - _Prerequisite for GUI Redesign Requirement 15.13_

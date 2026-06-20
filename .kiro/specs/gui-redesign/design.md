@@ -142,8 +142,7 @@ src/gui/
 │   ├── sidebar_nav.py       # Collapsible navigation rail
 │   ├── status_banner.py     # Contextual message area
 │   ├── filter_table.py      # Shared filter table (5 columns)
-│   ├── device_card.py       # Device info card widget
-│   └── peq_toggle.py        # PEQ/RoomFit enable/disable toggle
+│   └── device_card.py       # Device info card widget
 ├── pages/
 │   ├── __init__.py
 │   ├── connect_page.py      # Device discovery + selection
@@ -426,24 +425,9 @@ class DeviceCard(QWidget):
 
 **Visual:** Rounded card (8px radius), 16px padding. Name as heading, model + IP as subtext, firmware version, role badge (solo/master/slave). States: idle (neutral border), connecting (pulsing accent border), connected (filled accent left strip), error (red left strip + error text + retry button).
 
-### 8. PEQToggle (`components/peq_toggle.py`)
+### 8. ~~PEQToggle~~ DEFERRED
 
-Quick enable/disable toggle for PEQ and RoomFit (Req 22).
-
-```python
-class PEQToggle(QWidget):
-    """PEQ on/off toggle with optional RoomFit toggle."""
-
-    peq_toggled = Signal(bool)      # True = enable
-    roomfit_toggled = Signal(bool)   # True = enable
-
-    def set_peq_state(self, enabled: bool) -> None: ...
-    def set_roomfit_visible(self, visible: bool) -> None: ...
-    def set_roomfit_state(self, enabled: bool) -> None: ...
-    def set_roomfit_enabled(self, enabled: bool) -> None:
-        """Disable toggle if API not confirmed (Uncertainty Protocol)."""
-        ...
-```
+*Moved to backlog (`docs/backlog.md`). The PEQ/RoomFit enable/disable toggle will not be part of the initial GUI redesign. The backend CLI command `peq-toggle` provides this functionality for power users.*
 
 
 ### 9. Wizard Pages (`pages/`)
@@ -573,6 +557,7 @@ class PresetsDeviceView(QWidget):
     load_into_editor = Signal(object)      # single item
     copy_to_device_requested = Signal(list) # selected items
     save_to_my_presets = Signal(list)       # selected items
+    apply_to_sources_requested = Signal(str, list)  # (preset_name, source_names)
 
     def set_peq_presets(self, presets: list) -> None: ...
     def set_roomfit_profiles(self, profiles: list) -> None: ...
@@ -581,7 +566,7 @@ class PresetsDeviceView(QWidget):
     # Two sections: "PEQ Presets" and "RoomFit Profiles"
     # Each item: name, channel mode badge, PEQ/RoomFit badge
     # Multi-select for batch operations
-    # "Export as REW File", "Save to My Presets", "Load into Editor", "Copy to Another Device"
+    # "Export as REW File", "Save to My Presets", "Load into Editor", "Copy to Another Device", "Apply to Sources" (PEQ only)
 ```
 
 #### MyPresetsView (`views/my_presets_view.py`)
@@ -818,6 +803,7 @@ Secondary workflows reuse the same page widgets but with different entry points:
 | Copy to Another Device | Presets on Device → select → "Copy" | DevicePicker → SourcePicker → Push (per item) |
 | Copy to Another Source | Review/PushPage → "Copy to another source" | SourcePicker (multi-select) → Push (per source) |
 | Apply to Multiple Devices | Review → "Apply to multiple devices" | DevicePicker (multi-select) → SourcePicker (per device) → Push (sequential) |
+| Apply Preset to Sources | Presets on Device → select PEQ preset → "Apply to Sources" | SourcePicker (checkboxes) → load_peq_profile per source → Done |
 | Profile Recall & Push | My Presets → select → "Load" | Loads into Review step with filters populated |
 | Batch Export | Presets view → "Export All" | FolderPicker → Progress → Done |
 

@@ -30,6 +30,10 @@ These rules are mandatory for all work in this codebase. They encode hard-won le
 
 6. **RoomFit filters are global — not per-input.** Unlike PEQ which applies per source (wifi, HDMI, etc.), RoomFit profiles apply to all audio inputs on the device. The UI must never show a source/input selector for RoomFit operations. The API uses a `source_name` parameter internally, but from the user's perspective RoomFit is device-wide.
 
+## PEQ Preset Rules
+
+7. **PEQ presets are global — loadable onto any source.** PEQ presets are stored device-wide (the same preset list is visible for all sources in the WiiM Home app). A preset saved while one source is active can be loaded onto any other source via `EQv2SourceLoad`. The UI should allow users to apply a named preset to one or more sources in a single action.
+
 ---
 
 ## Safety & Write Protocol

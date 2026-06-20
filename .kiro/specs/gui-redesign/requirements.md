@@ -297,6 +297,7 @@ The GUI Redesign replaces the current panel-based layout of the WiiM ↔ REW PEQ
 10. WHEN the device does not support profile enumeration (`supports_profile_enumeration=False`), THE App SHALL display "Device presets not available on this model" in the PEQ presets section.
 11. WHEN `roomfit_level` is 0, THE App SHALL hide the RoomFit profiles section entirely.
 12. THE App SHALL allow the user to select one or more presets/profiles and click "Copy to Another Device" to push those presets to a different WiiM device. This option SHALL only be visible when 2 or more devices were found during discovery. THE App SHALL present a device picker (from discovered devices, excluding the current device), a target source selector (for PEQ presets), and execute the Safe_Write_Protocol per preset per target device. Progress and per-item results SHALL be displayed. Copying is same-type only: PEQ presets copy as PEQ, RoomFit profiles copy as RoomFit. Cross-type copying (PEQ→RoomFit or vice versa) is not supported.
+13. THE App SHALL allow the user to select a PEQ preset and click "Apply to Sources" to load that preset as the active EQ on one or more sources. THE App SHALL display the device's available sources as checkboxes (all unchecked by default). WHEN the user confirms, THE App SHALL call `load_peq_profile(source, preset_name)` for each selected source and display per-source success/failure results. This operation does NOT use Safe_Write_Protocol (it loads an existing preset, not writing raw bands). This action SHALL only be available for PEQ presets (not RoomFit profiles, since RoomFit is device-global).
 
 ---
 
@@ -335,9 +336,9 @@ The GUI Redesign replaces the current panel-based layout of the WiiM ↔ REW PEQ
    - **Copy Preset to Another Device** (via Presets on Device → Select items → "Copy to Another Device"): Select presets → pick target device → pick target source (PEQ only) → Safe_Write_Protocol per item. Per Requirement 15.11.
    - **Copy PEQ to Another Source** (after push or from Review → "Copy to another source"): Select one or more target sources on the same device → Safe_Write_Protocol per source. Per Requirement 20.
    - **Apply to Multiple Devices** (from Review → "Apply to multiple devices"): Select target devices + sources → sequential push per device. Per Requirement 21.
+   - **Apply Preset to Sources** (via Presets on Device → select PEQ preset → "Apply to Sources"): Pick one or more target sources → load preset onto each. Per Requirement 15.13.
 4. THE App SHALL support the following utility use cases:
    - **Dry Run**: Available as a toggle within any push flow; changes "Push" button to "Preview Only" and prevents all device writes.
-   - **PEQ/RoomFit Toggle**: One-click enable/disable of PEQ or RoomFit on the connected device, always visible when a device is connected. Per Requirement 22.
    - **Undo Last Push**: One-click restore from the most recent backup after a successful push. Per Requirement 18.
    - **Compare Before/After**: Toggle on the Review step showing a diff between current device state and filters about to be pushed. Per Requirement 19.
    - **Local Preset Management**: Accessible from the Sidebar_Nav ("My Saved Presets") as a dedicated view; CRUD operations (save, load, rename, delete, duplicate, tag) use inline editing patterns (no separate wizard needed since these are single-action operations).
@@ -407,20 +408,9 @@ The GUI Redesign replaces the current panel-based layout of the WiiM ↔ REW PEQ
 
 ---
 
-### Requirement 22: PEQ and RoomFit Enable/Disable Toggle
+### Requirement 22: ~~PEQ and RoomFit Enable/Disable Toggle~~ DEFERRED
 
-**User Story:** As an audiophile, I want to quickly enable or disable PEQ or RoomFit on my device with one click, so that I can A/B test with and without EQ while listening.
-
-#### Acceptance Criteria
-
-1. WHEN a device is connected and PEQ is supported, THE App SHALL display a clearly visible PEQ on/off toggle in the device status area (visible in all workflow steps).
-2. THE PEQ toggle SHALL reflect the current device state: ON when `EQStat` is "On", OFF when "Off".
-3. WHEN the user toggles PEQ ON, THE App SHALL send the `EQChangeSourceFX` command with the currently selected source (or the device's active source if no source has been explicitly selected) and pluginURI to enable PEQ on that source.
-4. WHEN the user toggles PEQ OFF, THE App SHALL send the `EQSourceOff` command with the currently selected source (or the device's active source) and pluginURI to disable PEQ on that source.
-5. WHEN the connected device has `roomfit_level >= 1`, THE App SHALL display a separate RoomFit on/off toggle alongside the PEQ toggle.
-6. THE RoomFit toggle SHALL use the appropriate API mechanism to enable/disable RoomFit. IF no dedicated RoomFit toggle command is confirmed in the API, THE App SHALL use the Uncertainty Protocol: log the gap in `docs/corrections.md`, disable the RoomFit toggle in the UI with a tooltip "RoomFit toggle not yet supported — use the WiiM Home app", and implement when the API mechanism is confirmed.
-7. THE toggle actions SHALL NOT require backup or safe-write (they do not modify filter data, only the enabled/disabled state).
-8. THE toggle state change SHALL provide immediate visual feedback (toggle animates, Status_Banner shows "PEQ enabled" or "PEQ disabled") with the actual device state confirmed via a read-back within 1 second.
+*Moved to `docs/backlog.md`. The WiiM Home app already provides EQ on/off toggling. Backend CLI command (`peq-toggle`) remains available for power users. See backlog for reactivation instructions.*
 
 ---
 
