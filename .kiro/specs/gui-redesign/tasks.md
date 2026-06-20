@@ -88,7 +88,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 4. Implement wizard pages
-  - [~] 4.1 Create `src/gui/pages/connect_page.py`
+  - [x] 4.1 Create `src/gui/pages/connect_page.py`
     - Implement ConnectPage with scanning animation, device card display, empty state
     - Auto-trigger discovery on show
     - Auto-select single device (emit device_selected)
@@ -97,14 +97,14 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Support refresh_requested signal
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
 
-  - [~] 4.2 Create `src/gui/pages/eq_type_page.py`
+  - [x] 4.2 Create `src/gui/pages/eq_type_page.py`
     - Implement EQTypePage with two large selectable cards
     - "Parametric EQ - per-input EQ filters" and "RoomFit - room correction (all inputs)"
     - Emit eq_type_selected signal ("peq" or "roomfit")
     - Only shown when device supports RoomFit (roomfit_level >= 2)
     - _Requirements: 1.9, 11.2_
 
-  - [~] 4.3 Create `src/gui/pages/source_page.py`
+  - [x] 4.3 Create `src/gui/pages/source_page.py`
     - Implement SourcePage showing device audio sources as selectable items
     - Pre-select active source with "(currently active)" label
     - Channel mode selector (Stereo / Left / Right) - hidden if not supported
@@ -112,7 +112,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Emit source_selected signal (source_name, channel_mode)
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
-  - [~] 4.4 Create `src/gui/pages/filters_page.py`
+  - [x] 4.4 Create `src/gui/pages/filters_page.py`
     - Implement FiltersPage with three options: Import from REW File, Pull from Device, Pull from REW API
     - File picker: single file for Stereo, dual file for L/R with channel labels
     - Drag-and-drop target for .txt files
@@ -122,7 +122,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - REW API option visible only when reachable
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12, 9.3_
 
-  - [~] 4.5 Create `src/gui/pages/review_page.py`
+  - [x] 4.5 Create `src/gui/pages/review_page.py`
     - Implement ReviewPage with FilterTable, summary header (bands, source, channel, device)
     - Primary button: "Push to Device"; secondary: "Export as REW File", "Save to My Presets"
     - Dry Run toggle (changes button to "Preview Only", shows "DRY RUN" badge)
@@ -131,14 +131,14 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Ctrl+Enter keyboard shortcut for push confirmation
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 9.7, 12.1, 19.1, 19.4, 20.1_
 
-  - [~] 4.6 Create `src/gui/pages/name_profile_page.py`
+  - [x] 4.6 Create `src/gui/pages/name_profile_page.py`
     - Implement NameProfilePage with text input (32-char max)
     - Show existing profiles list for reference
     - Warning when overwriting active profile (deactivation warning)
     - Emit name_confirmed signal
     - _Requirements: 16.3, 16.4, 16.5_
 
-  - [~] 4.7 Create `src/gui/pages/push_page.py`
+  - [x] 4.7 Create `src/gui/pages/push_page.py`
     - Implement PushPage with progress stages: Backing up → Writing → Verifying → Done
     - Success state: green checkmark, "OK" (green) + "Undo" (red/orange) primary buttons
     - Secondary: "Export as REW File", "Save to My Presets" text links
@@ -159,7 +159,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 6. Implement WizardController state machine
-  - [~] 6.1 Create `src/gui/wizard_controller.py`
+  - [x] 6.1 Create `src/gui/wizard_controller.py`
     - Implement WizardStep enum and FlowType enum
     - Implement WizardState dataclass with all state fields
     - Implement WizardController(QObject) with step sequencing logic

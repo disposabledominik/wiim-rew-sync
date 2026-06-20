@@ -1,0 +1,451 @@
+"""PushPage — push execution progress and result display.
+
+Shows the Safe Write Protocol progress as a vertical stepper
+(Backing up -> Writing -> Verifying -> Done), success/failure states,
+and post-push actions (OK, Undo, Export, Save to Presets).
+
+Requirements referenced: 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 18.1.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from src.gui.constants import (
+    ACCENT_COLOR,
+    ERROR_COLOR,
+    MAX_CONTENT_WIDTH,
+    SPACING_LG,
+    SPACING_MD,
+    SUCCESS_COLOR,
+    WARNING_COLOR,
+)
+
+# ---------------------------------------------------------------------------
+# Stage definitions
+# ---------------------------------------------------------------------------
+
+_STAGES: list[str] = ["backing_up", "writing", "verifying", "done"]
+_STAGE_LABELS: dict[str, str] = {
+    "backing_up": "Backing up",
+    "writing": "Writing",
+    "verifying": "Verifying",
+    "done": "Done",
+}
+
+
+class _StageRow(QWidget):
+    """Single row in the vertical stepper showing a stage label and status icon."""
+
+    def __init__(self, stage_key: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._stage_key = stage_key
+        self._status: str = "pending"  # pending | active | complete | failed
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setSpacing(SPACING_MD)
+
+        self._icon_label = QLabel("\u25CB", self)  # hollow circle (pending)
+        self._icon_label.setFixedWidth(24)
+        self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._icon_label)
+
+        self._text_label = QLabel(_STAGE_LABELS[stage_key], self)
+        self._text_label.setStyleSheet("font-size: 14px;")
+        layout.addWidget(self._text_label)
+        layout.addStretch()
+
+    @property
+    def status(self) -> str:
+        """Current status of this stage row."""
+        return self._status
+
+    def set_status(self, status: str) -> None:
+        """Set the visual status of this stage.
+
+        Args:
+            status: One of "pending", "active", "complete", "failed".
+        """
+        self._status = status
+        if status == "pending":
+            self._icon_label.setText("\u25CB")  # hollow circle
+            self._icon_label.setStyleSheet("font-size: 16px; color: #9E9E9E;")
+            self._text_label.setStyleSheet("font-size: 14px; color: #9E9E9E;")
+        elif status == "active":
+            self._icon_label.setText("\u25CF")  # filled circle (spinner placeholder)
+            self._icon_label.setStyleSheet(f"font-size: 16px; color: {ACCENT_COLOR};")
+            self._text_label.setStyleSheet(
+                f"font-size: 14px; font-weight: 600; color: {ACCENT_COLOR};"
+            )
+        elif status == "complete":
+            self._icon_label.setText("\u2713")  # checkmark
+            self._icon_label.setStyleSheet(f"font-size: 16px; color: {SUCCESS_COLOR};")
+            self._text_label.setStyleSheet(f"font-size: 14px; color: {SUCCESS_COLOR};")
+        elif status == "failed":
+            self._icon_label.setText("\u2717")  # X mark
+            self._icon_label.setStyleSheet(f"font-size: 16px; color: {ERROR_COLOR};")
+            self._text_label.setStyleSheet(f"font-size: 14px; color: {ERROR_COLOR};")
+
+
+class PushPage(QWidget):
+    """Push execution progress and result display.
+
+    Shows a vertical stepper for the Safe Write Protocol stages and
+    transitions to success/failure/dry-run result states.
+
+    Signals:
+        undo_requested: User clicked Undo after successful push.
+        export_requested: User clicked Export as REW File.
+        save_preset_requested: User clicked Save to My Presets.
+        done_acknowledged: User clicked OK after success.
+    """
+
+    undo_requested = Signal()
+    export_requested = Signal()
+    save_preset_requested = Signal()
+    done_acknowledged = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("PushPage")
+        self._setup_ui()
+        self.reset()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def set_stage(self, stage: str) -> None:
+        """Advance the progress stepper to the given stage.
+
+        Marks all stages before *stage* as complete and the specified
+        stage as active. Stages after it remain pending.
+
+        Args:
+            stage: One of "backing_up", "writing", "verifying", "done".
+        """
+        self._show_progress_state()
+        stage_index = _STAGES.index(stage) if stage in _STAGES else 0
+        for i, key in enumerate(_STAGES):
+            row = self._stage_rows[key]
+            if i < stage_index:
+                row.set_status("complete")
+            elif i == stage_index:
+                row.set_status("active" if stage != "done" else "complete")
+            else:
+                row.set_status("pending")
+
+    def set_success(self, backup_path: str = "") -> None:
+        """Transition to success state.
+
+        Shows green checkmark, success message, OK/Undo buttons,
+        and secondary action links.
+
+        Args:
+            backup_path: Optional path to the backup file (for reference).
+        """
+        # Mark all stages complete
+        for row in self._stage_rows.values():
+            row.set_status("complete")
+
+        self._show_result_state()
+        self._result_icon.setText("\u2713")
+        self._result_icon.setStyleSheet(f"font-size: 48px; color: {SUCCESS_COLOR};")
+        self._result_message.setText("Filters pushed successfully")
+        self._result_message.setStyleSheet(f"font-size: 16px; color: {SUCCESS_COLOR};")
+        self._detail_label.setVisible(False)
+
+        # Show success actions
+        self._ok_button.setVisible(True)
+        self._undo_button.setVisible(True)
+        self._secondary_row.setVisible(True)
+        self._failure_row.setVisible(False)
+
+    def set_failure(self, message: str, backup_path: str, critical: bool = False) -> None:
+        """Transition to failure state.
+
+        Shows warning/critical icon, error message, and recovery info.
+
+        Args:
+            message: Human-readable error description.
+            backup_path: Path to the backup file for manual recovery.
+            critical: True if rollback also failed (critical state).
+        """
+        # Mark last active stage as failed
+        for key in reversed(_STAGES):
+            row = self._stage_rows[key]
+            if row.status == "active":
+                row.set_status("failed")
+                break
+
+        self._show_result_state()
+        if critical:
+            self._result_icon.setText("\u26A0")  # warning triangle
+            self._result_icon.setStyleSheet(f"font-size: 48px; color: {ERROR_COLOR};")
+            self._result_message.setText("Critical: Manual recovery required")
+            self._result_message.setStyleSheet(f"font-size: 16px; color: {ERROR_COLOR};")
+            detail_text = (
+                f"{message}\n\n"
+                f"Recovery steps:\n"
+                f"1. Open the backup file below\n"
+                f"2. Use Settings > Restore from Backup\n"
+                f"3. Or manually restore via CLI\n\n"
+                f"Backup: {backup_path}"
+            )
+        else:
+            self._result_icon.setText("\u26A0")  # warning triangle
+            self._result_icon.setStyleSheet(f"font-size: 48px; color: {WARNING_COLOR};")
+            self._result_message.setText("Push failed - device safely restored")
+            self._result_message.setStyleSheet(f"font-size: 16px; color: {WARNING_COLOR};")
+            detail_text = (
+                f"{message}\n\n"
+                f"Your device was safely restored to its previous state.\n"
+                f"Backup: {backup_path}"
+            )
+
+        self._detail_label.setText(detail_text)
+        self._detail_label.setVisible(True)
+        self._backup_path_label.setText(backup_path)
+        self._backup_path_label.setVisible(bool(backup_path))
+
+        # Show failure actions
+        self._ok_button.setVisible(True)
+        self._undo_button.setVisible(False)
+        self._secondary_row.setVisible(False)
+        self._failure_row.setVisible(True)
+
+    def set_dry_run_result(self, summary: str) -> None:
+        """Show dry run translation result (no network operations).
+
+        Hides the progress stepper and displays a DRY RUN badge
+        with the translation summary.
+
+        Args:
+            summary: Multi-line text describing the translation result.
+        """
+        self._progress_container.setVisible(False)
+        self._show_result_state()
+        self._dry_run_badge.setVisible(True)
+        self._result_icon.setText("\u2139")  # info icon
+        self._result_icon.setStyleSheet(f"font-size: 48px; color: {ACCENT_COLOR};")
+        self._result_message.setText("Translation Preview (Dry Run)")
+        self._result_message.setStyleSheet(f"font-size: 16px; color: {ACCENT_COLOR};")
+        self._detail_label.setText(summary)
+        self._detail_label.setVisible(True)
+        self._backup_path_label.setVisible(False)
+
+        # Only OK button for dry run
+        self._ok_button.setVisible(True)
+        self._undo_button.setVisible(False)
+        self._secondary_row.setVisible(False)
+        self._failure_row.setVisible(False)
+
+    def reset(self) -> None:
+        """Reset to initial state (all stages pending, no result)."""
+        self._progress_container.setVisible(True)
+        self._result_container.setVisible(False)
+        self._dry_run_badge.setVisible(False)
+        self._backup_path_label.setVisible(False)
+        for row in self._stage_rows.values():
+            row.set_status("pending")
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _show_progress_state(self) -> None:
+        """Ensure progress stepper is visible and result area hidden."""
+        self._progress_container.setVisible(True)
+        self._result_container.setVisible(False)
+        self._dry_run_badge.setVisible(False)
+
+    def _show_result_state(self) -> None:
+        """Show the result area (keeps stepper visible for context)."""
+        self._result_container.setVisible(True)
+
+    def _setup_ui(self) -> None:
+        """Build the page layout."""
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+        page_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        # Content wrapper with max width
+        content_wrapper = QWidget(self)
+        content_wrapper.setMaximumWidth(MAX_CONTENT_WIDTH)
+        content_layout = QVBoxLayout(content_wrapper)
+        content_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
+        content_layout.setSpacing(SPACING_LG)
+
+        # Dry Run badge (hidden by default)
+        self._dry_run_badge = QLabel("DRY RUN", content_wrapper)
+        self._dry_run_badge.setObjectName("PushPageDryRunBadge")
+        self._dry_run_badge.setStyleSheet(
+            f"background-color: {ACCENT_COLOR}; color: #FFFFFF; "
+            f"border-radius: 10px; padding: 2px 10px; font-size: 11px; "
+            f"font-weight: 600;"
+        )
+        self._dry_run_badge.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
+        self._dry_run_badge.setVisible(False)
+        content_layout.addWidget(self._dry_run_badge)
+
+        # Progress stepper container
+        self._progress_container = QWidget(content_wrapper)
+        progress_layout = QVBoxLayout(self._progress_container)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(4)
+
+        progress_title = QLabel("Push Progress", self._progress_container)
+        progress_title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        progress_layout.addWidget(progress_title)
+
+        self._stage_rows: dict[str, _StageRow] = {}
+        for stage_key in _STAGES:
+            row = _StageRow(stage_key, self._progress_container)
+            self._stage_rows[stage_key] = row
+            progress_layout.addWidget(row)
+
+        content_layout.addWidget(self._progress_container)
+
+        # Result container (success/failure/dry-run)
+        self._result_container = QWidget(content_wrapper)
+        result_layout = QVBoxLayout(self._result_container)
+        result_layout.setContentsMargins(0, SPACING_LG, 0, 0)
+        result_layout.setSpacing(SPACING_MD)
+        result_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        # Large result icon
+        self._result_icon = QLabel("", self._result_container)
+        self._result_icon.setObjectName("PushPageResultIcon")
+        self._result_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._result_icon.setStyleSheet("font-size: 48px;")
+        result_layout.addWidget(self._result_icon)
+
+        # Result message
+        self._result_message = QLabel("", self._result_container)
+        self._result_message.setObjectName("PushPageResultMessage")
+        self._result_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._result_message.setStyleSheet("font-size: 16px;")
+        result_layout.addWidget(self._result_message)
+
+        # Detail/recovery text (multi-line)
+        self._detail_label = QLabel("", self._result_container)
+        self._detail_label.setObjectName("PushPageDetailLabel")
+        self._detail_label.setWordWrap(True)
+        self._detail_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._detail_label.setStyleSheet("font-size: 13px; color: #616161;")
+        self._detail_label.setVisible(False)
+        result_layout.addWidget(self._detail_label)
+
+        # Backup path (copyable, selectable text)
+        self._backup_path_label = QLabel("", self._result_container)
+        self._backup_path_label.setObjectName("PushPageBackupPath")
+        self._backup_path_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self._backup_path_label.setStyleSheet(
+            "font-size: 12px; font-family: monospace; "
+            "background-color: #F5F5F5; padding: 4px 8px; border-radius: 4px;"
+        )
+        self._backup_path_label.setVisible(False)
+        result_layout.addWidget(self._backup_path_label)
+
+        # Primary action buttons row (OK + Undo)
+        action_layout = QHBoxLayout()
+        action_layout.setContentsMargins(0, SPACING_MD, 0, 0)
+        action_layout.setSpacing(SPACING_MD)
+        action_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._ok_button = QPushButton("OK", self._result_container)
+        self._ok_button.setObjectName("PushPageOKButton")
+        self._ok_button.setProperty("class", "primary")
+        self._ok_button.setStyleSheet(
+            f"QPushButton {{ background-color: {SUCCESS_COLOR}; color: #FFFFFF; "
+            f"padding: 8px 24px; border-radius: 6px; font-size: 14px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background-color: #1B5E20; }}"
+        )
+        self._ok_button.clicked.connect(self.done_acknowledged.emit)
+        self._ok_button.setVisible(False)
+        action_layout.addWidget(self._ok_button)
+
+        self._undo_button = QPushButton("Undo", self._result_container)
+        self._undo_button.setObjectName("PushPageUndoButton")
+        self._undo_button.setProperty("class", "danger")
+        self._undo_button.setStyleSheet(
+            f"QPushButton {{ background-color: {WARNING_COLOR}; color: #FFFFFF; "
+            f"padding: 8px 24px; border-radius: 6px; font-size: 14px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background-color: #E65100; }}"
+        )
+        self._undo_button.clicked.connect(self.undo_requested.emit)
+        self._undo_button.setVisible(False)
+        action_layout.addWidget(self._undo_button)
+
+        result_layout.addLayout(action_layout)
+
+        # Secondary links row (Export + Save to Presets)
+        self._secondary_row = QWidget(self._result_container)
+        secondary_layout = QHBoxLayout(self._secondary_row)
+        secondary_layout.setContentsMargins(0, 0, 0, 0)
+        secondary_layout.setSpacing(SPACING_MD)
+        secondary_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        export_link = QPushButton("Export as REW File", self._secondary_row)
+        export_link.setObjectName("PushPageExportLink")
+        export_link.setFlat(True)
+        export_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        export_link.setStyleSheet(
+            f"color: {ACCENT_COLOR}; font-size: 13px; text-decoration: underline;"
+        )
+        export_link.clicked.connect(self.export_requested.emit)
+        secondary_layout.addWidget(export_link)
+
+        separator = QLabel("|", self._secondary_row)
+        separator.setStyleSheet("color: #9E9E9E; font-size: 13px;")
+        secondary_layout.addWidget(separator)
+
+        save_link = QPushButton("Save to My Presets", self._secondary_row)
+        save_link.setObjectName("PushPageSavePresetLink")
+        save_link.setFlat(True)
+        save_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_link.setStyleSheet(
+            f"color: {ACCENT_COLOR}; font-size: 13px; text-decoration: underline;"
+        )
+        save_link.clicked.connect(self.save_preset_requested.emit)
+        secondary_layout.addWidget(save_link)
+
+        self._secondary_row.setVisible(False)
+        result_layout.addWidget(self._secondary_row)
+
+        # Failure-specific row (OK returns to wizard)
+        self._failure_row = QWidget(self._result_container)
+        failure_layout = QHBoxLayout(self._failure_row)
+        failure_layout.setContentsMargins(0, 0, 0, 0)
+        failure_layout.setSpacing(SPACING_MD)
+        failure_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._failure_row.setVisible(False)
+        result_layout.addWidget(self._failure_row)
+
+        self._result_container.setVisible(False)
+        content_layout.addWidget(self._result_container)
+
+        content_layout.addStretch()
+
+        # Center the content wrapper
+        wrapper_layout = QHBoxLayout()
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.addStretch()
+        wrapper_layout.addWidget(content_wrapper)
+        wrapper_layout.addStretch()
+        page_layout.addLayout(wrapper_layout)
