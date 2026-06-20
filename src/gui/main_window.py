@@ -43,7 +43,7 @@ from src.gui.async_bridge import AsyncBridge
 from src.gui.components.sidebar_nav import SidebarNav
 from src.gui.components.status_banner import StatusBanner
 from src.gui.components.step_indicator import StepIndicator
-from src.gui.constants import MAX_CONTENT_WIDTH, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH
+from src.gui.constants import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH
 from src.gui.dialogs.crash_dialog import CrashDialog
 from src.gui.dialogs.device_picker import DevicePickerDialog
 from src.gui.dialogs.measurement_picker import MeasurementPickerDialog
@@ -380,7 +380,6 @@ class MainWindow(QMainWindow):
         # Stacked widget (center, stretch) — reserve minimum height (Req 10.12)
         self._stacked_widget = QStackedWidget()
         self._stacked_widget.setMinimumHeight(400)
-        self._stacked_widget.setMaximumWidth(MAX_CONTENT_WIDTH)
         content_layout.addWidget(self._stacked_widget, stretch=1)
 
         # Status banner (bottom) — fixed height, anchored position (Req 10.11)

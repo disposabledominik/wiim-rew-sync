@@ -210,7 +210,7 @@ INPUT_RADIUS: int = 4
 # Sizing
 # ---------------------------------------------------------------------------
 
-MAX_CONTENT_WIDTH: int = 800
+MAX_CONTENT_WIDTH: int = 1200
 """Maximum content area width in pixels (prevents overly stretched layouts)."""
 
 SIDEBAR_EXPANDED: int = 200
