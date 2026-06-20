@@ -13,7 +13,9 @@ from __future__ import annotations
 import logging
 import sys
 import traceback
-from typing import Literal
+from collections.abc import Coroutine
+from pathlib import Path
+from typing import Any, Literal
 
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
@@ -29,6 +31,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.adapters.capability_prober import CapabilityProber
+from src.adapters.rew_http_client import REWHttpApiClient
+from src.adapters.safe_write import SafeWrite
+from src.adapters.wiim_adapter import WiiMAdapter
+from src.adapters.wiim_http import WiiMHttpClient
+from src.discovery.discovery_module import DiscoveryModule
 from src.gui.app_settings import AppSettings
 from src.gui.async_bridge import AsyncBridge
 from src.gui.components.sidebar_nav import SidebarNav
@@ -58,7 +66,16 @@ from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetsDeviceView
 from src.gui.views.settings_view import SettingsView
 from src.gui.wizard_controller import FlowType, WizardController, WizardStep
-from src.utils.app_dirs import get_log_dir
+from src.models.errors import (
+    ParseError,
+    REWNotConnectedError,
+    ValidationError,
+    WiiMConnectionError,
+    WiiMTimeoutError,
+)
+from src.repository.backup_manager import BackupManager
+from src.repository.profile_repository import ProfileRepository
+from src.utils.app_dirs import get_app_data_dir, get_log_dir
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
@@ -141,6 +158,26 @@ class MainWindow(QMainWindow):
             self._bridge.start()
         else:
             self._bridge = async_bridge
+
+        # --- Backend adapter instances (Req 14.1-14.6) ---
+        # Eagerly created at startup:
+        self._discovery_module = DiscoveryModule(
+            timeout=float(self._settings.discovery_timeout),
+        )
+        self._rew_client = REWHttpApiClient()
+        presets_dir = (
+            Path(self._settings.presets_directory)
+            if self._settings.presets_directory
+            else get_app_data_dir()
+        )
+        self._profile_repository = ProfileRepository(storage_root=presets_dir)
+        self._backup_manager = BackupManager(storage_root=presets_dir)
+
+        # Lazily created on device selection (Req 14.2, 14.3):
+        self._wiim_http_client: WiiMHttpClient | None = None
+        self._capability_prober: CapabilityProber | None = None
+        self._wiim_adapter: WiiMAdapter | None = None
+        self._safe_write: SafeWrite | None = None
 
         # --- Window properties ---
         self.setWindowTitle("WiiM \u2194 REW PEQ Sync")
@@ -785,6 +822,67 @@ class MainWindow(QMainWindow):
             message: Progress status message.
         """
         self._status_banner.show_progress(message)
+
+    # ------------------------------------------------------------------
+    # Error mapping & bridge wrapper (Req 12.1-12.4)
+    # ------------------------------------------------------------------
+
+    def _map_error(self, exc: Exception) -> str:
+        """Map technical exceptions to user-friendly messages.
+
+        Returns a plain-language message suitable for display in the
+        StatusBanner. Never returns None and never raises.
+
+        Args:
+            exc: The caught exception from an adapter call.
+
+        Returns:
+            A user-friendly error message string.
+        """
+        mapping: dict[type, str] = {
+            WiiMTimeoutError: "Device not responding",
+            WiiMConnectionError: "Could not reach device",
+            REWNotConnectedError: "REW is not connected",
+            FileNotFoundError: "File not found",
+            PermissionError: "Permission denied",
+        }
+        # Check exact type matches first (order matters: subclasses before bases)
+        for exc_type, message in mapping.items():
+            if isinstance(exc, exc_type):
+                return message
+
+        # Dynamic messages that include exception details
+        if isinstance(exc, ParseError):
+            return f"Could not read file: {exc}"
+        if isinstance(exc, ValidationError):
+            return f"Invalid data: {exc}"
+        if isinstance(exc, OSError):
+            return "File could not be written"
+
+        # Generic fallback for unmapped exception types
+        return "An unexpected error occurred"
+
+    async def _bridge_wrapper(self, operation_name: str, coro: Coroutine[Any, Any, Any]) -> None:
+        """Wrap an adapter coroutine with error mapping and signal emission.
+
+        Catches all exceptions, logs the full traceback to the app log,
+        and emits ``operation_error`` with a user-friendly message.
+
+        Subclasses/handlers call this via:
+            self._bridge.run_async(self._bridge_wrapper("discovery", self._do_discovery()))
+
+        Args:
+            operation_name: Human-readable label for logging (e.g. "discovery").
+            coro: The awaitable adapter coroutine to execute.
+        """
+        try:
+            await coro
+        except Exception as exc:
+            logger.exception("Operation '%s' failed", operation_name)
+            self._bridge.operation_error.emit(
+                type(exc).__name__,
+                self._map_error(exc),
+            )
 
     # ------------------------------------------------------------------
     # Navigation handlers
