@@ -73,7 +73,7 @@ def generate_support_bundle(
         # Add device capabilities dump
         if capabilities is not None:
             if hasattr(capabilities, "model_dump"):
-                caps_data = capabilities.model_dump()  # type: ignore[union-attr]
+                caps_data = capabilities.model_dump()
             else:
                 caps_data = str(capabilities)
             zf.writestr(

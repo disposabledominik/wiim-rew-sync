@@ -8,7 +8,7 @@ from __future__ import annotations
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from src.models.canonical import CanonicalFilter
+from src.models.canonical import CanonicalFilter, FilterType
 from src.tests.conftest import st_float_near_boundary
 from src.utils.fp_compare import (
     _FP_EPS,
@@ -111,7 +111,7 @@ class TestQMatches:
 
 
 def _make_filter(
-    type_: str = "PEAK",
+    type_: FilterType = "PEAK",
     freq: float = 1000.0,
     gain: float = 3.0,
     q: float = 1.0,
@@ -274,7 +274,7 @@ class TestBandMatchesOffProperty:
 
 
 # Strategy for non-OFF filter types
-_NON_OFF_TYPES = ["PEAK", "LS", "HS"]
+_NON_OFF_TYPES: list[FilterType] = ["PEAK", "LS", "HS"]
 
 
 class TestBandMatchesTypeMismatchProperty:
@@ -293,8 +293,8 @@ class TestBandMatchesTypeMismatchProperty:
     @settings(max_examples=100)
     def test_band_matches_type_mismatch_always_false(
         self,
-        type_a: str,
-        type_b: str,
+        type_a: FilterType,
+        type_b: FilterType,
         freq: float,
         gain: float,
         q: float,

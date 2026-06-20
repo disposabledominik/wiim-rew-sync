@@ -291,7 +291,7 @@ class WiiMAdapter:
                 f"Expected JSON dict from EQGetLV2SourceBandEx, got: {type(response).__name__}"
             )
 
-        return response.get("EQStat", "Off") == "On"
+        return bool(response.get("EQStat", "Off") == "On")
 
     # ------------------------------------------------------------------
     # Multiroom
@@ -816,5 +816,5 @@ class WiiMAdapter:
                 f"got: {type(response).__name__}"
             )
 
-        custom_list: list[dict[str, str]] = response.get("custom", [])  # type: ignore[assignment]
+        custom_list: list[dict[str, str]] = response.get("custom", [])
         return custom_list

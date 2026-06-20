@@ -107,7 +107,7 @@ class TestErrorDialogShowError:
 
         ErrorDialog.show_error("WARNING", "Test", "Test message")
         assert len(execs) == 1
-        assert execs[0].severity == "WARNING"  # type: ignore[union-attr]
+        assert execs[0].severity == "WARNING"  # type: ignore[attr-defined]
 
 
 class TestMainWindowErrorHandling:

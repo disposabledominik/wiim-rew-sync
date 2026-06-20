@@ -1285,9 +1285,8 @@ class TestEnablePeq:
         """enable_peq returns None on successful call."""
         mock_client.command.return_value = "OK"
 
-        result = await adapter.enable_peq("wifi")
-
-        assert result is None
+        await adapter.enable_peq("wifi")
+        # enable_peq is declared -> None; no return value to check
 
     async def test_enable_peq_connection_error_propagates(
         self, adapter: WiiMAdapter, mock_client: AsyncMock
@@ -1331,9 +1330,8 @@ class TestDisablePeq:
         """disable_peq returns None on successful call."""
         mock_client.command.return_value = "OK"
 
-        result = await adapter.disable_peq("wifi")
-
-        assert result is None
+        await adapter.disable_peq("wifi")
+        # disable_peq is declared -> None; no return value to check
 
     async def test_disable_peq_connection_error_propagates(
         self, adapter: WiiMAdapter, mock_client: AsyncMock

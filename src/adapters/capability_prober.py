@@ -176,7 +176,7 @@ class CapabilityProber:
 
         # Dynamically detect max_filters by counting distinct band letter prefixes
         # in the EQBand response (e.g. a_mode, b_mode, ... l_mode → 12 bands).
-        eq_band: list[dict[str, object]] = resp.get("EQBand", [])  # type: ignore[assignment]
+        eq_band: list[dict[str, object]] = resp.get("EQBand", [])
         band_letters: set[str] = set()
         for entry in eq_band:
             pn = str(entry.get("param_name", ""))

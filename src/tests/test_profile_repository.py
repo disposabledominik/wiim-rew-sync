@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -298,7 +299,7 @@ def st_lr_profile(draw: st.DrawFn) -> Profile:
     name = draw(
         st.text(min_size=1, max_size=20, alphabet=st.characters(whitelist_categories=("L", "N")))
     )
-    channel_mode = draw(st.sampled_from(["left", "right"]))
+    channel_mode: Literal["left", "right"] = draw(st.sampled_from(["left", "right"]))
     return Profile(
         name=name, channel_mode=channel_mode, filters_l=filters_l, filters_r=filters_r
     )

@@ -27,7 +27,7 @@ class TestMigrateProfile:
 
     def test_missing_version_migrates_to_current(self) -> None:
         """A dict without schema_version is treated as version 0 and migrated."""
-        raw = {
+        raw: dict[str, object] = {
             "name": "old_profile",
             "channel_mode": "stereo",
             "filters": [],

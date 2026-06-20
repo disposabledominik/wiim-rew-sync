@@ -476,6 +476,8 @@ class TestInstallCrashHandler:
                 raise ValueError("test-crash-message-42")
             except ValueError:
                 exc_type, exc_value, exc_tb = sys.exc_info()
+                assert exc_type is not None
+                assert exc_value is not None
                 sys.excepthook(exc_type, exc_value, exc_tb)
 
             # Flush handlers
@@ -502,6 +504,8 @@ class TestInstallCrashHandler:
                 raise RuntimeError("traceback-check")
             except RuntimeError:
                 exc_type, exc_value, exc_tb = sys.exc_info()
+                assert exc_type is not None
+                assert exc_value is not None
                 sys.excepthook(exc_type, exc_value, exc_tb)
 
             for h in logging.getLogger(LOGGER_APP).handlers:
