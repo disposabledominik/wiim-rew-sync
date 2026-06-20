@@ -909,27 +909,56 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_peq_ready(self, peq_data: object) -> None:
-        """Handle PEQ data ready — store filter count and show success message.
+        """Handle PEQ data ready — populate ReviewPage and advance wizard.
 
         After device pull or file import emits peq_ready, this handler
-        shows the user how many filters were loaded and that they can proceed.
-        The message is shown with a short delay so it appears after
-        OperationFeedbackManager.finish_operation() clears the progress banner.
+        populates the ReviewPage with the loaded filters and advances
+        the wizard to the REVIEW step.
 
         Args:
             peq_data: PEQ settings object or filter list from the operation.
         """
         filters = self._wizard_controller.state.current_filters
         count = len(filters)
+
         if count > 0:
-            # Delay so message appears after finish_operation() clears the banner
+            # Populate ReviewPage with loaded filters
+            self._review_page.set_filters(filters)
+
+            # Set summary info
+            state = self._wizard_controller.state
+            device_ip = state.selected_device or "Unknown"
+            source = state.selected_source or "wifi"
+            channel = state.channel_mode or "Stereo"
+
+            # Try to get friendly device name
+            device_name = device_ip
+            for d in self._discovered_devices:
+                if d.ip == device_ip:
+                    device_name = d.name
+                    break
+
+            active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
+            self._review_page.set_summary(device_name, source, channel, active_bands)
+
+            # Enable device comparison if we have device state
+            device_filters = getattr(state, "device_filters", None)
+            self._review_page.set_device_state_available(device_filters is not None)
+
+            # Advance wizard to REVIEW step
+            self._wizard_controller.advance(summary=f"{count} filters")
+
+            # Show success in status banner (delayed so finish_operation clear passes)
             QTimer.singleShot(
-                50, lambda: self._status_banner.show_success(f"{count} filters loaded from device")
+                50, lambda: self._status_banner.show_success(
+                    f"{count} filters loaded — ready for review"
+                )
             )
         else:
             QTimer.singleShot(
                 50, lambda: self._status_banner.show_info("Device has no active filters")
             )
+
         logger.info("PEQ data ready: %d filters", count)
 
     @Slot(object)
