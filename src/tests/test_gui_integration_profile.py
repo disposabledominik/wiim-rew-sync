@@ -14,9 +14,7 @@ import pytest
 
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import PAGE_INDICES, MainWindow
-from src.gui.secondary_workflows import SecondaryWorkflowManager
 from src.models.canonical import CanonicalFilter
-
 
 # ---------------------------------------------------------------------------
 # Helpers

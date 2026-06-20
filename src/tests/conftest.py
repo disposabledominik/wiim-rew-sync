@@ -9,9 +9,22 @@ Strategies defined here (used across multiple PBT tasks):
 
 from __future__ import annotations
 
+import pytest
 from hypothesis import strategies as st
 
 from src.models.canonical import CanonicalFilter
+
+
+@pytest.fixture(autouse=True)
+def _suppress_unsaved_changes_dialog(monkeypatch):
+    """Prevent UnsavedChangesDialog from blocking during test teardown.
+
+    Patches MainWindow._has_unsaved_changes to always return False so that
+    closeEvent never opens the modal dialog. This avoids test hangs on WSL2.
+    """
+    from src.gui.main_window import MainWindow
+
+    monkeypatch.setattr(MainWindow, "_has_unsaved_changes", lambda self: False)
 
 
 def st_float_near_boundary(center: float, tolerance: float) -> st.SearchStrategy[float]:

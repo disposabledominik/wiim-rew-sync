@@ -1895,8 +1895,8 @@ class MainWindow(QMainWindow):
         If the wizard has modified filter state, prompt the user before
         closing. Always shuts down the AsyncBridge on close.
         """
-        # Check for unsaved changes
-        if self._has_unsaved_changes():
+        # Check for unsaved changes (skip if _skip_unsaved_prompt is set, e.g. in tests)
+        if not getattr(self, "_skip_unsaved_prompt", False) and self._has_unsaved_changes():
             choice: Literal["save", "discard", "cancel"] = (
                 UnsavedChangesDialog.confirm_discard(self)
             )
