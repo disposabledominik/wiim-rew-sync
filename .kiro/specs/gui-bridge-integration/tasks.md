@@ -8,7 +8,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
 
 ## Tasks
 
-- [ ] 1. Dependency initialization and error mapping
+- [x] 1. Dependency initialization and error mapping
   - [x] 1.1 Add backend adapter instance attributes to MainWindow.__init__
     - Create `_discovery_module`, `_rew_client`, `_profile_repository`, `_backup_manager` at startup
     - Add `_wiim_http_client`, `_capability_prober`, `_wiim_adapter`, `_safe_write` as `None`-initialized attributes (created lazily on device selection)
@@ -22,18 +22,18 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Add `_bridge_wrapper` async helper that catches exceptions, logs traceback, and emits `operation_error`
     - _Requirements: 12.1, 12.2, 12.3, 12.4_
 
-  - [~] 1.3 Add concurrent operation guard to MainWindow
+  - [x] 1.3 Add concurrent operation guard to MainWindow
     - Check `self._feedback_manager.is_active` before every `run_async` call
     - If active, log a warning and return early (ignore the trigger)
     - _Requirements: 13.4_
 
-  - [~] 1.4 Write property test for error mapping completeness (Property 5)
+  - [x] 1.4 Write property test for error mapping completeness (Property 5)
     - **Property 5: Error mapping completeness**
     - **Validates: Requirements 12.2**
     - Generate exception instances from known mapping set and verify correct message returned
     - Generate arbitrary Exception subclasses and verify generic fallback returned (never None, never raises)
 
-  - [~] 1.5 Write property test for concurrent operation prevention (Property 6)
+  - [x] 1.5 Write property test for concurrent operation prevention (Property 6)
     - **Property 6: Concurrent operation prevention**
     - **Validates: Requirements 13.4**
     - Generate pairs of operation trigger signals while is_active is True

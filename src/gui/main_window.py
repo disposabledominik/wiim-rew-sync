@@ -884,6 +884,17 @@ class MainWindow(QMainWindow):
                 self._map_error(exc),
             )
 
+    def _is_busy(self) -> bool:
+        """Check if an async operation is already in progress.
+
+        Returns True (and logs a warning) if the feedback manager indicates
+        an active operation, meaning the new trigger should be ignored.
+        """
+        if self._feedback_manager.is_active:
+            logger.warning("Operation ignored: another operation is in progress")
+            return True
+        return False
+
     # ------------------------------------------------------------------
     # Navigation handlers
     # ------------------------------------------------------------------
