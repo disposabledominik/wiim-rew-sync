@@ -134,7 +134,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Use mocked SafeWrite/TranslationEngine
     - _Requirements: 6.1-6.7, 7.1-7.6_
 
-- [~] 5. Checkpoint — primary handlers complete
+- [x] 5. Checkpoint — primary handlers complete
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 6. Picker dialogs for secondary workflows
@@ -236,7 +236,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - On selection: trigger `_do_rew_get_filters(uuid)` via bridge
     - _Requirements: 5.2, 5.7_
 
-- [~] 9. Checkpoint — all integration wiring complete
+- [x] 9. Checkpoint — all integration wiring complete
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 10. Operation feedback timeout integration
@@ -246,32 +246,32 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Stop timeout timer on `finish_operation()`
     - _Requirements: 13.5_
 
-  - [~] 10.2 Write unit tests for operation feedback timeout
+  - [x] 10.2 Write unit tests for operation feedback timeout
     - Test timeout fires after 30s (use QTimer simulation via qtbot.waitSignal)
     - Test timeout does not fire if operation finishes before 30s
     - Test buttons re-enabled on timeout
     - _Requirements: 13.1, 13.2, 13.3, 13.5_
 
 - [ ] 11. Integration tests
-  - [~] 11.1 Write integration test for discovery → device selection → probe → push flow
+  - [x] 11.1 Write integration test for discovery → device selection → probe → push flow
     - End-to-end signal chain with mocked adapters
     - Verify wizard state transitions
     - Verify page population at each step
     - _Requirements: 1.1-1.7, 2.1-2.7, 6.1-6.7_
 
-  - [~] 11.2 Write integration test for SecondaryWorkflowManager with mocked adapters
+  - [x] 11.2 Write integration test for SecondaryWorkflowManager with mocked adapters
     - Test copy-to-sources with mixed success/failure results
     - Test multi-device push with connection failures
     - Test undo with missing backup file
     - _Requirements: 8.1-8.6, 9.3-9.7, 10.3-10.7_
 
-  - [~] 11.3 Write integration test for profile recall flow
+  - [x] 11.3 Write integration test for profile recall flow
     - Test profile with filters → navigates to Review
     - Test empty profile → error shown
     - Test corrupted profile → error shown
     - _Requirements: 11.1-11.5_
 
-- [~] 12. Final checkpoint — full test suite passes
+- [x] 12. Final checkpoint — full test suite passes
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
