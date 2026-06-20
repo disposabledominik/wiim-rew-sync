@@ -1343,6 +1343,7 @@ class MainWindow(QMainWindow):
         Args:
             view_key: Navigation target key from SidebarNav.
         """
+        logger.debug("Navigation requested: %s", view_key)
         if view_key == "home":
             # Return to current wizard step
             self._on_step_changed(self._wizard_controller.current_step)
