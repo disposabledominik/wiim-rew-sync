@@ -534,18 +534,33 @@ class MainWindow(QMainWindow):
         """Handle device selection from ConnectPage.
 
         Stores the device in wizard state and triggers capability probing.
+        Creates WiiMHttpClient and CapabilityProber for the selected device,
+        then launches an async probe via the bridge.
         """
+        if self._is_busy():
+            return
+
         self._wizard_controller.state.selected_device = device_ip
-        # TODO: Trigger capability probe via bridge
-        # self._bridge.run_async(probe_device_capabilities(device_ip))
+
+        # Lazily create device-specific adapters (Req 14.2, 14.3)
+        self._wiim_http_client = WiiMHttpClient(device_ip)
+        self._capability_prober = CapabilityProber(self._wiim_http_client)
+
+        self._bridge.run_async(
+            self._bridge_wrapper("capability_probe", self._do_probe())
+        )
         logger.info("Device selected: %s", device_ip)
 
     @Slot()
     def _on_refresh_requested(self) -> None:
         """Handle refresh/rescan request from ConnectPage."""
+        if self._is_busy():
+            return
+
         self._connect_page.set_scanning(True)
-        # TODO: Trigger discovery via bridge
-        # self._bridge.run_async(discover_devices())
+        self._bridge.run_async(
+            self._bridge_wrapper("discovery", self._do_discovery())
+        )
         logger.debug("Discovery refresh requested")
 
     @Slot(str)
@@ -894,6 +909,33 @@ class MainWindow(QMainWindow):
             logger.warning("Operation ignored: another operation is in progress")
             return True
         return False
+
+    # ------------------------------------------------------------------
+    # Async operation coroutines (Req 1.1-1.7, 2.1-2.7)
+    # ------------------------------------------------------------------
+
+    async def _do_discovery(self) -> None:
+        """Run device discovery and emit results via bridge signal.
+
+        Calls DiscoveryModule.discover() and transforms each DeviceInfo
+        into a dict with keys "name", "ip", "model" for the ConnectPage.
+        """
+        devices = await self._discovery_module.discover()
+        device_list = [
+            {"name": d.name, "ip": d.ip, "model": d.model}
+            for d in devices
+        ]
+        self._bridge.discovery_complete.emit(device_list)
+
+    async def _do_probe(self) -> None:
+        """Run capability probing and emit results via bridge signal.
+
+        Calls CapabilityProber.probe() and emits the DeviceCapabilities
+        object for flow-type determination and wizard advancement.
+        """
+        assert self._capability_prober is not None
+        caps = await self._capability_prober.probe()
+        self._bridge.capabilities_ready.emit(caps)
 
     # ------------------------------------------------------------------
     # Navigation handlers

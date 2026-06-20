@@ -40,14 +40,14 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Verify no second `run_async` call is made
 
 - [ ] 2. Primary wizard signal handlers — discovery and capability probe
-  - [~] 2.1 Wire `_on_refresh_requested` to discovery via AsyncBridge
+  - [x] 2.1 Wire `_on_refresh_requested` to discovery via AsyncBridge
     - Replace TODO with `self._bridge.run_async(self._do_discovery())` where `_do_discovery` is an async method calling `self._discovery_module.discover()`
     - On success, emit `discovery_complete` with transformed device dicts (keys: "name", "ip", "model")
     - On error, emit `operation_error` with mapped message
     - Guard with concurrent operation check
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7_
 
-  - [~] 2.2 Wire `_on_device_selected` to capability probing via AsyncBridge
+  - [x] 2.2 Wire `_on_device_selected` to capability probing via AsyncBridge
     - Create `WiiMHttpClient(device_ip)` and `CapabilityProber(client)` on selection
     - Store as `self._wiim_http_client` and `self._capability_prober`
     - Call `self._bridge.run_async(self._do_probe())` where `_do_probe` calls `self._capability_prober.probe()`
@@ -138,21 +138,21 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 6. Picker dialogs for secondary workflows
-  - [~] 6.1 Create `SourcePickerDialog` in `src/gui/dialogs/source_picker.py`
+  - [x] 6.1 Create `SourcePickerDialog` in `src/gui/dialogs/source_picker.py`
     - Modal dialog with checkable source list (excludes current source)
     - Accept/Cancel buttons
     - Returns `list[str]` of selected sources or `None` on cancel
     - Static method `get_sources(parent, available_sources, exclude)` for convenience
     - _Requirements: 9.1, 9.2_
 
-  - [~] 6.2 Create `DevicePickerDialog` in `src/gui/dialogs/device_picker.py`
+  - [x] 6.2 Create `DevicePickerDialog` in `src/gui/dialogs/device_picker.py`
     - Modal dialog with checkable device list (excludes current device)
     - Accept/Cancel buttons
     - Returns `list[DeviceInfo]` of selected devices or `None` on cancel
     - Static method `get_devices(parent, discovered_devices, exclude_ip)` for convenience
     - _Requirements: 10.1, 10.2, 15.1, 15.2_
 
-  - [~] 6.3 Create `MeasurementPickerDialog` in `src/gui/dialogs/measurement_picker.py`
+  - [x] 6.3 Create `MeasurementPickerDialog` in `src/gui/dialogs/measurement_picker.py`
     - Modal dialog with single-select measurement list
     - Accept/Cancel buttons
     - Returns `MeasurementSummary` or `None` on cancel
