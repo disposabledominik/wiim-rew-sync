@@ -229,6 +229,12 @@ class MainWindow(QMainWindow):
         # --- Secondary workflows (Req 17, 18, 20, 21) ---
         self._setup_secondary_workflows()
 
+        # --- Initialize step indicator with default flow ---
+        sequence = self._wizard_controller.get_steps()
+        labels = [step.value.replace("_", " ").title() for step in sequence]
+        self._step_indicator.set_steps(labels)
+        self._step_indicator.set_current(0)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -888,7 +894,13 @@ class MainWindow(QMainWindow):
             self._wizard_controller.advance(summary="Connected")
 
         # Update sidebar with device info
-        device_name = getattr(caps, "device_name", "WiiM Device")
+        device_name = caps.model or "WiiM Device"
+        # Try to get the friendly name from discovered devices list
+        selected_ip = self._wizard_controller.state.selected_device
+        for d in self._discovered_devices:
+            if d.ip == selected_ip:
+                device_name = d.name
+                break
         self._sidebar_nav.set_device_info(device_name, connected=True)
 
         # Populate SourcePage with available sources
@@ -897,14 +909,21 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_peq_ready(self, peq_data: object) -> None:
-        """Handle PEQ data ready — populate FiltersPage or advance.
+        """Handle PEQ data ready — store filter count and show success message.
+
+        After device pull or file import emits peq_ready, this handler
+        shows the user how many filters were loaded and that they can proceed.
 
         Args:
-            peq_data: PEQ settings object containing filter data.
+            peq_data: PEQ settings object or filter list from the operation.
         """
-        # TODO: Extract filters from peq_data and populate filters page
-        # self._filters_page.show_warnings(warnings) if applicable
-        logger.info("PEQ data ready")
+        filters = self._wizard_controller.state.current_filters
+        count = len(filters)
+        if count > 0:
+            self._status_banner.show_success(f"{count} filters loaded from device")
+        else:
+            self._status_banner.show_info("Device has no active filters")
+        logger.info("PEQ data ready: %d filters", count)
 
     @Slot(object)
     def _on_write_complete(self, result: object) -> None:
