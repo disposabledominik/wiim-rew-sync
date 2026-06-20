@@ -285,10 +285,10 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Triggered on close or navigate-away when filter changes exist
     - _Requirements: 12.5_
 
-- [~] 10. Checkpoint - Ensure views and dialogs build correctly
+- [x] 10. Checkpoint - Ensure views and dialogs build correctly
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 11. Implement MainWindow and wire everything together
+- [x] 11. Implement MainWindow and wire everything together
   - [x] 11.1 Create `src/gui/main_window.py`
     - Implement MainWindow(QMainWindow) shell with sidebar + QStackedWidget + StatusBanner
     - Layout: MenuBar → Central Widget (QHBoxLayout: SidebarNav + QVBoxLayout: StepIndicator + QStackedWidget + StatusBanner)
@@ -341,7 +341,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Undo last push: restore from most recent backup via Safe_Write_Protocol
     - _Requirements: 17.1, 17.2, 17.3, 18.1, 18.2, 18.3, 18.4, 18.6, 20.1, 20.2, 20.3, 20.4, 20.5, 21.1, 21.2, 21.3, 21.4, 21.5, 21.6_
 
-  - [~] 11.7 Write integration tests for full wizard flows
+  - [x] 11.7 Write integration tests for full wizard flows
     - Test happy path: single device → import → push (mock AsyncBridge signals)
     - Test RoomFit flow: EQ_TYPE shown, SOURCE skipped, NAME_PROFILE before push
     - Test back-navigation: step invalidation, page state reset
@@ -375,14 +375,14 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - troubleshooting.md (device not found, parse errors, push failures, rollback)
     - _Requirements: 27.2, 27.3, 27.7, 27.8, 27.10_
 
-- [ ] 14. Remove old GUI files and update entry point
-  - [~] 14.1 Remove deprecated files from `src/gui/` (panels/, old main_window, etc.)
+- [x] 14. Remove old GUI files and update entry point
+  - [x] 14.1 Remove deprecated files from `src/gui/` (panels/, old main_window, etc.)
     - Delete all files in src/gui/ except async_bridge.py
     - Update src/gui/__init__.py to export new MainWindow
     - Ensure entry point (if any) creates new MainWindow
     - _Requirements: 14.2_
 
-- [~] 15. Final checkpoint - Full integration verification
+- [x] 15. Final checkpoint - Full integration verification
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
