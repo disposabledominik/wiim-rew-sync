@@ -17,7 +17,7 @@ from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any, Literal
 
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -913,6 +913,8 @@ class MainWindow(QMainWindow):
 
         After device pull or file import emits peq_ready, this handler
         shows the user how many filters were loaded and that they can proceed.
+        The message is shown with a short delay so it appears after
+        OperationFeedbackManager.finish_operation() clears the progress banner.
 
         Args:
             peq_data: PEQ settings object or filter list from the operation.
@@ -920,9 +922,14 @@ class MainWindow(QMainWindow):
         filters = self._wizard_controller.state.current_filters
         count = len(filters)
         if count > 0:
-            self._status_banner.show_success(f"{count} filters loaded from device")
+            # Delay so message appears after finish_operation() clears the banner
+            QTimer.singleShot(
+                50, lambda: self._status_banner.show_success(f"{count} filters loaded from device")
+            )
         else:
-            self._status_banner.show_info("Device has no active filters")
+            QTimer.singleShot(
+                50, lambda: self._status_banner.show_info("Device has no active filters")
+            )
         logger.info("PEQ data ready: %d filters", count)
 
     @Slot(object)
