@@ -74,7 +74,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Assert roomfit_level < 2 → PEQ_ONLY; roomfit_level >= 2 → NOT PEQ_ONLY
 
 - [ ] 3. Primary wizard signal handlers — filter loading
-  - [~] 3.1 Wire `_on_file_import_requested` to TranslationEngine via AsyncBridge
+  - [x] 3.1 Wire `_on_file_import_requested` to TranslationEngine via AsyncBridge
     - Call `self._bridge.run_async(self._do_file_import(path))` where `_do_file_import` calls `TranslationEngine.parse_rew_file(path)`
     - On success: store filters in WizardController state, populate FiltersPage
     - On success with skipped bands: also show info message with skip count
@@ -82,7 +82,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Guard with concurrent operation check
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
-  - [~] 3.2 Wire `_on_device_pull_requested` to WiiMAdapter via AsyncBridge
+  - [x] 3.2 Wire `_on_device_pull_requested` to WiiMAdapter via AsyncBridge
     - Check selected source exists in state; if not, show error and return
     - Call `self._bridge.run_async(self._do_device_pull())` where `_do_device_pull` calls `self._wiim_adapter.read_peq(source_name)`
     - On success: convert PEQSettings to CanonicalFilter via `TranslationEngine.parse_wiim_band_array()`, store in state, populate FiltersPage
@@ -90,7 +90,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Guard with concurrent operation check
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
 
-  - [~] 3.3 Wire `_on_rew_api_pull_requested` to REWHttpApiClient via AsyncBridge
+  - [x] 3.3 Wire `_on_rew_api_pull_requested` to REWHttpApiClient via AsyncBridge
     - Call `self._bridge.run_async(self._do_rew_list_measurements())` to list measurements
     - On success with items: present MeasurementPickerDialog for user selection
     - On user selection: call `self._bridge.run_async(self._do_rew_get_filters(uuid))`
@@ -165,7 +165,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - _Requirements: 9.1, 9.2, 10.1, 10.2, 5.2, 5.7_
 
 - [ ] 7. SecondaryWorkflowManager async execution
-  - [~] 7.1 Add `configure()` method to SecondaryWorkflowManager for adapter injection
+  - [x] 7.1 Add `configure()` method to SecondaryWorkflowManager for adapter injection
     - Accept `bridge`, `wiim_adapter_factory`, `safe_write_factory`, `backup_manager` parameters
     - Store references for use in workflow methods
     - Call `configure()` from MainWindow after adapters are created (in `_on_capabilities_ready`)

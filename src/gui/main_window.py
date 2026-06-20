@@ -602,19 +602,45 @@ class MainWindow(QMainWindow):
         Args:
             path: Path to the REW text file.
         """
-        # TODO: Trigger file parsing via bridge or local translator
+        if self._is_busy():
+            return
+
+        self._bridge.run_async(
+            self._bridge_wrapper("file_import", self._do_file_import(path))
+        )
         logger.info("File import requested: %s", path)
 
     @Slot()
     def _on_device_pull_requested(self) -> None:
         """Handle pull-from-device request from FiltersPage."""
-        # TODO: Trigger PEQ pull via bridge
+        if self._is_busy():
+            return
+
+        # Precondition: adapter must be available (device connected)
+        if self._wiim_adapter is None:
+            self._status_banner.show_error("No device connected")
+            return
+
+        # Precondition: source must be selected
+        source_name = self._wizard_controller.state.selected_source
+        if not source_name:
+            self._status_banner.show_error("No source selected")
+            return
+
+        self._bridge.run_async(
+            self._bridge_wrapper("device_pull", self._do_device_pull())
+        )
         logger.info("Device pull requested")
 
     @Slot()
     def _on_rew_api_pull_requested(self) -> None:
         """Handle pull-from-REW-API request from FiltersPage."""
-        # TODO: Trigger REW API pull via bridge
+        if self._is_busy():
+            return
+
+        self._bridge.run_async(
+            self._bridge_wrapper("rew_list", self._do_rew_list_measurements())
+        )
         logger.info("REW API pull requested")
 
     @Slot()
@@ -775,6 +801,16 @@ class MainWindow(QMainWindow):
         assert self._wiim_http_client is not None
         self._wiim_adapter = WiiMAdapter(self._wiim_http_client, caps)  # type: ignore[arg-type]
         self._safe_write = SafeWrite(self._wiim_adapter, self._backup_manager)
+
+        # Configure SecondaryWorkflowManager with adapter factories (Req 8.1, 9.3, 10.3, 15.3)
+        self._secondary_workflows.configure(
+            bridge=self._bridge,
+            wiim_adapter_factory=lambda ip: WiiMAdapter(
+                WiiMHttpClient(ip), caps,  # type: ignore[arg-type]
+            ),
+            safe_write_factory=lambda adapter: SafeWrite(adapter, self._backup_manager),
+            backup_manager=self._backup_manager,
+        )
 
         # Check for empty source_names — device reports no audio sources (Req 2.7)
         source_names = getattr(caps, "source_names", [])
@@ -948,6 +984,91 @@ class MainWindow(QMainWindow):
         assert self._capability_prober is not None
         caps = await self._capability_prober.probe()
         self._bridge.capabilities_ready.emit(caps)
+
+    async def _do_file_import(self, path: str) -> None:
+        """Parse a REW EQ text file and populate filters.
+
+        Calls REWParser.parse_file_with_warnings() for full result including
+        skipped bands. Stores filters in wizard state, shows warnings if any.
+
+        Args:
+            path: Path to the REW text file.
+        """
+        from src.translator.rew_parser import REWParser
+
+        file_path = Path(path)
+        parser = REWParser()
+        filters, warnings = parser.parse_file_with_warnings(file_path)
+
+        # Store in wizard state
+        self._wizard_controller.state.current_filters = filters
+
+        # Notify FiltersPage of success via peq_ready signal
+        self._bridge.peq_ready.emit(filters)
+
+        # If there were skipped/unsupported bands, show info message
+        if warnings:
+            skip_count = len(warnings)
+            self._bridge.progress_update.emit(
+                f"{len(filters)} filters loaded, {skip_count} unsupported band(s) skipped"
+            )
+
+    async def _do_device_pull(self) -> None:
+        """Pull PEQ settings from the connected device.
+
+        Reads PEQ bands via WiiMAdapter, converts to CanonicalFilter list,
+        stores in wizard state, and emits result signal.
+        """
+        assert self._wiim_adapter is not None
+        source_name = self._wizard_controller.state.selected_source
+
+        peq_settings = await self._wiim_adapter.read_peq(source_name)
+
+        # Extract filters based on channel mode
+        if peq_settings.channel_mode == "lr":
+            # For L/R mode, combine both channels
+            filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+        else:
+            filters = peq_settings.bands
+
+        # Store in wizard state
+        self._wizard_controller.state.current_filters = filters
+        self._wizard_controller.state.device_filters = filters
+
+        # Emit result signal
+        self._bridge.peq_ready.emit(peq_settings)
+
+    async def _do_rew_list_measurements(self) -> None:
+        """List available measurements from REW API.
+
+        Calls REWHttpApiClient.list_measurements() and emits the result.
+        If empty, emits an info message instead of the measurement list.
+        """
+        measurements = await self._rew_client.list_measurements()
+
+        if not measurements:
+            self._bridge.progress_update.emit("No measurements found in REW")
+            return
+
+        # Emit measurement list for the picker dialog
+        self._bridge.rew_measurements_ready.emit(measurements)
+
+    async def _do_rew_get_filters(self, uuid: str) -> None:
+        """Fetch filters for a specific REW measurement.
+
+        Calls REWHttpApiClient.get_filters(uuid), stores in wizard state,
+        and emits result signal.
+
+        Args:
+            uuid: The measurement UUID selected by the user.
+        """
+        filters = await self._rew_client.get_filters(uuid)
+
+        # Store in wizard state
+        self._wizard_controller.state.current_filters = filters
+
+        # Emit result signal
+        self._bridge.rew_filters_ready.emit(filters)
 
     # ------------------------------------------------------------------
     # Navigation handlers

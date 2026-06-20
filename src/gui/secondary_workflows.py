@@ -18,11 +18,19 @@ Requirements referenced: 17.1, 17.2, 17.3, 18.1, 18.2, 18.3, 18.4, 18.6,
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from src.models.canonical import CanonicalFilter
+
+if TYPE_CHECKING:
+    from src.adapters.safe_write import SafeWrite
+    from src.adapters.wiim_adapter import WiiMAdapter
+    from src.gui.async_bridge import AsyncBridge
+    from src.repository.backup_manager import BackupManager
 
 logger = logging.getLogger("wiim_rew_sync.secondary_workflows")
 
@@ -115,6 +123,50 @@ class SecondaryWorkflowManager(QObject):
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
+        self._bridge: AsyncBridge | None = None
+        self._wiim_adapter_factory: Callable[[str], WiiMAdapter] | None = None
+        self._safe_write_factory: Callable[[WiiMAdapter], SafeWrite] | None = None
+        self._backup_manager: BackupManager | None = None
+
+    # ------------------------------------------------------------------
+    # Configuration (adapter injection for async execution)
+    # ------------------------------------------------------------------
+
+    def configure(
+        self,
+        bridge: AsyncBridge,
+        wiim_adapter_factory: Callable[[str], WiiMAdapter],
+        safe_write_factory: Callable[[WiiMAdapter], SafeWrite],
+        backup_manager: BackupManager,
+    ) -> None:
+        """Inject adapter dependencies for real async workflow execution.
+
+        Called from MainWindow._on_capabilities_ready after adapters are created.
+        The factories allow per-device adapter creation for multi-device operations.
+
+        Args:
+            bridge: The AsyncBridge for run_async calls.
+            wiim_adapter_factory: Factory creating a WiiMAdapter for a given IP.
+            safe_write_factory: Factory creating a SafeWrite from a WiiMAdapter.
+            backup_manager: The backup manager instance for state snapshots.
+
+        Requirements: 8.1, 9.3, 10.3, 15.3.
+        """
+        self._bridge = bridge
+        self._wiim_adapter_factory = wiim_adapter_factory
+        self._safe_write_factory = safe_write_factory
+        self._backup_manager = backup_manager
+        logger.info("SecondaryWorkflowManager configured with adapter factories")
+
+    @property
+    def is_configured(self) -> bool:
+        """Return True if configure() has been called with valid dependencies."""
+        return (
+            self._bridge is not None
+            and self._wiim_adapter_factory is not None
+            and self._safe_write_factory is not None
+            and self._backup_manager is not None
+        )
 
     # ------------------------------------------------------------------
     # Workflow 1: Copy to Another Source (Req 20)
