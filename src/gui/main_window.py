@@ -757,11 +757,13 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_capabilities_ready(self, caps: object) -> None:
-        """Handle device capabilities — determine flow and advance.
+        """Handle device capabilities — create adapters, determine flow, and advance.
 
-        Implements auto-advance logic:
-        - PEQ-only device (roomfit_level < 2): skip EQ_TYPE step
-        - RoomFit-capable: advance to EQ_TYPE
+        After storing capabilities:
+        1. Creates WiiMAdapter and SafeWrite (Req 14.2, 14.3)
+        2. Checks for empty source_names (Req 2.7) — error if none
+        3. Determines flow type based on roomfit_level
+        4. Advances the wizard
 
         Args:
             caps: DeviceCapabilities object from the probe.
@@ -769,6 +771,18 @@ class MainWindow(QMainWindow):
         # Store capabilities (caps has roomfit_level, source_names, etc.)
         roomfit_level = getattr(caps, "roomfit_level", 0)
 
+        # Create WiiMAdapter and SafeWrite now that we have a connected client (Req 14.2, 14.3)
+        assert self._wiim_http_client is not None
+        self._wiim_adapter = WiiMAdapter(self._wiim_http_client, caps)  # type: ignore[arg-type]
+        self._safe_write = SafeWrite(self._wiim_adapter, self._backup_manager)
+
+        # Check for empty source_names — device reports no audio sources (Req 2.7)
+        source_names = getattr(caps, "source_names", [])
+        if not source_names:
+            self._bridge.operation_error.emit("NoSources", "Device reports no audio sources")
+            return
+
+        # Determine flow type and advance wizard
         if roomfit_level < 2:
             # PEQ-only device — skip EQ_TYPE step (Req 1.10)
             self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
@@ -781,11 +795,9 @@ class MainWindow(QMainWindow):
         device_name = getattr(caps, "device_name", "WiiM Device")
         self._sidebar_nav.set_device_info(device_name, connected=True)
 
-        # Populate SourcePage with available sources if present
-        source_names = getattr(caps, "source_names", [])
+        # Populate SourcePage with available sources
         active_source = getattr(caps, "active_source", "")
-        if source_names:
-            self._source_page.set_sources(source_names, active_source)
+        self._source_page.set_sources(source_names, active_source)
 
     @Slot(object)
     def _on_peq_ready(self, peq_data: object) -> None:

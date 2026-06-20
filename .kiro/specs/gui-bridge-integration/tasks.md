@@ -55,19 +55,19 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Guard with concurrent operation check
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7_
 
-  - [~] 2.3 Update `_on_capabilities_ready` to create WiiMAdapter and SafeWrite
+  - [x] 2.3 Update `_on_capabilities_ready` to create WiiMAdapter and SafeWrite
     - After storing capabilities, create `WiiMAdapter(self._wiim_http_client)` and `SafeWrite(self._wiim_adapter, self._backup_manager)`
     - Store as `self._wiim_adapter` and `self._safe_write`
     - Handle empty source_names (show error, stay on ConnectPage)
     - _Requirements: 14.2, 14.3, 2.7_
 
-  - [~] 2.4 Write property test for DeviceInfo transformation (Property 1)
+  - [x] 2.4 Write property test for DeviceInfo transformation (Property 1)
     - **Property 1: DeviceInfo transformation preserves required keys**
     - **Validates: Requirements 1.2**
     - Generate lists of DeviceInfo with arbitrary name/ip/model strings
     - Assert every resulting dict has "name" and "ip" keys matching original fields
 
-  - [~] 2.5 Write property test for flow type determination (Property 2)
+  - [x] 2.5 Write property test for flow type determination (Property 2)
     - **Property 2: Flow type determination from roomfit_level**
     - **Validates: Requirements 2.2, 2.3**
     - Generate DeviceCapabilities with roomfit_level 0-4
@@ -159,7 +159,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Static method `get_measurement(parent, measurements)` for convenience
     - _Requirements: 5.2, 5.7_
 
-  - [~] 6.4 Write unit tests for picker dialogs
+  - [x] 6.4 Write unit tests for picker dialogs
     - Test dialog creation, selection, accept/cancel return values
     - Use qtbot fixtures
     - _Requirements: 9.1, 9.2, 10.1, 10.2, 5.2, 5.7_
