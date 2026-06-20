@@ -703,3 +703,20 @@ Findings from full codebase integrity review. Decisions documented here for futu
   - Add unit test with mocked adapter verifying each source gets `load_peq_profile` called
   - _Domain rule: PEQ presets are global and loadable onto any source (rules.md rule 7)_
   - _Prerequisite for GUI Redesign Requirement 15.13_
+
+### Phase 11: Code Hygiene (from integrity review)
+
+- [ ] 61. REWGenerator warning propagation and dead code cleanup
+  - **Refactor `REWGenerator.generate_file()` to return `list[ValidationWarning]`:**
+    - Currently the method logs UNKNOWN-band skipping but discards the information
+    - Change return type from `None` to `list[ValidationWarning]`
+    - Accumulate a `ValidationWarning` for each skipped UNKNOWN band and return the list
+    - Update `REWGenerator.generate_lr_files()` to return `tuple[Path, Path, list[ValidationWarning]]`
+    - Update `TranslationEngine.generate_rew_file()` facade to return `list[ValidationWarning]`
+    - Update `TranslationEngine.generate_rew_lr_files()` facade to return `tuple[Path, Path, list[ValidationWarning]]`
+    - Update unit tests in `test_rew_generator.py` to assert on returned warnings
+    - _Root cause: The GUI redesign (FiltersPage, export dialog) needs to surface skipped-band warnings to the user. Currently only logged._
+  - **Remove dead `TYPE_CHECKING` block in `src/discovery/zeroconf_discover.py`:**
+    - Delete the empty `if TYPE_CHECKING: pass` block (lines 21-22)
+    - Remove the unused `from typing import TYPE_CHECKING` import
+  - _Requirements: GUI Redesign task 4.4 (FiltersPage validation warnings), task 36 design note_

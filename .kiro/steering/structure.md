@@ -30,7 +30,8 @@ src/
 │   └── schema_migrator.py # Profile schema version migration
 └── utils/           # Shared utilities (fp_compare, app_dirs, etc.)
     ├── fp_compare.py    # Floating-point tolerance predicates
-    └── app_dirs.py      # OS-appropriate data directory resolution
+    ├── app_dirs.py      # OS-appropriate data directory resolution
+    └── support_bundle.py # Generate support bundles for troubleshooting
 
 docs/                # Project documentation (PRD, architecture, API notes, etc.)
 ```

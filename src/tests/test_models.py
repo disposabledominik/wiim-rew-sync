@@ -195,7 +195,7 @@ class TestPEQBand:
 
     def test_band_number_above_maximum_rejected(self) -> None:
         with pytest.raises(PydanticValidationError, match="band_number"):
-            PEQBand(band_number=11, letter="a", mode=1, frequency=1000.0, q=1.0, gain=0.0)
+            PEQBand(band_number=13, letter="a", mode=1, frequency=1000.0, q=1.0, gain=0.0)
 
 
 # ---------------------------------------------------------------------------
