@@ -117,6 +117,27 @@ pip3 install -e ".[dev]"
 - **Shared interfaces:** When Task A creates a module that Task B calls, specify exact method names/signatures in both prompts.
 - **Verify after:** Run full test suite to catch interface mismatches.
 
+### Pre-Wave Parallelism Assessment (MANDATORY)
+
+Before dispatching any wave of concurrent tasks, the orchestrator MUST perform a collision analysis:
+
+1. **List target files:** For each task in the wave, identify every file it will CREATE or MODIFY.
+2. **Check for overlaps:** If two or more tasks write to the same file, they CANNOT run in parallel.
+3. **Check for read-after-write dependencies:** If Task B imports a symbol that Task A defines in the same wave, they CANNOT run in parallel (Task A must complete first).
+4. **Check for shared test files:** If multiple tasks add tests to the same `test_*.py` file, batch them into one subagent or run sequentially.
+
+**Decision matrix:**
+
+| Situation | Action |
+|-----------|--------|
+| All tasks create separate new files | ✅ Dispatch in parallel |
+| Two tasks both modify the same existing file | ❌ Run sequentially or batch into one subagent |
+| Task B imports from Task A's new module | ❌ Run Task A first, then Task B |
+| Tasks share a test file | ❌ Batch tests into one subagent or run sequentially |
+| Tasks create separate files but share an `__init__.py` export | ⚠️ Safe if each only adds its own import line; risky if they restructure `__all__` |
+
+**When in doubt, run sequentially.** A 30-second delay is cheaper than debugging a merge conflict or silent overwrite.
+
 ## Testing Policy
 
 - **Every module requires comprehensive unit tests.** No production module is considered complete without a matching `test_<module>.py` covering its public API, edge cases, and error paths.
