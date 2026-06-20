@@ -35,7 +35,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Create `src/gui/components/__init__.py`, `src/gui/pages/__init__.py`, `src/gui/views/__init__.py`, `src/gui/dialogs/__init__.py`, `src/gui/assets/icons/`, `src/gui/assets/help/`
     - _Requirements: 14.2_
 
-- [ ] 2. Implement shared components
+- [x] 2. Implement shared components
   - [x] 2.1 Create `src/gui/components/status_banner.py`
     - Implement StatusBanner widget with show_info, show_success, show_error, show_progress, clear methods
     - Color-coded backgrounds (info=neutral, success=green, error=red, progress=spinner)
@@ -76,7 +76,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Rounded card (8px radius), 16px padding
     - _Requirements: 2.3, 2.7, 2.9_
 
-  - [ ] 2.7 Write unit tests for shared components
+  - [x] 2.7 Write unit tests for shared components
     - Test StatusBanner message display, auto-dismiss, state colors
     - Test StepIndicator step states, click signals, label adaptation
     - Test SidebarNav collapse/expand, navigation signals
@@ -84,11 +84,11 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Test DeviceCard states (idle/connecting/connected/error)
     - _Requirements: 7.1-7.6, 1.3-1.4, 8.1-8.2, 5.1-5.5, 2.3_
 
-- [ ] 3. Checkpoint - Ensure shared components build correctly
+- [~] 3. Checkpoint - Ensure shared components build correctly
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 4. Implement wizard pages
-  - [ ] 4.1 Create `src/gui/pages/connect_page.py`
+  - [~] 4.1 Create `src/gui/pages/connect_page.py`
     - Implement ConnectPage with scanning animation, device card display, empty state
     - Auto-trigger discovery on show
     - Auto-select single device (emit device_selected)
@@ -97,14 +97,14 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Support refresh_requested signal
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
 
-  - [ ] 4.2 Create `src/gui/pages/eq_type_page.py`
+  - [~] 4.2 Create `src/gui/pages/eq_type_page.py`
     - Implement EQTypePage with two large selectable cards
     - "Parametric EQ - per-input EQ filters" and "RoomFit - room correction (all inputs)"
     - Emit eq_type_selected signal ("peq" or "roomfit")
     - Only shown when device supports RoomFit (roomfit_level >= 2)
     - _Requirements: 1.9, 11.2_
 
-  - [ ] 4.3 Create `src/gui/pages/source_page.py`
+  - [~] 4.3 Create `src/gui/pages/source_page.py`
     - Implement SourcePage showing device audio sources as selectable items
     - Pre-select active source with "(currently active)" label
     - Channel mode selector (Stereo / Left / Right) - hidden if not supported
@@ -112,7 +112,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Emit source_selected signal (source_name, channel_mode)
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
 
-  - [ ] 4.4 Create `src/gui/pages/filters_page.py`
+  - [~] 4.4 Create `src/gui/pages/filters_page.py`
     - Implement FiltersPage with three options: Import from REW File, Pull from Device, Pull from REW API
     - File picker: single file for Stereo, dual file for L/R with channel labels
     - Drag-and-drop target for .txt files
@@ -122,7 +122,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - REW API option visible only when reachable
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11, 4.12, 9.3_
 
-  - [ ] 4.5 Create `src/gui/pages/review_page.py`
+  - [~] 4.5 Create `src/gui/pages/review_page.py`
     - Implement ReviewPage with FilterTable, summary header (bands, source, channel, device)
     - Primary button: "Push to Device"; secondary: "Export as REW File", "Save to My Presets"
     - Dry Run toggle (changes button to "Preview Only", shows "DRY RUN" badge)
@@ -131,14 +131,14 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Ctrl+Enter keyboard shortcut for push confirmation
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 9.7, 12.1, 19.1, 19.4, 20.1_
 
-  - [ ] 4.6 Create `src/gui/pages/name_profile_page.py`
+  - [~] 4.6 Create `src/gui/pages/name_profile_page.py`
     - Implement NameProfilePage with text input (32-char max)
     - Show existing profiles list for reference
     - Warning when overwriting active profile (deactivation warning)
     - Emit name_confirmed signal
     - _Requirements: 16.3, 16.4, 16.5_
 
-  - [ ] 4.7 Create `src/gui/pages/push_page.py`
+  - [~] 4.7 Create `src/gui/pages/push_page.py`
     - Implement PushPage with progress stages: Backing up → Writing → Verifying → Done
     - Success state: green checkmark, "OK" (green) + "Undo" (red/orange) primary buttons
     - Secondary: "Export as REW File", "Save to My Presets" text links
@@ -146,7 +146,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Dry Run mode: show translation result without network operations
     - _Requirements: 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 18.1_
 
-  - [ ] 4.8 Write unit tests for wizard pages
+  - [~] 4.8 Write unit tests for wizard pages
     - Test ConnectPage: discovery trigger, auto-select, empty state
     - Test EQTypePage: selection signals
     - Test SourcePage: source list population, channel mode visibility
@@ -155,11 +155,11 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Test PushPage: progress stages, success/failure display
     - _Requirements: 2.1-2.9, 1.9, 3.1-3.6, 4.1-4.12, 5.1-5.7, 6.2-6.8_
 
-- [ ] 5. Checkpoint - Ensure wizard pages build correctly
+- [~] 5. Checkpoint - Ensure wizard pages build correctly
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 6. Implement WizardController state machine
-  - [ ] 6.1 Create `src/gui/wizard_controller.py`
+  - [~] 6.1 Create `src/gui/wizard_controller.py`
     - Implement WizardStep enum and FlowType enum
     - Implement WizardState dataclass with all state fields
     - Implement WizardController(QObject) with step sequencing logic
@@ -171,7 +171,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Wire to AsyncBridge signals for capability/discovery/write results
     - _Requirements: 1.2, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 14.1_
 
-  - [ ] 6.2 Write property test: Flow step sequence correctness (Property 1)
+  - [~] 6.2 Write property test: Flow step sequence correctness (Property 1)
     - **Property 1: Flow step sequence correctness**
     - For any valid FlowType and device capabilities, steps_for_flow() returns the exact documented sequence
     - PEQ → [CONNECT, EQ_TYPE, SOURCE, FILTERS, REVIEW, PUSH]
@@ -180,42 +180,42 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - No SOURCE for RoomFit, no EQ_TYPE for PEQ-only, NAME_PROFILE only for RoomFit
     - **Validates: Requirements 1.2, 1.9, 1.10, 1.11**
 
-  - [ ] 6.3 Write property test: Step classification invariant (Property 2)
+  - [~] 6.3 Write property test: Step classification invariant (Property 2)
     - **Property 2: Step classification invariant**
     - For any valid wizard state, every step is classified as exactly one of: completed, active, or upcoming
     - No step in two categories simultaneously; active step is always exactly one
     - **Validates: Requirements 1.3**
 
-  - [ ] 6.4 Write property test: Forward advancement preserves sequence order (Property 3)
+  - [~] 6.4 Write property test: Forward advancement preserves sequence order (Property 3)
     - **Property 3: Forward advancement preserves sequence order**
     - For any non-final step, advance() moves to next step in sequence
     - Previous step added to completed set; new step not in completed set
     - **Validates: Requirements 1.5**
 
-  - [ ] 6.5 Write property test: Back-navigation invalidates subsequent steps (Property 4)
+  - [~] 6.5 Write property test: Back-navigation invalidates subsequent steps (Property 4)
     - **Property 4: Back-navigation invalidates all subsequent steps**
     - Navigating backward removes all steps after target from completed set
     - Preserves steps before target (inclusive); current step becomes target
     - **Validates: Requirements 1.6**
 
-  - [ ] 6.6 Write property test: Push prerequisites predicate (Property 5)
+  - [~] 6.6 Write property test: Push prerequisites predicate (Property 5)
     - **Property 5: Push prerequisites predicate**
     - Push enabled iff: device connected, source selected (or RoomFit), filters non-empty, dry_run is False
     - If any condition not met, push is disabled
     - **Validates: Requirements 12.1**
 
-  - [ ] 6.7 Write unit tests for WizardController
+  - [~] 6.7 Write unit tests for WizardController
     - Test flow branching based on roomfit_level (0 → PEQ-only, >=2 → EQ_TYPE shown)
     - Test advance/back-navigation/reset behavior
     - Test signal emission (step_changed, flow_type_changed, wizard_reset)
     - Test step summary updates via step_summary_updated signal
     - _Requirements: 1.2-1.12, 11.1-11.8_
 
-- [ ] 7. Checkpoint - Ensure WizardController logic is correct
+- [~] 7. Checkpoint - Ensure WizardController logic is correct
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 8. Implement secondary views
-  - [ ] 8.1 Create `src/gui/views/presets_device_view.py`
+  - [~] 8.1 Create `src/gui/views/presets_device_view.py`
     - Implement PresetsDeviceView with two sections: PEQ Presets and RoomFit Profiles
     - Fetch via list_peq_profiles() and list_roomfit_profiles()
     - Each item: name, channel mode badge, PEQ/RoomFit badge
@@ -225,7 +225,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Search/filter field when > 10 items
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9, 15.10, 15.11, 15.12, 8.5, 8.6, 10.9_
 
-  - [ ] 8.2 Create `src/gui/views/my_presets_view.py`
+  - [~] 8.2 Create `src/gui/views/my_presets_view.py`
     - Implement MyPresetsView with local preset library CRUD
     - List items: name, channel mode badge (Stereo/L/R), active band count
     - Inline rename (double-click), context menu (Load, Rename, Duplicate, Delete)
@@ -233,7 +233,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Emit load_requested signal to populate wizard Review step
     - _Requirements: 8.3, 8.4, 10.9_
 
-  - [ ] 8.3 Create `src/gui/views/settings_view.py`
+  - [~] 8.3 Create `src/gui/views/settings_view.py`
     - Implement SettingsView with sections: Appearance, Paths, Behavior, Logs, Support
     - Appearance: Light/Dark/System theme toggle
     - Paths: Log dir, Presets dir, Default REW export folder (with browse + validation)
@@ -243,7 +243,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - All settings persist via settings.json
     - _Requirements: 24.1, 24.2, 24.5, 24.9, 24.10, 24.11, 24.12, 24.14, 24.15, 25.4_
 
-  - [ ] 8.4 Create `src/gui/views/help_view.py`
+  - [~] 8.4 Create `src/gui/views/help_view.py`
     - Implement HelpView as side panel overlay (does not replace current view)
     - Render bundled Markdown from assets/help/
     - Searchable table of contents sidebar
@@ -251,7 +251,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Navigate to section via help icon "?" on wizard steps
     - _Requirements: 27.1, 27.2, 27.3, 27.4, 27.5, 27.6, 27.7, 27.8, 27.9, 27.10_
 
-  - [ ] 8.5 Write unit tests for secondary views
+  - [~] 8.5 Write unit tests for secondary views
     - Test PresetsDeviceView: section display, multi-select, empty state
     - Test MyPresetsView: CRUD signals, search filtering, load signal
     - Test SettingsView: theme toggle, path validation, settings persistence
@@ -259,7 +259,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - _Requirements: 15.1-15.12, 8.3-8.6, 24.1-24.15, 27.1-27.10_
 
 - [ ] 9. Implement dialogs
-  - [ ] 9.1 Create `src/gui/dialogs/push_confirmation.py`
+  - [~] 9.1 Create `src/gui/dialogs/push_confirmation.py`
     - Implement PushConfirmation modal dialog with static confirm() method
     - Display: device name, source, channel mode, band count, dry run state
     - Include clamping summary when applicable
@@ -267,29 +267,29 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Consolidate sequential confirmations into single summary
     - _Requirements: 6.1, 12.2, 12.3, 12.6_
 
-  - [ ] 9.2 Create `src/gui/dialogs/onboarding_overlay.py`
+  - [~] 9.2 Create `src/gui/dialogs/onboarding_overlay.py`
     - Implement OnboardingOverlay for first-run welcome
     - 3 capability cards: Import filters, Push safely, Save presets
     - "Get Started" button (dismiss + start wizard) and "Skip" link
     - Only shown when first_run_complete is False in settings
     - _Requirements: 23.1, 23.2, 23.3, 23.4, 23.5, 23.7_
 
-  - [ ] 9.3 Create `src/gui/dialogs/crash_dialog.py`
+  - [~] 9.3 Create `src/gui/dialogs/crash_dialog.py`
     - Implement CrashDialog with static show_crash() method
     - Display "The app encountered an unexpected error" + log file path
     - Include "View Logs" link and "Generate Support Bundle" button
     - _Requirements: 24.6, 24.7, 24.13_
 
-  - [ ] 9.4 Create `src/gui/dialogs/unsaved_changes_dialog.py`
+  - [~] 9.4 Create `src/gui/dialogs/unsaved_changes_dialog.py`
     - Implement unsaved changes confirmation dialog
     - Triggered on close or navigate-away when filter changes exist
     - _Requirements: 12.5_
 
-- [ ] 10. Checkpoint - Ensure views and dialogs build correctly
+- [~] 10. Checkpoint - Ensure views and dialogs build correctly
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 11. Implement MainWindow and wire everything together
-  - [ ] 11.1 Create `src/gui/main_window.py`
+  - [~] 11.1 Create `src/gui/main_window.py`
     - Implement MainWindow(QMainWindow) shell with sidebar + QStackedWidget + StatusBanner
     - Layout: MenuBar → Central Widget (QHBoxLayout: SidebarNav + QVBoxLayout: StepIndicator + QStackedWidget + StatusBanner)
     - QDockWidget for Diagnostics (hidden, View → Diagnostics toggle)
@@ -300,7 +300,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Handle closeEvent (unsaved changes check, bridge shutdown)
     - _Requirements: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6_
 
-  - [ ] 11.2 Wire WizardController to page signals and AsyncBridge
+  - [~] 11.2 Wire WizardController to page signals and AsyncBridge
     - Connect page signals (device_selected, eq_type_selected, source_selected, etc.) to WizardController
     - Connect AsyncBridge signals (discovery_complete, capabilities_ready, peq_ready, write_complete, operation_error, progress_update) to controller handlers
     - Connect StepIndicator.step_clicked to WizardController.go_to_step
@@ -308,7 +308,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Implement auto-advance logic (single device auto-select, PEQ-only device skip)
     - _Requirements: 14.1, 14.3, 14.6, 1.5, 2.4, 2.8, 9.1, 9.2_
 
-  - [ ] 11.3 Implement responsive operation feedback and button state management
+  - [~] 11.3 Implement responsive operation feedback and button state management
     - Disable action buttons immediately on click (prevent double-submit)
     - Show loading state within 100ms of user action
     - Display "This may take a moment..." for operations > 3 seconds
@@ -316,14 +316,14 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Ensure main thread never blocks (all I/O via AsyncBridge)
     - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6_
 
-  - [ ] 11.4 Implement layout stability and progressive disclosure
+  - [~] 11.4 Implement layout stability and progressive disclosure
     - Anchor action buttons, navigation, step indicators, and status banner positions
     - Reserve content area space with skeleton placeholders during loading
     - MAX_CONTENT_WIDTH constraint with centered alignment on large screens
     - Progressive disclosure: channel mode, RoomFit, dry run as secondary/expandable controls
     - _Requirements: 10.11, 10.12, 10.13, 10.5_
 
-  - [ ] 11.5 Implement keyboard navigation and accessibility
+  - [~] 11.5 Implement keyboard navigation and accessibility
     - Full Tab/Shift+Tab/Enter/Escape navigation through all steps
     - Logical tab order following visual reading order
     - Visible focus indicators (3:1 contrast ratio)
@@ -333,7 +333,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - State communication via icon + text (not color alone)
     - _Requirements: 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7_
 
-  - [ ] 11.6 Implement secondary workflow integrations
+  - [~] 11.6 Implement secondary workflow integrations
     - "Copy to another source" flow: source picker (multi-select) → Safe_Write_Protocol per source
     - "Apply to multiple devices" flow: device picker → source picker per device → sequential push
     - "Copy to Another Device" from Presets on Device view
@@ -341,7 +341,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Undo last push: restore from most recent backup via Safe_Write_Protocol
     - _Requirements: 17.1, 17.2, 17.3, 18.1, 18.2, 18.3, 18.4, 18.6, 20.1, 20.2, 20.3, 20.4, 20.5, 21.1, 21.2, 21.3, 21.4, 21.5, 21.6_
 
-  - [ ] 11.7 Write integration tests for full wizard flows
+  - [~] 11.7 Write integration tests for full wizard flows
     - Test happy path: single device → import → push (mock AsyncBridge signals)
     - Test RoomFit flow: EQ_TYPE shown, SOURCE skipped, NAME_PROFILE before push
     - Test back-navigation: step invalidation, page state reset
@@ -351,14 +351,14 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - _Requirements: 1.2-1.12, 11.1-11.8, 14.1-14.6_
 
 - [ ] 12. Implement settings persistence and first-run logic
-  - [ ] 12.1 Create AppSettings dataclass and settings file I/O
+  - [~] 12.1 Create AppSettings dataclass and settings file I/O
     - Implement AppSettings dataclass (theme, log_directory, presets_directory, etc.)
     - Load/save from settings.json in app data directory
     - Auto-reconnect to last-used device on launch
     - Auto-enable Dry Run for first-time users
     - _Requirements: 9.2, 12.4, 23.6, 24.15_
 
-  - [ ] 12.2 Wire settings to MainWindow and components
+  - [~] 12.2 Wire settings to MainWindow and components
     - Apply theme on startup based on saved preference
     - Set sidebar collapsed state from settings
     - Set Dry Run default from settings
@@ -366,7 +366,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - _Requirements: 23.1, 23.5, 24.15, 25.4_
 
 - [ ] 13. Create help content assets
-  - [ ] 13.1 Create bundled help Markdown files in `src/gui/assets/help/`
+  - [~] 13.1 Create bundled help Markdown files in `src/gui/assets/help/`
     - getting-started.md (mirrors onboarding content)
     - import-and-push.md (primary workflow guide)
     - pull-and-export.md
@@ -376,13 +376,13 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - _Requirements: 27.2, 27.3, 27.7, 27.8, 27.10_
 
 - [ ] 14. Remove old GUI files and update entry point
-  - [ ] 14.1 Remove deprecated files from `src/gui/` (panels/, old main_window, etc.)
+  - [~] 14.1 Remove deprecated files from `src/gui/` (panels/, old main_window, etc.)
     - Delete all files in src/gui/ except async_bridge.py
     - Update src/gui/__init__.py to export new MainWindow
     - Ensure entry point (if any) creates new MainWindow
     - _Requirements: 14.2_
 
-- [ ] 15. Final checkpoint - Full integration verification
+- [~] 15. Final checkpoint - Full integration verification
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
