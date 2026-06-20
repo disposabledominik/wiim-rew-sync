@@ -399,7 +399,7 @@ class TestUndoAfterPush:
             window._secondary_workflows, "undo_last_push"
         ) as mock_undo:
             window._on_undo_requested()
-            mock_undo.assert_called_once_with("/backups/peq_backup_001.json")
+            mock_undo.assert_called_once_with("wifi", "/backups/peq_backup_001.json")
 
     def test_undo_complete_success_shows_banner(self, make_window) -> None:
         """Successful undo shows success message in StatusBanner."""

@@ -17,14 +17,17 @@ Requirements referenced: 17.1, 17.2, 17.3, 18.1, 18.2, 18.3, 18.4, 18.6,
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from src.models.canonical import CanonicalFilter
+from src.models.peq import PEQSettings
 
 if TYPE_CHECKING:
     from src.adapters.safe_write import SafeWrite
@@ -127,6 +130,7 @@ class SecondaryWorkflowManager(QObject):
         self._wiim_adapter_factory: Callable[[str], WiiMAdapter] | None = None
         self._safe_write_factory: Callable[[WiiMAdapter], SafeWrite] | None = None
         self._backup_manager: BackupManager | None = None
+        self._current_adapter: WiiMAdapter | None = None
 
     # ------------------------------------------------------------------
     # Configuration (adapter injection for async execution)
@@ -168,6 +172,19 @@ class SecondaryWorkflowManager(QObject):
             and self._backup_manager is not None
         )
 
+    def set_current_adapter(self, adapter: WiiMAdapter | None) -> None:
+        """Set the current device adapter for same-device workflows.
+
+        Called from MainWindow whenever the active device changes (after
+        capability probing creates a WiiMAdapter). Used by copy_to_sources
+        and undo_last_push which operate on the currently connected device.
+
+        Args:
+            adapter: The WiiMAdapter for the currently connected device,
+                    or None to clear.
+        """
+        self._current_adapter = adapter
+
     # ------------------------------------------------------------------
     # Workflow 1: Copy to Another Source (Req 20)
     # ------------------------------------------------------------------
@@ -190,40 +207,62 @@ class SecondaryWorkflowManager(QObject):
             filters: The canonical filters to push to each target source.
             target_sources: List of source names to copy filters to.
 
-        Requirement 20.3: User can select one or more target sources.
-        Requirement 20.4: Safe_Write_Protocol executed independently per source.
-        Requirement 20.5: Per-source progress and results displayed.
+        Requirements: 9.3, 9.4, 9.5, 9.6, 9.7.
         """
+        assert self._bridge is not None
+        self._bridge.run_async(self._do_copy_to_sources(filters, target_sources))
+
+    async def _do_copy_to_sources(
+        self,
+        filters: list[CanonicalFilter],
+        target_sources: list[str],
+    ) -> None:
+        """Execute copy-to-sources with fault isolation per source.
+
+        Each source is written independently — one failure does NOT stop
+        remaining sources (Req 9.7).
+        """
+        assert self._safe_write_factory is not None
+        assert self._current_adapter is not None
+
         results: list[SourceCopyResult] = []
+        safe_write = self._safe_write_factory(self._current_adapter)
 
         for source_name in target_sources:
-            self.copy_to_sources_progress.emit(
-                f"Writing to {source_name}..."
-            )
+            self.copy_to_sources_progress.emit(f"Writing to {source_name}...")
             logger.info(
                 "Copy-to-source: writing %d filters to source '%s'",
                 len(filters),
                 source_name,
             )
 
-            # TODO: Execute Safe_Write_Protocol per source via AsyncBridge:
-            #   1. backup_source(device_ip, source_name)
-            #   2. write_filters(device_ip, source_name, filters)
-            #   3. verify_write(device_ip, source_name, filters)
-            #   4. commit or rollback
-            # For now, record a placeholder success result.
-            results.append(
-                SourceCopyResult(
+            try:
+                settings = PEQSettings(
                     source_name=source_name,
-                    success=True,
-                    message=f"Copied to {source_name}",
+                    channel_mode="stereo",
+                    bands=filters,
                 )
-            )
-            logger.info("Copy-to-source: completed for '%s'", source_name)
+                await safe_write.execute(source_name, settings)
+                results.append(
+                    SourceCopyResult(
+                        source_name=source_name,
+                        success=True,
+                        message=f"Copied to {source_name}",
+                    )
+                )
+                logger.info("Copy-to-source: completed for '%s'", source_name)
+            except Exception as exc:
+                logger.exception("Copy-to-source failed for '%s'", source_name)
+                results.append(
+                    SourceCopyResult(
+                        source_name=source_name,
+                        success=False,
+                        message=str(exc),
+                    )
+                )
 
         self.copy_to_sources_complete.emit(results)
 
-        # Build summary for logging
         succeeded = sum(1 for r in results if r.success)
         failed = len(results) - succeeded
         logger.info(
@@ -245,10 +284,10 @@ class SecondaryWorkflowManager(QObject):
         """Apply filters to multiple devices sequentially.
 
         For each device, connects, probes, and writes to the specified sources.
-        Processes one device at a time for safety (Req 21.4).
+        Processes one device at a time for safety.
 
         If a push fails on one device, reports the failure and continues
-        with remaining devices (Req 21.5 — no all-or-nothing).
+        with remaining devices (fault isolation).
 
         Emits multi_device_progress per device and multi_device_complete
         with the full results list when all devices are processed.
@@ -257,44 +296,87 @@ class SecondaryWorkflowManager(QObject):
             filters: The canonical filters to push to each device/source.
             request: MultiDeviceRequest specifying device→source mappings.
 
-        Requirement 21.4: Sequential push per device.
-        Requirement 21.5: Failure on one device does not stop others.
-        Requirement 21.6: Summary displayed after all devices processed.
+        Requirements: 10.3, 10.4, 10.5, 10.6, 10.7.
         """
+        assert self._bridge is not None
+        self._bridge.run_async(self._do_apply_to_devices(filters, request))
+
+    async def _do_apply_to_devices(
+        self,
+        filters: list[CanonicalFilter],
+        request: MultiDeviceRequest,
+    ) -> None:
+        """Execute multi-device push with fault isolation per device.
+
+        Each device is processed independently — one failure does NOT stop
+        remaining devices (Req 10.7).
+        """
+        assert self._wiim_adapter_factory is not None
+        assert self._safe_write_factory is not None
+
         results: list[DevicePushResult] = []
 
         for device_ip, source_list in request.device_source_map.items():
             device_name = request.device_names.get(device_ip, device_ip)
 
-            for source_name in source_list:
+            try:
                 self.multi_device_progress.emit(
-                    f"Pushing to {device_name} / {source_name}..."
+                    f"Connecting to {device_name}..."
                 )
-                logger.info(
-                    "Multi-device push: %s (%s) / source '%s'",
-                    device_name,
-                    device_ip,
-                    source_name,
-                )
+                adapter = self._wiim_adapter_factory(device_ip)
+                safe_write = self._safe_write_factory(adapter)
 
-                # TODO: Execute full push sequence via AsyncBridge:
-                #   1. connect_to_device(device_ip)
-                #   2. probe_capabilities(device_ip)
-                #   3. Safe_Write_Protocol(device_ip, source_name, filters)
-                # For now, record a placeholder success result.
-                results.append(
-                    DevicePushResult(
-                        device_ip=device_ip,
-                        device_name=device_name,
-                        source_name=source_name,
-                        success=True,
-                        message=f"Pushed to {device_name} / {source_name}",
+                for source_name in source_list:
+                    self.multi_device_progress.emit(
+                        f"Pushing to {device_name} / {source_name}..."
                     )
+                    logger.info(
+                        "Multi-device push: %s (%s) / source '%s'",
+                        device_name,
+                        device_ip,
+                        source_name,
+                    )
+
+                    settings = PEQSettings(
+                        source_name=source_name,
+                        channel_mode="stereo",
+                        bands=filters,
+                    )
+                    await safe_write.execute(source_name, settings)
+
+                    results.append(
+                        DevicePushResult(
+                            device_ip=device_ip,
+                            device_name=device_name,
+                            source_name=source_name,
+                            success=True,
+                            message=f"Pushed to {device_name} / {source_name}",
+                        )
+                    )
+            except Exception as exc:
+                logger.exception(
+                    "Multi-device push failed for %s (%s)", device_name, device_ip
                 )
+                # Record failure for all remaining sources on this device
+                for source_name in source_list:
+                    # Only add if not already recorded as success
+                    already_recorded = any(
+                        r.device_ip == device_ip and r.source_name == source_name
+                        for r in results
+                    )
+                    if not already_recorded:
+                        results.append(
+                            DevicePushResult(
+                                device_ip=device_ip,
+                                device_name=device_name,
+                                source_name=source_name,
+                                success=False,
+                                message=str(exc),
+                            )
+                        )
 
         self.multi_device_complete.emit(results)
 
-        # Build summary (Req 21.6)
         succeeded = sum(1 for r in results if r.success)
         total = len(results)
         failed = total - succeeded
@@ -333,25 +415,41 @@ class SecondaryWorkflowManager(QObject):
             target_source: Target source name on the device (PEQ only).
                           Empty string for RoomFit (device-global).
 
-        Requirement 17.3: Copy Preset to Another Device guided flow.
+        Requirements: 15.3, 15.4, 15.5, 15.6.
         """
-        logger.info(
-            "Copy-to-device: writing %d filters to device %s, source '%s'",
-            len(preset_filters),
-            target_device_ip,
-            target_source or "(global/RoomFit)",
+        assert self._bridge is not None
+        self._bridge.run_async(
+            self._do_copy_preset_to_device(preset_filters, target_device_ip, target_source)
         )
 
-        # TODO: Execute via AsyncBridge:
-        #   1. connect_to_device(target_device_ip)
-        #   2. probe_capabilities(target_device_ip)
-        #   3. Safe_Write_Protocol(target_device_ip, target_source, preset_filters)
-        # For now, emit placeholder success.
-        self.copy_to_device_complete.emit(
-            True,
-            f"Preset copied to device {target_device_ip}",
-        )
-        logger.info("Copy-to-device: completed for %s", target_device_ip)
+    async def _do_copy_preset_to_device(
+        self,
+        filters: list[CanonicalFilter],
+        target_ip: str,
+        source_name: str,
+    ) -> None:
+        """Execute copy-preset-to-device via SafeWrite on target device."""
+        assert self._wiim_adapter_factory is not None
+        assert self._safe_write_factory is not None
+
+        try:
+            adapter = self._wiim_adapter_factory(target_ip)
+            safe_write = self._safe_write_factory(adapter)
+
+            settings = PEQSettings(
+                source_name=source_name,
+                channel_mode="stereo",
+                bands=filters,
+            )
+            await safe_write.execute(source_name, settings)
+
+            self.copy_to_device_complete.emit(
+                True, f"Filters applied to {target_ip}"
+            )
+            logger.info("Copy-to-device: completed for %s", target_ip)
+        except Exception as exc:
+            logger.exception("Copy-to-device failed for %s", target_ip)
+            self.copy_to_device_complete.emit(False, str(exc))
 
     # ------------------------------------------------------------------
     # Workflow 4: Profile Recall (Req 17.2)
@@ -397,35 +495,77 @@ class SecondaryWorkflowManager(QObject):
     # ------------------------------------------------------------------
 
     @Slot(str)
-    def undo_last_push(self, backup_path: str) -> None:
+    def undo_last_push(self, source_name: str, backup_path: str | Path = "") -> None:
         """Restore the device's PEQ state from the most recent backup.
 
         The undo operation follows the same Safe_Write_Protocol as a normal
-        push (Req 18.3): backup current state → write backup data → verify →
+        push: backup current state → write backup data → verify →
         commit/rollback.
 
         Args:
+            source_name: The source name to restore (needed for SafeWrite).
             backup_path: Path to the pre-write backup file created during
                         the original push operation.
 
-        Requirement 18.2: Restore from most recent backup.
-        Requirement 18.3: Undo uses Safe_Write_Protocol.
-        Requirement 18.4: Display "Previous filters restored" on success.
-        Requirement 18.6: User does not need to know about file paths.
+        Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6.
         """
-        if not backup_path:
-            logger.error("Undo requested but no backup path available")
-            self.undo_complete.emit(False, "No backup available to restore from")
+        assert self._bridge is not None
+        self._bridge.run_async(self._do_undo(source_name, backup_path))
+
+    async def _do_undo(self, source_name: str, backup_path: str | Path) -> None:
+        """Execute undo via SafeWrite with backup data.
+
+        Reads the backup file, reconstructs PEQSettings, and writes them
+        back to the device using the Safe_Write_Protocol.
+        """
+        assert self._safe_write_factory is not None
+        assert self._current_adapter is not None
+
+        path = Path(backup_path) if isinstance(backup_path, str) else backup_path
+
+        # Check if backup file exists (Req 8.5)
+        if not path or not path.exists():
+            logger.error("Undo requested but backup file not found: %s", path)
+            self.undo_complete.emit(False, "No backup available")
             return
 
-        logger.info("Undo last push: restoring from backup '%s'", backup_path)
+        try:
+            # Read backup data from JSON file
+            backup_data = json.loads(path.read_text(encoding="utf-8"))
 
-        # TODO: Execute via AsyncBridge:
-        #   1. Read backup file to get previous filter state
-        #   2. backup_current_state() (safety: backup even before undo)
-        #   3. write_filters(device_ip, source_name, backup_filters)
-        #   4. verify_write(device_ip, source_name, backup_filters)
-        #   5. commit or rollback
-        # For now, emit placeholder success.
-        self.undo_complete.emit(True, "Previous filters restored")
-        logger.info("Undo last push: completed successfully")
+            # Reconstruct PEQSettings from backup record
+            channel_mode_raw = backup_data.get("channel_mode", "stereo")
+            # BackupRecord uses "stereo"/"left"/"right"; PEQSettings uses "stereo"/"lr"
+            peq_channel_mode: str = (
+                "stereo" if channel_mode_raw == "stereo" else "lr"
+            )
+
+            if peq_channel_mode == "stereo":
+                filters_raw = backup_data.get("filters", [])
+                bands = [CanonicalFilter(**f) for f in filters_raw]
+                settings = PEQSettings(
+                    source_name=source_name,
+                    channel_mode="stereo",
+                    bands=bands,
+                )
+            else:
+                filters_l_raw = backup_data.get("filters_l", [])
+                filters_r_raw = backup_data.get("filters_r", [])
+                bands_l = [CanonicalFilter(**f) for f in filters_l_raw]
+                bands_r = [CanonicalFilter(**f) for f in filters_r_raw]
+                settings = PEQSettings(
+                    source_name=source_name,
+                    channel_mode="lr",
+                    bands_l=bands_l,
+                    bands_r=bands_r,
+                )
+
+            # Execute SafeWrite with the restored settings
+            safe_write = self._safe_write_factory(self._current_adapter)
+            await safe_write.execute(source_name, settings)
+
+            self.undo_complete.emit(True, "Previous filters restored")
+            logger.info("Undo last push: completed successfully")
+        except Exception as exc:
+            logger.exception("Undo last push failed")
+            self.undo_complete.emit(False, str(exc))

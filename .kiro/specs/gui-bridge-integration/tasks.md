@@ -101,14 +101,14 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Guard with concurrent operation check
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7_
 
-  - [~] 3.4 Write unit tests for file import, device pull, and REW pull handlers
+  - [x] 3.4 Write unit tests for file import, device pull, and REW pull handlers
     - Test happy paths with mocked adapters returning valid data
     - Test error paths (file not found, parse error, timeout, REW not connected)
     - Test precondition failures (no source selected for device pull)
     - _Requirements: 3.1-3.6, 4.1-4.5, 5.1-5.7_
 
 - [ ] 4. Primary wizard signal handlers — push and export
-  - [~] 4.1 Wire push step to SafeWrite via AsyncBridge
+  - [x] 4.1 Wire push step to SafeWrite via AsyncBridge
     - When WizardController advances to PUSH step, call `self._bridge.run_async(self._do_push())`
     - `_do_push` calls `self._safe_write.execute(source_name, peq_settings)`
     - Emit progress_update for each Safe_Write_Protocol stage (backing up, writing, verifying)
@@ -117,7 +117,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Guard with concurrent operation check
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
 
-  - [~] 4.2 Wire `_on_export_requested` to TranslationEngine via AsyncBridge
+  - [x] 4.2 Wire `_on_export_requested` to TranslationEngine via AsyncBridge
     - Open QFileDialog for save path (default .txt extension)
     - If user cancels dialog: return with no action
     - Call `self._bridge.run_async(self._do_export(filters, path))`
@@ -171,21 +171,21 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - Call `configure()` from MainWindow after adapters are created (in `_on_capabilities_ready`)
     - _Requirements: 8.1, 9.3, 10.3, 15.3_
 
-  - [~] 7.2 Implement async `copy_to_sources` via AsyncBridge
+  - [x] 7.2 Implement async `copy_to_sources` via AsyncBridge
     - Replace placeholder with `bridge.run_async(self._do_copy_to_sources(filters, targets))`
     - For each source: execute SafeWrite independently, emit progress per source
     - On per-source failure: record failure, continue to next source (fault isolation)
     - Emit `copy_to_sources_complete` with full results list
     - _Requirements: 9.3, 9.4, 9.5, 9.6, 9.7_
 
-  - [~] 7.3 Implement async `apply_to_devices` via AsyncBridge
+  - [x] 7.3 Implement async `apply_to_devices` via AsyncBridge
     - Replace placeholder with `bridge.run_async(self._do_apply_to_devices(filters, request))`
     - For each device: connect → probe → SafeWrite; emit progress per device
     - On per-device failure: record failure, continue (fault isolation)
     - Emit `multi_device_complete` with full results list
     - _Requirements: 10.3, 10.4, 10.5, 10.6, 10.7_
 
-  - [~] 7.4 Implement async `undo_last_push` via AsyncBridge
+  - [x] 7.4 Implement async `undo_last_push` via AsyncBridge
     - Read backup file from `backup_path` to get previous PEQ state
     - Execute SafeWrite with backup data (backup current → write → verify)
     - On success: emit `undo_complete(True, "Previous filters restored")`
@@ -193,7 +193,7 @@ All adapter calls flow through `AsyncBridge.run_async()` and results return via 
     - On missing backup file: emit `undo_complete(False, "No backup available")`
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
 
-  - [~] 7.5 Implement async `copy_preset_to_device` via AsyncBridge
+  - [x] 7.5 Implement async `copy_preset_to_device` via AsyncBridge
     - Connect to target device, probe capabilities, execute SafeWrite
     - On success: emit `copy_to_device_complete(True, message)`
     - On failure: emit `copy_to_device_complete(False, error_message)`

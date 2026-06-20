@@ -22,6 +22,7 @@ from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
+    QFileDialog,
     QHBoxLayout,
     QMainWindow,
     QMenuBar,
@@ -73,6 +74,7 @@ from src.models.errors import (
     WiiMConnectionError,
     WiiMTimeoutError,
 )
+from src.models.peq import PEQSettings
 from src.repository.backup_manager import BackupManager
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
@@ -645,14 +647,54 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_push_requested(self) -> None:
-        """Handle push request from ReviewPage — advance to Push step."""
+        """Handle push request from ReviewPage — advance to Push step and execute push.
+
+        Guards against concurrent operations, advances the wizard to the PUSH
+        step, then launches the SafeWrite protocol via AsyncBridge.
+
+        Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
+        """
+        if self._is_busy():
+            return
+
         self._wizard_controller.advance(summary="Push")
+        self._bridge.run_async(
+            self._bridge_wrapper("push", self._do_push())
+        )
 
     @Slot()
     def _on_export_requested(self) -> None:
-        """Handle export request from ReviewPage."""
-        # TODO: Trigger file export dialog and write
-        logger.info("Export as REW file requested")
+        """Handle export request from ReviewPage — open file dialog and write REW file.
+
+        Guards against concurrent operations, opens a QFileDialog for the save
+        path, then launches REWGenerator.generate_file via AsyncBridge.
+
+        Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
+        """
+        if self._is_busy():
+            return
+
+        # Get default export folder from settings
+        default_dir = self._settings.rew_export_folder or str(Path.home())
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export REW EQ File",
+            default_dir,
+            "REW EQ Files (*.txt)",
+        )
+
+        # User cancelled the dialog
+        if not path:
+            return
+
+        # Gather filters from wizard state
+        filters = self._wizard_controller.state.current_filters
+
+        self._bridge.run_async(
+            self._bridge_wrapper("export", self._do_export(filters, path))
+        )
+        logger.info("Export as REW file requested: %s", path)
 
     @Slot(str)
     def _on_name_confirmed(self, name: str) -> None:
@@ -672,7 +714,8 @@ class MainWindow(QMainWindow):
         Requirement 18.2: Restore from most recent backup.
         """
         backup_path = getattr(self._wizard_controller.state, "last_backup_path", "")
-        self._secondary_workflows.undo_last_push(backup_path)
+        source_name = getattr(self._wizard_controller.state, "selected_source", "")
+        self._secondary_workflows.undo_last_push(source_name, backup_path)
 
     @Slot()
     def _on_done_acknowledged(self) -> None:
@@ -811,6 +854,7 @@ class MainWindow(QMainWindow):
             safe_write_factory=lambda adapter: SafeWrite(adapter, self._backup_manager),
             backup_manager=self._backup_manager,
         )
+        self._secondary_workflows.set_current_adapter(self._wiim_adapter)
 
         # Check for empty source_names — device reports no audio sources (Req 2.7)
         source_names = getattr(caps, "source_names", [])
@@ -1069,6 +1113,79 @@ class MainWindow(QMainWindow):
 
         # Emit result signal
         self._bridge.rew_filters_ready.emit(filters)
+
+    async def _do_push(self) -> None:
+        """Execute SafeWrite protocol to push filters to device.
+
+        Constructs PEQSettings from wizard state (source_name, channel_mode,
+        current_filters), emits progress updates for each protocol stage,
+        and emits write_complete on success.
+
+        Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
+        """
+        assert self._safe_write is not None
+
+        state = self._wizard_controller.state
+        source_name = state.selected_source
+        filters = state.current_filters
+        channel_mode = state.channel_mode.lower()
+
+        # Build PEQSettings from wizard state
+        if channel_mode == "lr":
+            # Split filters evenly between L and R channels
+            mid = len(filters) // 2
+            settings = PEQSettings(
+                source_name=source_name,
+                channel_mode="lr",
+                bands_l=filters[:mid],
+                bands_r=filters[mid:],
+            )
+        else:
+            settings = PEQSettings(
+                source_name=source_name,
+                channel_mode="stereo",
+                bands=filters,
+            )
+
+        # Emit progress for backup stage
+        self._bridge.progress_update.emit("Backing up...")
+
+        # Execute the five-step safe write protocol
+        result = await self._safe_write.execute(source_name, settings)
+
+        if result.success:
+            self._bridge.progress_update.emit("Writing...")
+            self._bridge.progress_update.emit("Verifying...")
+            self._bridge.write_complete.emit(result)
+        else:
+            # Emit the write_complete with failure result so PushPage can show status
+            self._bridge.write_complete.emit(result)
+
+    async def _do_export(self, filters: list, path: str) -> None:
+        """Generate a REW EQ text file from current filters.
+
+        Calls REWGenerator.generate_file() and emits progress_update with
+        success message. Includes skip count if any bands were skipped.
+
+        Args:
+            filters: List of CanonicalFilter objects to export.
+            path: Destination file path chosen by the user.
+
+        Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
+        """
+        from src.translator.rew_generator import REWGenerator
+
+        generator = REWGenerator()
+        file_path = Path(path)
+        warnings = generator.generate_file(filters, file_path)
+
+        if warnings:
+            skip_count = len(warnings)
+            self._bridge.progress_update.emit(
+                f"File exported successfully ({skip_count} unsupported band(s) skipped)"
+            )
+        else:
+            self._bridge.progress_update.emit("File exported successfully")
 
     # ------------------------------------------------------------------
     # Navigation handlers
