@@ -56,6 +56,7 @@ def make_window(qtbot, mock_bridge):
     yield _factory
 
     for w in windows:
+        w._wizard_controller.state.current_filters = []
         w.close()
 
 

@@ -41,6 +41,8 @@ def window(qtbot):
         w = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(w)
         yield w
+        # Clear filters to prevent UnsavedChangesDialog from blocking on close
+        w._wizard_controller.state.current_filters = []
         w.close()
 
 
