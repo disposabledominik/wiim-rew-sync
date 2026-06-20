@@ -641,11 +641,12 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error("No device connected")
             return
 
-        # Precondition: source must be selected
+        # Precondition: source must be selected (for PEQ flows)
+        # RoomFit is device-global, so default to "wifi" if no source explicitly set
         source_name = self._wizard_controller.state.selected_source
         if not source_name:
-            self._status_banner.show_error("No source selected")
-            return
+            # Default for RoomFit or when source step was skipped
+            self._wizard_controller.state.selected_source = "wifi"
 
         self._status_banner.show_progress("Pulling filters from device...")
         self._bridge.run_async(
@@ -792,6 +793,12 @@ class MainWindow(QMainWindow):
         sequence = self._wizard_controller.get_steps()
         labels = [step.value.replace("_", " ").title() for step in sequence]
         self._step_indicator.set_steps(labels)
+
+        # Replay completed step summaries (rebuilding wiped them)
+        for step, summary in self._wizard_controller.completed_steps.items():
+            if step in sequence:
+                index = sequence.index(step)
+                self._step_indicator.set_completed(index, summary)
 
         # Re-apply current step highlighting
         current = self._wizard_controller.current_step

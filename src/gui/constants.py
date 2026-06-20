@@ -238,23 +238,23 @@ STATUS_BANNER_HEIGHT: int = 40
 # Filter Table Column Widths
 # ---------------------------------------------------------------------------
 
-FILTER_COL_BAND: int = 40
+FILTER_COL_BAND: int = 50
 """Band number column width in pixels."""
 
-FILTER_COL_TYPE: int = 70
+FILTER_COL_TYPE: int = 80
 """Filter type column width in pixels."""
 
-FILTER_COL_FREQ: int = 100
+FILTER_COL_FREQ: int = 120
 """Frequency column width in pixels."""
 
-FILTER_COL_GAIN: int = 90
+FILTER_COL_GAIN: int = 110
 """Gain (dB) column width in pixels."""
 
-FILTER_COL_Q: int = 70
+FILTER_COL_Q: int = 80
 """Q factor column width in pixels."""
 
-FILTER_TABLE_MAX_WIDTH: int = 400
-"""Maximum filter table width in pixels (compact, centered)."""
+FILTER_TABLE_MAX_WIDTH: int = 600
+"""Maximum filter table width in pixels."""
 
 # ---------------------------------------------------------------------------
 # Animation Timing (milliseconds)
