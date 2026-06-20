@@ -462,6 +462,7 @@ class TestHandlerConfiguration:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.qt_no_exception_capture
 class TestInstallCrashHandler:
     def test_unhandled_exception_appears_in_app_log(self, tmp_path: Path) -> None:
         """Simulating an unhandled exception writes it to app.log at CRITICAL."""
