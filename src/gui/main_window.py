@@ -869,8 +869,14 @@ class MainWindow(QMainWindow):
         # Check for empty source_names — device reports no audio sources (Req 2.7)
         source_names = getattr(caps, "source_names", [])
         if not source_names:
-            self._bridge.operation_error.emit("NoSources", "Device reports no audio sources")
-            return
+            # Fallback: WiiM devices always support "wifi" even if getStatusEx
+            # doesn't report InputList. Use canonical defaults confirmed by
+            # hardware testing (see src/cli/main.py _CANONICAL_SOURCES).
+            source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
+            logger.warning(
+                "Device reported no source_names; using canonical defaults: %s",
+                source_names,
+            )
 
         # Determine flow type and advance wizard
         if roomfit_level < 2:
