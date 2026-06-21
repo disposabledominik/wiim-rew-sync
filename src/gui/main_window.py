@@ -1261,8 +1261,11 @@ class MainWindow(QMainWindow):
 
         peq_settings = await self._wiim_adapter.read_roomfit(source_name, profile_name)
 
-        # Extract filters
-        filters = peq_settings.bands
+        # Extract filters based on channel mode
+        if peq_settings.channel_mode == "lr":
+            filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+        else:
+            filters = peq_settings.bands
 
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
@@ -1308,11 +1311,11 @@ class MainWindow(QMainWindow):
         target_ip: str,
         target_source: str,
     ) -> None:
-        """Read a preset from current device and write it to a target device.
+        """Read a preset from current device and save it as a named preset on target.
 
         1. Reads preset filters from the currently connected device
         2. Connects to target device
-        3. Writes the filters via SafeWrite
+        3. Saves as a named preset (same name) on the target device
 
         Args:
             preset_name: Name of the preset/profile to copy.
@@ -1329,7 +1332,10 @@ class MainWindow(QMainWindow):
             peq_settings = await self._wiim_adapter.read_roomfit(
                 source_name, preset_name
             )
-            filters = peq_settings.bands
+            if peq_settings.channel_mode == "lr":
+                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+            else:
+                filters = peq_settings.bands
         else:
             # Load PEQ preset, then read
             await self._wiim_adapter.load_peq_profile(source_name, preset_name)
@@ -1339,10 +1345,118 @@ class MainWindow(QMainWindow):
             else:
                 filters = peq_settings.bands
 
-        # Step 2: Write to target device via SecondaryWorkflowManager
-        self._secondary_workflows.copy_preset_to_device(
-            filters, target_ip, target_source
+        if not filters:
+            self._status_banner.show_error(f"Preset '{preset_name}' has no filters to copy")
+            return
+
+        # Step 2: Connect to target device and save as named preset
+        target_client = WiiMHttpClient(target_ip)
+        try:
+            target_caps = await CapabilityProber(target_client).probe()
+            target_adapter = WiiMAdapter(target_client, target_caps)
+            await target_adapter.save_peq_profile(target_source, preset_name)
+            # Write filters first, then save
+            settings = PEQSettings(
+                source_name=target_source,
+                channel_mode="stereo",
+                bands=filters,
+            )
+            safe_write = SafeWrite(target_adapter, self._backup_manager)
+            await safe_write.execute(target_source, settings)
+            await target_adapter.save_peq_profile(target_source, preset_name)
+
+            self._status_banner.show_success(
+                f"Preset '{preset_name}' saved to {target_ip} on source '{target_source}'"
+            )
+        finally:
+            await target_client.close()
+
+    async def _do_preset_export(
+        self, preset_name: str, preset_type: str, path: str
+    ) -> None:
+        """Read a preset from device and export as REW file.
+
+        Args:
+            preset_name: Name of the preset to export.
+            preset_type: "PEQ" or "RoomFit".
+            path: Destination file path.
+        """
+        assert self._wiim_adapter is not None
+        source_name = self._wizard_controller.state.selected_source or "wifi"
+
+        # Read preset filters from device
+        if preset_type == "RoomFit":
+            peq_settings = await self._wiim_adapter.read_roomfit(source_name, preset_name)
+            if peq_settings.channel_mode == "lr":
+                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+            else:
+                filters = peq_settings.bands
+        else:
+            await self._wiim_adapter.load_peq_profile(source_name, preset_name)
+            peq_settings = await self._wiim_adapter.read_peq(source_name)
+            if peq_settings.channel_mode == "lr":
+                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+            else:
+                filters = peq_settings.bands
+
+        if not filters:
+            self._status_banner.show_error(f"Preset '{preset_name}' has no filters to export")
+            return
+
+        # Export via REWGenerator
+        from src.translator.rew_generator import REWGenerator
+
+        generator = REWGenerator()
+        warnings = generator.generate_file(filters, Path(path))
+
+        if warnings:
+            self._bridge.progress_update.emit(
+                f"Exported '{preset_name}' ({len(warnings)} band(s) skipped)"
+            )
+        else:
+            self._bridge.progress_update.emit(
+                f"Exported '{preset_name}' to {Path(path).name}"
+            )
+
+    async def _do_preset_save(self, preset_name: str, preset_type: str) -> None:
+        """Read a preset from device and save to local profile repository.
+
+        Args:
+            preset_name: Name of the preset to save.
+            preset_type: "PEQ" or "RoomFit".
+        """
+        assert self._wiim_adapter is not None
+        source_name = self._wizard_controller.state.selected_source or "wifi"
+
+        # Read preset filters from device
+        if preset_type == "RoomFit":
+            peq_settings = await self._wiim_adapter.read_roomfit(source_name, preset_name)
+            if peq_settings.channel_mode == "lr":
+                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+            else:
+                filters = peq_settings.bands
+        else:
+            await self._wiim_adapter.load_peq_profile(source_name, preset_name)
+            peq_settings = await self._wiim_adapter.read_peq(source_name)
+            if peq_settings.channel_mode == "lr":
+                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+            else:
+                filters = peq_settings.bands
+
+        if not filters:
+            self._status_banner.show_error(f"Preset '{preset_name}' has no filters to save")
+            return
+
+        # Save to local profile repository as a Profile object
+        from src.models.profile import Profile
+
+        profile = Profile(
+            name=preset_name,
+            channel_mode="stereo",
+            filters=filters,
         )
+        self._profile_repository.save(profile)
+        self._status_banner.show_success(f"Saved '{preset_name}' to My Presets")
 
     async def _do_rew_list_measurements(self) -> None:
         """List available measurements from REW API.
@@ -2069,8 +2183,7 @@ class MainWindow(QMainWindow):
     def _on_preset_export_requested(self, items: list) -> None:
         """Handle PresetsDeviceView "Export as REW File" for selected presets.
 
-        Opens a save dialog and exports the first selected item's filters.
-        TODO: support batch export of multiple items.
+        Reads each preset's filters from device, then exports as REW text file.
 
         Args:
             items: List of PresetItem objects selected for export.
@@ -2078,13 +2191,30 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
-        # For now, export the first item — need to read its filters from device
-        item = items[0]
-        self._status_banner.show_info(
-            f"Export of device preset '{item.name}' not yet implemented",
-            auto_dismiss=5000,
+        # Open save dialog
+        default_dir = self._settings.rew_export_folder or str(Path.home())
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Preset as REW File",
+            str(Path(default_dir) / f"{items[0].name}.txt"),
+            "REW EQ Files (*.txt)",
         )
-        logger.info("Preset export requested: %s", [i.name for i in items])
+        if not path:
+            logger.debug("Export preset cancelled by user")
+            return
+
+        # Read first item's filters from device, then export
+        item = items[0]
+        preset_name = getattr(item, "name", "")
+        preset_type = getattr(item, "preset_type", "PEQ")
+        self._status_banner.show_progress(f"Exporting '{preset_name}'...")
+        self._bridge.run_async(
+            self._bridge_wrapper(
+                "preset_export",
+                self._do_preset_export(preset_name, preset_type, path),
+            )
+        )
+        logger.info("Preset export requested: %s -> %s", preset_name, path)
 
     @Slot(list)
     def _on_preset_save_requested(self, items: list) -> None:
@@ -2092,7 +2222,6 @@ class MainWindow(QMainWindow):
 
         Reads filters from device for each selected item and saves to local
         profile repository.
-        TODO: implement full save flow.
 
         Args:
             items: List of PresetItem objects selected for saving.
@@ -2100,9 +2229,15 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
-        self._status_banner.show_info(
-            f"Save to My Presets for '{items[0].name}' not yet implemented",
-            auto_dismiss=5000,
+        item = items[0]
+        preset_name = getattr(item, "name", "")
+        preset_type = getattr(item, "preset_type", "PEQ")
+        self._status_banner.show_progress(f"Saving '{preset_name}' to My Presets...")
+        self._bridge.run_async(
+            self._bridge_wrapper(
+                "preset_save",
+                self._do_preset_save(preset_name, preset_type),
+            )
         )
         logger.info("Preset save requested: %s", [i.name for i in items])
 
