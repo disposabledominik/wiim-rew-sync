@@ -47,3 +47,10 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 34 | Copy to Another Device: RoomFit profile saved as PEQ on target (wrong type) | FIXED | NO | `d0aa100` | _do_copy_preset_to_device now branches on preset_type; uses write_roomfit() for RoomFit |
 | 35 | Source page shows all canonical sources regardless of device model | FIXED | NO | `d0aa100` | Model-based source fallback (Mini→wifi+bluetooth; Pro/Ultra→full set) instead of blanket canonical list |
 | 36 | WiiM Mini shows RoomFit in EQ Type despite not supporting it | FIXED | NO | `d0aa100` | Added model-based roomfit blocklist; Mini forced to PEQ_ONLY flow even if roomfit_level >= 2 |
+| 37 | ReviewPage "Save to My Presets" button does nothing | FIXED | NO | `d6983fb` | save_preset_requested signal was never connected; added _on_review_save_preset handler |
+| 38 | My Saved Presets: no actions (delete/rename/duplicate) wired | FIXED | NO | `d6983fb` | Connected rename_requested, duplicate_requested, delete_requested signals to handlers |
+| 39 | My Saved Presets: L/R presets shown as "stereo" with 24 bands | FIXED | NO | `d6983fb` | _do_preset_save now preserves channel_mode="left" with filters_l/filters_r |
+| 40 | Export L/R preset from Presets on Device creates single file | FIXED | NO | `d6983fb` | _do_preset_export now generates _L.txt and _R.txt for L/R channel_mode |
+| 41 | Back-nav to Connect → selecting new device keeps old flow type | FIXED | NO | `d6983fb` | _on_device_selected resets flow_type to PEQ before probing |
+| 42 | WiiM Mini missing line-in source in Source page | FIXED | NO | `d6983fb` | Updated model fallback: Mini = wifi, bluetooth, line-in |
+| 43 | Sound/Sound Lite shows optical and HDMI sources (not applicable) | FIXED | NO | `d6983fb` | Added "sound"/"lite" to model fallback: wifi, bluetooth, line-in only |

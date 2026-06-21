@@ -518,6 +518,7 @@ class MainWindow(QMainWindow):
         self._filters_page.roomfit_profile_selected.connect(self._on_roomfit_profile_selected)
         self._review_page.push_requested.connect(self._on_push_requested)
         self._review_page.export_rew_requested.connect(self._on_export_requested)
+        self._review_page.save_preset_requested.connect(self._on_review_save_preset)
         self._name_profile_page.name_confirmed.connect(self._on_name_confirmed)
         self._push_page.undo_requested.connect(self._on_undo_requested)
         self._push_page.done_acknowledged.connect(self._on_done_acknowledged)
@@ -558,10 +559,15 @@ class MainWindow(QMainWindow):
         Stores the device in wizard state and triggers capability probing.
         Creates WiiMHttpClient and CapabilityProber for the selected device,
         then launches an async probe via the bridge.
+
+        Resets flow type to default PEQ so previous device's flow doesn't leak
+        (smoke fix: back-navigation re-connect).
         """
         if self._is_busy():
             return
 
+        # Reset flow type so previous device's PEQ_ONLY doesn't persist
+        self._wizard_controller.set_flow_type(FlowType.PEQ)
         self._wizard_controller.state.selected_device = device_ip
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
@@ -951,18 +957,20 @@ class MainWindow(QMainWindow):
         source_names = getattr(caps, "source_names", [])
         if not source_names:
             # Fallback: use model-based source mapping when device doesn't report
-            # InputList (smoke #35). Only include sources that actually exist on
-            # the device model. See docs/wiim_api_notes.md for model capabilities.
+            # InputList. Only include sources that actually exist on the device model.
             model_lower = (getattr(caps, "model", "") or "").lower()
             if "mini" in model_lower:
-                source_names = ["wifi", "bluetooth"]
+                source_names = ["wifi", "bluetooth", "line-in"]
+            elif "sound" in model_lower or "lite" in model_lower:
+                # WiiM Sound and Sound Lite: wifi, bluetooth, line-in only
+                source_names = ["wifi", "bluetooth", "line-in"]
             elif "pro" in model_lower or "ultra" in model_lower:
                 source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
             elif "amp" in model_lower:
                 source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
             else:
-                # Generic fallback for unknown models
-                source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
+                # Generic fallback for unknown models — use conservative set
+                source_names = ["wifi", "bluetooth", "line-in"]
             logger.warning(
                 "Device reported no source_names; using model-based defaults "
                 "(model=%s): %s",
@@ -1501,6 +1509,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Read a preset from device and export as REW file.
 
+        For L/R mode, generates two files (_L.txt and _R.txt) from the base path.
+
         Args:
             preset_name: Name of the preset to export.
             preset_type: "PEQ" or "RoomFit".
@@ -1512,39 +1522,67 @@ class MainWindow(QMainWindow):
         # Read preset filters from device
         if preset_type == "RoomFit":
             peq_settings = await self._wiim_adapter.read_roomfit(source_name, preset_name)
-            if peq_settings.channel_mode == "lr":
-                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-            else:
-                filters = peq_settings.bands
         else:
             await self._wiim_adapter.load_peq_profile(source_name, preset_name)
             peq_settings = await self._wiim_adapter.read_peq(source_name)
-            if peq_settings.channel_mode == "lr":
-                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-            else:
-                filters = peq_settings.bands
 
-        if not filters:
-            self._status_banner.show_error(f"Preset '{preset_name}' has no filters to export")
-            return
-
-        # Export via REWGenerator
         from src.translator.rew_generator import REWGenerator
 
         generator = REWGenerator()
-        warnings = generator.generate_file(filters, Path(path))
+        file_path = Path(path)
 
-        if warnings:
-            self._bridge.progress_update.emit(
-                f"Exported '{preset_name}' ({len(warnings)} band(s) skipped)"
-            )
+        # Ensure .txt extension
+        if file_path.suffix.lower() != ".txt":
+            file_path = file_path.with_suffix(".txt")
+
+        if peq_settings.channel_mode == "lr":
+            # L/R mode: generate two files
+            filters_l = peq_settings.bands_l or []
+            filters_r = peq_settings.bands_r or []
+
+            if not filters_l and not filters_r:
+                self._status_banner.show_error(
+                    f"Preset '{preset_name}' has no filters to export"
+                )
+                return
+
+            left_path = file_path.with_stem(file_path.stem + "_L")
+            right_path = file_path.with_stem(file_path.stem + "_R")
+            warnings_l = generator.generate_file(filters_l, left_path)
+            warnings_r = generator.generate_file(filters_r, right_path)
+            total_warnings = len(warnings_l) + len(warnings_r)
+
+            if total_warnings:
+                self._bridge.progress_update.emit(
+                    f"Exported '{preset_name}' L/R ({total_warnings} band(s) skipped)"
+                )
+            else:
+                self._bridge.progress_update.emit(
+                    f"Exported '{preset_name}' as {left_path.name} and {right_path.name}"
+                )
         else:
-            self._bridge.progress_update.emit(
-                f"Exported '{preset_name}' to {Path(path).name}"
-            )
+            # Stereo mode: single file
+            filters = peq_settings.bands
+            if not filters:
+                self._status_banner.show_error(
+                    f"Preset '{preset_name}' has no filters to export"
+                )
+                return
+
+            warnings = generator.generate_file(filters, file_path)
+            if warnings:
+                self._bridge.progress_update.emit(
+                    f"Exported '{preset_name}' ({len(warnings)} band(s) skipped)"
+                )
+            else:
+                self._bridge.progress_update.emit(
+                    f"Exported '{preset_name}' to {file_path.name}"
+                )
 
     async def _do_preset_save(self, preset_name: str, preset_type: str) -> None:
         """Read a preset from device and save to local profile repository.
+
+        Preserves L/R channel mode when saving (not flattened to stereo).
 
         Args:
             preset_name: Name of the preset to save.
@@ -1556,30 +1594,40 @@ class MainWindow(QMainWindow):
         # Read preset filters from device
         if preset_type == "RoomFit":
             peq_settings = await self._wiim_adapter.read_roomfit(source_name, preset_name)
-            if peq_settings.channel_mode == "lr":
-                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-            else:
-                filters = peq_settings.bands
         else:
             await self._wiim_adapter.load_peq_profile(source_name, preset_name)
             peq_settings = await self._wiim_adapter.read_peq(source_name)
-            if peq_settings.channel_mode == "lr":
-                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-            else:
-                filters = peq_settings.bands
 
-        if not filters:
-            self._status_banner.show_error(f"Preset '{preset_name}' has no filters to save")
-            return
-
-        # Save to local profile repository as a Profile object
+        # Save to local profile repository preserving channel mode
         from src.models.profile import Profile
 
-        profile = Profile(
-            name=preset_name,
-            channel_mode="stereo",
-            filters=filters,
-        )
+        if peq_settings.channel_mode == "lr":
+            filters_l = peq_settings.bands_l or []
+            filters_r = peq_settings.bands_r or []
+            if not filters_l and not filters_r:
+                self._status_banner.show_error(
+                    f"Preset '{preset_name}' has no filters to save"
+                )
+                return
+            profile = Profile(
+                name=preset_name,
+                channel_mode="left",
+                filters_l=filters_l,
+                filters_r=filters_r,
+            )
+        else:
+            filters = peq_settings.bands
+            if not filters:
+                self._status_banner.show_error(
+                    f"Preset '{preset_name}' has no filters to save"
+                )
+                return
+            profile = Profile(
+                name=preset_name,
+                channel_mode="stereo",
+                filters=filters,
+            )
+
         self._profile_repository.save(profile)
 
         # Refresh MyPresetsView so the new preset is visible (smoke #31)
@@ -2142,6 +2190,15 @@ class MainWindow(QMainWindow):
         self._my_presets_view.load_requested.connect(
             self._on_profile_load_requested
         )
+        self._my_presets_view.rename_requested.connect(
+            self._on_profile_rename_requested
+        )
+        self._my_presets_view.duplicate_requested.connect(
+            self._on_profile_duplicate_requested
+        )
+        self._my_presets_view.delete_requested.connect(
+            self._on_profile_delete_requested
+        )
 
         # --- Outbound: workflow manager signals → UI updates ---
         self._secondary_workflows.copy_to_sources_progress.connect(
@@ -2338,6 +2395,89 @@ class MainWindow(QMainWindow):
         """
         logger.info("Profile load requested: %s", getattr(profile, "name", "unknown"))
         self._secondary_workflows.recall_profile(profile)
+
+    @Slot()
+    def _on_review_save_preset(self) -> None:
+        """Handle ReviewPage 'Save to My Presets' — save current filters locally.
+
+        Saves the wizard's current_filters to the local profile repository
+        using a generated name, then refreshes MyPresetsView.
+        """
+        state = self._wizard_controller.state
+        filters = state.current_filters
+        if not filters:
+            self._status_banner.show_error("No filters to save")
+            return
+
+        # Generate a default preset name from device + source
+        device_name = "WiiM"
+        for d in self._discovered_devices:
+            if d.ip == state.selected_device:
+                device_name = d.name
+                break
+        source = state.selected_source or "wifi"
+        channel = state.channel_mode or "Stereo"
+
+        from src.models.profile import Profile
+
+        # Determine channel mode for the Profile model
+        if channel.lower() in ("l/r", "lr"):
+            mid = len(filters) // 2
+            profile = Profile(
+                name=f"{device_name} - {source} ({channel})",
+                channel_mode="left",
+                filters_l=filters[:mid],
+                filters_r=filters[mid:],
+            )
+        else:
+            profile = Profile(
+                name=f"{device_name} - {source} ({channel})",
+                channel_mode="stereo",
+                filters=filters,
+            )
+
+        self._profile_repository.save(profile)
+
+        # Refresh MyPresetsView
+        all_profiles = self._profile_repository.list()
+        self._my_presets_view.set_presets(all_profiles)
+
+        self._status_banner.show_success(f"Saved '{profile.name}' to My Presets")
+        logger.info("Review save preset: %s", profile.name)
+
+    @Slot(str, str)
+    def _on_profile_rename_requested(self, old_name: str, new_name: str) -> None:
+        """Handle MyPresetsView rename action."""
+        try:
+            self._profile_repository.rename(old_name, new_name)
+            all_profiles = self._profile_repository.list()
+            self._my_presets_view.set_presets(all_profiles)
+            self._status_banner.show_success(f"Renamed '{old_name}' to '{new_name}'")
+        except Exception as exc:
+            self._status_banner.show_error(f"Rename failed: {exc}")
+
+    @Slot(str)
+    def _on_profile_duplicate_requested(self, name: str) -> None:
+        """Handle MyPresetsView duplicate action."""
+        try:
+            new_name = f"{name} (copy)"
+            self._profile_repository.duplicate(name, new_name)
+            all_profiles = self._profile_repository.list()
+            self._my_presets_view.set_presets(all_profiles)
+            self._status_banner.show_success(f"Duplicated '{name}'")
+        except Exception as exc:
+            self._status_banner.show_error(f"Duplicate failed: {exc}")
+
+    @Slot(str)
+    def _on_profile_delete_requested(self, name: str) -> None:
+        """Handle MyPresetsView delete action."""
+        try:
+            self._profile_repository.delete(name)
+            all_profiles = self._profile_repository.list()
+            self._my_presets_view.set_presets(all_profiles)
+            self._status_banner.show_success(f"Deleted '{name}'")
+        except Exception as exc:
+            self._status_banner.show_error(f"Delete failed: {exc}")
 
     @Slot(list)
     def _on_preset_export_requested(self, items: list) -> None:
