@@ -773,7 +773,14 @@ class MainWindow(QMainWindow):
 
         # Dry run: show preview result without writing to device (smoke #80)
         if state.dry_run:
-            self._wizard_controller.advance(summary="Dry Run")
+            # For RoomFit, skip NAME_PROFILE step — go directly to PUSH
+            if flow_type == FlowType.ROOMFIT:
+                # Advance twice: REVIEW → NAME_PROFILE → PUSH
+                self._wizard_controller.advance(summary="Dry Run")
+                self._wizard_controller.advance(summary="Dry Run")
+            else:
+                # PEQ: advance once: REVIEW → PUSH
+                self._wizard_controller.advance(summary="Dry Run")
             filters = state.current_filters
             band_count = len(filters)
             sources = [s.strip() for s in (state.selected_source or "wifi").split(",") if s.strip()]
