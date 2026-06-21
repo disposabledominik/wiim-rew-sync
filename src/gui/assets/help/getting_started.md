@@ -24,37 +24,55 @@ manage multiple configurations.
 ### 1. Connect to Your Device
 
 When you open the app, it automatically searches for WiiM devices on your
-network. If only one device is found, it connects automatically. Otherwise,
-select your device from the list.
+network. Device cards appear after a few seconds showing the device name,
+model, and IP address. Click a device card to connect.
 
 If no devices appear, check the Troubleshooting section for common causes.
 
 ### 2. Choose Your EQ Type
 
-If your device supports RoomFit, you will be asked to choose:
+If your device supports RoomFit (all models except WiiM Mini), you will
+be asked to choose:
 
-- **Parametric EQ** - Applies filters to a specific audio input (source).
-  Different sources can have different EQ settings.
-- **RoomFit** - Applies room correction across all audio inputs at once.
+- **Parametric EQ** — Applies filters to specific audio input(s). Different
+  sources can have different EQ settings.
+- **RoomFit** — Applies room correction across all audio inputs at once.
 
-If your device only supports PEQ, this step is skipped automatically.
+If your device only supports PEQ (WiiM Mini), this step is skipped
+automatically.
 
-### 3. Import Filters
+### 3. Select Sources (PEQ Only)
 
-Load your REW measurements by importing a text file, pulling from the REW
-API, or reading the current configuration from your device.
+For PEQ, choose one or more audio sources to apply your filters to. You can
+select multiple sources (e.g., Wi-Fi and Bluetooth) and the same filters
+will be pushed to all of them in one operation.
 
-### 4. Review and Push
+### 4. Import Filters
 
-Preview the filter table to confirm everything looks right, then push to
-your device. The app always backs up your current settings first, so you
-can undo the change if needed.
+On the Filters page, choose between Stereo or L/R (per-channel) mode, then
+browse for your REW EQ text file:
+
+- **Stereo** — Select one .txt file. The same filters apply to both channels.
+- **L/R** — Select separate files for Left and Right channels.
+
+Click "Next" (or "Import" for L/R) to load the filters into the review step.
+
+### 5. Review and Push
+
+The Review page shows a table of all filter bands with frequency, gain, Q,
+and type. Check that everything looks right, then click "Push to Device."
+
+The app always backs up your current device settings first, so you can undo
+the change if needed.
 
 ## Tips for New Users
 
-- **Dry Run mode** is enabled by default for first-time users. It previews
-  the translation without writing anything to your device.
+- **Dry Run mode** — Toggle the Dry Run checkbox on the Review page to
+  preview the translation without writing to your device. The push button
+  changes to "Preview Only."
 - **Undo** is always available after a push. Your previous settings are
   backed up automatically.
-- Use the sidebar to access Presets, Settings, and this Help guide at any
-  time during the workflow.
+- Use the sidebar to access Presets on Device, My Saved Presets, Settings,
+  and the User Guide at any time during the workflow.
+- **Presets on Device** in the sidebar lets you browse, export, and copy
+  existing PEQ presets and RoomFit profiles directly from your WiiM device.

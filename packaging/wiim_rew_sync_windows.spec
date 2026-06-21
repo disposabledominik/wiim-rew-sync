@@ -58,11 +58,22 @@ excluded_modules = [
     "PySide6.QtWebSockets",
 ]
 
+# Data files to bundle (help articles for in-app user guide)
+import os
+help_src = os.path.join("..", "src", "gui", "assets", "help")
+datas_list = []
+if os.path.isdir(help_src):
+    for f in os.listdir(help_src):
+        if f.endswith(".md"):
+            datas_list.append(
+                (os.path.join(help_src, f), os.path.join("src", "gui", "assets", "help"))
+            )
+
 a = Analysis(
     ["entry_gui.py"],
     pathex=["..", "."],
     binaries=[],
-    datas=[],
+    datas=datas_list,
     hiddenimports=hidden_imports,
     hookspath=[],
     hooksconfig={},

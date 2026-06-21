@@ -186,6 +186,7 @@ dist/WiiM-REW-Sync   (~70-90 MB)
 
 - **No UPX compression**: UPX causes antivirus false positives on Windows for non-technical users. All spec files set `upx=False` explicitly.
 - **Single-file distribution**: All platforms use `onefile` mode (or BUNDLE for macOS) for simplicity. No installer required — just copy the file and run.
+- **Bundled data files**: Help article markdown files (`src/gui/assets/help/*.md`) are included as data files so the in-app User Guide works in the packaged build.
 - **Excluded Qt modules**: Heavy, unused PySide6 modules are excluded to reduce binary size by ~20-30 MB:
   QtWebEngine, Qt3D, QtMultimedia, QtQuick, QtQml, QtDesigner, QtTest, QtBluetooth, QtNfc, QtPositioning, QtSensors, QtSerialPort, QtWebSockets.
 - **Hidden imports**: Core dependencies (pydantic, httpx, zeroconf, PySide6 widgets) and all `src.*` submodules are explicitly included to prevent PyInstaller from missing dynamic imports.

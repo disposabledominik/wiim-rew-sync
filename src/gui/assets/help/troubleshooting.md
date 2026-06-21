@@ -20,11 +20,11 @@ If the app cannot discover your WiiM device, try the following:
 The app uses mDNS (multicast DNS) to discover devices. Some firewalls
 block mDNS traffic:
 
-- **Windows Firewall** - Allow the app through Windows Defender Firewall
+- **Windows Firewall** — Allow the app through Windows Defender Firewall
   for "Private" networks. mDNS uses UDP port 5353.
-- **Third-party firewalls** - Temporarily disable to test, then add an
+- **Third-party firewalls** — Temporarily disable to test, then add an
   exception for the app.
-- **Router settings** - Some routers block multicast between Wi-Fi and
+- **Router settings** — Some routers block multicast between Wi-Fi and
   Ethernet. Check your router's "multicast" or "IGMP snooping" settings.
 
 ### Manual Fallback
@@ -56,8 +56,9 @@ If you see a parse error when importing a REW file:
 
 ### Too Many Filters
 
-- WiiM devices support up to 10 PEQ bands. If your REW file contains more
-  than 10 filters, only the first 10 are imported.
+- WiiM devices support up to 10 PEQ bands (12 on some newer firmware
+  versions). If your REW file contains more filters than your device
+  supports, only the first N enabled filters are imported.
 - The app shows a warning when filters are truncated.
 
 ## Push Failures
@@ -104,6 +105,8 @@ After a successful push, click "Undo" on the result screen to restore
 your previous configuration. This is available immediately after pushing
 and uses the same automatic backup.
 
+For multi-source pushes, Undo restores all sources that were written to.
+
 ### Backup Files
 
 If automatic rollback cannot reach the device, the backup is preserved
@@ -113,18 +116,18 @@ as a JSON file. You can find the path:
 - In Settings under "Paths" (backup directory)
 
 To manually restore: re-connect to your device, load the backup file as
-a preset, and push it again.
+a preset from My Saved Presets, and push it again.
 
 ## REW API Connection Issues
 
-If "Pull from REW" is not available:
+If "Pull from REW" is not working:
 
 - Ensure REW is running on your computer.
 - In REW, go to Preferences and enable the HTTP server.
-- The app checks for REW availability automatically. If REW starts after
-  the app, navigate back to the Filters step to re-check.
 - REW's API listens on port 4735 by default. Ensure nothing else is using
   that port.
+- If REW was started after this app, the connection will be detected
+  automatically on next operation.
 
 ## Getting More Help
 
@@ -134,7 +137,7 @@ If you encounter an issue you cannot resolve, generate a support bundle:
 
 1. Go to Settings (sidebar).
 2. Scroll to the "Support" section.
-3. Click "Generate Support Bundle".
+3. Click "Generate Support Bundle."
 
 This creates a zip file containing your app logs and configuration
 (no personal data or EQ settings). Share this file when seeking help.
@@ -143,9 +146,18 @@ This creates a zip file containing your app logs and configuration
 
 The app maintains three log files:
 
-- **app.log** - General application events
-- **wiim_api.log** - All communication with your WiiM device
-- **rew_api.log** - All communication with REW
+- **app.log** — General application events
+- **wiim_api.log** — All communication with your WiiM device
+- **rew_api.log** — All communication with REW
 
-Find log files via Settings or by clicking "View Logs" in the crash
-dialog. Log files rotate automatically and do not grow indefinitely.
+Find log files via Settings. Log files rotate automatically and do not
+grow indefinitely.
+
+### Diagnostics Panel
+
+For advanced troubleshooting, open the Diagnostics panel from the menu.
+This developer tool lets you:
+
+- Send raw API commands to your WiiM device
+- View the device's full capability information
+- Browse recent API logs

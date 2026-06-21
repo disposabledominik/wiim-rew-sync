@@ -113,43 +113,72 @@ This feature is intended to support debugging during development and future firm
 
 ## GUI Layout (PySide6)
 
-The main window is divided into functional panels:
+The main window uses a wizard-based flow with a persistent sidebar for navigation:
 
 ```
-┌─────────────────────────────────────────────────┐
-│  Device Panel (top)                             │
-│  [Discovered devices list] [Refresh] [Caps]     │
-├──────────────────┬──────────────────────────────┤
-│  Source / Mode   │  EQ Filter Table             │
-│  [Input selector]│  (10 bands, editable preview)│
-│  [Stereo / L / R]│                              │
-│  [PEQ / RoomFit] │                              │
-├──────────────────┴──────────────────────────────┤
-│  Action Bar                                     │
-│  [Import REW] [Export REW] [Pull] [Push] [Dry Run] │
-├─────────────────────────────────────────────────┤
-│  Profile Library (tab)                          │
-│  [Saved profiles, load/save/tag/delete]         │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  Main Window                                                │
+├──────────┬──────────────────────────────────────────────────┤
+│ Sidebar  │  Wizard Content Area (QStackedWidget)            │
+│          │                                                  │
+│ • Home   │  Step Indicator (Connect → EQ Type → Source →    │
+│ • Presets│                   Filters → Review → Push)       │
+│   on Dev │  ┌──────────────────────────────────────────┐   │
+│ • My     │  │ Active Wizard Page                       │   │
+│   Presets│  │ (one of 7 pages based on current step)   │   │
+│ • Settings│ │                                          │   │
+│          │  └──────────────────────────────────────────┘   │
+│ • Help   │                                                  │
+├──────────┴──────────────────────────────────────────────────┤
+│  Status Banner (operation feedback)                         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Source selection workflow
+### Wizard Pages
 
-Because PEQ is configured per input source, the user must select a source before reading or writing. The workflow is:
+| Step | Page | Purpose |
+|------|------|---------|
+| Connect | ConnectPage | mDNS device discovery, device card selection |
+| EQ Type | EQTypePage | Choose PEQ or RoomFit (skipped for PEQ-only devices) |
+| Source | SourcePage | Multi-select audio sources via checkboxes (PEQ only, skipped for RoomFit) |
+| Filters | FiltersPage | Stereo/L/R mode toggle + REW file browse + import |
+| Review | ReviewPage | Filter table, Dry Run toggle, Push/Export/Save actions |
+| Name Profile | NameProfilePage | RoomFit profile naming (RoomFit flow only) |
+| Push | PushPage | Progress stepper (Backup → Write → Verify), Undo/Export/Save on success |
 
-1. User selects a device from the Device Panel → the app fetches `InputList` from `getStatusEx`.
-2. The Source selector populates with the device's available inputs (e.g. WiFi, Bluetooth, Line In).
-3. User selects an input source — this sets `source_name` for all subsequent read/write operations.
-4. User selects channel mode: Stereo or L/R (disabled if `supports_channel_peq=False`).
-5. User selects EQ type: PEQ or RoomFit (RoomFit tab hidden if `supports_roomfit=False`, i.e. WiiM Mini).
-6. Pull / Push / Import / Export all operate on the currently selected device + source + mode combination.
+### Secondary Views (via sidebar)
 
-**The source selector must always reflect the live `InputList` from the device, not a hard-coded list.** If the device changes inputs (e.g. via firmware update), the selector updates on next device selection or refresh.
+| View | Purpose |
+|------|---------|
+| Presets on Device | Browse PEQ presets and RoomFit profiles on connected device; Export/Save/Load/Copy actions |
+| My Saved Presets | Local preset library with toolbar (Load/Rename/Duplicate/Delete) |
+| Settings | Theme, paths, support bundle generation |
+| Help (User Guide) | In-app markdown help with searchable TOC |
+| Diagnostics | Raw API command browser, capability dump (developer tool, menu-accessible) |
 
-- All device writes are initiated only from the Action Bar.
-- UI elements are disabled when the corresponding capability is not supported.
-- RoomFit controls appear only when `roomfit_level >= 1` and are progressively enabled based on the detected level.
-- All async operations run on background threads; the UI must remain responsive at all times.
+### PEQ Workflow
+
+1. User connects to a device (ConnectPage) → capability probe runs.
+2. EQ Type page shown if device supports RoomFit; otherwise skipped (auto-PEQ).
+3. Source page: multi-select one or more audio inputs (checkboxes).
+4. Filters page: choose Stereo or L/R, browse REW file(s), click Next/Import.
+5. Review page: inspect filter table, toggle Dry Run, push/export/save.
+6. Push page: progress stepper, success with Undo/Export/Save.
+
+### RoomFit Workflow
+
+Steps 1–2 same as PEQ. Source step is skipped.
+3. Filters page: choose Stereo or L/R, browse file(s).
+4. Review page: inspect and push.
+5. Name Profile page: enter profile name (warns on overwrite of existing/active).
+6. Push page: same safe write protocol.
+
+### Design Notes
+
+- Source page shows all common WiiM sources (no reliable API to enumerate physical inputs).
+- WiiM Mini is forced to PEQ-only flow even though it accepts RoomFit API commands (no actual hardware support).
+- All async operations run via AsyncBridge (dedicated asyncio thread); GUI remains responsive.
+- RoomFit toggle (enable/disable on device) is not supported via API — users must use WiiM Home app.
 
 ---
 

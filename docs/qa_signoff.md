@@ -107,38 +107,37 @@ Found 53 known vulnerabilities in 15 packages. **None are in project direct depe
 | 1 | REW import → Canonical (no data loss) | `test_rew_parser.py`, `test_translator.py` (PBT round-trip) |
 | 2 | Frequency > 22000 Hz → validation error | `test_rew_parser.py::TestParseFileFrequencyError` |
 | 3 | Device offline → graceful timeout | `test_capability_prober.py::TestConnectionFailure`, `test_wiim_http.py` |
-| 4 | Push → backup saved | `test_safe_write.py::TestSuccessPath::test_success_calls_backup` |
+| 4 | Push → backup saved per source | `test_safe_write.py::TestSuccessPath::test_success_calls_backup` |
 | 5 | Read-back variance > 0.05dB → rollback | `test_safe_write.py::TestVerifyFailureRollbackSuccess` |
 | 6 | Verification passes → success, no rollback | `test_safe_write.py::TestSuccessPath` |
 | 7 | Rollback restores original PEQ | `test_safe_write.py::TestVerifyFailureRollbackSuccess::test_rollback_writes_original_back` |
-| 8 | WiiM Mini capabilities | `test_capability_prober.py::TestWiiMDeviceDetection::test_wiim_mini_detected_correctly` |
+| 8 | WiiM Mini capabilities (PEQ only) | `test_capability_prober.py::TestWiiMDeviceDetection::test_wiim_mini_detected_correctly` |
 | 9 | Batch-write bypass | `test_wiim_adapter.py::TestWritePeqBatch` |
 | 10 | Dry Run (no network writes) | `test_cli.py::test_dry_run_import_valid` |
 | 12 | REW export format correctness | `test_rew_generator.py` (full format validation) |
 | 13 | Log rotation (10MB, 5 archives) | `test_logging.py::TestHandlerConfiguration` |
 | 14 | Schema migration on profile load | `test_schema_migrator.py`, `test_profile_repository.py::TestSchemaMigration` |
-| 15 | L/R channel pull → both models | `test_wiim_adapter.py::TestReadPeqLR` |
+| 15 | L/R channel pull → both models + tabs | `test_wiim_adapter.py::TestReadPeqLR` |
 | 16 | Invalid HTTP response → error logged | `test_wiim_http.py::test_http_500_raises_wiim_response_error` |
-| 22 | 0Hz/OFF filter → band disabled | `test_wiim_generator.py::TestModeMapping::test_off_maps_to_mode_negative_1` |
-| 24 | No network → app opens, profile library works | `test_profile_repository.py` (filesystem only) |
-| 25 | Rollback failure → critical error | `test_safe_write.py::TestRollbackFailure` |
-| 28 | >10 bands → truncation warning | `test_rew_generator.py::TestMaxFilters`, `test_cli.py::test_dry_run_import_surfaces_range_warning` |
-| 30 | L/R profile on Stereo device → mode adaptation | `test_safe_write.py::TestChannelModeAdaptation` |
+| 17 | Rollback failure → critical error | `test_safe_write.py::TestRollbackFailure` |
+| 26 | 0Hz/OFF filter → band disabled | `test_wiim_generator.py::TestModeMapping::test_off_maps_to_mode_negative_1` |
+| 27 | >max_filters → truncation warning | `test_rew_generator.py::TestMaxFilters`, `test_cli.py::test_dry_run_import_surfaces_range_warning` |
+| 32 | No network → app opens, presets accessible | `test_profile_repository.py` (filesystem only) |
 
 ### Hardware-Required Scenarios (Cannot Be Automated)
 
 | # | Scenario | Reason |
 |---|----------|--------|
 | 11 | Device rebooting during write → safe abort | Requires physical device power cycle |
-| 17 | REW API measurement selection | Requires running REW instance |
-| 18 | RoomFit Level 1 → UI shows "Active", buttons disabled | Requires specific firmware + GUI |
-| 19 | RoomFit Level 4 → full read/export/write | Requires compatible device |
-| 20 | Multiroom slave write targets specific device | Requires multiroom group |
-| 21 | Identical device names → distinct by IP/MAC | Requires 2+ physical devices |
-| 23 | Diagnostics mode → raw HTTP visible | Requires live network traffic |
-| 26 | WiiM Mini → 10 bands, no RoomFit tab | Requires Mini + GUI |
-| 27 | Amp Pro/Ultra/Sound capabilities match Ultra | Requires specific hardware |
-| 29 | Source selector from InputList | Requires device with multiple inputs |
+| 18 | REW API measurement selection | Requires running REW instance |
+| 19 | RoomFit EQ type choice | Requires RoomFit-capable device + GUI |
+| 20 | RoomFit push with profile naming | Requires compatible device |
+| 21 | Multiroom slave write targets specific device | Requires multiroom group |
+| 22 | Identical device names → distinct by IP | Requires 2+ physical devices |
+| 23 | Multi-source push → all sources written | Requires device with multiple inputs |
+| 31 | Diagnostics panel → raw HTTP visible | Requires live network traffic |
+| 33 | WiiM Mini → EQ Type skipped, PEQ only | Requires Mini + GUI |
+| 34 | Amp Pro/Ultra/Sound capabilities match Ultra | Requires specific hardware |
 
 **Note:** CLI hardware validation was completed 2026-06-14 (Task 32 phase gate). Scenarios 4, 5, 6, 7, 9 were confirmed against real WiiM devices during that session.
 
@@ -157,7 +156,8 @@ Found 53 known vulnerabilities in 15 packages. **None are in project direct depe
 
 ### Final Verdict
 
-**Software QA: PASSED.**
-**Hardware QA: Pending — requires real WiiM device(s) for scenarios 11, 17-21, 23, 26-27, 29.**
+**Software QA: PASSED** (as of 2026-06-15, pre-GUI phase).
+**GUI Smoke Testing:** 87 issues found and fixed during manual testing (see `docs/smoke_test_issues.md`).
+**Hardware QA: Pending** — requires real WiiM device(s) for full-flow validation with the GUI (scenarios 29, 35-39, 41, 44-45, 47).
 
-All automated quality gates are green. The application is ready for hardware validation and subsequent distribution packaging.
+All automated quality gates were green prior to the GUI integration phase. A fresh full test suite run is recommended before final packaging to confirm no regressions from the 87 GUI fixes.

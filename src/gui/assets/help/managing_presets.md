@@ -16,50 +16,65 @@ source.
 
 You can save a preset from two places:
 
-- **Review page** - Click "Save to My Presets" before or after pushing.
-- **Push result** - Click "Save Preset" on the success screen.
+- **Review page** — Click "Save to My Presets" to store the current filters.
+- **Push result** — Click "Save to My Presets" on the success screen.
 
 Give your preset a descriptive name (e.g., "Living Room Correction" or
-"Headphone EQ v2"). The channel mode (Stereo or L/R) is saved automatically.
+"Headphone EQ v2"). The channel mode (Stereo or L/R) is saved automatically
+and displayed as a badge in the preset list.
 
 ## Loading a Preset
 
 Open "My Saved Presets" from the sidebar. Select a preset and click "Load"
-to bring its filters into the wizard Review step. From there you can push
-to any connected device and source.
+in the toolbar. The filters are loaded into the wizard Review step. From
+there you can push to any connected device and source.
+
+For L/R presets, both channels are loaded and the Review page shows separate
+Left/Right tabs.
+
+If the wizard isn't fully set up (no device connected or no source selected),
+a Quick Setup dialog appears to help you choose a device, source, and channel
+mode before loading.
 
 ## Organizing Your Library
 
 ### Rename
 
-Double-click a preset name in the list to rename it inline. Press Enter to
-confirm or Escape to cancel.
+Select a preset in the list and click "Rename" in the toolbar. Enter a new
+name and confirm. Alternatively, double-click the preset name to rename
+inline.
 
 ### Duplicate
 
-Right-click a preset and choose "Duplicate" to create a copy. Useful when
-you want to experiment with variations of an existing configuration.
+Select a preset and click "Duplicate" in the toolbar to create a copy.
+Useful when you want to experiment with variations of an existing
+configuration.
 
 ### Delete
 
-Right-click and choose "Delete" to remove a preset. This action cannot be
-undone - the preset file is permanently removed.
+Select a preset and click "Delete" in the toolbar to permanently remove it.
+This action cannot be undone.
 
 ### Search and Filter
 
-When your library grows beyond 10 presets, a search bar appears
-automatically. Type to filter by name.
+When your library grows beyond a few presets, use the search bar at the top
+to filter by name.
 
 ## Presets on Device
 
 The "Presets on Device" view in the sidebar shows PEQ presets and RoomFit
 profiles stored directly on your WiiM device. From here you can:
 
-- **Export** - Download device presets as REW files for backup
-- **Save locally** - Copy a device preset into your local library
-- **Load into editor** - Bring a device preset into the wizard for
-  modification
-- **Apply to sources** - Apply a PEQ preset to one or more audio inputs
+- **Export** — Download as a REW-compatible .txt file (separate L/R files
+  for per-channel presets)
+- **Save locally** — Copy a device preset into your My Saved Presets library
+- **Load** — Bring a device preset into the wizard Review step for
+  modification or re-pushing
+- **Copy to another device** — Push the preset to one or more other WiiM
+  devices on your network
+
+PEQ presets and RoomFit profiles appear in separate sections. Selecting an
+item in one section deselects any selection in the other.
 
 ## Tips
 
@@ -68,3 +83,4 @@ profiles stored directly on your WiiM device. From here you can:
   (room, mic position, date).
 - PEQ presets can be loaded onto any source on any device. They are not
   tied to a specific input.
+- L/R presets show a "L/R" badge and display per-channel band counts.

@@ -5,29 +5,43 @@ REW-compatible files for analysis or backup.
 
 ## Pulling Filters from Your Device
 
-From the Filters step in the wizard, choose "Pull from Device" to read the
-active PEQ or RoomFit configuration directly from your WiiM device.
+Use "Presets on Device" in the sidebar to browse and pull configurations
+from your WiiM device.
 
-### PEQ Pull
+### PEQ Presets
 
-For PEQ, the app reads the filter configuration for the source and channel
-mode you selected in the previous step. You will see the full 10-band set
-including any bands that are set to OFF.
+The Presets on Device view lists all PEQ presets saved on your device. From
+here you can:
 
-### RoomFit Pull
+- **Load** — Bring the preset's filters into the Review step for editing
+  or re-pushing to a different source.
+- **Export** — Save as a REW-compatible .txt file.
+- **Save locally** — Copy the preset into your local My Saved Presets
+  library.
+- **Copy to another device** — Push the preset directly to one or more
+  other WiiM devices on your network.
 
-For RoomFit, the app shows a dropdown of available profiles on your device.
-Select the profile you want to view, and its filters will be loaded into the
-review table.
+### RoomFit Profiles
+
+If your device supports RoomFit, the Presets on Device view also lists
+RoomFit profiles in a separate section. The same actions (Load, Export,
+Save, Copy) are available.
 
 ## Exporting as REW File
 
 After loading filters (whether imported or pulled), click "Export as REW
-File" on the Review page. The app saves a standard REW-compatible text file
-that you can open in Room EQ Wizard for further analysis or modification.
+File" on the Review page or from the Presets on Device view.
 
-Choose a location using the file dialog. The default export folder can be
-set in Settings.
+### Stereo Export
+
+A standard file dialog appears. Choose a location and filename. The file
+gets a .txt extension automatically if you don't type one.
+
+### L/R Export
+
+For L/R (per-channel) configurations, an export dialog appears asking you
+to specify filenames for the Left and Right channels. Two separate .txt
+files are created (e.g., `MyEQ_L.txt` and `MyEQ_R.txt`).
 
 ### Export Format
 
@@ -52,13 +66,14 @@ app's data directory.
 
 If something goes wrong after a push, you have two options:
 
-- **Undo** - Click the Undo button on the push result screen to immediately
-  restore your previous settings.
-- **Manual restore** - Backups are saved as JSON files in the app data
-  folder. You can find the backup path in Settings under "Paths".
+- **Undo** — Click the Undo button on the push result screen to immediately
+  restore your previous settings. For multi-source pushes, Undo restores
+  all affected sources.
+- **Manual restore** — Backups are saved as JSON files in the app data
+  folder. You can find the backup path in Settings under "Paths."
 
 ### Backup Lifecycle
 
-Backups are created automatically on each push and retained until you
-manually remove them. Each backup is timestamped and tagged with the device
-name and source.
+Backups are created automatically on each push and retained until the limit
+is reached (20 most recent per device). Each backup is timestamped and
+tagged with the device name, source, and channel mode.

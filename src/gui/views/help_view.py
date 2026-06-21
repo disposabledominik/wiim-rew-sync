@@ -76,9 +76,18 @@ _PLACEHOLDER_CONTENT = (
 def _resolve_help_dir() -> Path:
     """Resolve the assets/help/ directory path.
 
-    Tries importlib.resources first (for installed packages), then falls
-    back to file-system relative path (for development).
+    Tries PyInstaller _MEIPASS first (for packaged builds), then
+    importlib.resources (for installed packages), then falls back to
+    file-system relative path (for development).
     """
+    # PyInstaller onefile: files are extracted to sys._MEIPASS
+    import sys
+
+    if hasattr(sys, "_MEIPASS"):
+        meipass_path = Path(sys._MEIPASS) / "src" / "gui" / "assets" / "help"
+        if meipass_path.is_dir():
+            return meipass_path
+
     try:
         # Python 3.12+ files() API
         ref = importlib.resources.files("src.gui.assets.help")

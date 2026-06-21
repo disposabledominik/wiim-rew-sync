@@ -13,6 +13,9 @@ wheels/
 
 # Virtual environments
 .venv/
+.venv-win/
+.venv-mac/
+.venv-linux/
 venv/
 env/
 ENV/

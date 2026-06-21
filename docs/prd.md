@@ -11,12 +11,14 @@ This project delivers a lightweight cross-platform desktop tool to transfer para
 5. **Recoverability**: Non-destructive workflows with automatic rollback.
 
 ## Functional Requirements
-1. **Device Discovery**: Automatically locate WiiM devices on LAN using zeroconf. Refresh manually/automatically. Display IP, friendly name, model, firmware, and capabilities. Failure to discover must not crash the app.
-2. **Capability Detection**: Probe for `supports_peq`, `supports_roomfit`, `supports_channel_peq`, etc. Adapt UI accordingly. All WiiM devices support 10-band per-input PEQ with stereo and individual L/R channel modes. All WiiM devices except WiiM Mini additionally support a dedicated RoomFit band set. WiiM Mini supports PEQ but not RoomFit.
-3. **PEQ Read (Pull)**: Read active PEQ configuration, stereo PEQ, L/R channel PEQ, and active preset names from WiiM.
-4. **PEQ Write (Push)**: Validate all values, backup existing state, write PEQ, read back to verify (using floating-point tolerances), and rollback on mismatch/failure.
-5. **REW Import/Export**: Import REW EQ text files (validating frequency, gain, Q, type). Export WiiM PEQ filters to perfectly formatted REW-compatible text files.
-6. **Local Profile Library**: Save, load, rename, delete, duplicate, and tag profiles locally.
+1. **Device Discovery**: Automatically locate WiiM devices on LAN using zeroconf (mDNS primary, subnet scan fallback). Refresh manually/automatically. Display device name, model, and IP. Failure to discover must not crash the app.
+2. **Capability Detection**: Probe for `supports_peq`, `supports_roomfit`, `supports_channel_peq`, `max_filters`, etc. Adapt UI accordingly. All WiiM devices support PEQ with stereo and L/R channel modes. All except WiiM Mini additionally support RoomFit. WiiM Mini is forced to PEQ-only flow.
+3. **PEQ Read (Pull)**: Read active PEQ presets from WiiM device via "Presets on Device" sidebar view.
+4. **PEQ Write (Push)**: Validate all values, backup existing state per source, write PEQ to one or more sources, read back to verify (using floating-point tolerances), and rollback on mismatch/failure. Multi-source push supported.
+5. **REW Import/Export**: Import REW EQ text files (.txt) in Stereo or L/R mode. Export to REW-compatible text format (dual files for L/R).
+6. **Local Profile Library ("My Saved Presets")**: Save, load, rename, delete, duplicate presets. Supports Stereo and L/R channel modes with badge display.
+7. **Presets on Device**: Browse PEQ presets and RoomFit profiles stored on device. Export, save locally, load into wizard, copy to other devices.
+8. **Multi-Source Push**: Source step allows multi-select. Same filter set pushed to all selected sources in one operation with per-source backup and undo.
 
 ## RoomFit Requirements (Experimental)
 RoomFit capabilities are treated progressively:
