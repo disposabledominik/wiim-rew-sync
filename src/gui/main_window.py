@@ -2631,7 +2631,7 @@ class MainWindow(QMainWindow):
         """Handle MyPresetsView "Load" action — recall profile into ReviewPage.
 
         Loads the profile's filters and navigates to the Review step.
-        If no device is connected, the flow adapts to require connection first.
+        Sets wizard state channel_mode from the profile before recall.
 
         Requirement 17.2: Profile Recall & Push flow.
 
@@ -2639,6 +2639,12 @@ class MainWindow(QMainWindow):
             profile: Profile object from the local preset library.
         """
         logger.info("Profile load requested: %s", getattr(profile, "name", "unknown"))
+        # Set channel_mode in wizard state from profile BEFORE recall emits
+        channel_mode = getattr(profile, "channel_mode", "stereo")
+        if is_lr_mode(channel_mode):
+            self._wizard_controller.state.channel_mode = "L/R"
+        else:
+            self._wizard_controller.state.channel_mode = "Stereo"
         self._secondary_workflows.recall_profile(profile)
 
     @Slot()
@@ -2897,7 +2903,8 @@ class MainWindow(QMainWindow):
         """Handle profile recall — populate ReviewPage and navigate.
 
         Loads the recalled filters into the wizard state and ReviewPage,
-        then navigates to the Review step.
+        then navigates to the Review step. Uses L/R display when channel_mode
+        was set by _on_profile_load_requested.
 
         Requirement 17.2: Profile Recall loads into Review step.
 
@@ -2912,13 +2919,17 @@ class MainWindow(QMainWindow):
         state = self._wizard_controller.state
         state.current_filters = filters
 
-        # Populate ReviewPage with the recalled filters
-        self._review_page.set_filters(filters)
+        # Populate ReviewPage with the recalled filters (L/R aware)
+        channel = state.channel_mode or "Stereo"
+        if is_lr_mode(channel):
+            left, right = split_lr_filters(filters)
+            self._review_page.set_lr_filters(left, right)
+        else:
+            self._review_page.set_filters(filters)
 
         # Update summary (use current connection info if available)
         device = state.selected_device or "No device"
         source = state.selected_source or "Not selected"
-        channel = state.channel_mode or "Stereo"
         active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
         self._review_page.set_summary(device, source, channel, active_bands)
 
