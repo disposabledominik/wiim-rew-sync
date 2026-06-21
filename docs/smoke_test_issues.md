@@ -58,3 +58,10 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 45 | Export from Review vs Presets on Device shows different dialogs | FIXED | NO | current | Consolidated into shared _export_filters_as_rew helper; both use ExportDialog for L/R |
 | 46 | My Saved Presets: no visible action buttons (only right-click context menu) | FIXED | NO | `e921182` | Added visible toolbar (Load/Rename/Duplicate/Delete) that appears on item selection |
 | 47 | Duplicate save/export logic across trigger points (architectural) | FIXED | NO | current | Created shared helpers: _save_filters_to_presets, _export_filters_as_rew; all triggers converge |
+| 48 | Presets on Device "Save to My Presets" creates popup windows | FIXED | NO | current | _do_preset_save was calling Qt widget methods from async thread; moved to thread-safe pattern |
+| 49 | Loading L/R profile from My Saved Presets shows "no filters" | FIXED | NO | current | recall_profile now handles L/R profiles (filters_l + filters_r) not just stereo |
+| 50 | "Copy to another source" shows "No sources available" | FIXED | NO | current | Was reading from capabilities.source_names (empty); now uses SourcePage's known source list |
+| 51 | REW file import: no way to import L/R (two files) | FIXED | NO | current | Added Stereo/L/R choice dialog on import click; L/R shows dual file picker; wired file_import_lr_requested signal |
+| 52 | FiltersPage shows "Pull from Device" and "Pull from REW API" options | FIXED | N/A | current | Hidden — these workflows are accessible via "Presets on Device" sidebar |
+| 53 | PushPage "Export" and "Save to My Presets" buttons do nothing | FIXED | NO | current | Wired push_page.export_requested and save_preset_requested to shared handlers |
+| 54 | Push step doesn't show checkmark on success | FIXED | NO | current | _on_write_complete now marks PUSH step completed in step indicator |

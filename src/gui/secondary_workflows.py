@@ -461,19 +461,25 @@ class SecondaryWorkflowManager(QObject):
 
         Extracts CanonicalFilter data from the profile and emits
         profile_recalled so the wizard can populate the ReviewPage.
-
-        If the device is already connected, the filters go directly to Review.
-        If not connected, the wizard adapts the flow to require connection first.
+        Handles both stereo (profile.filters) and L/R (profile.filters_l + filters_r).
 
         Args:
             profile: A Profile object from the local preset library.
-                    Expected to have a `filters` attribute (list[CanonicalFilter]).
 
         Requirement 17.2: Profile Recall & Push flow.
         """
-        # Extract filters from profile
-        filters: list[CanonicalFilter] = getattr(profile, "filters", [])
         profile_name: str = getattr(profile, "name", "Unknown")
+        channel_mode: str = getattr(profile, "channel_mode", "stereo")
+
+        # Extract filters based on channel mode
+        if channel_mode in ("left", "right"):
+            # L/R profile: combine both channels into flat list
+            filters_l: list[CanonicalFilter] = getattr(profile, "filters_l", None) or []
+            filters_r: list[CanonicalFilter] = getattr(profile, "filters_r", None) or []
+            filters = filters_l + filters_r
+        else:
+            # Stereo profile
+            filters = getattr(profile, "filters", None) or []
 
         if not filters:
             logger.warning(
@@ -484,9 +490,10 @@ class SecondaryWorkflowManager(QObject):
             return
 
         logger.info(
-            "Profile recall: loaded %d filters from profile '%s'",
+            "Profile recall: loaded %d filters from profile '%s' (%s)",
             len(filters),
             profile_name,
+            channel_mode,
         )
         self.profile_recalled.emit(filters)
 

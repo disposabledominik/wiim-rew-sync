@@ -513,6 +513,7 @@ class MainWindow(QMainWindow):
         self._source_page.source_selected.connect(self._on_source_selected)
         self._filters_page.filters_accepted.connect(self._on_filters_accepted)
         self._filters_page.file_import_requested.connect(self._on_file_import_requested)
+        self._filters_page.file_import_lr_requested.connect(self._on_file_import_lr_requested)
         self._filters_page.device_pull_requested.connect(self._on_device_pull_requested)
         self._filters_page.rew_api_pull_requested.connect(self._on_rew_api_pull_requested)
         self._filters_page.roomfit_profile_selected.connect(self._on_roomfit_profile_selected)
@@ -522,6 +523,8 @@ class MainWindow(QMainWindow):
         self._name_profile_page.name_confirmed.connect(self._on_name_confirmed)
         self._push_page.undo_requested.connect(self._on_undo_requested)
         self._push_page.done_acknowledged.connect(self._on_done_acknowledged)
+        self._push_page.export_requested.connect(self._on_export_requested)
+        self._push_page.save_preset_requested.connect(self._on_review_save_preset)
 
         # --- 2. WizardController → UI updates ---
         self._wizard_controller.step_changed.connect(self._on_step_changed)
@@ -643,6 +646,27 @@ class MainWindow(QMainWindow):
             self._bridge_wrapper("file_import", self._do_file_import(path))
         )
         logger.info("File import requested: %s", path)
+
+    @Slot(str, str)
+    def _on_file_import_lr_requested(self, path_l: str, path_r: str) -> None:
+        """Handle L/R file import request from FiltersPage.
+
+        Parses both files and combines them into a single filter list with
+        L/R channel mode set in wizard state.
+
+        Args:
+            path_l: Path to the left channel REW text file.
+            path_r: Path to the right channel REW text file.
+        """
+        if self._is_busy():
+            return
+
+        self._bridge.run_async(
+            self._bridge_wrapper(
+                "file_import_lr", self._do_file_import_lr(path_l, path_r)
+            )
+        )
+        logger.info("L/R file import requested: L=%s, R=%s", path_l, path_r)
 
     @Slot()
     def _on_device_pull_requested(self) -> None:
@@ -1049,6 +1073,9 @@ class MainWindow(QMainWindow):
         if success:
             self._push_page.set_success(backup_path)
             self._wizard_controller.state.last_backup_path = backup_path
+            # Mark PUSH step as completed in the step indicator
+            self._wizard_controller.state.completed_steps[WizardStep.PUSH] = "Done"
+            self._wizard_controller.step_summary_updated.emit(WizardStep.PUSH, "Done")
             self._status_banner.show_success("Filters pushed successfully")
         else:
             error_msg = getattr(result, "error", "Unknown error")
@@ -1351,6 +1378,45 @@ class MainWindow(QMainWindow):
                 f"{len(filters)} filters loaded, {skip_count} unsupported band(s) skipped"
             )
 
+    async def _do_file_import_lr(self, path_l: str, path_r: str) -> None:
+        """Parse two REW EQ text files as L/R channels.
+
+        Parses each file independently, combines into a flat filter list (L+R),
+        and sets channel_mode to "L/R" in wizard state.
+
+        Args:
+            path_l: Path to the left channel REW text file.
+            path_r: Path to the right channel REW text file.
+        """
+        from src.translator.rew_parser import REWParser
+
+        parser = REWParser()
+        filters_l, warnings_l = parser.parse_file_with_warnings(Path(path_l))
+        filters_r, warnings_r = parser.parse_file_with_warnings(Path(path_r))
+
+        # Combine L+R into flat list and set L/R channel mode
+        filters = filters_l + filters_r
+        self._wizard_controller.state.current_filters = filters
+        self._wizard_controller.state.channel_mode = "L/R"
+
+        # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
+        from src.models.peq import PEQSettings
+
+        peq_data = PEQSettings(
+            source_name=self._wizard_controller.state.selected_source or "wifi",
+            channel_mode="lr",
+            bands_l=filters_l,
+            bands_r=filters_r,
+        )
+        self._bridge.peq_ready.emit(peq_data)
+
+        total_warnings = len(warnings_l) + len(warnings_r)
+        if total_warnings:
+            self._bridge.progress_update.emit(
+                f"L/R import: {len(filters_l)}+{len(filters_r)} bands "
+                f"({total_warnings} skipped)"
+            )
+
     async def _do_device_pull(self) -> None:
         """Pull PEQ settings from the connected device.
 
@@ -1630,6 +1696,8 @@ class MainWindow(QMainWindow):
         """Read a preset from device and save to local profile repository.
 
         Uses the shared _save_filters_to_presets helper for consistent behavior.
+        Note: the helper is safe to call here because AsyncBridge signals
+        are delivered via QueuedConnection (thread-safe).
 
         Args:
             preset_name: Name of the preset to save.
@@ -1659,8 +1727,31 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Use shared save helper (runs on main thread via signal)
-        self._save_filters_to_presets(preset_name, filters, channel_mode)
+        # Save directly (Profile construction + file write is thread-safe)
+        from src.models.profile import Profile
+
+        safe_name = preset_name.translate(str.maketrans("", "", '/\\:*?"<>|'))
+        if not safe_name:
+            safe_name = "Untitled Preset"
+
+        if channel_mode == "L/R":
+            mid = len(filters) // 2
+            profile = Profile(
+                name=safe_name,
+                channel_mode="left",
+                filters_l=filters[:mid],
+                filters_r=filters[mid:],
+            )
+        else:
+            profile = Profile(
+                name=safe_name,
+                channel_mode="stereo",
+                filters=filters,
+            )
+
+        self._profile_repository.save(profile)
+        # UI updates via progress_update signal (thread-safe, delivered on main thread)
+        self._bridge.progress_update.emit(f"Saved '{safe_name}' to My Presets")
 
     async def _do_rew_list_measurements(self) -> None:
         """List available measurements from REW API.
@@ -2269,15 +2360,12 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error("No filters loaded to copy")
             return
 
-        # Get available sources from device capabilities
-        if self._wiim_adapter is None:
-            self._status_banner.show_error("No device connected")
-            return
-
-        available_sources = self._wiim_adapter.capabilities.source_names
+        # Get available sources — use the same list shown in SourcePage
+        # (device may not report source_names; we use the canonical list)
+        available_sources = list(self._source_page._source_buttons.keys())
         if not available_sources:
-            self._status_banner.show_error("No sources available on device")
-            return
+            # Fallback to common sources
+            available_sources = ["wifi", "bluetooth", "line-in", "auxIn", "optical", "HDMI"]
 
         # Open source picker dialog (excludes current source)
         target_sources = SourcePickerDialog.get_sources(

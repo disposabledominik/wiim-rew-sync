@@ -296,6 +296,7 @@ class FiltersPage(QWidget):
             content_wrapper,
         )
         self._pull_card.clicked.connect(self._on_pull_clicked)
+        self._pull_card.setVisible(False)  # Available via "Presets on Device" sidebar
         content_layout.addWidget(self._pull_card)
 
         self._rew_api_card = _OptionCard(
@@ -304,7 +305,7 @@ class FiltersPage(QWidget):
             content_wrapper,
         )
         self._rew_api_card.clicked.connect(self._on_rew_api_clicked)
-        self._rew_api_card.setVisible(False)  # Hidden until confirmed reachable
+        self._rew_api_card.setVisible(False)  # Available via "Presets on Device" sidebar
         content_layout.addWidget(self._rew_api_card)
 
         # Drag-and-drop zone (Req 9.3)
@@ -518,21 +519,42 @@ class FiltersPage(QWidget):
 
     @Slot()
     def _on_import_clicked(self) -> None:
-        """Handle Import from REW File card click."""
+        """Handle Import from REW File card click.
+
+        Shows channel mode choice: Stereo (1 file) or L/R (2 files).
+        For stereo, opens a single file picker.
+        For L/R, shows the dual-file picker section.
+        """
         if self._channel_mode == "lr":
-            # Show L/R file picker section
+            # Already in L/R mode (set by Source page) — show L/R picker
             self._lr_section.setVisible(True)
             return
 
-        # Stereo: single file dialog (Req 4.2)
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select REW Filter File",
-            "",
-            "REW Text Files (*.txt);;All Files (*)",
-        )
-        if path:
-            self.file_import_requested.emit(path)
+        # Show a simple choice: Stereo or L/R import
+        from PySide6.QtWidgets import QMessageBox
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Import Mode")
+        msg.setText("How would you like to import?")
+        stereo_btn = msg.addButton("Stereo (1 file)", QMessageBox.ButtonRole.AcceptRole)
+        lr_btn = msg.addButton("L/R (2 files)", QMessageBox.ButtonRole.ActionRole)
+        msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+
+        clicked = msg.clickedButton()
+        if clicked == lr_btn:
+            self._channel_mode = "lr"
+            self._lr_section.setVisible(True)
+        elif clicked == stereo_btn:
+            # Stereo: single file dialog (Req 4.2)
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select REW Filter File",
+                "",
+                "REW Text Files (*.txt);;All Files (*)",
+            )
+            if path:
+                self.file_import_requested.emit(path)
 
     @Slot()
     def _on_pull_clicked(self) -> None:
@@ -614,8 +636,6 @@ class FiltersPage(QWidget):
         # Re-show option cards and drop zone so user can pick an import method again
         self._import_card.setVisible(True)
         self._import_card.setEnabled(True)
-        self._pull_card.setVisible(True)
-        self._pull_card.setEnabled(True)
         self._drop_zone.setVisible(not self._roomfit_mode)
 
     # ------------------------------------------------------------------
