@@ -2574,8 +2574,12 @@ class MainWindow(QMainWindow):
             "<li>Local preset library with backup and undo</li>"
             "<li>Multi-source and multi-device operations</li>"
             "</ul>"
-            '<p><a href="https://github.com/wiim-rew-sync/wiim-rew-sync">GitHub Repository</a></p>'
+            '<p><a href="https://github.com/disposabledominik/wiim-rew-sync">'
+            "GitHub Repository</a></p>"
             "<p><small>Licensed under MIT License</small></p>"
+            "<p><small>This software is provided as-is with no warranty. "
+            "The authors assume no responsibility for any damage to your "
+            "devices. Use at your own risk.</small></p>"
             "<p><small>Local-first \u2022 No cloud \u2022 No telemetry</small></p>",
         )
 
