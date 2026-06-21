@@ -251,7 +251,7 @@ class PresetsDeviceView(QWidget):
         self._peq_list.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        self._peq_list.itemSelectionChanged.connect(self._update_action_buttons)
+        self._peq_list.itemSelectionChanged.connect(self._on_peq_selection_changed)
         layout.addWidget(self._peq_list)
 
         return section
@@ -287,7 +287,7 @@ class PresetsDeviceView(QWidget):
         self._roomfit_list.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
-        self._roomfit_list.itemSelectionChanged.connect(self._update_action_buttons)
+        self._roomfit_list.itemSelectionChanged.connect(self._on_roomfit_selection_changed)
         layout.addWidget(self._roomfit_list)
 
         return section
@@ -484,6 +484,20 @@ class PresetsDeviceView(QWidget):
     def _on_peq_search_changed(self, text: str) -> None:
         """Filter PEQ list based on search input."""
         self._populate_peq_list(filter_text=text)
+
+    @Slot()
+    def _on_peq_selection_changed(self) -> None:
+        """Handle PEQ list selection — clear RoomFit selection for mutual exclusion."""
+        if self._peq_list.selectedItems():
+            self._roomfit_list.clearSelection()
+        self._update_action_buttons()
+
+    @Slot()
+    def _on_roomfit_selection_changed(self) -> None:
+        """Handle RoomFit list selection — clear PEQ selection for mutual exclusion."""
+        if self._roomfit_list.selectedItems():
+            self._peq_list.clearSelection()
+        self._update_action_buttons()
 
     @Slot(str)
     def _on_roomfit_search_changed(self, text: str) -> None:

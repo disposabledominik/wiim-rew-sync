@@ -74,3 +74,5 @@ These rules are mandatory for all work in this codebase. They encode hard-won le
 19. **Every GUI bug found during smoke testing MUST be logged to `docs/smoke_test_issues.md`.** Add a new row with issue number, description, status (`OPEN`), test status (`NO`), and notes. When a fix is applied, update the status to `FIXED` and record the commit hash. This is automatic — do not wait for the user to request it.
 
 20. **When fixing a smoke test issue, update its status in `docs/smoke_test_issues.md` in the same commit.** Never fix an issue without updating the tracker.
+
+21. **When creating unit-tests for smoke test issues, update their status in `docs/smoke_test_issues.md` in the same commit.** Never create unit-tests for smoke-test issues without updating the tracker.

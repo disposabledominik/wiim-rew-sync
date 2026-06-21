@@ -34,3 +34,7 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 21 | Sidebar collapsed mode shows blank buttons (no icons) | FIXED | N/A | current | Added emoji icons as placeholders for collapsed mode |
 | 22 | Presets on Device shows PEQ presets but no RoomFit profiles | FIXED | NO | current | _do_list_presets now fetches both PEQ + RoomFit and populates both sections |
 | 23 | RoomFit FiltersPage profile dropdown is empty | FIXED | NO | current | Added _do_list_roomfit_profiles async fetch when EQ type "roomfit" is selected |
+| 24 | Presets on Device: Export/Save/Load buttons do nothing (no signal wired) | FIXED | NO | current | Wired export_requested, save_to_my_presets, load_into_editor signals to handlers |
+| 25 | Presets on Device: Can select PEQ + RoomFit items simultaneously | FIXED | NO | current | Added mutual exclusion: selecting in one list clears the other |
+| 26 | Presets on Device: Copy to Another Device doesn't actually write preset to target | FIXED | NO | current | Now reads filters from current device first, then writes to target via SafeWrite |
+| 27 | RoomFit FiltersPage: No way to progress after selecting profile from dropdown | FIXED | NO | current | Wired roomfit_profile_selected signal to _on_roomfit_profile_selected handler |

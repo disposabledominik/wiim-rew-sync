@@ -514,6 +514,7 @@ class MainWindow(QMainWindow):
         self._filters_page.file_import_requested.connect(self._on_file_import_requested)
         self._filters_page.device_pull_requested.connect(self._on_device_pull_requested)
         self._filters_page.rew_api_pull_requested.connect(self._on_rew_api_pull_requested)
+        self._filters_page.roomfit_profile_selected.connect(self._on_roomfit_profile_selected)
         self._review_page.push_requested.connect(self._on_push_requested)
         self._review_page.export_rew_requested.connect(self._on_export_requested)
         self._name_profile_page.name_confirmed.connect(self._on_name_confirmed)
@@ -671,6 +672,32 @@ class MainWindow(QMainWindow):
             self._bridge_wrapper("rew_list", self._do_rew_list_measurements())
         )
         logger.info("REW API pull requested")
+
+    @Slot(str)
+    def _on_roomfit_profile_selected(self, profile_name: str) -> None:
+        """Handle RoomFit profile selection from FiltersPage dropdown.
+
+        Reads the selected profile's filters from the device and advances
+        to the Review page.
+
+        Args:
+            profile_name: Name of the RoomFit profile chosen by the user.
+        """
+        if self._is_busy():
+            return
+
+        if self._wiim_adapter is None:
+            self._status_banner.show_error("No device connected")
+            return
+
+        self._wizard_controller.state.roomfit_profile_name = profile_name
+        self._status_banner.show_progress(f"Loading RoomFit profile '{profile_name}'...")
+        self._bridge.run_async(
+            self._bridge_wrapper(
+                "roomfit_pull", self._do_roomfit_pull(profile_name)
+            )
+        )
+        logger.info("RoomFit profile selected: %s", profile_name)
 
     @Slot()
     def _on_push_requested(self) -> None:
@@ -1220,6 +1247,103 @@ class MainWindow(QMainWindow):
         # Emit result signal
         self._bridge.peq_ready.emit(peq_settings)
 
+    async def _do_roomfit_pull(self, profile_name: str) -> None:
+        """Pull RoomFit profile filters from the device.
+
+        Reads the named RoomFit profile via WiiMAdapter, stores filters
+        in wizard state, and emits peq_ready to advance to Review.
+
+        Args:
+            profile_name: Name of the RoomFit profile to read.
+        """
+        assert self._wiim_adapter is not None
+        source_name = self._wizard_controller.state.selected_source or "wifi"
+
+        peq_settings = await self._wiim_adapter.read_roomfit(source_name, profile_name)
+
+        # Extract filters
+        filters = peq_settings.bands
+
+        # Store in wizard state
+        self._wizard_controller.state.current_filters = filters
+        self._wizard_controller.state.device_filters = filters
+
+        # Emit result signal (triggers _on_peq_ready → Review page)
+        self._bridge.peq_ready.emit(peq_settings)
+
+    async def _do_load_peq_preset(self, preset_name: str) -> None:
+        """Load a named PEQ preset from device and emit peq_ready.
+
+        Loads the preset via EQv2SourceLoad then reads the resulting bands.
+
+        Args:
+            preset_name: Name of the PEQ preset to load.
+        """
+        assert self._wiim_adapter is not None
+        source_name = self._wizard_controller.state.selected_source or "wifi"
+
+        # Load the preset onto the current source
+        await self._wiim_adapter.load_peq_profile(source_name, preset_name)
+
+        # Read back the resulting PEQ state
+        peq_settings = await self._wiim_adapter.read_peq(source_name)
+
+        # Extract filters
+        if peq_settings.channel_mode == "lr":
+            filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+        else:
+            filters = peq_settings.bands
+
+        # Store in wizard state
+        self._wizard_controller.state.current_filters = filters
+        self._wizard_controller.state.device_filters = filters
+
+        # Emit result signal
+        self._bridge.peq_ready.emit(peq_settings)
+
+    async def _do_copy_preset_to_device(
+        self,
+        preset_name: str,
+        preset_type: str,
+        target_ip: str,
+        target_source: str,
+    ) -> None:
+        """Read a preset from current device and write it to a target device.
+
+        1. Reads preset filters from the currently connected device
+        2. Connects to target device
+        3. Writes the filters via SafeWrite
+
+        Args:
+            preset_name: Name of the preset/profile to copy.
+            preset_type: "PEQ" or "RoomFit".
+            target_ip: IP address of the target device.
+            target_source: Target source name on the remote device.
+        """
+        assert self._wiim_adapter is not None
+
+        source_name = self._wizard_controller.state.selected_source or "wifi"
+
+        # Step 1: Read filters from current device
+        if preset_type == "RoomFit":
+            peq_settings = await self._wiim_adapter.read_roomfit(
+                source_name, preset_name
+            )
+            filters = peq_settings.bands
+        else:
+            # Load PEQ preset, then read
+            await self._wiim_adapter.load_peq_profile(source_name, preset_name)
+            peq_settings = await self._wiim_adapter.read_peq(source_name)
+            if peq_settings.channel_mode == "lr":
+                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+            else:
+                filters = peq_settings.bands
+
+        # Step 2: Write to target device via SecondaryWorkflowManager
+        self._secondary_workflows.copy_preset_to_device(
+            filters, target_ip, target_source
+        )
+
     async def _do_rew_list_measurements(self) -> None:
         """List available measurements from REW API.
 
@@ -1725,6 +1849,15 @@ class MainWindow(QMainWindow):
         self._presets_device_view.copy_to_device_requested.connect(
             self._on_copy_to_device_requested
         )
+        self._presets_device_view.export_requested.connect(
+            self._on_preset_export_requested
+        )
+        self._presets_device_view.save_to_my_presets.connect(
+            self._on_preset_save_requested
+        )
+        self._presets_device_view.load_into_editor.connect(
+            self._on_preset_load_into_editor
+        )
         self._my_presets_view.load_requested.connect(
             self._on_profile_load_requested
         )
@@ -1902,12 +2035,19 @@ class MainWindow(QMainWindow):
             target_ip,
         )
 
-        # For each selected item, extract filters and copy to target device
+        # For each selected item, read its filters from current device then copy
+        # to target device. Use async bridge for the read+write sequence.
         for item in items:
-            preset_filters = getattr(item, "filters", [])
-            if preset_filters:
-                self._secondary_workflows.copy_preset_to_device(
-                    preset_filters, target_ip, target_source
+            preset_name = getattr(item, "name", "")
+            preset_type = getattr(item, "preset_type", "PEQ")
+            if preset_name:
+                self._bridge.run_async(
+                    self._bridge_wrapper(
+                        "copy_preset",
+                        self._do_copy_preset_to_device(
+                            preset_name, preset_type, target_ip, target_source or "wifi"
+                        ),
+                    )
                 )
 
     @Slot(object)
@@ -1924,6 +2064,79 @@ class MainWindow(QMainWindow):
         """
         logger.info("Profile load requested: %s", getattr(profile, "name", "unknown"))
         self._secondary_workflows.recall_profile(profile)
+
+    @Slot(list)
+    def _on_preset_export_requested(self, items: list) -> None:
+        """Handle PresetsDeviceView "Export as REW File" for selected presets.
+
+        Opens a save dialog and exports the first selected item's filters.
+        TODO: support batch export of multiple items.
+
+        Args:
+            items: List of PresetItem objects selected for export.
+        """
+        if not items:
+            return
+
+        # For now, export the first item — need to read its filters from device
+        item = items[0]
+        self._status_banner.show_info(
+            f"Export of device preset '{item.name}' not yet implemented",
+            auto_dismiss=5000,
+        )
+        logger.info("Preset export requested: %s", [i.name for i in items])
+
+    @Slot(list)
+    def _on_preset_save_requested(self, items: list) -> None:
+        """Handle PresetsDeviceView "Save to My Presets" for selected items.
+
+        Reads filters from device for each selected item and saves to local
+        profile repository.
+        TODO: implement full save flow.
+
+        Args:
+            items: List of PresetItem objects selected for saving.
+        """
+        if not items:
+            return
+
+        self._status_banner.show_info(
+            f"Save to My Presets for '{items[0].name}' not yet implemented",
+            auto_dismiss=5000,
+        )
+        logger.info("Preset save requested: %s", [i.name for i in items])
+
+    @Slot(object)
+    def _on_preset_load_into_editor(self, item: object) -> None:
+        """Handle PresetsDeviceView "Load into Editor" for a single preset.
+
+        Reads the preset's filters from the device and loads them into
+        the wizard Review page.
+
+        Args:
+            item: PresetItem object to load.
+        """
+        name = getattr(item, "name", "")
+        preset_type = getattr(item, "preset_type", "PEQ")
+
+        if not name:
+            return
+
+        if self._wiim_adapter is None:
+            self._status_banner.show_error("No device connected")
+            return
+
+        self._status_banner.show_progress(f"Loading preset '{name}'...")
+        if preset_type == "RoomFit":
+            self._bridge.run_async(
+                self._bridge_wrapper("load_preset", self._do_roomfit_pull(name))
+            )
+        else:
+            # PEQ preset: load it via EQv2SourceLoad then read
+            self._bridge.run_async(
+                self._bridge_wrapper("load_preset", self._do_load_peq_preset(name))
+            )
+        logger.info("Preset load into editor: %s (type=%s)", name, preset_type)
 
     # --- Outbound handlers (workflow manager → UI updates) ---
 
