@@ -95,6 +95,6 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 82 | My Saved Presets and Connect step still have narrow/condensed content layout | FIXED | N/A | `d6b9288` | Removed AlignHCenter from ConnectPage, ReviewPage, MyPresetsView outer layouts |
 | 83 | File>Import/Export menu items do nothing; Help>About not wired | FIXED | N/A | `d6b9288` | Removed File>Import/Export (redundant with UI); wired Help>About with product description dialog |
 | 84 | Help article needs update to reflect current UI after all bug fixes | OPEN | N/A | — | Deferred: update Help content once all other issues are resolved |
-| 85 | Diagnostics panel "Send" button does nothing (raw_command_requested not wired) | FIXED | NO | `9c6de2d` | Connected signal to _on_raw_command_requested; executes via WiiMHttpClient and shows response |
-| 86 | Connect step and My Saved Presets still narrow; row highlight misaligned in My Presets | FIXED | N/A | `9c6de2d` | Removed wrapper stretch centering from ConnectPage/ReviewPage; set explicit sizeHint height for list items |
-| 87 | Sidebar preset/profile load doesn't work when wizard state is incomplete | FIXED | NO | `9c6de2d` | Added QuickSetupDialog — shows only when EQ type or source is missing; collects info before loading |
+| 85 | Diagnostics panel "Send" button does nothing (raw_command_requested not wired) | FIXED | NO | `9c6de2d`, `ff4597d` | Connected signal; route response through progress_update signal to avoid cross-thread segfault |
+| 86 | Connect step and My Saved Presets still narrow; row highlight misaligned in My Presets | FIXED | N/A | `9c6de2d`, `ff4597d` | Removed wrapper stretch centering; set explicit sizeHint height; set scanning widget minHeight |
+| 87 | Sidebar preset/profile load doesn't work when wizard state is incomplete | FIXED | NO | `9c6de2d`, `ff4597d` | QuickSetupDialog always shows source for PEQ; checks completed_steps; navigates to Review after load |
