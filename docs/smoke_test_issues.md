@@ -71,5 +71,8 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 58 | Multi-device push always uses stereo PEQ regardless of context | FIXED | NO | `5761cef` | apply_to_devices now receives channel_mode from wizard state; builds L/R PEQSettings when appropriate |
 | 59 | RoomFit: Filters page shows "Select RoomFit profile to pull" dropdown | FIXED | N/A | `7e6cc12` | Hidden — RoomFit profile pull is via "Presets on Device" sidebar only |
 | 60 | RoomFit: NameProfilePage "Existing profiles" list is empty | FIXED | NO | `0a132e4` | Added _populate_name_profile_page() that fetches profiles when navigating to NAME_PROFILE step |
-| 61 | RoomFit: Push ignores profile name from "Name Profile" step (uses "My RoomFit") | FIXED | NO | current | _on_push_requested defers push for RoomFit; push fires from _on_name_confirmed after name is stored |
-| 62 | RoomFit: Undo button crashes with "Is a directory" error | FIXED | NO | current | Undo now works for RoomFit: backs up existing profile before overwrite; hidden for new profiles only |
+| 61 | RoomFit: Push ignores profile name from "Name Profile" step (uses "My RoomFit") | FIXED | NO | `b4f9037` | _on_push_requested defers push for RoomFit; push fires from _on_name_confirmed after name is stored |
+| 62 | RoomFit: Undo button crashes with "Is a directory" error | FIXED | NO | `b83d65f` | Undo now works for RoomFit: backs up existing profile before overwrite; hidden for new profiles only |
+| 63 | RoomFit/PEQ: L/R filters written as Stereo in all write paths | FIXED | NO | `306a1de` | write_roomfit now accepts channel_mode; all write paths (push, copy, multi-device) use shared helpers |
+| 64 | Duplicated logic across 30+ locations (architectural) | FIXED | NO | `aaffc0f` | Created src/gui/shared_helpers.py with 5 shared functions; eliminated all duplication |
+| 65 | Loading L/R profile from My Presets loses channel mode (shows as stereo) | FIXED | NO | `ec85fc5` | _on_profile_load_requested sets wizard state.channel_mode from profile before recall |
