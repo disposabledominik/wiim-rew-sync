@@ -459,13 +459,6 @@ class MainWindow(QMainWindow):
         # --- File menu ---
         file_menu = menu_bar.addMenu("&File")
 
-        import_action = QAction("&Import...", self)
-        import_action.setShortcut("Ctrl+O")
-        file_menu.addAction(import_action)
-
-        export_action = QAction("&Export...", self)
-        file_menu.addAction(export_action)
-
         file_menu.addSeparator()
 
         quit_action = QAction("&Quit", self)
@@ -489,6 +482,7 @@ class MainWindow(QMainWindow):
         help_menu = menu_bar.addMenu("&Help")
 
         about_action = QAction("&About", self)
+        about_action.triggered.connect(self._on_about_triggered)
         help_menu.addAction(about_action)
 
         user_guide_action = QAction("&User Guide", self)
@@ -523,6 +517,7 @@ class MainWindow(QMainWindow):
         self._review_page.push_requested.connect(self._on_push_requested)
         self._review_page.export_rew_requested.connect(self._on_export_requested)
         self._review_page.save_preset_requested.connect(self._on_review_save_preset)
+        self._review_page.dry_run_toggled.connect(self._on_dry_run_toggled)
         self._name_profile_page.name_confirmed.connect(self._on_name_confirmed)
         self._push_page.undo_requested.connect(self._on_undo_requested)
         self._push_page.done_acknowledged.connect(self._on_done_acknowledged)
@@ -740,10 +735,16 @@ class MainWindow(QMainWindow):
         )
         logger.info("RoomFit profile selected: %s", profile_name)
 
+    @Slot(bool)
+    def _on_dry_run_toggled(self, enabled: bool) -> None:
+        """Handle dry run toggle — update wizard state."""
+        self._wizard_controller.state.dry_run = enabled
+
     @Slot()
     def _on_push_requested(self) -> None:
         """Handle push request from ReviewPage — advance and execute push.
 
+        For dry run: advance to PUSH step and show preview result (no device write).
         For PEQ flow: advance to PUSH step and execute immediately.
         For RoomFit flow: advance to NAME_PROFILE step first (push happens
         after user confirms the profile name via _on_name_confirmed).
@@ -753,7 +754,22 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             return
 
+        state = self._wizard_controller.state
         flow_type = self._wizard_controller.flow_type
+
+        # Dry run: show preview result without writing to device (smoke #80)
+        if state.dry_run:
+            self._wizard_controller.advance(summary="Dry Run")
+            filters = state.current_filters
+            band_count = len(filters)
+            sources = [s.strip() for s in (state.selected_source or "wifi").split(",") if s.strip()]
+            source_info = ", ".join(sources) if sources else "wifi"
+            channel = state.channel_mode or "Stereo"
+            self._push_page.set_dry_run_result(
+                f"Dry run complete: {band_count} bands validated for "
+                f"{source_info} ({channel}). No changes were written to device."
+            )
+            return
 
         if flow_type == FlowType.ROOMFIT:
             # RoomFit: advance to NAME_PROFILE — push deferred until name confirmed
@@ -799,16 +815,18 @@ class MainWindow(QMainWindow):
         """Handle undo request from PushPage — restore from last backup.
 
         For PEQ: delegates to SecondaryWorkflowManager (SafeWrite restore).
+        Supports multi-source undo when backup_path contains semicolons.
         For RoomFit: reads backup, writes bands back to the same profile name.
 
         Requirement 18.1: Prominent "Undo" action available after push.
         Requirement 18.2: Restore from most recent backup.
         """
         backup_path = self._wizard_controller.state.last_backup_path
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name_raw = self._wizard_controller.state.selected_source or "wifi"
 
         if self._wizard_controller.flow_type == FlowType.ROOMFIT:
             # RoomFit undo: restore backed-up bands to the same profile name
+            source_name = source_name_raw.split(",")[0].strip()
             profile_name = self._wizard_controller.state.roomfit_profile_name
             self._bridge.run_async(
                 self._bridge_wrapper(
@@ -817,8 +835,20 @@ class MainWindow(QMainWindow):
                 )
             )
         else:
-            # PEQ undo: delegate to SecondaryWorkflowManager
-            self._secondary_workflows.undo_last_push(source_name, backup_path)
+            # PEQ undo: handle multi-source backup paths (smoke #77)
+            # Format: "source1=/path/to/backup1;source2=/path/to/backup2"
+            if ";" in backup_path or "=" in backup_path:
+                # Multi-source undo
+                self._bridge.run_async(
+                    self._bridge_wrapper(
+                        "undo_multi_source",
+                        self._do_undo_multi_source(backup_path),
+                    )
+                )
+            else:
+                # Single source undo (legacy format)
+                source_name = source_name_raw.split(",")[0].strip()
+                self._secondary_workflows.undo_last_push(source_name, backup_path)
 
     async def _do_undo_roomfit(
         self, backup_path: str, source_name: str, profile_name: str
@@ -854,6 +884,40 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             logger.exception("RoomFit undo failed")
             self._status_banner.show_error(f"Undo failed: {exc}")
+
+    async def _do_undo_multi_source(self, backup_paths_str: str) -> None:
+        """Undo a multi-source push by restoring each source's backup.
+
+        Args:
+            backup_paths_str: Semicolon-separated "source=/path" entries.
+        """
+        entries = [e.strip() for e in backup_paths_str.split(";") if e.strip()]
+        succeeded = 0
+        failed = 0
+
+        for entry in entries:
+            if "=" not in entry:
+                continue
+            source_name, bp = entry.split("=", 1)
+            source_name = source_name.strip()
+            bp = bp.strip()
+
+            try:
+                self._bridge.progress_update.emit(f"Restoring {source_name}...")
+                self._secondary_workflows.undo_last_push(source_name, bp)
+                succeeded += 1
+            except Exception:
+                logger.exception("Undo source '%s' failed", source_name)
+                failed += 1
+
+        if failed == 0:
+            self._status_banner.show_success(
+                f"All {succeeded} source(s) restored from backup"
+            )
+        else:
+            self._status_banner.show_error(
+                f"Undo: {succeeded} restored, {failed} failed"
+            )
 
     @Slot()
     def _on_done_acknowledged(self) -> None:
@@ -1122,10 +1186,6 @@ class MainWindow(QMainWindow):
 
             active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
             self._review_page.set_summary(device_name, source, channel, active_bands)
-
-            # Enable device comparison if we have device state
-            device_filters = getattr(state, "device_filters", None)
-            self._review_page.set_device_state_available(device_filters is not None)
 
             # Advance wizard to REVIEW step
             self._wizard_controller.advance(summary=f"{count} filters")
@@ -1610,10 +1670,19 @@ class MainWindow(QMainWindow):
             target_adapter = WiiMAdapter(target_client, target_caps)
 
             if preset_type == "RoomFit":
-                # RoomFit: write as RoomFit profile on target (smoke #34)
-                await target_adapter.write_roomfit(
-                    target_source, preset_name, filters
-                )
+                # RoomFit: write as RoomFit profile on target (smoke #34, #79)
+                if is_lr_mode(channel_mode):
+                    left, right = split_lr_filters(filters)
+                    await target_adapter.write_roomfit(
+                        target_source, preset_name, filters,
+                        channel_mode="lr",
+                        filters_l=left,
+                        filters_r=right,
+                    )
+                else:
+                    await target_adapter.write_roomfit(
+                        target_source, preset_name, filters
+                    )
             else:
                 # PEQ: write filters then save as named PEQ preset
                 settings = build_peq_settings(
@@ -1721,14 +1790,15 @@ class MainWindow(QMainWindow):
                     failed += 1
 
         # Show summary result
+        n_items = len(items)
+        n_devices = len(target_devices)
         if failed == 0:
             self._status_banner.show_success(
-                f"All {total_ops} preset(s) copied to "
-                f"{len(target_devices)} device(s)"
+                f"{n_items} preset(s) copied to {n_devices} device(s)"
             )
         else:
             self._status_banner.show_error(
-                f"Copied {succeeded} of {total_ops} presets ({failed} failed)"
+                f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
             )
 
     async def _do_preset_export(
@@ -1971,6 +2041,7 @@ class MainWindow(QMainWindow):
             assert self._safe_write is not None
 
             last_result = None
+            backup_paths: list[str] = []
             for i, source_name in enumerate(source_list):
                 if len(source_list) > 1:
                     self._bridge.progress_update.emit(
@@ -1981,16 +2052,25 @@ class MainWindow(QMainWindow):
                 result = await self._safe_write.execute(source_name, settings)
                 last_result = result
 
+                # Collect backup path for undo (smoke #77)
+                bp = getattr(result, "backup_path", "")
+                if bp:
+                    backup_paths.append(f"{source_name}={bp}")
+
                 if not result.success:
                     # Abort on first failure
                     self._bridge.write_complete.emit(result)
                     return
 
-            # All sources succeeded
+            # All sources succeeded — store all backup paths as semicolon-joined
             if last_result and last_result.success:
-                self._bridge.progress_update.emit("Writing...")
+                # Encode multi-source backup paths for undo
+                combined_backup = ";".join(backup_paths) if backup_paths else ""
+                result = WriteResult(
+                    success=True, backup_path=combined_backup
+                )
                 self._bridge.progress_update.emit("Verifying...")
-                self._bridge.write_complete.emit(last_result)
+                self._bridge.write_complete.emit(result)
 
     async def _do_export(self, filters: list, path: str) -> None:
         """Generate a REW EQ text file from current filters.
@@ -2340,6 +2420,28 @@ class MainWindow(QMainWindow):
     def _on_user_guide_triggered(self) -> None:
         """Switch stacked widget to help view (Help > User Guide)."""
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["help"])
+
+    @Slot()
+    def _on_about_triggered(self) -> None:
+        """Show About dialog (Help > About)."""
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.about(
+            self,
+            "About WiiM \u2194 REW PEQ Sync",
+            "<h3>WiiM \u2194 REW PEQ Sync</h3>"
+            "<p>Transfer parametric EQ and RoomFit filter configurations "
+            "between Room EQ Wizard (REW) and WiiM devices on your local network.</p>"
+            "<p><b>Features:</b></p>"
+            "<ul>"
+            "<li>Import/export REW EQ text files</li>"
+            "<li>Read/write PEQ and RoomFit filters via WiiM HTTP API</li>"
+            "<li>Stereo and L/R channel mode support</li>"
+            "<li>Local preset library with backup and undo</li>"
+            "<li>Multi-source and multi-device operations</li>"
+            "</ul>"
+            "<p><small>Local-first \u2022 No cloud \u2022 No telemetry</small></p>",
+        )
 
     # ------------------------------------------------------------------
     # Operation Feedback Wiring (Req 13.1-13.6)

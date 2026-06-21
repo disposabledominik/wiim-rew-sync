@@ -87,3 +87,11 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 74 | Presets on Device "Copy to another device" only copies to first selected device (regression of #33) | FIXED | NO | `edee68f` | Replaced selected_devices[0] with iteration over all selected devices via _do_copy_presets_batch_multi |
 | 75 | Review "Apply to multiple devices" always pushes to active PEQ (wrong for RoomFit) | FIXED | N/A | `edee68f` | Removed button entirely; "Copy to another device" in Presets on Device serves the same purpose correctly |
 | 76 | Review "Copy to another source" replaced by multi-source selection in Source step | FIXED | N/A | `edee68f` | Source step now uses checkboxes (multi-select); push writes to all selected sources; removed Copy to another source button |
+| 77 | Multi-source PEQ push: Undo doesn't restore all sources | FIXED | NO | `6caa00c` | _do_push now stores per-source backup paths; _do_undo_multi_source restores each source from its own backup |
+| 78 | Copy to another device: status message says "N presets" when only 1 preset copied to N devices | FIXED | NO | `6caa00c` | Status now reads "1 preset(s) copied to 3 device(s)" reflecting actual items × devices |
+| 79 | Copy to another device: L/R RoomFit profiles stored as Stereo on target | FIXED | NO | `6caa00c` | _do_copy_preset_to_device now passes channel_mode with filters_l/filters_r for L/R RoomFit |
+| 80 | Dry Run mode: Push proceeds to device anyway, no dry-run acknowledgment in Push step | FIXED | NO | `6caa00c` | _on_push_requested now checks state.dry_run; shows set_dry_run_result instead of writing to device |
+| 81 | "Compare with device" toggle does nothing (dead UI) | FIXED | N/A | `6caa00c` | Removed toggle, signal, and methods entirely; no functional comparison was implemented |
+| 82 | My Saved Presets and Connect step still have narrow/condensed content layout | FIXED | N/A | `6caa00c` | Removed AlignHCenter from ConnectPage, ReviewPage, MyPresetsView outer layouts |
+| 83 | File>Import/Export menu items do nothing; Help>About not wired | FIXED | N/A | `6caa00c` | Removed File>Import/Export (redundant with UI); wired Help>About with product description dialog |
+| 84 | Help article needs update to reflect current UI after all bug fixes | OPEN | N/A | — | Deferred: update Help content once all other issues are resolved |

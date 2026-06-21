@@ -235,7 +235,7 @@ class MyPresetsView(QWidget):
         self._rename_editor.setVisible(False)
         self._rename_editor.editingFinished.connect(self._on_rename_finished)
 
-        outer_layout.addWidget(content, alignment=Qt.AlignmentFlag.AlignHCenter)
+        outer_layout.addWidget(content)
 
     # ------------------------------------------------------------------
     # List population

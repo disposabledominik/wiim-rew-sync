@@ -303,17 +303,6 @@ class TestReviewPage:
         with qtbot.waitSignal(page.push_requested, timeout=1000):
             qtbot.mouseClick(page._push_button, Qt.MouseButton.LeftButton)
 
-    def test_compare_disabled_by_default(self, qtbot) -> None:
-        """Compare checkbox is disabled until device state is available."""
-        page = ReviewPage()
-        qtbot.addWidget(page)
-
-        assert not page._compare_checkbox.isEnabled()
-
-        page.set_device_state_available(True)
-
-        assert page._compare_checkbox.isEnabled()
-
 
 # ---------------------------------------------------------------------------
 # TestPushPage

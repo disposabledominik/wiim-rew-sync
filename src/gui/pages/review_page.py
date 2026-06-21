@@ -37,27 +37,23 @@ class ReviewPage(QWidget):
     Displays the current filter set in a read-only table and provides action
     buttons for pushing to device, exporting, and saving presets.
     Dry Run mode changes the primary button label and shows a badge.
-    Compare toggle enables diff view against device state.
 
     Signals:
         push_requested: User wants to push filters to device.
         export_rew_requested: Export filters as REW-compatible file.
         save_preset_requested: Save filters to local preset library.
         dry_run_toggled: Dry run mode changed (bool: enabled).
-        compare_toggled: Compare with device toggled (bool: enabled).
     """
 
     push_requested = Signal()
     export_rew_requested = Signal()
     save_preset_requested = Signal()
     dry_run_toggled = Signal(bool)
-    compare_toggled = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ReviewPage")
         self._dry_run: bool = False
-        self._device_state_available: bool = False
         self._setup_ui()
         self._setup_shortcuts()
 
@@ -93,19 +89,6 @@ class ReviewPage(QWidget):
         """
         self._filter_table.set_lr_filters(left, right, clamping_map)
 
-    def set_comparison(
-        self,
-        before: list[CanonicalFilter],
-        after: list[CanonicalFilter],
-    ) -> None:
-        """Enable comparison mode in FilterTable.
-
-        Args:
-            before: Filters representing the current device state.
-            after: Filters representing the incoming/new state.
-        """
-        self._filter_table.set_comparison(before, after)
-
     def set_summary(
         self,
         device: str,
@@ -126,17 +109,6 @@ class ReviewPage(QWidget):
         self._summary_label.setText(
             f"{band_count} bands \u2192 {device} / {source} / {channel}"
         )
-
-    def set_device_state_available(self, available: bool) -> None:
-        """Enable or disable the Compare with device toggle.
-
-        Args:
-            available: True if device state is available for comparison.
-        """
-        self._device_state_available = available
-        self._compare_checkbox.setEnabled(available)
-        if not available:
-            self._compare_checkbox.setChecked(False)
 
     def set_dry_run(self, enabled: bool) -> None:
         """Update the dry run state.
@@ -160,7 +132,6 @@ class ReviewPage(QWidget):
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
-        page_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         # Content wrapper with max width
         content_wrapper = QWidget(self)
@@ -202,12 +173,6 @@ class ReviewPage(QWidget):
         self._dry_run_checkbox.setObjectName("ReviewPageDryRunToggle")
         self._dry_run_checkbox.toggled.connect(self._on_dry_run_toggled)
         toggles_layout.addWidget(self._dry_run_checkbox)
-
-        self._compare_checkbox = QCheckBox("Compare with device", content_wrapper)
-        self._compare_checkbox.setObjectName("ReviewPageCompareToggle")
-        self._compare_checkbox.setEnabled(False)
-        self._compare_checkbox.toggled.connect(self._on_compare_toggled)
-        toggles_layout.addWidget(self._compare_checkbox)
 
         toggles_layout.addStretch()
         content_layout.addLayout(toggles_layout)
@@ -270,11 +235,6 @@ class ReviewPage(QWidget):
         self._dry_run = checked
         self._update_dry_run_ui()
         self.dry_run_toggled.emit(checked)
-
-    @Slot(bool)
-    def _on_compare_toggled(self, checked: bool) -> None:
-        """Handle compare with device checkbox toggle."""
-        self.compare_toggled.emit(checked)
 
     @Slot()
     def _on_push_clicked(self) -> None:

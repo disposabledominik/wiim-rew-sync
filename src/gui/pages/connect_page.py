@@ -138,7 +138,6 @@ class ConnectPage(QWidget):
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(0)
-        page_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
         # Content wrapper with max width
         content_wrapper = QWidget(self)
