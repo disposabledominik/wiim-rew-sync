@@ -27,7 +27,10 @@ from src.translator.wiim_parser import parse_wiim_band_array
 
 
 @given(filters=st_canonical_filter_list(min_size=1, max_size=10))
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@settings(
+    max_examples=100,
+    suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
+)
 def test_rew_parse_generate_parse_round_trip(
     filters: list[CanonicalFilter], tmp_path: Path
 ) -> None:

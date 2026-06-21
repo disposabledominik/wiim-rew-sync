@@ -41,6 +41,7 @@ Only needed for building from source, running tests, and linting:
 | pytest | ≥ 8.2.0 | Test runner |
 | pytest-cov | ≥ 5.0.0 | Coverage reporting |
 | pytest-asyncio | ≥ 0.23.0 | Async test support |
+| pytest-qt | ≥ 4.4.0 | Qt GUI testing (signal/slot, widget interaction) |
 | respx | ≥ 0.21.0 | Mock httpx requests in tests |
 | ruff | ≥ 0.4.0 | Linter and formatter |
 | mypy | ≥ 1.10.0 | Static type checker |

@@ -9,8 +9,12 @@ src/
 │   ├── zeroconf_discover.py # mDNS probe (_wiim._tcp.local.)
 │   └── subnet_scanner.py   # Fallback getStatusEx subnet scan
 ├── gui/             # PySide6 GUI layer
-│   ├── dialogs/     # Modal dialogs
-│   └── panels/      # Main window panels
+│   ├── assets/      # Help articles, icons, stylesheets
+│   ├── components/  # Reusable widgets (device_card, filter_table, sidebar_nav, status_banner, step_indicator)
+│   ├── dialogs/     # Modal dialogs (error, export, import, device_picker, measurement_picker, etc.)
+│   ├── pages/       # Wizard pages (connect, eq_type, filters, source, review, push, name_profile)
+│   ├── panels/      # Dockable panels (diagnostics_panel)
+│   └── views/       # Secondary views (help_view, my_presets_view, presets_device_view, settings_view)
 ├── logging/         # Rotating log setup (app.log, wiim_api.log, rew_api.log)
 ├── models/          # Domain models (pydantic)
 │   ├── canonical.py # CanonicalFilter — central data model

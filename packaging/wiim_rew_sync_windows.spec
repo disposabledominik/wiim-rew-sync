@@ -60,7 +60,10 @@ excluded_modules = [
 
 # Data files to bundle (help articles for in-app user guide)
 import os
-help_src = os.path.join("..", "src", "gui", "assets", "help")
+_SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
+_PROJECT_ROOT = os.path.join(_SPEC_DIR, '..')
+
+help_src = os.path.join(_PROJECT_ROOT, "src", "gui", "assets", "help")
 datas_list = []
 if os.path.isdir(help_src):
     for f in os.listdir(help_src):
@@ -68,6 +71,18 @@ if os.path.isdir(help_src):
             datas_list.append(
                 (os.path.join(help_src, f), os.path.join("src", "gui", "assets", "help"))
             )
+
+# Bundle app icon (SVG) for runtime window icon
+icons_src = os.path.join(_PROJECT_ROOT, "src", "gui", "assets", "icons")
+for icon_file in ("app_icon.svg", "app_icon.ico", "app_icon.png"):
+    icon_path = os.path.join(icons_src, icon_file)
+    if os.path.isfile(icon_path):
+        datas_list.append(
+            (icon_path, os.path.join("src", "gui", "assets", "icons"))
+        )
+
+# Resolve icon path for the exe embedded icon
+_ICON_PATH = os.path.join(_PROJECT_ROOT, 'src', 'gui', 'assets', 'icons', 'app_icon.ico')
 
 a = Analysis(
     ["entry_gui.py"],
@@ -107,5 +122,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='../src/gui/assets/icons/app_icon.ico',
+    icon=_ICON_PATH,
 )

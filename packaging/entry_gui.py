@@ -65,10 +65,16 @@ def main() -> int:
     app.setOrganizationName("wiim-rew-sync")
 
     # Set app icon (visible in taskbar)
-    icon_path = (
-        Path(__file__).resolve().parent.parent
-        / "src" / "gui" / "assets" / "icons" / "app_icon.svg"
-    )
+    # In PyInstaller bundle, resources are extracted to sys._MEIPASS
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).resolve().parent.parent
+
+    icon_path = base_path / "src" / "gui" / "assets" / "icons" / "app_icon.svg"
+    if not icon_path.exists():
+        # Fallback: try .ico (bundled alongside)
+        icon_path = base_path / "src" / "gui" / "assets" / "icons" / "app_icon.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
