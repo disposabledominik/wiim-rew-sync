@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from src.adapters.capability_prober import CapabilityProber
 from src.adapters.rew_http_client import REWHttpApiClient
-from src.adapters.safe_write import SafeWrite
+from src.adapters.safe_write import SafeWrite, WriteResult
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
@@ -819,6 +819,10 @@ class MainWindow(QMainWindow):
         page_key = step_to_page_key.get(step)
         if page_key and page_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
+
+        # Populate NameProfilePage when entering that step (RoomFit flow)
+        if step == WizardStep.NAME_PROFILE:
+            self._populate_name_profile_page()
 
         # Update StepIndicator: set current and clear steps no longer completed
         sequence = self._wizard_controller.get_steps()
@@ -1796,51 +1800,63 @@ class MainWindow(QMainWindow):
         self._bridge.rew_filters_ready.emit(filters)
 
     async def _do_push(self) -> None:
-        """Execute SafeWrite protocol to push filters to device.
+        """Execute push to device — PEQ via SafeWrite, or RoomFit via write_roomfit.
 
-        Constructs PEQSettings from wizard state (source_name, channel_mode,
-        current_filters), emits progress updates for each protocol stage,
-        and emits write_complete on success.
+        For PEQ flow: constructs PEQSettings and uses SafeWrite protocol.
+        For RoomFit flow: uses write_roomfit with the named profile.
 
         Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
         """
-        assert self._safe_write is not None
+        assert self._wiim_adapter is not None
 
         state = self._wizard_controller.state
-        source_name = state.selected_source
+        source_name = state.selected_source or "wifi"
         filters = state.current_filters
         channel_mode = state.channel_mode.lower()
+        flow_type = self._wizard_controller.flow_type
 
-        # Build PEQSettings from wizard state
-        if channel_mode in ("lr", "l/r"):
-            # Split filters evenly between L and R channels
-            mid = len(filters) // 2
-            settings = PEQSettings(
-                source_name=source_name,
-                channel_mode="lr",
-                bands_l=filters[:mid],
-                bands_r=filters[mid:],
-            )
-        else:
-            settings = PEQSettings(
-                source_name=source_name,
-                channel_mode="stereo",
-                bands=filters,
-            )
-
-        # Emit progress for backup stage
         self._bridge.progress_update.emit("Backing up...")
 
-        # Execute the five-step safe write protocol
-        result = await self._safe_write.execute(source_name, settings)
+        if flow_type == FlowType.ROOMFIT:
+            # RoomFit: write as named profile via write_roomfit
+            profile_name = state.roomfit_profile_name or "My RoomFit"
+            try:
+                await self._wiim_adapter.write_roomfit(source_name, profile_name, filters)
 
-        if result.success:
-            self._bridge.progress_update.emit("Writing...")
-            self._bridge.progress_update.emit("Verifying...")
-            self._bridge.write_complete.emit(result)
+                result = WriteResult(success=True, backup_path="")
+                self._bridge.progress_update.emit("Writing RoomFit profile...")
+                self._bridge.write_complete.emit(result)
+            except Exception as exc:
+
+                result = WriteResult(success=False, error=str(exc), backup_path="")
+                self._bridge.write_complete.emit(result)
         else:
-            # Emit the write_complete with failure result so PushPage can show status
-            self._bridge.write_complete.emit(result)
+            # PEQ: use SafeWrite protocol
+            assert self._safe_write is not None
+
+            if channel_mode in ("lr", "l/r"):
+                mid = len(filters) // 2
+                settings = PEQSettings(
+                    source_name=source_name,
+                    channel_mode="lr",
+                    bands_l=filters[:mid],
+                    bands_r=filters[mid:],
+                )
+            else:
+                settings = PEQSettings(
+                    source_name=source_name,
+                    channel_mode="stereo",
+                    bands=filters,
+                )
+
+            result = await self._safe_write.execute(source_name, settings)
+
+            if result.success:
+                self._bridge.progress_update.emit("Writing...")
+                self._bridge.progress_update.emit("Verifying...")
+                self._bridge.write_complete.emit(result)
+            else:
+                self._bridge.write_complete.emit(result)
 
     async def _do_export(self, filters: list, path: str) -> None:
         """Generate a REW EQ text file from current filters.
@@ -1921,6 +1937,39 @@ class MainWindow(QMainWindow):
         self._bridge.run_async(
             self._bridge_wrapper("list_presets", self._do_list_presets())
         )
+
+    def _populate_name_profile_page(self) -> None:
+        """Fetch RoomFit profile names and populate NameProfilePage list.
+
+        Called when the wizard navigates to the NAME_PROFILE step.
+        """
+        if self._wiim_adapter is None:
+            self._name_profile_page.set_existing_profiles([])
+            return
+
+        self._bridge.run_async(
+            self._bridge_wrapper(
+                "list_roomfit_for_naming",
+                self._do_populate_name_profiles(),
+            )
+        )
+
+    async def _do_populate_name_profiles(self) -> None:
+        """Fetch RoomFit profiles and populate the NameProfilePage."""
+        assert self._wiim_adapter is not None
+        source_name = self._wizard_controller.state.selected_source or "wifi"
+
+        try:
+            if self._wiim_adapter.capabilities.roomfit_level >= 1:
+                profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
+                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
+                # TODO: detect active profile name (not currently available from API)
+                self._name_profile_page.set_existing_profiles(profile_names, "")
+            else:
+                self._name_profile_page.set_existing_profiles([])
+        except Exception:
+            logger.warning("Failed to list RoomFit profiles for naming", exc_info=True)
+            self._name_profile_page.set_existing_profiles([])
 
     async def _do_list_roomfit_profiles(self) -> None:
         """Fetch RoomFit profile names and populate FiltersPage dropdown."""
