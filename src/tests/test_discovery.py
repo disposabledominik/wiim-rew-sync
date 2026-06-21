@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from src.discovery.discovery_module import DiscoveryModule
@@ -351,7 +351,7 @@ _WIIM_PROJECTS = st.sampled_from(["WiiM_Pro", "WiiM_Mini", "WiiM_Amp", "WiiM_Ult
         r"192\.168\.\d{1,3}\.\d{1,3}", fullmatch=True
     ),
 )
-@settings(max_examples=100)
+@settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
 def test_pbt_discovery_result_field_completeness(
     project: str,
     device_name: str,

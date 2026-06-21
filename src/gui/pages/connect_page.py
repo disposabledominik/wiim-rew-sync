@@ -52,7 +52,7 @@ class ConnectPage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ConnectPage")
-        self._device_cards: list[DeviceCard] = []
+        self._device_cards: list[tuple[DeviceCard, str]] = []  # (card, ip) pairs
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -73,7 +73,7 @@ class ConnectPage(QWidget):
             self._empty_widget.setVisible(False)
 
     def set_devices(self, devices: list[dict]) -> None:
-        """Populate the page with discovered device cards.
+        """Populate the page with discovered device cards (replaces all current cards).
 
         Each dict should have keys: name, model, ip, firmware, role.
 
@@ -95,24 +95,39 @@ class ConnectPage(QWidget):
         self._devices_scroll.setVisible(True)
 
         for device in devices:
-            card = DeviceCard(self._devices_container)
-            card.set_device_info(
-                name=device.get("name", "Unknown Device"),
-                model=device.get("model", ""),
-                ip=device.get("ip", ""),
-                firmware=device.get("firmware", ""),
-                role=device.get("role", ""),
-            )
-            device_ip = device.get("ip", "")
-            card.clicked.connect(lambda _=None, ip=device_ip: self._on_card_clicked(ip))
-            self._devices_layout.addWidget(card)
-            self._device_cards.append(card)
+            self._add_device_card(device)
 
         # Auto-select single device (Req 2.4)
         if len(devices) == 1:
             ip = devices[0].get("ip", "")
             if ip:
                 self.device_selected.emit(ip)
+
+    def update_devices(self, devices: list[dict]) -> None:
+        """Progressively update device cards (add new ones, keep existing).
+
+        Called during progressive discovery — adds cards for newly-discovered
+        devices without clearing existing ones. Hides scanning state once at
+        least one device is shown.
+
+        Args:
+            devices: Cumulative list of all devices found so far.
+        """
+        # Build set of IPs already shown
+        shown_ips = {ip for _card, ip in self._device_cards}
+
+        new_devices = [d for d in devices if d.get("ip", "") not in shown_ips]
+        if not new_devices:
+            return
+
+        # First progressive update — switch from scanning to device list
+        if not self._device_cards:
+            self._scanning_widget.setVisible(False)
+            self._empty_widget.setVisible(False)
+            self._devices_scroll.setVisible(True)
+
+        for device in new_devices:
+            self._add_device_card(device)
 
     def clear(self) -> None:
         """Reset the page to its initial scanning state."""
@@ -268,10 +283,25 @@ class ConnectPage(QWidget):
 
     def _clear_cards(self) -> None:
         """Remove all device cards from the layout."""
-        for card in self._device_cards:
+        for card, _ip in self._device_cards:
             self._devices_layout.removeWidget(card)
             card.deleteLater()
         self._device_cards.clear()
+
+    def _add_device_card(self, device: dict) -> None:
+        """Create and add a single device card to the layout."""
+        card = DeviceCard(self._devices_container)
+        card.set_device_info(
+            name=device.get("name", "Unknown Device"),
+            model=device.get("model", ""),
+            ip=device.get("ip", ""),
+            firmware=device.get("firmware", ""),
+            role=device.get("role", ""),
+        )
+        device_ip = device.get("ip", "")
+        card.clicked.connect(lambda _=None, ip=device_ip: self._on_card_clicked(ip))
+        self._devices_layout.insertWidget(self._devices_layout.count() - 1, card)
+        self._device_cards.append((card, device_ip))
 
     @Slot(str)
     def _on_card_clicked(self, ip: str) -> None:

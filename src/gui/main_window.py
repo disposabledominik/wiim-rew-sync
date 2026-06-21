@@ -534,6 +534,7 @@ class MainWindow(QMainWindow):
 
         # --- 3. AsyncBridge → handlers ---
         self._bridge.discovery_complete.connect(self._on_discovery_complete)
+        self._bridge.discovery_progress.connect(self._on_discovery_progress)
         self._bridge.capabilities_ready.connect(self._on_capabilities_ready)
         self._bridge.peq_ready.connect(self._on_peq_ready)
         self._bridge.write_complete.connect(self._on_write_complete)
@@ -1067,6 +1068,18 @@ class MainWindow(QMainWindow):
         self._connect_page.set_scanning(False)
         self._connect_page.set_devices(devices)
 
+    @Slot(list)
+    def _on_discovery_progress(self, devices: list) -> None:
+        """Handle progressive discovery updates — add new device cards.
+
+        Called as devices are found during parallel discovery. Updates the
+        ConnectPage incrementally without waiting for discovery to complete.
+
+        Args:
+            devices: Cumulative list of all devices found so far.
+        """
+        self._connect_page.update_devices(devices)
+
     @Slot(object)
     def _on_capabilities_ready(self, caps: object) -> None:
         """Handle device capabilities — create adapters, determine flow, and advance.
@@ -1506,10 +1519,19 @@ class MainWindow(QMainWindow):
     async def _do_discovery(self) -> None:
         """Run device discovery and emit results via bridge signal.
 
-        Calls DiscoveryModule.discover() and transforms each DeviceInfo
-        into a dict with keys "name", "ip", "model" for the ConnectPage.
+        Uses progressive discovery — devices appear in the UI as soon as
+        they're found rather than waiting for the full scan to complete.
         """
-        devices = await self._discovery_module.discover()
+
+        def _on_found(devices: list[DeviceInfo]) -> None:
+            """Progressive callback — emit partial results to the UI."""
+            device_list = [
+                {"name": d.name, "ip": d.ip, "model": d.model}
+                for d in devices
+            ]
+            self._bridge.discovery_progress.emit(device_list)
+
+        devices = await self._discovery_module.discover(on_found=_on_found)
         # Cache raw DeviceInfo objects for device picker dialogs
         self._discovered_devices = devices
         device_list = [

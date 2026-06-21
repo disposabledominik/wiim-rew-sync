@@ -1,10 +1,11 @@
 """
 Discovery orchestrator — combines mDNS and subnet scan strategies.
 
-Implements the full discovery sequence:
-  1. mDNS `_wiim._tcp.local.`
-  2. Fallback mDNS `_linkplay._tcp.local.`
-  3. Fallback subnet scan with `getStatusEx` probe
+Implements a parallel discovery strategy for fast, responsive device detection:
+  1. Start mDNS probe (`_wiim._tcp.local.` then `_linkplay._tcp.local.`)
+  2. After a short grace period, start subnet scan in parallel
+  3. Emit results progressively as devices are found (via on_found callback)
+  4. Deduplicate by IP across both strategies
 
 Returns an empty list (no exception) if nothing is found.
 
@@ -13,6 +14,7 @@ Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -26,14 +28,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("wiim_rew_sync.discovery")
 
+# Grace period (seconds) — how long to wait for mDNS results before
+# launching the subnet scan in parallel. Short enough to feel responsive,
+# long enough for mDNS to win on healthy networks.
+_MDNS_GRACE_PERIOD: float = 1.5
+
 
 async def _enrich_device(device: DeviceInfo, timeout: float) -> DeviceInfo:
     """Enrich a DeviceInfo by calling getStatusEx if model/firmware are empty.
 
+    Only needed for mDNS-discovered devices whose TXT records may be sparse.
+    Subnet-scanned devices already have full info from getStatusEx.
+
     Falls back to the original device info if the probe fails.
     """
     if device.model and device.firmware:
-        return device  # Already populated (e.g. from TXT records)
+        return device  # Already populated (e.g. from TXT records or subnet scan)
 
     from src.adapters.wiim_http import WiiMHttpClient
 
@@ -62,10 +72,12 @@ async def _enrich_device(device: DeviceInfo, timeout: float) -> DeviceInfo:
 class DiscoveryModule:
     """Orchestrates WiiM device discovery using mDNS and subnet scanning.
 
-    Discovery strategy:
-      1. Probe `_wiim._tcp.local.` via zeroconf
-      2. If empty → probe `_linkplay._tcp.local.` via zeroconf
-      3. If still empty → subnet scan with `getStatusEx` probes
+    Discovery strategy (parallel with short-circuit):
+      1. Start mDNS probe (tries _wiim._tcp.local. then _linkplay._tcp.local.)
+      2. After 1.5s grace period: if mDNS already found devices, skip subnet scan
+      3. Otherwise, start subnet scan in parallel with remaining mDNS time
+      4. Deduplicate results by IP address
+      5. Emit results progressively via on_found callback (if provided)
 
     Always returns a list (empty if no devices found). Never raises exceptions
     to the caller.
@@ -90,53 +102,160 @@ class DiscoveryModule:
             http_client_factory=http_client_factory,
         )
 
-    async def discover(self) -> list[DeviceInfo]:
-        """Run the full discovery sequence.
+    async def discover(
+        self,
+        on_found: Callable[[list[DeviceInfo]], None] | None = None,
+    ) -> list[DeviceInfo]:
+        """Run the parallel discovery sequence.
 
-        Tries mDNS first (`_wiim._tcp.local.`, then `_linkplay._tcp.local.`),
-        falling back to subnet scan if mDNS yields no results.
+        Args:
+            on_found: Optional callback invoked each time new devices are
+                discovered. Receives the cumulative list of all devices found
+                so far (deduplicated by IP). Called from the async worker thread.
 
         Returns:
-            List of discovered DeviceInfo objects. Empty list if nothing found.
+            Final list of discovered DeviceInfo objects. Empty list if nothing found.
             Never raises exceptions.
         """
         try:
-            devices = await self._zeroconf.discover()
-            if devices:
-                # Enrich devices with model/firmware from getStatusEx
-                import asyncio
-
-                enriched = await asyncio.gather(
-                    *[_enrich_device(d, self._timeout) for d in devices]
-                )
-                self._devices = list(enriched)
-                logger.info("mDNS discovery found %d device(s)", len(self._devices))
-                return self._devices
-
-            # Fallback to subnet scan
-            logger.info("mDNS found no devices; falling back to subnet scan")
-            devices = await self._scanner.scan()
-            self._devices = devices
-            if devices:
-                logger.info("Subnet scan found %d device(s)", len(devices))
-            else:
-                logger.info("No WiiM devices found on network")
-            return self._devices
-
+            return await self._discover_parallel(on_found)
         except Exception:
             logger.exception("Unexpected error during discovery")
             return []
 
-    async def refresh(self) -> list[DeviceInfo]:
+    async def _discover_parallel(
+        self,
+        on_found: Callable[[list[DeviceInfo]], None] | None,
+    ) -> list[DeviceInfo]:
+        """Core parallel discovery logic."""
+        seen_ips: set[str] = set()
+        all_devices: list[DeviceInfo] = []
+
+        def _add_devices(new_devices: list[DeviceInfo]) -> bool:
+            """Add devices to the result set, deduplicating by IP.
+
+            Returns True if any new devices were added.
+            """
+            added = False
+            for d in new_devices:
+                if d.ip not in seen_ips:
+                    seen_ips.add(d.ip)
+                    all_devices.append(d)
+                    added = True
+            return added
+
+        # Phase 1: Start mDNS probe
+        mdns_task = asyncio.create_task(self._zeroconf.discover())
+
+        # Wait for the grace period — give mDNS a head start
+        grace = min(_MDNS_GRACE_PERIOD, self._timeout)
+        await asyncio.sleep(grace)
+
+        # Check if mDNS already found devices during the grace period
+        if mdns_task.done():
+            mdns_devices = mdns_task.result()
+            if mdns_devices:
+                enriched = await self._enrich_mdns_devices(mdns_devices)
+                _add_devices(enriched)
+                self._devices = list(all_devices)
+                if on_found:
+                    on_found(list(all_devices))
+                logger.info(
+                    "mDNS discovery found %d device(s) within grace period",
+                    len(all_devices),
+                )
+                return self._devices
+
+        # Phase 2: mDNS hasn't delivered yet — start subnet scan in parallel
+        logger.info("mDNS grace period elapsed; starting subnet scan in parallel")
+        scan_task = asyncio.create_task(self._scanner.scan())
+
+        # Wait for mDNS to complete (remaining time)
+        remaining = max(0.0, self._timeout - grace)
+        if not mdns_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(mdns_task), timeout=remaining)
+            except TimeoutError:
+                logger.debug("mDNS timed out after %.1fs total", self._timeout)
+
+        # Collect mDNS results (if any)
+        if mdns_task.done() and not mdns_task.cancelled():
+            try:
+                mdns_devices = mdns_task.result()
+                if mdns_devices:
+                    enriched = await self._enrich_mdns_devices(mdns_devices)
+                    if _add_devices(enriched):
+                        if on_found:
+                            on_found(list(all_devices))
+                        logger.info(
+                            "mDNS found %d device(s) after grace period",
+                            len(mdns_devices),
+                        )
+            except Exception:
+                logger.debug("mDNS task raised an exception", exc_info=True)
+
+        # If mDNS found devices, we can cancel the subnet scan (it's redundant)
+        if all_devices:
+            scan_task.cancel()
+            try:
+                await scan_task
+            except asyncio.CancelledError:
+                pass
+            self._devices = list(all_devices)
+            return self._devices
+
+        # Phase 3: Wait for subnet scan results
+        try:
+            scan_devices = await scan_task
+        except asyncio.CancelledError:
+            scan_devices = []
+        except Exception:
+            logger.exception("Subnet scan failed")
+            scan_devices = []
+
+        # Subnet-scanned devices already have full info from getStatusEx —
+        # no enrichment needed (they come from _parse_status_response which
+        # extracts name, model, firmware, uuid directly).
+        if scan_devices:
+            _add_devices(scan_devices)
+            if on_found:
+                on_found(list(all_devices))
+            logger.info("Subnet scan found %d device(s)", len(scan_devices))
+        else:
+            logger.info("No WiiM devices found on network")
+
+        self._devices = list(all_devices)
+        return self._devices
+
+    async def _enrich_mdns_devices(
+        self, devices: list[DeviceInfo]
+    ) -> list[DeviceInfo]:
+        """Enrich mDNS-discovered devices that lack model/firmware info.
+
+        Only calls getStatusEx for devices whose TXT records didn't provide
+        the model and firmware fields. Runs enrichment in parallel.
+        """
+        enriched = await asyncio.gather(
+            *[_enrich_device(d, self._timeout) for d in devices]
+        )
+        return list(enriched)
+
+    async def refresh(
+        self,
+        on_found: Callable[[list[DeviceInfo]], None] | None = None,
+    ) -> list[DeviceInfo]:
         """Re-run the full discovery sequence and return updated results.
 
         Clears previous results before re-running discovery.
+
+        Args:
+            on_found: Optional progressive callback (same as discover()).
 
         Returns:
             Updated list of discovered DeviceInfo objects. Empty list if nothing found.
         """
         self._devices = []
-        return await self.discover()
+        return await self.discover(on_found=on_found)
 
     @property
     def devices(self) -> list[DeviceInfo]:

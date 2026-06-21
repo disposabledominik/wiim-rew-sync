@@ -25,6 +25,7 @@ class AsyncBridge(QObject):
 
     # --- Signals for operation results ---
     discovery_complete = Signal(list)       # list[DeviceInfo]
+    discovery_progress = Signal(list)       # list[DeviceInfo] — progressive updates
     capabilities_ready = Signal(object)     # DeviceCapabilities
     peq_ready = Signal(object)             # PEQSettings
     write_complete = Signal(object)        # WriteResult
