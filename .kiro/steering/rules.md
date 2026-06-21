@@ -65,3 +65,12 @@ These rules are mandatory for all work in this codebase. They encode hard-won le
 17. **Do not skip the CLI phase.** Task 32 is a hard gate. No GUI work begins until CLI validation passes against real hardware.
 
 18. **Uncertainty Protocol**: If endpoint behaviour is uncertain — stop, document the uncertainty in `docs/corrections.md` as a new row, create a `# TODO:` comment, set the relevant capability flag to the most conservative (safe) value, and continue with confirmed functionality only.
+
+
+---
+
+## Smoke Test Issue Tracking
+
+19. **Every GUI bug found during smoke testing MUST be logged to `docs/smoke_test_issues.md`.** Add a new row with issue number, description, status (`OPEN`), test status (`NO`), and notes. When a fix is applied, update the status to `FIXED` and record the commit hash. This is automatic — do not wait for the user to request it.
+
+20. **When fixing a smoke test issue, update its status in `docs/smoke_test_issues.md` in the same commit.** Never fix an issue without updating the tracker.

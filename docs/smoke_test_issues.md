@@ -31,3 +31,6 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 18 | Filter table too narrow (400px cap), only 3 columns visible | FIXED | N/A | `791f04a`, current | Removed max-width/centering, columns now stretch to fill available width |
 | 19 | RoomFit mode: FiltersPage shows PEQ options instead of RoomFit UI | FIXED | NO | current | _on_eq_type_selected now calls set_roomfit_mode(True/False) |
 | 20 | Presets on Device view shows nothing when navigated to | FIXED | NO | current | Added _load_device_presets() trigger on navigation + _do_list_presets async |
+| 21 | Sidebar collapsed mode shows blank buttons (no icons) | FIXED | N/A | current | Added emoji icons as placeholders for collapsed mode |
+| 22 | Presets on Device shows PEQ presets but no RoomFit profiles | FIXED | NO | current | _do_list_presets now fetches both PEQ + RoomFit and populates both sections |
+| 23 | RoomFit FiltersPage profile dropdown is empty | FIXED | NO | current | Added _do_list_roomfit_profiles async fetch when EQ type "roomfit" is selected |

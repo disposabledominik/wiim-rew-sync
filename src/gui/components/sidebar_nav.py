@@ -30,16 +30,19 @@ from src.gui.constants import (
 class _NavItem(QPushButton):
     """Single navigation item: icon area + text label."""
 
-    def __init__(self, key: str, label: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, key: str, label: str, icon_char: str = "", parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.key = key
         self._label_text = label
+        self._icon_char = icon_char
         self._active = False
 
         self.setFixedHeight(LIST_ITEM_HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setCheckable(True)
-        self.setText(label)
+        self.setText(f"{icon_char}  {label}" if icon_char else label)
         self.setToolTip(label)
         self._apply_style()
 
@@ -52,10 +55,11 @@ class _NavItem(QPushButton):
     def set_collapsed(self, collapsed: bool) -> None:
         """Toggle between icon-only and icon+label display."""
         if collapsed:
-            self.setText("")
+            self.setText(self._icon_char)
             self.setToolTip(self._label_text)
         else:
-            self.setText(self._label_text)
+            text = f"{self._icon_char}  {self._label_text}" if self._icon_char else self._label_text
+            self.setText(text)
             self.setToolTip("")
 
     def _apply_style(self) -> None:
@@ -99,12 +103,12 @@ class SidebarNav(QWidget):
     collapse_toggled = Signal(bool)
     """Emitted when the collapse state changes. True means collapsed (icon-only)."""
 
-    _NAV_ITEMS: tuple[tuple[str, str], ...] = (
-        ("home", "Home"),
-        ("presets_device", "Presets on Device"),
-        ("my_presets", "My Saved Presets"),
-        ("settings", "Settings"),
-        ("help", "Help"),
+    _NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
+        ("home", "Home", "\U0001F3E0"),
+        ("presets_device", "Presets on Device", "\U0001F3B6"),
+        ("my_presets", "My Saved Presets", "\U0001F4BE"),
+        ("settings", "Settings", "\u2699"),
+        ("help", "Help", "\u2753"),
     )
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -143,8 +147,8 @@ class SidebarNav(QWidget):
         layout.addWidget(self._header_widget)
 
         # Navigation items
-        for key, label in self._NAV_ITEMS:
-            item = _NavItem(key, label, self)
+        for key, label, icon in self._NAV_ITEMS:
+            item = _NavItem(key, label, icon, self)
             item.clicked.connect(self._on_item_clicked)
             self._nav_buttons[key] = item
             layout.addWidget(item)

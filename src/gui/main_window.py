@@ -596,6 +596,10 @@ class MainWindow(QMainWindow):
         elif eq_type == "roomfit":
             self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
             self._filters_page.set_roomfit_mode(True)
+            # Populate RoomFit profile dropdown from device
+            self._bridge.run_async(
+                self._bridge_wrapper("list_roomfit", self._do_list_roomfit_profiles())
+            )
 
         self._wizard_controller.advance(summary=eq_type.upper())
 
@@ -1342,34 +1346,66 @@ class MainWindow(QMainWindow):
             self._bridge_wrapper("list_presets", self._do_list_presets())
         )
 
-    async def _do_list_presets(self) -> None:
-        """Fetch device PEQ preset list and populate PresetsDeviceView."""
+    async def _do_list_roomfit_profiles(self) -> None:
+        """Fetch RoomFit profile names and populate FiltersPage dropdown."""
         assert self._wiim_adapter is not None
 
         source_name = self._wizard_controller.state.selected_source or "wifi"
         try:
-            presets = await self._wiim_adapter.list_peq_profiles(source_name)
+            if self._wiim_adapter.capabilities.roomfit_level >= 1:
+                profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
+                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
+                self._filters_page.set_roomfit_profiles(profile_names)
+            else:
+                self._filters_page.set_roomfit_profiles([])
         except Exception:
-            logger.warning("Failed to list device presets", exc_info=True)
-            self._presets_device_view.set_peq_unavailable()
-            return
+            logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
+            self._filters_page.set_roomfit_profiles([])
 
-        if not presets:
-            self._presets_device_view.set_peq_unavailable()
-            return
+    async def _do_list_presets(self) -> None:
+        """Fetch device PEQ preset list and RoomFit profiles, populate PresetsDeviceView."""
+        assert self._wiim_adapter is not None
 
-        # Convert preset dicts (keys: Name, channelMode, Type) to PresetItem objects
+        source_name = self._wizard_controller.state.selected_source or "wifi"
         from src.gui.views.presets_device_view import PresetItem
 
-        items = [
-            PresetItem(
-                name=p.get("Name", "Unnamed"),
-                preset_type="PEQ",
-                channel_mode=p.get("channelMode", "Stereo"),
-            )
-            for p in presets
-        ]
-        self._presets_device_view.set_peq_presets(items)
+        # Fetch PEQ presets
+        try:
+            if self._wiim_adapter.capabilities.supports_profile_enumeration:
+                peq_presets = await self._wiim_adapter.list_peq_profiles(source_name)
+                peq_items = [
+                    PresetItem(
+                        name=p.get("Name", "Unnamed"),
+                        preset_type="PEQ",
+                        channel_mode=p.get("channelMode", "Stereo"),
+                    )
+                    for p in peq_presets
+                ]
+                self._presets_device_view.set_peq_presets(peq_items)
+            else:
+                self._presets_device_view.set_peq_unavailable()
+        except Exception:
+            logger.warning("Failed to list PEQ presets", exc_info=True)
+            self._presets_device_view.set_peq_unavailable()
+
+        # Fetch RoomFit profiles
+        try:
+            if self._wiim_adapter.capabilities.roomfit_level >= 1:
+                rf_profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
+                rf_items = [
+                    PresetItem(
+                        name=p.get("Name", "Unnamed"),
+                        preset_type="RoomFit",
+                        channel_mode=p.get("channelMode", "Stereo"),
+                    )
+                    for p in rf_profiles
+                ]
+                self._presets_device_view.set_roomfit_profiles(rf_items)
+            else:
+                self._presets_device_view.set_roomfit_hidden()
+        except Exception:
+            logger.warning("Failed to list RoomFit profiles", exc_info=True)
+            self._presets_device_view.set_roomfit_hidden()
 
     # ------------------------------------------------------------------
     # Navigation handlers
