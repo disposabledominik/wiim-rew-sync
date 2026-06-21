@@ -28,22 +28,22 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 15 | RoomFit flow: Connect step missing checkmark after flow type switch | FIXED | NO | `791f04a` | _on_flow_type_changed now replays completed step summaries |
 | 16 | RoomFit flow: "No source selected" when pulling from device | FIXED | NO | `791f04a` | Defaults to "wifi" when no source explicitly set (RoomFit is device-global) |
 | 17 | Home button appears to do nothing | WONTFIX | N/A | — | Working as designed: "home" = return to current wizard step. If already there, no visible change. |
-| 18 | Filter table too narrow (400px cap), only 3 columns visible | FIXED | N/A | `791f04a`, current | Removed max-width/centering, columns now stretch to fill available width |
-| 19 | RoomFit mode: FiltersPage shows PEQ options instead of RoomFit UI | FIXED | NO | current | _on_eq_type_selected now calls set_roomfit_mode(True/False) |
-| 20 | Presets on Device view shows nothing when navigated to | FIXED | NO | current | Added _load_device_presets() trigger on navigation + _do_list_presets async |
-| 21 | Sidebar collapsed mode shows blank buttons (no icons) | FIXED | N/A | current | Added emoji icons as placeholders for collapsed mode |
-| 22 | Presets on Device shows PEQ presets but no RoomFit profiles | FIXED | NO | current | _do_list_presets now fetches both PEQ + RoomFit and populates both sections |
-| 23 | RoomFit FiltersPage profile dropdown is empty | FIXED | NO | current | Added _do_list_roomfit_profiles async fetch when EQ type "roomfit" is selected |
-| 24 | Presets on Device: Export/Save/Load buttons do nothing (no signal wired) | FIXED | NO | current | Fully implemented: Export reads preset then writes REW file; Save creates local Profile; Load reads preset into Review |
-| 25 | Presets on Device: Can select PEQ + RoomFit items simultaneously | FIXED | NO | current | Added mutual exclusion: selecting in one list clears the other |
-| 26 | Presets on Device: Copy to Another Device doesn't actually write preset to target | FIXED | NO | current | Reads filters, connects to target, writes via SafeWrite, saves as named preset; shows success/failure status |
-| 27 | RoomFit FiltersPage: No way to progress after selecting profile from dropdown | FIXED | NO | current | Wired roomfit_profile_selected; reads profile with L/R mode handling; advances to Review |
-| 28 | Review page shows single 24-row table for L/R instead of separate L/R tabs | OPEN | NO | — | _on_peq_ready uses set_filters() for all modes; should use set_lr_filters() for L/R |
-| 29 | Export as REW: L/R mode creates single file with 10 bands instead of two files | OPEN | NO | — | Export logic doesn't branch on channel_mode; needs to generate two files for L/R |
-| 30 | Export as REW: file doesn't get .txt extension when not typed by user | OPEN | NO | — | QFileDialog doesn't auto-append extension on some platforms |
-| 31 | Save to My Presets: no visible result after processing, nothing in My Presets | OPEN | NO | — | Save may succeed but no UI refresh of MyPresetsView; also check if save actually writes |
-| 32 | Copy to Another Device: status message not shown long enough to read | OPEN | NO | — | Success banner auto-dismisses too quickly or gets cleared by finish_operation |
-| 33 | Copy to Another Device: only pushes to first device when multiple selected | OPEN | NO | — | Loop only processes first item or sequential calls clobber each other |
-| 34 | Copy to Another Device: RoomFit profile saved as PEQ on target (wrong type) | OPEN | NO | — | Copy logic doesn't branch on preset_type for target save method |
-| 35 | Source page shows all canonical sources regardless of device model | OPEN | NO | — | Should filter based on device model + discovered sources with custom EQ |
-| 36 | WiiM Mini shows RoomFit in EQ Type despite not supporting it | OPEN | NO | — | Should check roomfit_level and hide RoomFit option when level < 2 |
+| 18 | Filter table too narrow (400px cap), only 3 columns visible | FIXED | N/A | `791f04a`, `5f355b5` | Removed max-width/centering, columns now stretch to fill available width |
+| 19 | RoomFit mode: FiltersPage shows PEQ options instead of RoomFit UI | FIXED | NO | `5f355b5` | _on_eq_type_selected now calls set_roomfit_mode(True/False) |
+| 20 | Presets on Device view shows nothing when navigated to | FIXED | NO | `5f355b5` | Added _load_device_presets() trigger on navigation + _do_list_presets async |
+| 21 | Sidebar collapsed mode shows blank buttons (no icons) | FIXED | N/A | `b6bcc36` | Added emoji icons as placeholders for collapsed mode |
+| 22 | Presets on Device shows PEQ presets but no RoomFit profiles | FIXED | NO | `b6bcc36` | _do_list_presets now fetches both PEQ + RoomFit and populates both sections |
+| 23 | RoomFit FiltersPage profile dropdown is empty | FIXED | NO | `b6bcc36` | Added _do_list_roomfit_profiles async fetch when EQ type "roomfit" is selected |
+| 24 | Presets on Device: Export/Save/Load buttons do nothing (no signal wired) | FIXED | NO | `69d09c2`, `c55918e` | Fully implemented: Export reads preset then writes REW file; Save creates local Profile; Load reads preset into Review |
+| 25 | Presets on Device: Can select PEQ + RoomFit items simultaneously | FIXED | NO | `69d09c2` | Added mutual exclusion: selecting in one list clears the other |
+| 26 | Presets on Device: Copy to Another Device doesn't actually write preset to target | FIXED | NO | `c55918e` | Reads filters, connects to target, writes via SafeWrite, saves as named preset; shows success/failure status |
+| 27 | RoomFit FiltersPage: No way to progress after selecting profile from dropdown | FIXED | NO | `69d09c2` | Wired roomfit_profile_selected; reads profile with L/R mode handling; advances to Review |
+| 28 | Review page shows single 24-row table for L/R instead of separate L/R tabs | FIXED | NO | `d0aa100` | _on_peq_ready now checks channel_mode and calls set_lr_filters() for L/R mode |
+| 29 | Export as REW: L/R mode creates single file with 10 bands instead of two files | FIXED | NO | `d0aa100` | Export logic branches on channel_mode; uses ExportDialog for dual-file L/R export |
+| 30 | Export as REW: file doesn't get .txt extension when not typed by user | FIXED | NO | `d0aa100` | Added if not path.lower().endswith('.txt'): path += '.txt' in stereo export path |
+| 31 | Save to My Presets: no visible result after processing, nothing in My Presets | FIXED | NO | `d0aa100` | Added _profile_repository.list() → set_presets() refresh after save; also refresh on nav to My Presets |
+| 32 | Copy to Another Device: status message not shown long enough to read | FIXED | NO | `d0aa100` | finish_operation() no longer clears banner unconditionally; only clears if still showing progress spinner |
+| 33 | Copy to Another Device: only pushes to first device when multiple selected | FIXED | NO | `d0aa100` | Replaced per-item run_async loop with single _do_copy_presets_batch coroutine |
+| 34 | Copy to Another Device: RoomFit profile saved as PEQ on target (wrong type) | FIXED | NO | `d0aa100` | _do_copy_preset_to_device now branches on preset_type; uses write_roomfit() for RoomFit |
+| 35 | Source page shows all canonical sources regardless of device model | FIXED | NO | `d0aa100` | Model-based source fallback (Mini→wifi+bluetooth; Pro/Ultra→full set) instead of blanket canonical list |
+| 36 | WiiM Mini shows RoomFit in EQ Type despite not supporting it | FIXED | NO | `d0aa100` | Added model-based roomfit blocklist; Mini forced to PEQ_ONLY flow even if roomfit_level >= 2 |

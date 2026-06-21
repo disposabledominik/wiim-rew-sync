@@ -78,8 +78,10 @@ def _make_caps(roomfit_level: int = 0) -> MagicMock:
     caps = MagicMock()
     caps.roomfit_level = roomfit_level
     caps.device_name = "WiiM Pro Plus"
+    caps.model = "WiiM Pro Plus"
     caps.source_names = ["wifi", "optical", "hdmi"]
     caps.active_source = "wifi"
+    caps.supports_profile_enumeration = False
     return caps
 
 
@@ -88,8 +90,10 @@ def _make_empty_sources_caps() -> MagicMock:
     caps = MagicMock()
     caps.roomfit_level = 0
     caps.device_name = "WiiM Mini"
+    caps.model = "WiiM Mini"
     caps.source_names = []
     caps.active_source = ""
+    caps.supports_profile_enumeration = False
     return caps
 
 
@@ -293,25 +297,30 @@ class TestProbeError:
 
 
 class TestEmptySourcesError:
-    """Integration test: empty source_names triggers operation_error."""
+    """Integration test: empty source_names uses model-based fallback (smoke fix #1)."""
 
-    def test_empty_sources_shows_error(self, window) -> None:
-        """Mock capabilities with empty source_names, verify operation_error emitted.
+    def test_empty_sources_uses_model_fallback(self, window) -> None:
+        """Mock capabilities with empty source_names, verify model-based fallback.
 
-        Requirements: 2.7
+        Previously this was an error condition (Req 2.7), but smoke fix #1
+        changed behavior to use model-based defaults when the device doesn't
+        report InputList. WiiM Mini gets ["wifi", "bluetooth"].
+
+        Requirements: 2.7, smoke fix #1, smoke fix #35.
         """
         # Set up device selection first
         window._on_device_selected("192.168.1.100")
 
-        # Create caps with empty source_names
+        # Create caps with empty source_names (WiiM Mini)
         caps = _make_empty_sources_caps()
         window._on_capabilities_ready(caps)
 
-        # Verify operation_error emitted (no sources found)
-        window._bridge.operation_error.emit.assert_called_once()
-        error_type, message = window._bridge.operation_error.emit.call_args[0]
-        assert error_type == "NoSources"
-        assert "no audio sources" in message.lower()
+        # Verify NO error — fallback sources used instead
+        window._bridge.operation_error.emit.assert_not_called()
 
-        # Wizard should NOT have advanced past CONNECT
-        assert window._wizard_controller.current_step == WizardStep.CONNECT
+        # Wizard should have advanced (PEQ_ONLY flow for Mini with roomfit_level=0)
+        from src.gui.wizard_controller import FlowType
+
+        assert window._wizard_controller.flow_type == FlowType.PEQ_ONLY
+        # Wizard advances past CONNECT since fallback sources work
+        assert window._wizard_controller.current_step != WizardStep.CONNECT

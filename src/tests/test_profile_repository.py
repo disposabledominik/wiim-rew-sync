@@ -308,7 +308,7 @@ def st_lr_profile(draw: st.DrawFn) -> Profile:
 @given(profile=st.one_of(st_stereo_profile(), st_lr_profile()))
 @settings(
     max_examples=100,
-    suppress_health_check=[HealthCheck.function_scoped_fixture],
+    suppress_health_check=[HealthCheck.function_scoped_fixture, HealthCheck.too_slow],
 )
 def test_channel_mode_key_invariant(profile: Profile, tmp_path: object) -> None:
     """Property: save/load round-trip preserves correct filter key structure.

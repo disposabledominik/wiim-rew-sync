@@ -185,6 +185,7 @@ class MainWindow(QMainWindow):
         self._capability_prober: CapabilityProber | None = None
         self._wiim_adapter: WiiMAdapter | None = None
         self._safe_write: SafeWrite | None = None
+        self._device_caps: object | None = None
 
         # Discovered devices cache (populated by discovery, used by device picker)
         self._discovered_devices: list[DeviceInfo] = []
@@ -720,36 +721,65 @@ class MainWindow(QMainWindow):
     def _on_export_requested(self) -> None:
         """Handle export request from ReviewPage — open file dialog and write REW file.
 
-        Guards against concurrent operations, opens a QFileDialog for the save
-        path, then launches REWGenerator.generate_file via AsyncBridge.
+        For stereo mode: single file via QFileDialog.
+        For L/R mode: dual-file export via ExportDialog (smoke #29).
+        Ensures .txt extension is appended when missing (smoke #30).
 
         Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
         """
         if self._is_busy():
             return
 
-        # Get default export folder from settings
-        default_dir = self._settings.rew_export_folder or str(Path.home())
+        state = self._wizard_controller.state
+        channel_mode = (state.channel_mode or "Stereo").lower()
+        filters = state.current_filters
 
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export REW EQ File",
-            default_dir,
-            "REW EQ Files (*.txt)",
-        )
+        if channel_mode in ("l/r", "lr"):
+            # L/R mode: use ExportDialog for dual-file selection (smoke #29)
+            from src.gui.dialogs.export_dialog import ExportDialog
 
-        # User cancelled the dialog
-        if not path:
-            logger.debug("Export cancelled by user")
-            return
+            paths = ExportDialog.get_paths(channel_mode="lr", parent=self)
+            if paths is None:
+                logger.debug("L/R export cancelled by user")
+                return
 
-        # Gather filters from wizard state
-        filters = self._wizard_controller.state.current_filters
+            path_l, path_r = paths
+            # Split filters into L/R halves
+            mid = len(filters) // 2
+            filters_l = filters[:mid]
+            filters_r = filters[mid:]
 
-        self._bridge.run_async(
-            self._bridge_wrapper("export", self._do_export(filters, path))
-        )
-        logger.info("Export as REW file requested: %s", path)
+            self._bridge.run_async(
+                self._bridge_wrapper(
+                    "export_lr",
+                    self._do_export_lr(filters_l, filters_r, path_l, path_r),
+                )
+            )
+            logger.info("Export as L/R REW files requested: %s, %s", path_l, path_r)
+        else:
+            # Stereo mode: single file dialog
+            default_dir = self._settings.rew_export_folder or str(Path.home())
+
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export REW EQ File",
+                default_dir,
+                "REW EQ Files (*.txt)",
+            )
+
+            # User cancelled the dialog
+            if not path:
+                logger.debug("Export cancelled by user")
+                return
+
+            # Ensure .txt extension (smoke #30)
+            if not path.lower().endswith(".txt"):
+                path += ".txt"
+
+            self._bridge.run_async(
+                self._bridge_wrapper("export", self._do_export(filters, path))
+            )
+            logger.info("Export as REW file requested: %s", path)
 
     @Slot(str)
     def _on_name_confirmed(self, name: str) -> None:
@@ -920,18 +950,45 @@ class MainWindow(QMainWindow):
         # Check for empty source_names — device reports no audio sources (Req 2.7)
         source_names = getattr(caps, "source_names", [])
         if not source_names:
-            # Fallback: WiiM devices always support "wifi" even if getStatusEx
-            # doesn't report InputList. Use canonical defaults confirmed by
-            # hardware testing (see src/cli/main.py _CANONICAL_SOURCES).
-            source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
+            # Fallback: use model-based source mapping when device doesn't report
+            # InputList (smoke #35). Only include sources that actually exist on
+            # the device model. See docs/wiim_api_notes.md for model capabilities.
+            model_lower = (getattr(caps, "model", "") or "").lower()
+            if "mini" in model_lower:
+                source_names = ["wifi", "bluetooth"]
+            elif "pro" in model_lower or "ultra" in model_lower:
+                source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
+            elif "amp" in model_lower:
+                source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
+            else:
+                # Generic fallback for unknown models
+                source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
             logger.warning(
-                "Device reported no source_names; using canonical defaults: %s",
+                "Device reported no source_names; using model-based defaults "
+                "(model=%s): %s",
+                model_lower,
                 source_names,
             )
 
+        # Store capabilities for later use (smoke #35, #36)
+        self._device_caps = caps
+
         # Determine flow type and advance wizard
-        if roomfit_level < 2:
+        # Guard: some devices may incorrectly report roomfit_level >= 2 due to
+        # firmware variations. Use model name as secondary check (smoke #36).
+        model_str = (getattr(caps, "model", "") or "").lower()
+        roomfit_blocked_models = ("mini",)  # Models known to not support RoomFit
+        is_roomfit_blocked = any(m in model_str for m in roomfit_blocked_models)
+
+        if roomfit_level < 2 or is_roomfit_blocked:
             # PEQ-only device — skip EQ_TYPE step (Req 1.10)
+            if is_roomfit_blocked and roomfit_level >= 2:
+                logger.warning(
+                    "Device model '%s' reports roomfit_level=%d but RoomFit is "
+                    "not supported on this model; forcing PEQ_ONLY flow (smoke #36)",
+                    model_str,
+                    roomfit_level,
+                )
             self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
             self._wizard_controller.advance(summary="Connected")
         else:
@@ -960,6 +1017,9 @@ class MainWindow(QMainWindow):
         populates the ReviewPage with the loaded filters and advances
         the wizard to the REVIEW step.
 
+        For L/R channel mode, splits the combined filter list and uses
+        set_lr_filters() to show separate L/R tabs (fix for smoke #28).
+
         Args:
             peq_data: PEQ settings object or filter list from the operation.
         """
@@ -967,14 +1027,28 @@ class MainWindow(QMainWindow):
         count = len(filters)
 
         if count > 0:
-            # Populate ReviewPage with loaded filters
-            self._review_page.set_filters(filters)
+            # Populate ReviewPage — branch on channel mode (smoke #28)
+            state = self._wizard_controller.state
+            channel = state.channel_mode or "Stereo"
+
+            # Check if peq_data carries explicit L/R bands
+            peq_channel = getattr(peq_data, "channel_mode", None)
+            bands_l = getattr(peq_data, "bands_l", None)
+            bands_r = getattr(peq_data, "bands_r", None)
+
+            if peq_channel == "lr" and bands_l and bands_r:
+                # Use explicit L/R bands from the PEQSettings object
+                self._review_page.set_lr_filters(list(bands_l), list(bands_r))
+            elif channel.lower() in ("l/r", "lr"):
+                # Fallback: split combined list evenly
+                mid = len(filters) // 2
+                self._review_page.set_lr_filters(filters[:mid], filters[mid:])
+            else:
+                self._review_page.set_filters(filters)
 
             # Set summary info
-            state = self._wizard_controller.state
             device_ip = state.selected_device or "Unknown"
             source = state.selected_source or "wifi"
-            channel = state.channel_mode or "Stereo"
 
             # Try to get friendly device name
             device_name = device_ip
@@ -995,13 +1069,13 @@ class MainWindow(QMainWindow):
 
             # Show success in status banner (delayed so finish_operation clear passes)
             QTimer.singleShot(
-                50, lambda: self._status_banner.show_success(
+                150, lambda: self._status_banner.show_success(
                     f"{count} filters loaded — ready for review"
                 )
             )
         else:
             QTimer.singleShot(
-                50, lambda: self._status_banner.show_info(
+                150, lambda: self._status_banner.show_info(
                     "Device has no active filters. Try importing from a REW file instead.",
                     auto_dismiss=0,
                 )
@@ -1354,22 +1428,73 @@ class MainWindow(QMainWindow):
         try:
             target_caps = await CapabilityProber(target_client).probe()
             target_adapter = WiiMAdapter(target_client, target_caps)
-            await target_adapter.save_peq_profile(target_source, preset_name)
-            # Write filters first, then save
-            settings = PEQSettings(
-                source_name=target_source,
-                channel_mode="stereo",
-                bands=filters,
-            )
-            safe_write = SafeWrite(target_adapter, self._backup_manager)
-            await safe_write.execute(target_source, settings)
-            await target_adapter.save_peq_profile(target_source, preset_name)
+
+            if preset_type == "RoomFit":
+                # RoomFit: write as RoomFit profile on target (smoke #34)
+                await target_adapter.write_roomfit(target_source, preset_name, filters)
+            else:
+                # PEQ: write filters then save as named PEQ preset
+                settings = PEQSettings(
+                    source_name=target_source,
+                    channel_mode="stereo",
+                    bands=filters,
+                )
+                safe_write = SafeWrite(target_adapter, self._backup_manager)
+                await safe_write.execute(target_source, settings)
+                await target_adapter.save_peq_profile(target_source, preset_name)
 
             self._status_banner.show_success(
                 f"Preset '{preset_name}' saved to {target_ip} on source '{target_source}'"
             )
         finally:
             await target_client.close()
+
+    async def _do_copy_presets_batch(
+        self,
+        items: list,
+        target_ip: str,
+        target_source: str,
+    ) -> None:
+        """Copy multiple presets to a target device sequentially (smoke #33).
+
+        Processes each preset in order within a single async coroutine to
+        avoid concurrent run_async calls clobbering each other.
+
+        Args:
+            items: List of PresetItem objects to copy.
+            target_ip: IP address of the target device.
+            target_source: Target source name on the remote device.
+        """
+        succeeded = 0
+        failed = 0
+
+        for item in items:
+            preset_name = getattr(item, "name", "")
+            preset_type = getattr(item, "preset_type", "PEQ")
+            if not preset_name:
+                continue
+
+            try:
+                await self._do_copy_preset_to_device(
+                    preset_name, preset_type, target_ip, target_source
+                )
+                succeeded += 1
+            except Exception:
+                logger.exception(
+                    "Copy preset '%s' to %s failed", preset_name, target_ip
+                )
+                failed += 1
+
+        # Show summary result
+        total = succeeded + failed
+        if failed == 0:
+            self._status_banner.show_success(
+                f"All {total} preset(s) copied to {target_ip}"
+            )
+        else:
+            self._status_banner.show_error(
+                f"Copied {succeeded} of {total} presets ({failed} failed)"
+            )
 
     async def _do_preset_export(
         self, preset_name: str, preset_type: str, path: str
@@ -1456,6 +1581,11 @@ class MainWindow(QMainWindow):
             filters=filters,
         )
         self._profile_repository.save(profile)
+
+        # Refresh MyPresetsView so the new preset is visible (smoke #31)
+        all_profiles = self._profile_repository.list()
+        self._my_presets_view.set_presets(all_profiles)
+
         self._status_banner.show_success(f"Saved '{preset_name}' to My Presets")
 
     async def _do_rew_list_measurements(self) -> None:
@@ -1562,6 +1692,39 @@ class MainWindow(QMainWindow):
             )
         else:
             self._bridge.progress_update.emit("File exported successfully")
+
+    async def _do_export_lr(
+        self,
+        filters_l: list,
+        filters_r: list,
+        path_l: Path,
+        path_r: Path,
+    ) -> None:
+        """Generate two REW EQ text files for L/R channel mode (smoke #29).
+
+        Uses REWGenerator.generate_file() for each channel independently.
+
+        Args:
+            filters_l: Left channel CanonicalFilter list.
+            filters_r: Right channel CanonicalFilter list.
+            path_l: Destination path for left channel file.
+            path_r: Destination path for right channel file.
+        """
+        from src.translator.rew_generator import REWGenerator
+
+        generator = REWGenerator()
+        warnings_l = generator.generate_file(filters_l, path_l)
+        warnings_r = generator.generate_file(filters_r, path_r)
+
+        total_warnings = len(warnings_l) + len(warnings_r)
+        if total_warnings:
+            self._bridge.progress_update.emit(
+                f"L/R files exported ({total_warnings} unsupported band(s) skipped)"
+            )
+        else:
+            self._bridge.progress_update.emit(
+                f"L/R files exported: {path_l.name} and {path_r.name}"
+            )
 
     def _load_device_presets(self) -> None:
         """Fetch and display device presets in the PresetsDeviceView.
@@ -1688,6 +1851,10 @@ class MainWindow(QMainWindow):
         # Trigger data fetch for views that need it
         if view_key == "presets_device":
             self._load_device_presets()
+        elif view_key == "my_presets":
+            # Refresh local presets from repository (smoke #31)
+            all_profiles = self._profile_repository.list()
+            self._my_presets_view.set_presets(all_profiles)
 
     # ------------------------------------------------------------------
     # Settings Wiring
@@ -2149,20 +2316,13 @@ class MainWindow(QMainWindow):
             target_ip,
         )
 
-        # For each selected item, read its filters from current device then copy
-        # to target device. Use async bridge for the read+write sequence.
-        for item in items:
-            preset_name = getattr(item, "name", "")
-            preset_type = getattr(item, "preset_type", "PEQ")
-            if preset_name:
-                self._bridge.run_async(
-                    self._bridge_wrapper(
-                        "copy_preset",
-                        self._do_copy_preset_to_device(
-                            preset_name, preset_type, target_ip, target_source or "wifi"
-                        ),
-                    )
-                )
+        # Process all items in a single async operation to avoid clobbering (smoke #33)
+        self._bridge.run_async(
+            self._bridge_wrapper(
+                "copy_presets_to_device",
+                self._do_copy_presets_batch(items, target_ip, target_source or "wifi"),
+            )
+        )
 
     @Slot(object)
     def _on_profile_load_requested(self, profile: object) -> None:

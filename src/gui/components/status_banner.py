@@ -135,6 +135,14 @@ class StatusBanner(QFrame):
         self.setVisible(False)
         self.dismissed.emit()
 
+    def is_progress(self) -> bool:
+        """Return True if the banner is currently showing a progress indicator.
+
+        Used by OperationFeedbackManager to decide whether finish_operation
+        should clear the banner (only clears progress, not result messages).
+        """
+        return self.isVisible() and self._progress_bar.isVisible()
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

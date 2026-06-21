@@ -283,9 +283,12 @@ class TestDevicePullPreconditions:
         window._bridge.run_async.assert_not_called()
 
     def test_device_pull_no_source_selected(self, window) -> None:
-        """Verify error shown when no source has been selected.
+        """Verify device pull defaults to 'wifi' when no source selected.
 
-        Requirement: 4.5
+        Previously this was an error condition, but smoke fix #16 changed the
+        behavior: RoomFit and source-skipped flows default to "wifi" and proceed.
+
+        Requirement: 4.5, smoke fix #16.
         """
         # Adapter is set but source is empty
         window._wiim_adapter = MagicMock()
@@ -294,8 +297,10 @@ class TestDevicePullPreconditions:
 
         window._on_device_pull_requested()
 
-        # Should NOT call run_async — precondition failed
-        window._bridge.run_async.assert_not_called()
+        # Should proceed with default source "wifi" — run_async IS called
+        window._bridge.run_async.assert_called_once()
+        # Verify the source was defaulted
+        assert window._wizard_controller.state.selected_source == "wifi"
 
 
 # ---------------------------------------------------------------------------

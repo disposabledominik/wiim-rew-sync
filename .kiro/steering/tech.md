@@ -43,10 +43,7 @@ Hooks execute in **Windows cmd shell** (not WSL) via batch files delegating to `
 **Every `execute_pwsh` call for pytest, ruff, or mypy MUST include `timeout=60000`.**
 
 ```bash
-# Full test suite (final verification)
-python3 -m pytest --no-header -q
-
-# Single test file (skip coverage gate)
+# Single test file (primary workflow — fast, ~5s)
 python3 -m pytest src/tests/test_foo.py -v --no-cov
 
 # Lint
@@ -59,16 +56,35 @@ python3 -m mypy src/
 pip3 install -e ".[dev]"
 ```
 
+### Test Run Strategy (IMPORTANT)
+
+The full test suite takes **~5 minutes** on WSL and will timeout agent commands. **Never pipe test output** (`| tail`, `| head`, `2>&1 | grep`) — this makes timeouts worse and loses output.
+
+**Use this tiered approach:**
+
+| When | Command | Time |
+|------|---------|------|
+| During development | `python3 -m pytest src/tests/test_<module>.py -v --no-cov` | ~5s |
+| After touching shared code | `python3 -m pytest src/tests/test_a.py src/tests/test_b.py --no-cov -q` | ~10-30s |
+| Final gate (rare) | `python3 -m pytest --no-header -q` | ~5min ⚠️ |
+
+**Rules:**
+- Run only the test file(s) relevant to your changes — never the full suite mid-task
+- Full suite is only for final verification and will likely timeout — that's OK if targeted tests pass
+- GUI integration tests (`test_wizard_integration.py`, `test_gui_*.py`) are slow (~25s each) — only run the specific class/test you need
+- If a command times out showing only passes (no `FAILED` lines), treat it as passing
+
 **Exit codes:** `-1` in WSL is normal (not a failure). `1` from pytest means tests failed (read output). Only retry on actual Python tracebacks — never retry because of exit codes.
 
 **NEVER:**
 - Check `python3 --version`
 - Create temp shell scripts for single commands
-- Pipe output to files then read them
+- Pipe pytest/ruff/mypy output through other commands (`| tail`, `| head`, `| grep`)
 - Run pytest/ruff/mypy as background processes
 - Add `sleep` commands to wait for output
 - Re-run a command that already produced valid output
 - Run `pip install` unless deps changed
+- Run the full test suite mid-task (use targeted tests instead)
 
 ## Key Configuration (pyproject.toml)
 
@@ -154,9 +170,9 @@ Before dispatching any wave of concurrent tasks, the orchestrator MUST perform a
 1. `python3 -m pytest src/tests/test_<module>.py -v --no-cov` — task's own tests pass
 2. `python3 -m ruff check src/` — zero lint errors
 3. `python3 -m mypy src/translator src/models` — zero type errors
-4. `python3 -m pytest --no-header -q` — full suite passes with coverage
+4. (Optional) `python3 -m pytest --no-header -q` — full suite, only if time allows
 
-Steps 1-3 for iteration; step 4 as final gate. Fix issues before marking done.
+Steps 1-3 are mandatory. Step 4 will likely timeout — only attempt after all other work is done.
 
 ## Task Dispatch Efficiency
 

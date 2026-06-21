@@ -82,8 +82,10 @@ def _make_caps(roomfit_level: int = 0) -> MagicMock:
     caps = MagicMock()
     caps.roomfit_level = roomfit_level
     caps.device_name = "WiiM Pro Plus"
+    caps.model = "WiiM Pro Plus"
     caps.source_names = ["wifi", "optical", "hdmi"]
     caps.active_source = "wifi"
+    caps.supports_profile_enumeration = False
     return caps
 
 
