@@ -78,6 +78,12 @@ def _setup_push_state(window) -> None:
         _make_filter(500.0),
     ]
     window._wizard_controller.state.channel_mode = "Stereo"
+    window._wizard_controller.state.dry_run = False
+
+    # Provide a mocked WiiMAdapter (required by _do_push assert)
+    mock_adapter = MagicMock()
+    mock_adapter.capabilities = MagicMock()
+    window._wiim_adapter = mock_adapter
 
     # Provide a mocked SafeWrite
     mock_safe_write = AsyncMock()
@@ -113,8 +119,12 @@ class TestPushHappyPath:
         # Verify source_name passed correctly
         call_args = mock_safe_write.execute.call_args
         assert call_args[0][0] == "wifi"
-        # Verify write_complete emitted with the result
-        window._bridge.write_complete.emit.assert_called_once_with(result)
+        # Verify write_complete emitted with success and encoded backup path
+        window._bridge.write_complete.emit.assert_called_once()
+        emitted_result = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted_result.success is True
+        assert "wifi=" in emitted_result.backup_path
+        assert "/backups/wifi_backup.json" in emitted_result.backup_path
 
     @pytest.mark.asyncio
     async def test_push_rollback_success(self, window) -> None:
@@ -185,8 +195,8 @@ class TestPushProgressUpdates:
         assert "Backing up..." in messages
 
     @pytest.mark.asyncio
-    async def test_push_success_emits_writing_and_verifying(self, window) -> None:
-        """Verify success path emits Writing and Verifying progress stages.
+    async def test_push_success_emits_verifying(self, window) -> None:
+        """Verify success path emits Verifying progress stage.
 
         Requirement: 6.6
         """
@@ -202,7 +212,7 @@ class TestPushProgressUpdates:
 
         progress_calls = window._bridge.progress_update.emit.call_args_list
         messages = [call[0][0] for call in progress_calls]
-        assert "Writing..." in messages
+        assert "Backing up..." in messages
         assert "Verifying..." in messages
 
 

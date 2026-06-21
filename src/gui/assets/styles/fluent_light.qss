@@ -4,7 +4,7 @@
    Color values match COLORS_LIGHT from src/gui/constants.py.
    Sizing values match constants: CARD_RADIUS=8, BUTTON_RADIUS=6,
    INPUT_RADIUS=4, SPACING_SM=8, SPACING_MD=16, SPACING_LG=24,
-   FONT_SIZE_BODY=13, LIST_ITEM_HEIGHT=44.
+   FONT_SIZE_BODY=14, LIST_ITEM_HEIGHT=44.
    ========================================================================== */
 
 
@@ -16,14 +16,14 @@ QMainWindow {
     background-color: #F5F5F5;
     color: #1A1A1A;
     font-family: "Segoe UI Variable", "Segoe UI", "SF Pro", system-ui, sans-serif;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 QWidget {
     background-color: transparent;
     color: #1A1A1A;
     font-family: "Segoe UI Variable", "Segoe UI", "SF Pro", system-ui, sans-serif;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 
@@ -55,19 +55,19 @@ QLabel {
 }
 
 QLabel[class="heading"] {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 600;
     color: #1A1A1A;
 }
 
 QLabel[class="title"] {
-    font-size: 24px;
+    font-size: 26px;
     font-weight: 600;
     color: #1A1A1A;
 }
 
 QLabel[class="caption"] {
-    font-size: 11px;
+    font-size: 12px;
     color: #616161;
 }
 
@@ -102,7 +102,7 @@ QPushButton {
     border: 1px solid #E0E0E0;
     border-radius: 6px;
     padding: 8px 16px;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     min-height: 32px;
 }
@@ -254,7 +254,7 @@ QLineEdit {
     border: 1px solid #E0E0E0;
     border-radius: 4px;
     padding: 8px 12px;
-    font-size: 13px;
+    font-size: 14px;
     min-height: 32px;
     selection-background-color: #00B4D8;
     selection-color: #FFFFFF;
@@ -292,7 +292,7 @@ QComboBox {
     border-radius: 4px;
     padding: 8px 12px;
     padding-right: 32px;
-    font-size: 13px;
+    font-size: 14px;
     min-height: 32px;
 }
 
@@ -363,7 +363,7 @@ QTableView {
     gridline-color: #EEEEEE;
     selection-background-color: #E6F8FC;
     selection-color: #1A1A1A;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 QTableWidget::item,
@@ -397,7 +397,7 @@ QHeaderView {
 QHeaderView::section {
     background-color: #FFFFFF;
     color: #616161;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
     padding: 8px;
@@ -531,7 +531,7 @@ QTabBar {
 QTabBar::tab {
     background-color: transparent;
     color: #616161;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     padding: 8px 16px;
     margin-right: 4px;
@@ -563,7 +563,7 @@ QTabBar::tab:disabled {
 QCheckBox {
     spacing: 8px;
     color: #1A1A1A;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 QCheckBox::indicator {
@@ -610,7 +610,7 @@ QCheckBox:disabled {
 QRadioButton {
     spacing: 8px;
     color: #1A1A1A;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 QRadioButton::indicator {
@@ -658,7 +658,7 @@ QGroupBox {
     border-radius: 8px;
     margin-top: 24px;
     padding: 24px 16px 16px 16px;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
 }
 
@@ -709,7 +709,7 @@ QToolTip {
     border: 1px solid #E0E0E0;
     border-radius: 4px;
     padding: 8px 12px;
-    font-size: 11px;
+    font-size: 12px;
 }
 
 
@@ -762,7 +762,7 @@ QMenuBar {
     border: none;
     border-bottom: 1px solid #EEEEEE;
     padding: 4px 8px;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 QMenuBar::item {
@@ -825,7 +825,7 @@ QStatusBar {
     color: #616161;
     border-top: 1px solid #EEEEEE;
     padding: 4px 16px;
-    font-size: 11px;
+    font-size: 12px;
 }
 
 QStatusBar::item {

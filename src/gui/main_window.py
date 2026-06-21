@@ -211,11 +211,11 @@ class MainWindow(QMainWindow):
             self._status_banner, parent=self
         )
 
-        # --- Apply initial settings state ---
-        self._apply_settings()
-
         # --- Wire wizard/page/bridge signals ---
         self._wire_signals()
+
+        # --- Apply initial settings state (AFTER signals are wired) ---
+        self._apply_settings()
 
         # --- Wire operation feedback to bridge ---
         self._wire_operation_feedback()
@@ -2004,6 +2004,11 @@ class MainWindow(QMainWindow):
 
         Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
         """
+        # Safety net: never write to device in dry-run mode
+        if self._wizard_controller.state.dry_run:
+            logger.warning("_do_push called in dry-run mode — aborting write")
+            return
+
         assert self._wiim_adapter is not None
 
         state = self._wizard_controller.state
@@ -2429,6 +2434,11 @@ class MainWindow(QMainWindow):
             self._on_show_onboarding_requested
         )
 
+        # Generate support bundle from Settings support section
+        self._settings_view.support_bundle_requested.connect(
+            self._on_support_bundle_requested
+        )
+
     def _connect_onboarding_signals(self) -> None:
         """Connect OnboardingOverlay signals to settings persistence."""
         self._onboarding_overlay.get_started_clicked.connect(
@@ -2482,6 +2492,50 @@ class MainWindow(QMainWindow):
         self._onboarding_overlay.raise_()
 
     @Slot()
+    def _on_support_bundle_requested(self) -> None:
+        """Generate a support bundle ZIP and offer to save it."""
+        from src.utils.support_bundle import generate_support_bundle
+
+        log_dir = get_log_dir()
+        settings_path = (
+            self._settings.settings_path
+            if hasattr(self._settings, "settings_path")
+            else None
+        )
+
+        # Ask user where to save
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Support Bundle",
+            str(Path.home() / "wiim-rew-sync-support.zip"),
+            "ZIP files (*.zip)",
+        )
+        if not save_path:
+            return
+
+        save_file = Path(save_path)
+        output_dir = save_file.parent
+
+        try:
+            bundle_path = generate_support_bundle(
+                output_path=output_dir,
+                log_dir=log_dir,
+                settings_path=settings_path,
+            )
+            # Rename to user's chosen filename if different
+            if bundle_path != save_file:
+                bundle_path.rename(save_file)
+                bundle_path = save_file
+            self._status_banner.show_success(
+                f"Support bundle saved: {bundle_path.name}"
+            )
+        except Exception as exc:
+            logger.exception("Failed to generate support bundle")
+            self._status_banner.show_error(
+                f"Failed to generate support bundle: {exc}"
+            )
+
+    @Slot()
     def _on_onboarding_get_started(self) -> None:
         """Handle onboarding Get Started: mark complete, save, navigate to connect."""
         self._settings.first_run_complete = True
@@ -2509,6 +2563,7 @@ class MainWindow(QMainWindow):
             self,
             "About WiiM \u2194 REW PEQ Sync",
             "<h3>WiiM \u2194 REW PEQ Sync</h3>"
+            "<p><b>Version 0.1.0</b></p>"
             "<p>Transfer parametric EQ and RoomFit filter configurations "
             "between Room EQ Wizard (REW) and WiiM devices on your local network.</p>"
             "<p><b>Features:</b></p>"
@@ -2519,6 +2574,8 @@ class MainWindow(QMainWindow):
             "<li>Local preset library with backup and undo</li>"
             "<li>Multi-source and multi-device operations</li>"
             "</ul>"
+            '<p><a href="https://github.com/wiim-rew-sync/wiim-rew-sync">GitHub Repository</a></p>'
+            "<p><small>Licensed under MIT License</small></p>"
             "<p><small>Local-first \u2022 No cloud \u2022 No telemetry</small></p>",
         )
 

@@ -206,6 +206,7 @@ class TestFullWizardFlow:
         assert window._wizard_controller.current_step == WizardStep.REVIEW
 
         # Advance to PUSH step
+        window._wizard_controller.state.dry_run = False
         window._on_push_requested()
         assert window._wizard_controller.current_step == WizardStep.PUSH
 
@@ -222,7 +223,11 @@ class TestFullWizardFlow:
         await window._do_push()
 
         # --- Step k: Verify write_complete emitted ---
-        window._bridge.write_complete.emit.assert_called_once_with(push_result)
+        window._bridge.write_complete.emit.assert_called_once()
+        emitted_result = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted_result.success is True
+        assert "wifi=" in emitted_result.backup_path
+        assert "/backups/wifi_backup.json" in emitted_result.backup_path
         mock_safe_write.execute.assert_called_once()
 
         # Verify correct source and settings passed to SafeWrite

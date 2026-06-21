@@ -16,6 +16,8 @@ def main() -> int:
     Returns:
         Exit code (0 for success).
     """
+    from pathlib import Path
+
     from src.logging.setup import configure_logging, ensure_logs_directory
     from src.utils.app_dirs import get_app_data_dir
 
@@ -44,8 +46,16 @@ def main() -> int:
     # --- Configure logging ---
     configure_logging(logs_dir)
 
-    # --- Start Qt application ---
+    # --- Enable high-DPI scaling (for Windows 11 clarity) ---
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
+
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
+
+    # --- Start Qt application ---
+    from PySide6.QtGui import QIcon
 
     from src.gui.async_bridge import AsyncBridge
     from src.gui.main_window import MainWindow
@@ -53,6 +63,14 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("WiiM-REW-Sync")
     app.setOrganizationName("wiim-rew-sync")
+
+    # Set app icon (visible in taskbar)
+    icon_path = (
+        Path(__file__).resolve().parent.parent
+        / "src" / "gui" / "assets" / "icons" / "app_icon.svg"
+    )
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     bridge = AsyncBridge()
     bridge.start()

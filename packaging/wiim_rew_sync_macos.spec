@@ -105,7 +105,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon='../src/gui/assets/icons/app_icon.icns',
 )
 
 coll = COLLECT(
@@ -122,7 +122,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="WiiM-REW-Sync.app",
-    icon=None,
+    icon='../src/gui/assets/icons/app_icon.icns',
     bundle_identifier="com.wiim-rew-sync.app",
     info_plist={
         "CFBundleDisplayName": "WiiM-REW-Sync",

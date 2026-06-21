@@ -276,6 +276,17 @@ class SettingsView(QWidget):
         self._path_validation_label.setVisible(False)
         layout.addWidget(self._path_validation_label)
 
+        # Restart note
+        restart_note = QLabel(
+            "Path changes take effect after restarting the app.", group
+        )
+        restart_note.setObjectName("SettingsPathRestartNote")
+        restart_note.setProperty("class", "caption")
+        restart_note.setStyleSheet(
+            f"font-size: {FONT_SIZE_CAPTION}px; color: #616161;"
+        )
+        layout.addWidget(restart_note)
+
         return group
 
     def _build_path_row(

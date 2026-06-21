@@ -104,7 +104,7 @@ class SidebarNav(QWidget):
     """Emitted when the collapse state changes. True means collapsed (icon-only)."""
 
     _NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
-        ("home", "Home", "\U0001F3E0"),
+        ("home", "Back", "\u2190"),
         ("presets_device", "Presets on Device", "\U0001F3B6"),
         ("my_presets", "My Saved Presets", "\U0001F4BE"),
         ("settings", "Settings", "\u2699"),

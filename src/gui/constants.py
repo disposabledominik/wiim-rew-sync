@@ -156,16 +156,16 @@ def _detect_font_family() -> str:
 FONT_FAMILY: str = _detect_font_family()
 """Platform-detected font family stack for QSS font-family property."""
 
-FONT_SIZE_BODY: int = 13
+FONT_SIZE_BODY: int = 14
 """Body text size in pixels (minimum per Req 10.4)."""
 
-FONT_SIZE_HEADING: int = 18
+FONT_SIZE_HEADING: int = 20
 """Section heading size in pixels."""
 
-FONT_SIZE_CAPTION: int = 11
+FONT_SIZE_CAPTION: int = 12
 """Caption and secondary label size in pixels."""
 
-FONT_SIZE_TITLE: int = 24
+FONT_SIZE_TITLE: int = 26
 """Page/view title size in pixels."""
 
 FONT_WEIGHT_NORMAL: int = 400

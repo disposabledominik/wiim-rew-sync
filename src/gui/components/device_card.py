@@ -30,12 +30,8 @@ from PySide6.QtWidgets import (
 from src.gui.constants import (
     ACCENT_COLOR,
     ANIMATION_NORMAL,
-    CARD_RADIUS,
     ERROR_COLOR,
-    FONT_SIZE_BODY,
     FONT_SIZE_CAPTION,
-    FONT_SIZE_HEADING,
-    FONT_WEIGHT_SEMIBOLD,
     SPACING_MD,
     SPACING_SM,
     SPACING_XS,
@@ -80,15 +76,13 @@ class DeviceCard(QFrame):
         # Device name (heading)
         self._name_label = QLabel(self)
         self._name_label.setObjectName("DeviceCardName")
-        self._name_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_HEADING}px; font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        self._name_label.setProperty("class", "heading")
         self._main_layout.addWidget(self._name_label)
 
         # Model (secondary text)
         self._model_label = QLabel(self)
         self._model_label.setObjectName("DeviceCardModel")
-        self._model_label.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px; color: #616161;")
+        self._model_label.setProperty("class", "secondary")
         self._main_layout.addWidget(self._model_label)
 
         # Info row: IP + firmware
@@ -98,12 +92,12 @@ class DeviceCard(QFrame):
 
         self._ip_label = QLabel(self)
         self._ip_label.setObjectName("DeviceCardIP")
-        self._ip_label.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION}px; color: #9E9E9E;")
+        self._ip_label.setProperty("class", "caption")
         info_row.addWidget(self._ip_label)
 
         self._firmware_label = QLabel(self)
         self._firmware_label.setObjectName("DeviceCardFirmware")
-        self._firmware_label.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION}px; color: #9E9E9E;")
+        self._firmware_label.setProperty("class", "caption")
         info_row.addWidget(self._firmware_label)
 
         info_row.addStretch()
@@ -239,35 +233,18 @@ class DeviceCard(QFrame):
     # ------------------------------------------------------------------
 
     def _apply_base_style(self) -> None:
-        """Apply stylesheet based on current state property."""
+        """Apply state-specific border styling via dynamic property, letting QSS handle colors."""
         state = self.property("state") or "idle"
-
-        # Base card style
-        base = (
-            f"QFrame#DeviceCard {{"
-            f"  border-radius: {CARD_RADIUS}px;"
-            f"  padding: {SPACING_MD}px;"
-            f"  background-color: #FFFFFF;"
-        )
-
-        if state == "idle":
-            style = base + "  border: 1px solid #E0E0E0;}"
-        elif state == "connecting":
-            style = base + f"  border: 2px solid {ACCENT_COLOR};}}"
-            # Opacity handled by animation
-            return self._set_card_style(style)
+        # Let QSS handle base card colors via QFrame[class="card"]
+        # Only add state-specific borders
+        if state == "connecting":
+            self.setStyleSheet(f"QFrame#DeviceCard {{ border: 2px solid {ACCENT_COLOR}; }}")
         elif state == "connected":
-            style = base + f"  border: 1px solid #E0E0E0; border-left: 3px solid {ACCENT_COLOR};}}"
+            self.setStyleSheet(f"QFrame#DeviceCard {{ border-left: 3px solid {ACCENT_COLOR}; }}")
         elif state == "error":
-            style = base + f"  border: 1px solid #E0E0E0; border-left: 3px solid {ERROR_COLOR};}}"
+            self.setStyleSheet(f"QFrame#DeviceCard {{ border-left: 3px solid {ERROR_COLOR}; }}")
         else:
-            style = base + "  border: 1px solid #E0E0E0;}"
-
-        self._set_card_style(style)
-
-    def _set_card_style(self, style: str) -> None:
-        """Apply the given stylesheet to the frame."""
-        self.setStyleSheet(style)
+            self.setStyleSheet("")  # Let QSS handle everything
 
     def _start_pulse(self) -> None:
         """Start pulsing opacity animation for connecting state."""
