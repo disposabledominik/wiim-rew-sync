@@ -76,3 +76,9 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 63 | RoomFit/PEQ: L/R filters written as Stereo in all write paths | FIXED | NO | `306a1de` | write_roomfit now accepts channel_mode; all write paths (push, copy, multi-device) use shared helpers |
 | 64 | Duplicated logic across 30+ locations (architectural) | FIXED | NO | `aaffc0f` | Created src/gui/shared_helpers.py with 5 shared functions; eliminated all duplication |
 | 65 | Loading L/R profile from My Presets loses channel mode (shows as stereo) | FIXED | NO | `ec85fc5` | _on_profile_load_requested sets wizard state.channel_mode from profile before recall |
+| 66 | FiltersPage: clicking "Import from REW File" after mode selection does nothing | FIXED | N/A | `32f0a44` | Redesigned: removed card+dialog; inline Stereo/L/R radio toggle + Browse buttons always visible |
+| 67 | FiltersPage: re-navigating to page keeps stale file selections | FIXED | N/A | `32f0a44` | Page now uses simple toggle+browse pattern; clear_results resets state |
+| 68 | Source page and other views too narrow (condensed, buttons clipped) | FIXED | N/A | `32f0a44` | Removed AlignHCenter from SourcePage outer layout; content expands to fill space |
+| 69 | SecondaryWorkflowManager copy_preset_to_device hardcodes stereo | FIXED | NO | `32f0a44` | Added channel_mode parameter (default "stereo"); callers pass through |
+| 70 | Duplicated backup JSON parsing in _do_undo and _do_undo_roomfit | FIXED | NO | `32f0a44` | Extracted parse_backup_filters() into shared_helpers; both undo paths use it |
+| 71 | Dead code: _OptionCard, _DropZone, pull/REW card handlers in FiltersPage | FIXED | N/A | `32f0a44` | Removed entirely in FiltersPage rewrite |
