@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -182,6 +183,33 @@ class MyPresetsView(QWidget):
         self._search_field.textChanged.connect(self._on_search_text_changed)
         content_layout.addWidget(self._search_field)
 
+        # Action toolbar (visible when an item is selected)
+        self._toolbar = QWidget(content)
+        toolbar_layout = QHBoxLayout(self._toolbar)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setSpacing(SPACING_SM)
+
+        self._load_btn = QPushButton("Load", self._toolbar)
+        self._load_btn.setToolTip("Load preset into Review for push/export")
+        self._load_btn.clicked.connect(self._on_load_clicked)
+        toolbar_layout.addWidget(self._load_btn)
+
+        self._rename_btn = QPushButton("Rename", self._toolbar)
+        self._rename_btn.clicked.connect(self._on_rename_clicked)
+        toolbar_layout.addWidget(self._rename_btn)
+
+        self._duplicate_btn = QPushButton("Duplicate", self._toolbar)
+        self._duplicate_btn.clicked.connect(self._on_duplicate_clicked)
+        toolbar_layout.addWidget(self._duplicate_btn)
+
+        self._delete_btn = QPushButton("Delete", self._toolbar)
+        self._delete_btn.clicked.connect(self._on_delete_clicked)
+        toolbar_layout.addWidget(self._delete_btn)
+
+        toolbar_layout.addStretch()
+        self._toolbar.setVisible(False)
+        content_layout.addWidget(self._toolbar)
+
         # Preset list
         self._list_widget = QListWidget(content)
         self._list_widget.setObjectName("MyPresetsList")
@@ -190,6 +218,7 @@ class MyPresetsView(QWidget):
         self._list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._list_widget.setSpacing(2)
+        self._list_widget.currentItemChanged.connect(self._on_selection_changed)
         content_layout.addWidget(self._list_widget)
 
         # Empty state label
@@ -341,6 +370,45 @@ class MyPresetsView(QWidget):
         menu.exec(self._list_widget.viewport().mapToGlobal(position))  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
+    # Toolbar button handlers
+    # ------------------------------------------------------------------
+
+    def _on_selection_changed(self, current: QListWidgetItem | None, _prev: object) -> None:
+        """Show toolbar when an item is selected, hide when deselected."""
+        self._toolbar.setVisible(current is not None)
+
+    def _get_selected_profile(self) -> Profile | None:
+        """Return the currently selected Profile, or None."""
+        item = self._list_widget.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.ItemDataRole.UserRole)
+
+    def _on_load_clicked(self) -> None:
+        """Handle Load button click."""
+        profile = self._get_selected_profile()
+        if profile:
+            self.load_requested.emit(profile)
+
+    def _on_rename_clicked(self) -> None:
+        """Handle Rename button click — start inline rename."""
+        item = self._list_widget.currentItem()
+        if item:
+            self._start_rename(item)
+
+    def _on_duplicate_clicked(self) -> None:
+        """Handle Duplicate button click."""
+        profile = self._get_selected_profile()
+        if profile:
+            self.duplicate_requested.emit(profile.name)
+
+    def _on_delete_clicked(self) -> None:
+        """Handle Delete button click."""
+        profile = self._get_selected_profile()
+        if profile:
+            self.delete_requested.emit(profile.name)
+
+    # ------------------------------------------------------------------
     # Event overrides
     # ------------------------------------------------------------------
 
@@ -363,20 +431,19 @@ def _channel_mode_display(mode: str) -> str:
         mode: One of "stereo", "left", "right".
 
     Returns:
-        Display string: "Stereo", "L", or "R".
+        Display string: "Stereo" or "L/R".
     """
-    mapping = {
-        "stereo": "Stereo",
-        "left": "L",
-        "right": "R",
-    }
-    return mapping.get(mode, mode.capitalize())
+    if mode in ("left", "right"):
+        return "L/R"
+    return "Stereo"
 
 
 def _count_bands(profile: Profile) -> tuple[int, int]:
     """Count active and total bands for a profile.
 
     A band is considered active if its gain is non-zero.
+
+    For L/R profiles, returns per-channel counts (each channel separately).
 
     Args:
         profile: The preset profile.
@@ -387,10 +454,8 @@ def _count_bands(profile: Profile) -> tuple[int, int]:
     if profile.channel_mode == "stereo":
         filters = profile.filters or []
     else:
-        # For L/R mode, combine both channels for display
-        filters_l = profile.filters_l or []
-        filters_r = profile.filters_r or []
-        filters = filters_l + filters_r
+        # For L/R mode, show per-channel count (use left channel as representative)
+        filters = profile.filters_l or []
 
     total = len(filters)
     active = sum(1 for f in filters if f.gain_db != 0.0)

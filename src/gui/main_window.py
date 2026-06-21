@@ -1045,6 +1045,9 @@ class MainWindow(QMainWindow):
             bands_r = getattr(peq_data, "bands_r", None)
 
             if peq_channel == "lr" and bands_l and bands_r:
+                # Update wizard state to reflect actual L/R mode from device
+                state.channel_mode = "L/R"
+                channel = "L/R"
                 # Use explicit L/R bands from the PEQSettings object
                 self._review_page.set_lr_filters(list(bands_l), list(bands_r))
             elif channel.lower() in ("l/r", "lr"):
