@@ -82,3 +82,8 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 69 | SecondaryWorkflowManager copy_preset_to_device hardcodes stereo | FIXED | NO | `32f0a44` | Added channel_mode parameter (default "stereo"); callers pass through |
 | 70 | Duplicated backup JSON parsing in _do_undo and _do_undo_roomfit | FIXED | NO | `32f0a44` | Extracted parse_backup_filters() into shared_helpers; both undo paths use it |
 | 71 | Dead code: _OptionCard, _DropZone, pull/REW card handlers in FiltersPage | FIXED | N/A | `32f0a44` | Removed entirely in FiltersPage rewrite |
+| 72 | FiltersPage: No "Next" button in Stereo mode to proceed after returning to step | FIXED | NO | `edee68f` | Added unified "Next" button to both Stereo and L/R modes; enabled only when required files are selected |
+| 73 | Stereo file import shown as L/R in Review due to stale channel_mode state | FIXED | NO | `edee68f` | _do_file_import now explicitly sets channel_mode="Stereo" before emitting peq_ready |
+| 74 | Presets on Device "Copy to another device" only copies to first selected device (regression of #33) | FIXED | NO | `edee68f` | Replaced selected_devices[0] with iteration over all selected devices via _do_copy_presets_batch_multi |
+| 75 | Review "Apply to multiple devices" always pushes to active PEQ (wrong for RoomFit) | FIXED | N/A | `edee68f` | Removed button entirely; "Copy to another device" in Presets on Device serves the same purpose correctly |
+| 76 | Review "Copy to another source" replaced by multi-source selection in Source step | FIXED | N/A | `edee68f` | Source step now uses checkboxes (multi-select); push writes to all selected sources; removed Copy to another source button |

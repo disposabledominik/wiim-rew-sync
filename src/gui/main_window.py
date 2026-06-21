@@ -48,7 +48,6 @@ from src.gui.dialogs.crash_dialog import CrashDialog
 from src.gui.dialogs.device_picker import DevicePickerDialog
 from src.gui.dialogs.measurement_picker import MeasurementPickerDialog
 from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
-from src.gui.dialogs.source_picker import SourcePickerDialog
 from src.gui.dialogs.unsaved_changes_dialog import UnsavedChangesDialog
 from src.gui.operation_feedback import OperationFeedbackManager
 from src.gui.pages.connect_page import ConnectPage
@@ -60,10 +59,7 @@ from src.gui.pages.review_page import ReviewPage
 from src.gui.pages.source_page import SourcePage
 from src.gui.panels.diagnostics_panel import DiagnosticsPanel
 from src.gui.secondary_workflows import (
-    DevicePushResult,
-    MultiDeviceRequest,
     SecondaryWorkflowManager,
-    SourceCopyResult,
 )
 from src.gui.shared_helpers import (
     build_peq_settings,
@@ -626,13 +622,20 @@ class MainWindow(QMainWindow):
         """Handle source selection — store in state and advance.
 
         Args:
-            source_name: Selected audio source name.
+            source_name: Comma-separated audio source name(s).
             channel_mode: Channel mode ("Stereo", "Left", "Right").
         """
         state = self._wizard_controller.state
         state.selected_source = source_name
         state.channel_mode = channel_mode
-        self._wizard_controller.advance(summary=source_name)
+
+        # Build summary label showing selected source(s)
+        sources = [s.strip() for s in source_name.split(",") if s.strip()]
+        if len(sources) == 1:
+            summary = sources[0]
+        else:
+            summary = f"{len(sources)} sources"
+        self._wizard_controller.advance(summary=summary)
 
     @Slot()
     def _on_filters_accepted(self) -> None:
@@ -1434,8 +1437,9 @@ class MainWindow(QMainWindow):
         parser = REWParser()
         filters, warnings = parser.parse_file_with_warnings(file_path)
 
-        # Store in wizard state
+        # Store in wizard state — explicitly set Stereo channel mode (smoke #72)
         self._wizard_controller.state.current_filters = filters
+        self._wizard_controller.state.channel_mode = "Stereo"
 
         # Notify FiltersPage of success via peq_ready signal
         self._bridge.peq_ready.emit(filters)
@@ -1674,6 +1678,59 @@ class MainWindow(QMainWindow):
                 f"Copied {succeeded} of {total} presets ({failed} failed)"
             )
 
+    async def _do_copy_presets_batch_multi(
+        self,
+        items: list,
+        target_devices: list,
+        target_source: str,
+    ) -> None:
+        """Copy presets to multiple target devices (smoke #73 fix).
+
+        Iterates over all target devices and copies all preset items to each.
+
+        Args:
+            items: List of PresetItem objects to copy.
+            target_devices: List of discovered device objects to copy to.
+            target_source: Target source name on each remote device.
+        """
+        succeeded = 0
+        failed = 0
+        total_ops = len(items) * len(target_devices)
+
+        for device in target_devices:
+            target_ip = device.ip
+            device_name = device.name
+            self._bridge.progress_update.emit(
+                f"Copying to {device_name}..."
+            )
+            for item in items:
+                preset_name = getattr(item, "name", "")
+                preset_type = getattr(item, "preset_type", "PEQ")
+                if not preset_name:
+                    continue
+
+                try:
+                    await self._do_copy_preset_to_device(
+                        preset_name, preset_type, target_ip, target_source
+                    )
+                    succeeded += 1
+                except Exception:
+                    logger.exception(
+                        "Copy preset '%s' to %s failed", preset_name, target_ip
+                    )
+                    failed += 1
+
+        # Show summary result
+        if failed == 0:
+            self._status_banner.show_success(
+                f"All {total_ops} preset(s) copied to "
+                f"{len(target_devices)} device(s)"
+            )
+        else:
+            self._status_banner.show_error(
+                f"Copied {succeeded} of {total_ops} presets ({failed} failed)"
+            )
+
     async def _do_preset_export(
         self, preset_name: str, preset_type: str, path: str
     ) -> None:
@@ -1826,6 +1883,7 @@ class MainWindow(QMainWindow):
         """Execute push to device — PEQ via SafeWrite, or RoomFit via write_roomfit.
 
         For PEQ flow: constructs PEQSettings and uses SafeWrite protocol.
+        Pushes to ALL selected sources (comma-separated in state.selected_source).
         For RoomFit flow: uses write_roomfit with the named profile.
 
         Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
@@ -1833,15 +1891,22 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
 
         state = self._wizard_controller.state
-        source_name = state.selected_source or "wifi"
+        source_names_raw = state.selected_source or "wifi"
         filters = state.current_filters
         channel_mode = state.channel_mode.lower()
         flow_type = self._wizard_controller.flow_type
+
+        # Parse comma-separated sources into a list
+        source_list = [s.strip() for s in source_names_raw.split(",") if s.strip()]
+        if not source_list:
+            source_list = ["wifi"]
 
         self._bridge.progress_update.emit("Backing up...")
 
         if flow_type == FlowType.ROOMFIT:
             # RoomFit: write as named profile via write_roomfit
+            # RoomFit is device-global, so source doesn't matter — use first
+            source_name = source_list[0]
             profile_name = state.roomfit_profile_name
             if not profile_name:
                 result = WriteResult(
@@ -1902,19 +1967,30 @@ class MainWindow(QMainWindow):
                 result = WriteResult(success=False, error=str(exc), backup_path="")
                 self._bridge.write_complete.emit(result)
         else:
-            # PEQ: use SafeWrite protocol
+            # PEQ: use SafeWrite protocol — push to ALL selected sources
             assert self._safe_write is not None
 
-            settings = build_peq_settings(source_name, filters, channel_mode)
+            last_result = None
+            for i, source_name in enumerate(source_list):
+                if len(source_list) > 1:
+                    self._bridge.progress_update.emit(
+                        f"Pushing to {source_name} ({i + 1}/{len(source_list)})..."
+                    )
 
-            result = await self._safe_write.execute(source_name, settings)
+                settings = build_peq_settings(source_name, filters, channel_mode)
+                result = await self._safe_write.execute(source_name, settings)
+                last_result = result
 
-            if result.success:
+                if not result.success:
+                    # Abort on first failure
+                    self._bridge.write_complete.emit(result)
+                    return
+
+            # All sources succeeded
+            if last_result and last_result.success:
                 self._bridge.progress_update.emit("Writing...")
                 self._bridge.progress_update.emit("Verifying...")
-                self._bridge.write_complete.emit(result)
-            else:
-                self._bridge.write_complete.emit(result)
+                self._bridge.write_complete.emit(last_result)
 
     async def _do_export(self, filters: list, path: str) -> None:
         """Generate a REW EQ text file from current filters.
@@ -2402,12 +2478,6 @@ class MainWindow(QMainWindow):
         self._secondary_workflows = SecondaryWorkflowManager(parent=self)
 
         # --- Inbound: page/view actions → workflow manager ---
-        self._review_page.copy_to_source_requested.connect(
-            self._on_copy_to_source_requested
-        )
-        self._review_page.multi_device_requested.connect(
-            self._on_multi_device_requested
-        )
         self._presets_device_view.copy_to_device_requested.connect(
             self._on_copy_to_device_requested
         )
@@ -2434,18 +2504,6 @@ class MainWindow(QMainWindow):
         )
 
         # --- Outbound: workflow manager signals → UI updates ---
-        self._secondary_workflows.copy_to_sources_progress.connect(
-            self._on_copy_to_sources_progress
-        )
-        self._secondary_workflows.copy_to_sources_complete.connect(
-            self._on_copy_to_sources_complete
-        )
-        self._secondary_workflows.multi_device_progress.connect(
-            self._on_multi_device_progress
-        )
-        self._secondary_workflows.multi_device_complete.connect(
-            self._on_multi_device_complete
-        )
         self._secondary_workflows.copy_to_device_complete.connect(
             self._on_copy_to_device_complete
         )
@@ -2457,108 +2515,6 @@ class MainWindow(QMainWindow):
         )
 
     # --- Inbound handlers (page/view → workflow trigger) ---
-
-    @Slot()
-    def _on_copy_to_source_requested(self) -> None:
-        """Handle ReviewPage "Copy to another source" button click.
-
-        Opens a source picker (multi-select) showing all device sources
-        except the currently selected one, then triggers copy_to_sources.
-
-        Requirement 9.1: Offer "Copy to another source" action.
-        Requirement 9.2: Display other available sources as selectable targets.
-        """
-        state = self._wizard_controller.state
-        current_source = state.selected_source
-        filters = state.current_filters
-
-        if not filters:
-            self._status_banner.show_error("No filters loaded to copy")
-            return
-
-        # Get available sources — use the same list shown in SourcePage
-        # (device may not report source_names; we use the canonical list)
-        available_sources = list(self._source_page._source_buttons.keys())
-        if not available_sources:
-            # Fallback to common sources
-            available_sources = ["wifi", "bluetooth", "line-in", "auxIn", "optical", "HDMI"]
-
-        # Open source picker dialog (excludes current source)
-        target_sources = SourcePickerDialog.get_sources(
-            self, available_sources, current_source
-        )
-
-        # User cancelled the dialog
-        if target_sources is None:
-            return
-
-        logger.info(
-            "Copy-to-source: copying %d filters to %s",
-            len(filters),
-            target_sources,
-        )
-        self._secondary_workflows.copy_to_sources(
-            filters, target_sources, state.channel_mode.lower()
-        )
-
-    @Slot()
-    def _on_multi_device_requested(self) -> None:
-        """Handle ReviewPage "Apply to multiple devices" button click.
-
-        Opens a device picker (multi-select) showing discovered devices
-        (excluding the current one), then triggers apply_to_devices with
-        each selected device mapped to all its available sources.
-
-        Requirement 10.1: Offer option only when >1 device discovered.
-        Requirement 10.2: Display all discovered devices as checkboxes.
-        """
-        state = self._wizard_controller.state
-        filters = state.current_filters
-
-        if not filters:
-            self._status_banner.show_error("No filters loaded to push")
-            return
-
-        # Get current device IP to exclude from picker
-        current_ip = state.selected_device or ""
-
-        # Need discovered devices for the picker
-        if not self._discovered_devices:
-            self._status_banner.show_error("No other devices discovered")
-            return
-
-        # Open device picker dialog (excludes current device)
-        selected_devices = DevicePickerDialog.get_devices(
-            self, self._discovered_devices, current_ip
-        )
-
-        # User cancelled the dialog
-        if selected_devices is None:
-            return
-
-        # Build MultiDeviceRequest: each selected device → current source as default
-        current_source = state.selected_source
-        device_source_map: dict[str, list[str]] = {}
-        device_names: dict[str, str] = {}
-
-        for device in selected_devices:
-            # Use current source as the target source for each device
-            device_source_map[device.ip] = [current_source] if current_source else []
-            device_names[device.ip] = device.name
-
-        request = MultiDeviceRequest(
-            device_source_map=device_source_map,
-            device_names=device_names,
-        )
-
-        logger.info(
-            "Multi-device push: %d devices selected, %d filters",
-            len(selected_devices),
-            len(filters),
-        )
-        self._secondary_workflows.apply_to_devices(
-            filters, request, state.channel_mode.lower()
-        )
 
     @Slot(list)
     def _on_copy_to_device_requested(self, items: list) -> None:
@@ -2594,24 +2550,22 @@ class MainWindow(QMainWindow):
         if selected_devices is None:
             return
 
-        # Use the first selected device as the target
-        target_device = selected_devices[0]
-        target_ip = target_device.ip
-        # Use current source as default for PEQ target
+        # Copy to ALL selected devices (smoke #73 — was using only first device)
         target_source = state.selected_source
 
         logger.info(
-            "Copy-to-device: %d items to %s (%s)",
+            "Copy-to-device: %d items to %d device(s)",
             len(items),
-            target_device.name,
-            target_ip,
+            len(selected_devices),
         )
 
-        # Process all items in a single async operation to avoid clobbering (smoke #33)
+        # Process all items across all selected devices in a single async operation
         self._bridge.run_async(
             self._bridge_wrapper(
-                "copy_presets_to_device",
-                self._do_copy_presets_batch(items, target_ip, target_source or "wifi"),
+                "copy_presets_to_devices",
+                self._do_copy_presets_batch_multi(
+                    items, selected_devices, target_source or "wifi"
+                ),
             )
         )
 
@@ -2804,75 +2758,6 @@ class MainWindow(QMainWindow):
         logger.info("Preset load into editor: %s (type=%s)", name, preset_type)
 
     # --- Outbound handlers (workflow manager → UI updates) ---
-
-    @Slot(str)
-    def _on_copy_to_sources_progress(self, message: str) -> None:
-        """Show copy-to-sources progress in the StatusBanner.
-
-        Args:
-            message: Progress message (e.g. "Writing to optical...").
-        """
-        self._status_banner.show_progress(message)
-
-    @Slot(list)
-    def _on_copy_to_sources_complete(self, results: list) -> None:
-        """Handle copy-to-sources completion — show summary in StatusBanner.
-
-        Requirement 20.5: Per-source progress and results displayed.
-
-        Args:
-            results: List of SourceCopyResult objects.
-        """
-        succeeded = sum(1 for r in results if isinstance(r, SourceCopyResult) and r.success)
-        failed = len(results) - succeeded
-
-        if failed == 0:
-            summary_parts = [
-                r.source_name for r in results
-                if isinstance(r, SourceCopyResult) and r.success
-            ]
-            self._status_banner.show_success(
-                f"Copied to {len(summary_parts)} source(s): "
-                + ", ".join(summary_parts)
-            )
-        else:
-            self._status_banner.show_error(
-                f"Copy complete: {succeeded} succeeded, {failed} failed"
-            )
-
-    @Slot(str)
-    def _on_multi_device_progress(self, message: str) -> None:
-        """Show multi-device push progress in the StatusBanner.
-
-        Args:
-            message: Progress message (e.g. "Pushing to WiiM Pro / wifi...").
-        """
-        self._status_banner.show_progress(message)
-
-    @Slot(list)
-    def _on_multi_device_complete(self, results: list) -> None:
-        """Handle multi-device push completion — show summary.
-
-        Requirement 21.6: Summary after all devices processed.
-
-        Args:
-            results: List of DevicePushResult objects.
-        """
-        succeeded = sum(
-            1 for r in results if isinstance(r, DevicePushResult) and r.success
-        )
-        total = len(results)
-        failed = total - succeeded
-
-        if failed == 0:
-            self._status_banner.show_success(
-                f"All {total} device/source pairs updated successfully"
-            )
-        else:
-            self._status_banner.show_error(
-                f"{succeeded} of {total} devices updated successfully. "
-                f"{failed} failed (see details)"
-            )
 
     @Slot(bool, str)
     def _on_copy_to_device_complete(self, success: bool, message: str) -> None:

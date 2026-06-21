@@ -143,25 +143,25 @@ class TestSourcePage:
     """Tests for SourcePage: source list, pre-selection, channel modes."""
 
     def test_set_sources_populates_list(self, qtbot) -> None:
-        """set_sources creates radio buttons for each source."""
+        """set_sources creates checkboxes for each source."""
         page = SourcePage()
         qtbot.addWidget(page)
 
         page.set_sources(["wifi", "HDMI", "Bluetooth"])
 
-        assert len(page._source_buttons) == 3
-        assert "wifi" in page._source_buttons
-        assert "HDMI" in page._source_buttons
+        assert len(page._source_checkboxes) == 3
+        assert "wifi" in page._source_checkboxes
+        assert "HDMI" in page._source_checkboxes
 
     def test_active_source_pre_selected(self, qtbot) -> None:
-        """The active source radio button is pre-checked."""
+        """The active source checkbox is pre-checked."""
         page = SourcePage()
         qtbot.addWidget(page)
 
         page.set_sources(["wifi", "HDMI", "Bluetooth"], active_source="HDMI")
 
-        assert page._source_buttons["HDMI"].isChecked()
-        assert not page._source_buttons["wifi"].isChecked()
+        assert page._source_checkboxes["HDMI"].isChecked()
+        assert not page._source_checkboxes["wifi"].isChecked()
 
     def test_channel_modes_hidden_by_default(self, qtbot) -> None:
         """Channel mode section is hidden by default."""
@@ -190,25 +190,45 @@ class TestSourcePage:
 
 
 class TestFiltersPage:
-    """Tests for FiltersPage: options, signals, warnings, errors."""
+    """Tests for FiltersPage: mode toggle, browse, signals, warnings, errors."""
 
-    def test_rew_api_hidden_by_default(self, qtbot) -> None:
-        """REW API card is hidden until explicitly shown."""
+    def test_stereo_mode_is_default(self, qtbot) -> None:
+        """Stereo mode section is visible by default."""
         page = FiltersPage()
         qtbot.addWidget(page)
         page.show()
 
-        assert not page._rew_api_card.isVisible()
+        assert page._stereo_section.isVisible()
+        assert not page._lr_section.isVisible()
 
-    def test_set_rew_api_available_shows_card(self, qtbot) -> None:
-        """set_rew_api_available(True) makes the REW API card visible."""
+    def test_lr_mode_toggle_shows_lr_section(self, qtbot) -> None:
+        """Switching to L/R mode shows L/R browse section."""
         page = FiltersPage()
         qtbot.addWidget(page)
         page.show()
 
-        page.set_rew_api_available(True)
+        page._lr_radio.setChecked(True)
 
-        assert page._rew_api_card.isVisible()
+        assert page._lr_section.isVisible()
+        assert not page._stereo_section.isVisible()
+
+    def test_next_button_disabled_initially(self, qtbot) -> None:
+        """Next button is disabled when no file is selected."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+
+        assert not page._next_btn.isEnabled()
+
+    def test_next_button_enabled_after_file_selection(self, qtbot) -> None:
+        """Next button is enabled after a stereo file path is set."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+
+        # Simulate file selection
+        page._stereo_path = "/tmp/test.txt"
+        page._next_btn.setEnabled(True)
+
+        assert page._next_btn.isEnabled()
 
     def test_show_warnings_displays_text(self, qtbot) -> None:
         """show_warnings displays warning messages in the warnings section."""
@@ -232,14 +252,6 @@ class TestFiltersPage:
 
         assert page._error_section.isVisible()
         assert "Failed to parse" in page._error_label.text()
-
-    def test_device_pull_signal(self, qtbot) -> None:
-        """Clicking Pull from Device card emits device_pull_requested."""
-        page = FiltersPage()
-        qtbot.addWidget(page)
-
-        with qtbot.waitSignal(page.device_pull_requested, timeout=1000):
-            qtbot.mouseClick(page._pull_card, Qt.MouseButton.LeftButton)
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 """Source selection wizard page.
 
 Displays audio sources available on the connected WiiM device and allows
-the user to select which input to apply PEQ to. Optionally shows a channel
-mode selector (Stereo / Left / Right) when L/R mode is supported.
+the user to select which input(s) to apply PEQ to. Supports multi-selection
+so the same filters can be pushed to multiple sources in a single action.
 
 Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
 """
@@ -12,6 +12,7 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -31,16 +32,19 @@ from src.gui.constants import (
 
 
 class SourcePage(QWidget):
-    """Audio source/input selection page.
+    """Audio source/input selection page with multi-select support.
 
-    Shows a list of device audio sources as selectable radio-button items.
+    Shows a list of device audio sources as selectable checkboxes.
     The currently active source is pre-selected with a "(currently active)"
-    badge. An optional channel mode selector allows choosing between Stereo,
+    badge. Multiple sources can be selected — on push, filters are applied
+    to all of them.
+
+    An optional channel mode selector allows choosing between Stereo,
     Left, and Right when the device supports L/R mode.
 
     Signals:
         source_selected(str, str): Emitted when the user clicks Continue.
-            Arguments are (source_name, channel_mode).
+            Arguments are (comma-separated source names, channel_mode).
     """
 
     source_selected = Signal(str, str)
@@ -48,7 +52,7 @@ class SourcePage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._active_source: str = ""
-        self._source_buttons: dict[str, QRadioButton] = {}
+        self._source_checkboxes: dict[str, QCheckBox] = {}
 
         self._setup_ui()
 
@@ -69,34 +73,33 @@ class SourcePage(QWidget):
         # Default to "wifi" if no active source detected (most common use case)
         default_source = active_source if active_source else "wifi"
 
-        # Clear existing source buttons
-        self._source_buttons.clear()
+        # Clear existing source checkboxes
+        self._source_checkboxes.clear()
         while self._source_list_layout.count():
             item = self._source_list_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
-        # Create a radio button for each source
+        # Create a checkbox for each source
         for source in sources:
             label = source
             if source == active_source and active_source:
-                label = f"{source}  —  currently active"
+                label = f"{source}  \u2014  currently active"
             elif source == default_source and not active_source:
-                label = f"{source}  —  recommended default"
+                label = f"{source}  \u2014  recommended default"
 
-            radio = QRadioButton(label)
-            radio.setObjectName(f"source_radio_{source}")
-            radio.setMinimumHeight(LIST_ITEM_HEIGHT)
-            radio.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            checkbox = QCheckBox(label)
+            checkbox.setObjectName(f"source_checkbox_{source}")
+            checkbox.setMinimumHeight(LIST_ITEM_HEIGHT)
+            checkbox.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
             if source == default_source:
-                radio.setStyleSheet(f"QRadioButton {{ color: {ACCENT_COLOR}; }}")
-                radio.setChecked(True)
+                checkbox.setStyleSheet(f"QCheckBox {{ color: {ACCENT_COLOR}; }}")
+                checkbox.setChecked(True)
 
-            radio.toggled.connect(self._on_source_toggled)
-            self._source_group.addButton(radio)
-            self._source_list_layout.addWidget(radio)
-            self._source_buttons[source] = radio
+            checkbox.toggled.connect(self._on_source_toggled)
+            self._source_list_layout.addWidget(checkbox)
+            self._source_checkboxes[source] = checkbox
 
         self._update_continue_enabled()
 
@@ -126,14 +129,15 @@ class SourcePage(QWidget):
         content_layout.setSpacing(SPACING_MD)
 
         # Title
-        title = QLabel("Select Audio Source")
+        title = QLabel("Select Audio Source(s)")
         title.setObjectName("source_page_title")
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
         content_layout.addWidget(title)
 
         # Explanatory note (Req 3.4)
         note = QLabel(
-            "PEQ settings are stored per-source. Select the input you want to apply EQ to.\n"
+            "PEQ settings are stored per-source. Select one or more inputs "
+            "to apply EQ to.\n"
             "Tip: 'wifi' covers Wi-Fi, Ethernet, and USB playback. "
             "Sound/Lite models use 'auxIn' instead of 'line-in'."
         )
@@ -143,9 +147,6 @@ class SourcePage(QWidget):
         content_layout.addWidget(note)
 
         # Source list area
-        self._source_group = QButtonGroup(self)
-        self._source_group.setExclusive(True)
-
         source_list_widget = QWidget()
         source_list_widget.setObjectName("source_list_container")
         self._source_list_layout = QVBoxLayout(source_list_widget)
@@ -220,31 +221,32 @@ class SourcePage(QWidget):
     # ------------------------------------------------------------------
 
     def _on_source_toggled(self, checked: bool) -> None:
-        """Handle source radio button toggle."""
-        if checked:
-            self._update_continue_enabled()
+        """Handle source checkbox toggle."""
+        self._update_continue_enabled()
 
     def _on_continue_clicked(self) -> None:
-        """Emit source_selected with the chosen source and channel mode."""
-        source_name = self._get_selected_source()
+        """Emit source_selected with the chosen source(s) and channel mode."""
+        sources = self._get_selected_sources()
         channel_mode = self._get_selected_channel_mode()
-        if source_name:
-            self.source_selected.emit(source_name, channel_mode)
+        if sources:
+            # Emit comma-separated source names
+            self.source_selected.emit(",".join(sources), channel_mode)
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 
     def _update_continue_enabled(self) -> None:
-        """Enable Continue button when a source is selected."""
-        self._continue_btn.setEnabled(self._get_selected_source() != "")
+        """Enable Continue button when at least one source is selected."""
+        self._continue_btn.setEnabled(len(self._get_selected_sources()) > 0)
 
-    def _get_selected_source(self) -> str:
-        """Return the source name of the currently selected radio button."""
-        for source_name, radio in self._source_buttons.items():
-            if radio.isChecked():
-                return source_name
-        return ""
+    def _get_selected_sources(self) -> list[str]:
+        """Return the source names of all currently checked checkboxes."""
+        selected = []
+        for source_name, checkbox in self._source_checkboxes.items():
+            if checkbox.isChecked():
+                selected.append(source_name)
+        return selected
 
     def _get_selected_channel_mode(self) -> str:
         """Return the selected channel mode string."""

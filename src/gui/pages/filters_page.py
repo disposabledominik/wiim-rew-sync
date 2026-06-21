@@ -66,6 +66,7 @@ class FiltersPage(QWidget):
         self.setObjectName("FiltersPage")
         self._channel_mode: str = "stereo"
         self._roomfit_mode: bool = False
+        self._stereo_path: str = ""
         self._left_path: str = ""
         self._right_path: str = ""
         self._setup_ui()
@@ -128,11 +129,14 @@ class FiltersPage(QWidget):
         """Reset to initial state — hide warnings and errors."""
         self._warnings_section.setVisible(False)
         self._error_section.setVisible(False)
+        self._stereo_path = ""
         self._left_path = ""
         self._right_path = ""
         self._left_file_label.setText("No file selected")
         self._right_file_label.setText("No file selected")
         self._stereo_file_label.setText("No file selected")
+        self._next_btn.setEnabled(False)
+        self._import_lr_btn.setEnabled(False)
 
     # ------------------------------------------------------------------
     # Private: UI setup
@@ -210,6 +214,23 @@ class FiltersPage(QWidget):
 
         page_layout.addWidget(self._stereo_section)
 
+        # "Next" button for stereo mode (enabled once a file is selected)
+        self._next_btn = QPushButton("Next")
+        self._next_btn.setMinimumWidth(140)
+        self._next_btn.setEnabled(False)
+        self._next_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: {ACCENT_COLOR}; color: white;"
+            f"  border: none; border-radius: 6px;"
+            f"  padding: 8px 16px; font-size: 13px;"
+            f"}}"
+            f"QPushButton:disabled {{"
+            f"  background-color: #CCCCCC; color: #888888;"
+            f"}}"
+        )
+        self._next_btn.clicked.connect(self._on_stereo_next)
+        page_layout.addWidget(self._next_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+
         # --- L/R file section ---
         self._lr_section = QWidget()
         lr_layout = QVBoxLayout(self._lr_section)
@@ -268,8 +289,8 @@ class FiltersPage(QWidget):
         right_row.addWidget(right_btn)
         lr_layout.addLayout(right_row)
 
-        # Import L/R button
-        self._import_lr_btn = QPushButton("Import L/R Files")
+        # Next button for L/R mode (enabled when both files are selected)
+        self._import_lr_btn = QPushButton("Next")
         self._import_lr_btn.setMinimumWidth(140)
         self._import_lr_btn.setEnabled(False)
         self._import_lr_btn.setStyleSheet(
@@ -413,11 +434,12 @@ class FiltersPage(QWidget):
         """Show/hide stereo vs L/R sections based on current mode."""
         is_lr = self._channel_mode == "lr"
         self._stereo_section.setVisible(not is_lr)
+        self._next_btn.setVisible(not is_lr)
         self._lr_section.setVisible(is_lr)
 
     @Slot()
     def _on_stereo_browse(self) -> None:
-        """Open file dialog for stereo import and emit signal."""
+        """Open file dialog for stereo file selection (does not trigger import)."""
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select REW Filter File",
@@ -425,8 +447,9 @@ class FiltersPage(QWidget):
             "REW Text Files (*.txt);;All Files (*)",
         )
         if path:
+            self._stereo_path = path
             self._stereo_file_label.setText(path.rsplit("/", 1)[-1])
-            self.file_import_requested.emit(path)
+            self._next_btn.setEnabled(True)
 
     @Slot()
     def _on_left_browse(self) -> None:
@@ -461,6 +484,12 @@ class FiltersPage(QWidget):
         """Emit file_import_lr_requested with both L/R paths."""
         if self._left_path and self._right_path:
             self.file_import_lr_requested.emit(self._left_path, self._right_path)
+
+    @Slot()
+    def _on_stereo_next(self) -> None:
+        """Emit file_import_requested with the selected stereo file path."""
+        if self._stereo_path:
+            self.file_import_requested.emit(self._stereo_path)
 
     @Slot(int)
     def _on_roomfit_index_changed(self, index: int) -> None:

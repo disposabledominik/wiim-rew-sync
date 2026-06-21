@@ -35,7 +35,7 @@ class ReviewPage(QWidget):
     """Filter review page with FilterTable, actions, and toggle controls.
 
     Displays the current filter set in a read-only table and provides action
-    buttons for pushing to device, exporting, saving, and batch operations.
+    buttons for pushing to device, exporting, and saving presets.
     Dry Run mode changes the primary button label and shows a badge.
     Compare toggle enables diff view against device state.
 
@@ -43,8 +43,6 @@ class ReviewPage(QWidget):
         push_requested: User wants to push filters to device.
         export_rew_requested: Export filters as REW-compatible file.
         save_preset_requested: Save filters to local preset library.
-        copy_to_source_requested: Copy filters to another audio source.
-        multi_device_requested: Apply filters to multiple devices.
         dry_run_toggled: Dry run mode changed (bool: enabled).
         compare_toggled: Compare with device toggled (bool: enabled).
     """
@@ -52,8 +50,6 @@ class ReviewPage(QWidget):
     push_requested = Signal()
     export_rew_requested = Signal()
     save_preset_requested = Signal()
-    copy_to_source_requested = Signal()
-    multi_device_requested = Signal()
     dry_run_toggled = Signal(bool)
     compare_toggled = Signal(bool)
 
@@ -241,28 +237,6 @@ class ReviewPage(QWidget):
 
         action_layout.addStretch()
         content_layout.addLayout(action_layout)
-
-        # Secondary actions row (links)
-        secondary_layout = QHBoxLayout()
-        secondary_layout.setContentsMargins(0, 0, 0, 0)
-        secondary_layout.setSpacing(SPACING_MD)
-
-        copy_source_button = QPushButton("Copy to another source", content_wrapper)
-        copy_source_button.setObjectName("ReviewPageCopySourceButton")
-        copy_source_button.setFlat(True)
-        copy_source_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        copy_source_button.clicked.connect(self.copy_to_source_requested.emit)
-        secondary_layout.addWidget(copy_source_button)
-
-        multi_device_button = QPushButton("Apply to multiple devices", content_wrapper)
-        multi_device_button.setObjectName("ReviewPageMultiDeviceButton")
-        multi_device_button.setFlat(True)
-        multi_device_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        multi_device_button.clicked.connect(self.multi_device_requested.emit)
-        secondary_layout.addWidget(multi_device_button)
-
-        secondary_layout.addStretch()
-        content_layout.addLayout(secondary_layout)
 
         content_layout.addStretch()
 
