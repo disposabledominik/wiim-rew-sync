@@ -13,7 +13,7 @@ Requirements referenced: 8.3, 8.4, 10.9.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QAction, QMouseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -272,7 +272,7 @@ class MyPresetsView(QWidget):
                 total_bands=total_bands,
             )
             item = QListWidgetItem(self._list_widget)
-            item.setSizeHint(item_widget.sizeHint())
+            item.setSizeHint(QSize(0, LIST_ITEM_HEIGHT))
             item.setData(Qt.ItemDataRole.UserRole, profile)
             self._list_widget.setItemWidget(item, item_widget)
 

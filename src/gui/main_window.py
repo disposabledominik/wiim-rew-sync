@@ -549,6 +549,11 @@ class MainWindow(QMainWindow):
         # --- 5. HelpView close button ---
         self._help_view.close_requested.connect(self._on_help_close_requested)
 
+        # --- 6. Diagnostics panel ---
+        self._diagnostics_panel.raw_command_requested.connect(
+            self._on_raw_command_requested
+        )
+
     # ------------------------------------------------------------------
     # Page → Controller handlers
     # ------------------------------------------------------------------
@@ -2268,6 +2273,38 @@ class MainWindow(QMainWindow):
         self._on_step_changed(self._wizard_controller.current_step)
 
     @Slot(str)
+    def _on_raw_command_requested(self, command: str) -> None:
+        """Handle raw command from Diagnostics panel — send to device and show response."""
+        if self._wiim_adapter is None:
+            self._diagnostics_panel.on_raw_response("Error: No device connected")
+            return
+
+        self._bridge.run_async(
+            self._bridge_wrapper("raw_command", self._do_raw_command(command))
+        )
+
+    async def _do_raw_command(self, command: str) -> None:
+        """Execute a raw httpapi command against the connected device.
+
+        Args:
+            command: The command string (e.g. "getStatusEx").
+        """
+        assert self._wiim_adapter is not None
+
+        try:
+            client = self._wiim_adapter._client
+            response = await client.command(command)
+            # Format the response as JSON if possible
+            import json
+            if isinstance(response, dict):
+                formatted = json.dumps(response, indent=2, ensure_ascii=False)
+            else:
+                formatted = str(response)
+            self._diagnostics_panel.on_raw_response(formatted)
+        except Exception as exc:
+            self._diagnostics_panel.on_raw_response(f"Error: {exc}")
+
+    @Slot(str)
     def _on_navigation_requested(self, view_key: str) -> None:
         """Handle sidebar navigation request — switch QStackedWidget page.
 
@@ -2676,7 +2713,8 @@ class MainWindow(QMainWindow):
         """Handle MyPresetsView "Load" action — recall profile into ReviewPage.
 
         Loads the profile's filters and navigates to the Review step.
-        Sets wizard state channel_mode from the profile before recall.
+        If wizard state is incomplete (no EQ type/source), shows QuickSetupDialog
+        to collect missing info before loading (smoke #87).
 
         Requirement 17.2: Profile Recall & Push flow.
 
@@ -2684,6 +2722,11 @@ class MainWindow(QMainWindow):
             profile: Profile object from the local preset library.
         """
         logger.info("Profile load requested: %s", getattr(profile, "name", "unknown"))
+
+        # Check if wizard state is complete enough to load
+        if not self._ensure_wizard_state_for_load():
+            return
+
         # Set channel_mode in wizard state from profile BEFORE recall emits
         channel_mode = getattr(profile, "channel_mode", "stereo")
         if is_lr_mode(channel_mode):
@@ -2832,7 +2875,8 @@ class MainWindow(QMainWindow):
         """Handle PresetsDeviceView "Load into Editor" for a single preset.
 
         Reads the preset's filters from the device and loads them into
-        the wizard Review page.
+        the wizard Review page. Shows QuickSetupDialog if wizard state
+        is incomplete (smoke #87).
 
         Args:
             item: PresetItem object to load.
@@ -2845,6 +2889,10 @@ class MainWindow(QMainWindow):
 
         if self._wiim_adapter is None:
             self._status_banner.show_error("No device connected")
+            return
+
+        # Check if wizard state is complete enough to load
+        if not self._ensure_wizard_state_for_load():
             return
 
         self._status_banner.show_progress(f"Loading preset '{name}'...")
@@ -2929,6 +2977,74 @@ class MainWindow(QMainWindow):
             self._status_banner.show_success(message)
         else:
             self._status_banner.show_error(f"Undo failed: {message}")
+
+    # ------------------------------------------------------------------
+    # Quick Setup helper (smoke #87)
+    # ------------------------------------------------------------------
+
+    def _ensure_wizard_state_for_load(self) -> bool:
+        """Check wizard state is complete for loading filters; show dialog if not.
+
+        If no device is connected, shows error and returns False.
+        If EQ type or source is missing, shows QuickSetupDialog.
+        On cancel, returns False. On confirm, updates wizard state and returns True.
+
+        Returns:
+            True if state is ready for loading, False if cancelled or blocked.
+        """
+        from src.gui.dialogs.quick_setup_dialog import QuickSetupDialog
+
+        state = self._wizard_controller.state
+
+        # Must have a device
+        if state.selected_device is None:
+            self._status_banner.show_error("Connect to a device first")
+            return False
+
+        # Determine what's missing
+        flow_type = self._wizard_controller.flow_type
+        need_eq_type = flow_type == FlowType.PEQ  # Default — if no explicit choice yet
+        # If flow_type was explicitly set (EQ_TYPE step completed), we don't need it
+        if WizardStep.EQ_TYPE in state.completed_steps:
+            need_eq_type = False
+
+        need_source = not state.selected_source and flow_type != FlowType.ROOMFIT
+        # If source step completed, we don't need it
+        if WizardStep.SOURCE in state.completed_steps:
+            need_source = False
+
+        # Nothing missing — proceed
+        if not need_eq_type and not need_source:
+            return True
+
+        # Show dialog
+        available_sources = list(self._source_page._source_checkboxes.keys())
+        if not available_sources:
+            available_sources = ["wifi", "bluetooth", "line-in", "optical", "HDMI", "auxIn"]
+
+        result = QuickSetupDialog.get_setup(
+            self,
+            need_eq_type=need_eq_type,
+            need_source=need_source,
+            available_sources=available_sources,
+        )
+
+        if result is None:
+            return False
+
+        eq_type, sources = result
+
+        # Apply to wizard state
+        if need_eq_type:
+            if eq_type == "roomfit":
+                self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
+            else:
+                self._wizard_controller.set_flow_type(FlowType.PEQ)
+
+        if need_source and sources:
+            state.selected_source = ",".join(sources)
+
+        return True
 
     # ------------------------------------------------------------------
     # Close Event

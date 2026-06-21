@@ -205,13 +205,8 @@ class ReviewPage(QWidget):
 
         content_layout.addStretch()
 
-        # Center the content wrapper
-        wrapper_layout = QHBoxLayout()
-        wrapper_layout.setContentsMargins(0, 0, 0, 0)
-        wrapper_layout.addStretch()
-        wrapper_layout.addWidget(content_wrapper)
-        wrapper_layout.addStretch()
-        page_layout.addLayout(wrapper_layout)
+        # Add content wrapper directly (fills available space)
+        page_layout.addWidget(content_wrapper)
 
     def _setup_shortcuts(self) -> None:
         """Configure keyboard shortcuts."""

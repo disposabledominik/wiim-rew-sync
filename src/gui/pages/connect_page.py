@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -184,13 +183,8 @@ class ConnectPage(QWidget):
 
         content_layout.addStretch()
 
-        # Center the content wrapper
-        wrapper_layout = QHBoxLayout()
-        wrapper_layout.setContentsMargins(0, 0, 0, 0)
-        wrapper_layout.addStretch()
-        wrapper_layout.addWidget(content_wrapper)
-        wrapper_layout.addStretch()
-        page_layout.addLayout(wrapper_layout)
+        # Add content wrapper directly (no centering — fills available space)
+        page_layout.addWidget(content_wrapper)
 
     def _build_scanning_widget(self, parent: QWidget) -> QWidget:
         """Build the scanning animation state widget."""
