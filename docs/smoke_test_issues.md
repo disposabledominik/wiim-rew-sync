@@ -38,3 +38,12 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 25 | Presets on Device: Can select PEQ + RoomFit items simultaneously | FIXED | NO | current | Added mutual exclusion: selecting in one list clears the other |
 | 26 | Presets on Device: Copy to Another Device doesn't actually write preset to target | FIXED | NO | current | Reads filters, connects to target, writes via SafeWrite, saves as named preset; shows success/failure status |
 | 27 | RoomFit FiltersPage: No way to progress after selecting profile from dropdown | FIXED | NO | current | Wired roomfit_profile_selected; reads profile with L/R mode handling; advances to Review |
+| 28 | Review page shows single 24-row table for L/R instead of separate L/R tabs | OPEN | NO | — | _on_peq_ready uses set_filters() for all modes; should use set_lr_filters() for L/R |
+| 29 | Export as REW: L/R mode creates single file with 10 bands instead of two files | OPEN | NO | — | Export logic doesn't branch on channel_mode; needs to generate two files for L/R |
+| 30 | Export as REW: file doesn't get .txt extension when not typed by user | OPEN | NO | — | QFileDialog doesn't auto-append extension on some platforms |
+| 31 | Save to My Presets: no visible result after processing, nothing in My Presets | OPEN | NO | — | Save may succeed but no UI refresh of MyPresetsView; also check if save actually writes |
+| 32 | Copy to Another Device: status message not shown long enough to read | OPEN | NO | — | Success banner auto-dismisses too quickly or gets cleared by finish_operation |
+| 33 | Copy to Another Device: only pushes to first device when multiple selected | OPEN | NO | — | Loop only processes first item or sequential calls clobber each other |
+| 34 | Copy to Another Device: RoomFit profile saved as PEQ on target (wrong type) | OPEN | NO | — | Copy logic doesn't branch on preset_type for target save method |
+| 35 | Source page shows all canonical sources regardless of device model | OPEN | NO | — | Should filter based on device model + discovered sources with custom EQ |
+| 36 | WiiM Mini shows RoomFit in EQ Type despite not supporting it | OPEN | NO | — | Should check roomfit_level and hide RoomFit option when level < 2 |
