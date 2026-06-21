@@ -732,20 +732,28 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_push_requested(self) -> None:
-        """Handle push request from ReviewPage — advance to Push step and execute push.
+        """Handle push request from ReviewPage — advance and execute push.
 
-        Guards against concurrent operations, advances the wizard to the PUSH
-        step, then launches the SafeWrite protocol via AsyncBridge.
+        For PEQ flow: advance to PUSH step and execute immediately.
+        For RoomFit flow: advance to NAME_PROFILE step first (push happens
+        after user confirms the profile name via _on_name_confirmed).
 
         Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
         """
         if self._is_busy():
             return
 
-        self._wizard_controller.advance(summary="Push")
-        self._bridge.run_async(
-            self._bridge_wrapper("push", self._do_push())
-        )
+        flow_type = self._wizard_controller.flow_type
+
+        if flow_type == FlowType.ROOMFIT:
+            # RoomFit: advance to NAME_PROFILE — push deferred until name confirmed
+            self._wizard_controller.advance(summary="Ready")
+        else:
+            # PEQ: advance to PUSH and execute immediately
+            self._wizard_controller.advance(summary="Push")
+            self._bridge.run_async(
+                self._bridge_wrapper("push", self._do_push())
+            )
 
     @Slot()
     def _on_export_requested(self) -> None:
@@ -764,13 +772,17 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_name_confirmed(self, name: str) -> None:
-        """Handle RoomFit profile name confirmation — store and advance.
+        """Handle RoomFit profile name confirmation — store, advance, and push.
 
         Args:
             name: The profile name chosen by the user.
         """
         self._wizard_controller.state.roomfit_profile_name = name
         self._wizard_controller.advance(summary=name)
+        # Now execute the actual push (deferred from _on_push_requested)
+        self._bridge.run_async(
+            self._bridge_wrapper("push", self._do_push())
+        )
 
     @Slot()
     def _on_undo_requested(self) -> None:
@@ -1090,6 +1102,9 @@ class MainWindow(QMainWindow):
             # Mark PUSH step as completed in the step indicator
             self._wizard_controller.state.completed_steps[WizardStep.PUSH] = "Done"
             self._wizard_controller.step_summary_updated.emit(WizardStep.PUSH, "Done")
+            # Hide Undo for RoomFit (saving to a named profile has no rollback)
+            if self._wizard_controller.flow_type == FlowType.ROOMFIT:
+                self._push_page._undo_button.setVisible(False)
             self._status_banner.show_success("Filters pushed successfully")
         else:
             error_msg = getattr(result, "error", "Unknown error")
@@ -1819,12 +1834,23 @@ class MainWindow(QMainWindow):
 
         if flow_type == FlowType.ROOMFIT:
             # RoomFit: write as named profile via write_roomfit
-            profile_name = state.roomfit_profile_name or "My RoomFit"
+            profile_name = state.roomfit_profile_name
+            if not profile_name:
+                result = WriteResult(
+                    success=False, error="No profile name specified", backup_path=""
+                )
+                self._bridge.write_complete.emit(result)
+                return
+
             try:
+                # For L/R mode, write_roomfit currently only supports stereo.
+                # Pass the full filter list — the adapter handles band allocation.
                 await self._wiim_adapter.write_roomfit(source_name, profile_name, filters)
 
                 result = WriteResult(success=True, backup_path="")
-                self._bridge.progress_update.emit("Writing RoomFit profile...")
+                self._bridge.progress_update.emit(
+                    f"RoomFit profile '{profile_name}' saved"
+                )
                 self._bridge.write_complete.emit(result)
             except Exception as exc:
 

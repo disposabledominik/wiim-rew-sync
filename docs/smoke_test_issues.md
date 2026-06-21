@@ -54,18 +54,22 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 41 | Back-nav to Connect → selecting new device keeps old flow type | FIXED | NO | `d6983fb` | _on_device_selected resets flow_type to PEQ before probing |
 | 42 | WiiM Mini missing line-in source in Source page | FIXED | NO | `d6983fb` | Reverted to showing all common sources (PEQ accepts any name; no model filtering needed) |
 | 43 | Sound/Sound Lite shows optical and HDMI sources (not applicable) | WONTFIX | N/A | — | PEQ engine accepts any source name; showing extra sources is harmless. No reliable way to probe physical inputs. |
-| 44 | ReviewPage "Save to My Presets" crashes with FileNotFoundError for L/R names | FIXED | NO | current | Name contained "/" from channel mode; added filesystem-safe name sanitization in shared helper |
-| 45 | Export from Review vs Presets on Device shows different dialogs | FIXED | NO | current | Consolidated into shared _export_filters_as_rew helper; both use ExportDialog for L/R |
+| 44 | ReviewPage "Save to My Presets" crashes with FileNotFoundError for L/R names | FIXED | NO | `5c93394` | Name contained "/" from channel mode; added filesystem-safe name sanitization in shared helper |
+| 45 | Export from Review vs Presets on Device shows different dialogs | FIXED | NO | `5c93394` | Consolidated into shared _export_filters_as_rew helper; both use ExportDialog for L/R |
 | 46 | My Saved Presets: no visible action buttons (only right-click context menu) | FIXED | NO | `e921182` | Added visible toolbar (Load/Rename/Duplicate/Delete) that appears on item selection |
-| 47 | Duplicate save/export logic across trigger points (architectural) | FIXED | NO | current | Created shared helpers: _save_filters_to_presets, _export_filters_as_rew; all triggers converge |
-| 48 | Presets on Device "Save to My Presets" creates popup windows | FIXED | NO | current | _do_preset_save was calling Qt widget methods from async thread; moved to thread-safe pattern |
-| 49 | Loading L/R profile from My Saved Presets shows "no filters" | FIXED | NO | current | recall_profile now handles L/R profiles (filters_l + filters_r) not just stereo |
-| 50 | "Copy to another source" shows "No sources available" | FIXED | NO | current | Was reading from capabilities.source_names (empty); now uses SourcePage's known source list |
-| 51 | REW file import: no way to import L/R (two files) | FIXED | NO | current | Added Stereo/L/R choice dialog on import click; L/R shows dual file picker; wired file_import_lr_requested signal |
-| 52 | FiltersPage shows "Pull from Device" and "Pull from REW API" options | FIXED | N/A | current | Hidden — these workflows are accessible via "Presets on Device" sidebar |
-| 53 | PushPage "Export" and "Save to My Presets" buttons do nothing | FIXED | NO | current | Wired push_page.export_requested and save_preset_requested to shared handlers |
-| 54 | Push step doesn't show checkmark on success | FIXED | NO | current | _on_write_complete now marks PUSH step completed in step indicator |
-| 55 | Push sends L/R filters as stereo (channel_mode "L/R" != "lr") | FIXED | NO | current | _do_push now checks both "lr" and "l/r" in channel_mode comparison |
-| 56 | Drag-and-drop zone confusing for L/R (which file is L vs R?) | FIXED | N/A | current | Drop zone hidden — import flow uses explicit Stereo/L/R choice dialog |
-| 57 | Back-navigation from Push keeps all steps checked | FIXED | NO | current | _on_step_changed now clears completion badges for invalidated steps via clear_completed() |
-| 58 | Multi-device push always uses stereo PEQ regardless of context | FIXED | NO | current | apply_to_devices now receives channel_mode from wizard state; builds L/R PEQSettings when appropriate |
+| 47 | Duplicate save/export logic across trigger points (architectural) | FIXED | NO | `5c93394` | Created shared helpers: _save_filters_to_presets, _export_filters_as_rew; all triggers converge |
+| 48 | Presets on Device "Save to My Presets" creates popup windows | FIXED | NO | `e144ddb` | _do_preset_save was calling Qt widget methods from async thread; moved to thread-safe pattern |
+| 49 | Loading L/R profile from My Saved Presets shows "no filters" | FIXED | NO | `e144ddb` | recall_profile now handles L/R profiles (filters_l + filters_r) not just stereo |
+| 50 | "Copy to another source" shows "No sources available" | FIXED | NO | `e144ddb` | Was reading from capabilities.source_names (empty); now uses SourcePage's known source list |
+| 51 | REW file import: no way to import L/R (two files) | FIXED | NO | `e144ddb` | Added Stereo/L/R choice dialog on import click; L/R shows dual file picker; wired file_import_lr_requested signal |
+| 52 | FiltersPage shows "Pull from Device" and "Pull from REW API" options | FIXED | N/A | `e144ddb` | Hidden — these workflows are accessible via "Presets on Device" sidebar |
+| 53 | PushPage "Export" and "Save to My Presets" buttons do nothing | FIXED | NO | `e144ddb` | Wired push_page.export_requested and save_preset_requested to shared handlers |
+| 54 | Push step doesn't show checkmark on success | FIXED | NO | `e144ddb` | _on_write_complete now marks PUSH step completed in step indicator |
+| 55 | Push sends L/R filters as stereo (channel_mode "L/R" != "lr") | FIXED | NO | `5761cef` | _do_push now checks both "lr" and "l/r" in channel_mode comparison |
+| 56 | Drag-and-drop zone confusing for L/R (which file is L vs R?) | FIXED | N/A | `5761cef` | Drop zone hidden — import flow uses explicit Stereo/L/R choice dialog |
+| 57 | Back-navigation from Push keeps all steps checked | FIXED | NO | `5761cef` | _on_step_changed now clears completion badges for invalidated steps via clear_completed() |
+| 58 | Multi-device push always uses stereo PEQ regardless of context | FIXED | NO | `5761cef` | apply_to_devices now receives channel_mode from wizard state; builds L/R PEQSettings when appropriate |
+| 59 | RoomFit: Filters page shows "Select RoomFit profile to pull" dropdown | FIXED | N/A | `7e6cc12` | Hidden — RoomFit profile pull is via "Presets on Device" sidebar only |
+| 60 | RoomFit: NameProfilePage "Existing profiles" list is empty | FIXED | NO | `0a132e4` | Added _populate_name_profile_page() that fetches profiles when navigating to NAME_PROFILE step |
+| 61 | RoomFit: Push ignores profile name from "Name Profile" step (uses "My RoomFit") | FIXED | NO | current | _on_push_requested defers push for RoomFit; push fires from _on_name_confirmed after name is stored |
+| 62 | RoomFit: Undo button crashes with "Is a directory" error | FIXED | N/A | current | Undo hidden for RoomFit (named profiles have no rollback concept) |
