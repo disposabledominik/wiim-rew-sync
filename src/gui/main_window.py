@@ -566,15 +566,24 @@ class MainWindow(QMainWindow):
         Creates WiiMHttpClient and CapabilityProber for the selected device,
         then launches an async probe via the bridge.
 
-        Resets flow type to default PEQ so previous device's flow doesn't leak
-        (smoke fix: back-navigation re-connect).
+        Resets flow type and clears source/step state so previous context
+        doesn't leak (smoke #87 — re-connect should re-ask source).
         """
         if self._is_busy():
             return
 
-        # Reset flow type so previous device's PEQ_ONLY doesn't persist
+        # Reset flow type and clear prior step state
         self._wizard_controller.set_flow_type(FlowType.PEQ)
-        self._wizard_controller.state.selected_device = device_ip
+        state = self._wizard_controller.state
+        state.selected_device = device_ip
+        state.selected_source = ""
+        state.current_filters = []
+        # Clear completed steps beyond CONNECT
+        state.completed_steps.pop(WizardStep.EQ_TYPE, None)
+        state.completed_steps.pop(WizardStep.SOURCE, None)
+        state.completed_steps.pop(WizardStep.FILTERS, None)
+        state.completed_steps.pop(WizardStep.REVIEW, None)
+        state.completed_steps.pop(WizardStep.PUSH, None)
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
         self._wiim_http_client = WiiMHttpClient(device_ip)
@@ -3039,11 +3048,11 @@ class MainWindow(QMainWindow):
 
         # Determine what's missing
         need_eq_type = WizardStep.EQ_TYPE not in state.completed_steps
-        # For PEQ flow, need source if not already set
-        # (also ask if EQ_TYPE not yet decided — user might pick PEQ)
+        # For PEQ flow, need source if SOURCE step not completed in current run
+        # (even if selected_source has a stale value from a prior session)
         flow_type = self._wizard_controller.flow_type
         need_source = (
-            not state.selected_source
+            WizardStep.SOURCE not in state.completed_steps
             and flow_type != FlowType.ROOMFIT
         )
         # If EQ_TYPE is already completed as RoomFit, no source needed
