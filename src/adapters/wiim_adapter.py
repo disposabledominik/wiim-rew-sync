@@ -722,7 +722,13 @@ class WiiMAdapter:
         return self._parse_peq_response(response, source_name)
 
     async def write_roomfit(
-        self, source_name: str, profile_name: str, filters: list[CanonicalFilter]
+        self,
+        source_name: str,
+        profile_name: str,
+        filters: list[CanonicalFilter],
+        channel_mode: str = "stereo",
+        filters_l: list[CanonicalFilter] | None = None,
+        filters_r: list[CanonicalFilter] | None = None,
     ) -> None:
         """Write RoomFit bands to a named profile.
 
@@ -735,7 +741,10 @@ class WiiMAdapter:
         Args:
             source_name: Audio input source (e.g. "wifi", "bluetooth").
             profile_name: Name to save the RoomFit profile as.
-            filters: List of CanonicalFilter objects to write as RoomFit bands.
+            filters: List of CanonicalFilter objects (used for stereo mode).
+            channel_mode: "stereo" or "lr" — determines write format.
+            filters_l: Left channel filters (required when channel_mode="lr").
+            filters_r: Right channel filters (required when channel_mode="lr").
 
         Raises:
             WiiMResponseError: RoomFit write not supported (level < 4) or
@@ -747,33 +756,63 @@ class WiiMAdapter:
                 f"device has level {self._capabilities.roomfit_level}"
             )
 
-        # Step 1: Generate band array
-        band_array, _warnings = generate_wiim_band_array(
-            filters, max_bands=self._capabilities.max_filters
-        )
-
-        # Step 2: Build EQBand parameter array (same format as PEQ)
-        eq_band_params: list[dict[str, str | float]] = []
         num_bands = self._capabilities.max_filters
-        for i in range(num_bands):
-            offset = i * 4
-            letter = _BAND_LETTERS[i]
-            eq_band_params.append({"param_name": f"{letter}_mode", "value": band_array[offset]})
-            eq_band_params.append({"param_name": f"{letter}_freq", "value": band_array[offset + 1]})
-            eq_band_params.append({"param_name": f"{letter}_gain", "value": band_array[offset + 2]})
-            eq_band_params.append({"param_name": f"{letter}_q", "value": band_array[offset + 3]})
 
-        # Step 3: Write to buffer with EQLevel: 2
-        write_payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "channelMode": "Stereo",
-            "EQBand": eq_band_params,
-            "EQLevel": 2,
-        })
+        if channel_mode in ("lr", "l/r") and filters_l and filters_r:
+            # L/R mode: build EQBandL and EQBandR arrays
+            band_array_l, _ = generate_wiim_band_array(filters_l, max_bands=num_bands)
+            band_array_r, _ = generate_wiim_band_array(filters_r, max_bands=num_bands)
+
+            eq_band_l: list[dict[str, str | float]] = []
+            eq_band_r: list[dict[str, str | float]] = []
+            for i in range(num_bands):
+                offset = i * 4
+                letter = _BAND_LETTERS[i]
+                arr_l = band_array_l
+                arr_r = band_array_r
+                eq_band_l.append({"param_name": f"{letter}_mode", "value": arr_l[offset]})
+                eq_band_l.append({"param_name": f"{letter}_freq", "value": arr_l[offset + 1]})
+                eq_band_l.append({"param_name": f"{letter}_gain", "value": arr_l[offset + 2]})
+                eq_band_l.append({"param_name": f"{letter}_q", "value": arr_l[offset + 3]})
+                eq_band_r.append({"param_name": f"{letter}_mode", "value": arr_r[offset]})
+                eq_band_r.append({"param_name": f"{letter}_freq", "value": arr_r[offset + 1]})
+                eq_band_r.append({"param_name": f"{letter}_gain", "value": arr_r[offset + 2]})
+                eq_band_r.append({"param_name": f"{letter}_q", "value": arr_r[offset + 3]})
+
+            write_payload = json.dumps({
+                "pluginURI": _PLUGIN_URI,
+                "source_name": source_name,
+                "channelMode": "L/R",
+                "EQBandL": eq_band_l,
+                "EQBandR": eq_band_r,
+                "EQLevel": 2,
+            })
+        else:
+            # Stereo mode: single EQBand array
+            band_array, _warnings = generate_wiim_band_array(filters, max_bands=num_bands)
+
+            eq_band_params: list[dict[str, str | float]] = []
+            for i in range(num_bands):
+                offset = i * 4
+                letter = _BAND_LETTERS[i]
+                arr = band_array
+                eq_band_params.append({"param_name": f"{letter}_mode", "value": arr[offset]})
+                eq_band_params.append({"param_name": f"{letter}_freq", "value": arr[offset + 1]})
+                eq_band_params.append({"param_name": f"{letter}_gain", "value": arr[offset + 2]})
+                eq_band_params.append({"param_name": f"{letter}_q", "value": arr[offset + 3]})
+
+            write_payload = json.dumps({
+                "pluginURI": _PLUGIN_URI,
+                "source_name": source_name,
+                "channelMode": "Stereo",
+                "EQBand": eq_band_params,
+                "EQLevel": 2,
+            })
+
+        # Write to buffer
         await self._client.command(f"EQSetLV2SourceBand:{quote(write_payload)}")
 
-        # Step 4: Save buffer to profile (include timestamp so WiiM app shows date)
+        # Save buffer to profile
         save_payload = json.dumps({
             "pluginURI": _PLUGIN_URI,
             "source_name": source_name,

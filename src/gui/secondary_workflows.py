@@ -194,6 +194,7 @@ class SecondaryWorkflowManager(QObject):
         self,
         filters: list[CanonicalFilter],
         target_sources: list[str],
+        channel_mode: str = "stereo",
     ) -> None:
         """Copy current filters to one or more target sources on the same device.
 
@@ -206,16 +207,20 @@ class SecondaryWorkflowManager(QObject):
         Args:
             filters: The canonical filters to push to each target source.
             target_sources: List of source names to copy filters to.
+            channel_mode: "stereo" or "lr" — determines how filters are split.
 
         Requirements: 9.3, 9.4, 9.5, 9.6, 9.7.
         """
         assert self._bridge is not None
-        self._bridge.run_async(self._do_copy_to_sources(filters, target_sources))
+        self._bridge.run_async(
+            self._do_copy_to_sources(filters, target_sources, channel_mode)
+        )
 
     async def _do_copy_to_sources(
         self,
         filters: list[CanonicalFilter],
         target_sources: list[str],
+        channel_mode: str = "stereo",
     ) -> None:
         """Execute copy-to-sources with fault isolation per source.
 
@@ -237,11 +242,20 @@ class SecondaryWorkflowManager(QObject):
             )
 
             try:
-                settings = PEQSettings(
-                    source_name=source_name,
-                    channel_mode="stereo",
-                    bands=filters,
-                )
+                if channel_mode in ("lr", "l/r"):
+                    mid = len(filters) // 2
+                    settings = PEQSettings(
+                        source_name=source_name,
+                        channel_mode="lr",
+                        bands_l=filters[:mid],
+                        bands_r=filters[mid:],
+                    )
+                else:
+                    settings = PEQSettings(
+                        source_name=source_name,
+                        channel_mode="stereo",
+                        bands=filters,
+                    )
                 await safe_write.execute(source_name, settings)
                 results.append(
                     SourceCopyResult(

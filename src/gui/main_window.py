@@ -1930,11 +1930,24 @@ class MainWindow(QMainWindow):
                     )
                     backup_path = str(bp)
 
-                # Write new bands to the named profile
+                # Write new bands to the named profile (respecting channel mode)
                 self._bridge.progress_update.emit(
                     f"Writing RoomFit profile '{profile_name}'..."
                 )
-                await self._wiim_adapter.write_roomfit(source_name, profile_name, filters)
+                if channel_mode in ("lr", "l/r"):
+                    mid = len(filters) // 2
+                    await self._wiim_adapter.write_roomfit(
+                        source_name,
+                        profile_name,
+                        filters,
+                        channel_mode="lr",
+                        filters_l=filters[:mid],
+                        filters_r=filters[mid:],
+                    )
+                else:
+                    await self._wiim_adapter.write_roomfit(
+                        source_name, profile_name, filters
+                    )
 
                 result = WriteResult(success=True, backup_path=backup_path)
                 self._bridge.progress_update.emit(
@@ -2554,7 +2567,9 @@ class MainWindow(QMainWindow):
             len(filters),
             target_sources,
         )
-        self._secondary_workflows.copy_to_sources(filters, target_sources)
+        self._secondary_workflows.copy_to_sources(
+            filters, target_sources, state.channel_mode.lower()
+        )
 
     @Slot()
     def _on_multi_device_requested(self) -> None:
