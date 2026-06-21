@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from src.gui.shared_helpers import build_peq_settings
 from src.models.canonical import CanonicalFilter
 from src.models.peq import PEQSettings
 
@@ -242,20 +243,7 @@ class SecondaryWorkflowManager(QObject):
             )
 
             try:
-                if channel_mode in ("lr", "l/r"):
-                    mid = len(filters) // 2
-                    settings = PEQSettings(
-                        source_name=source_name,
-                        channel_mode="lr",
-                        bands_l=filters[:mid],
-                        bands_r=filters[mid:],
-                    )
-                else:
-                    settings = PEQSettings(
-                        source_name=source_name,
-                        channel_mode="stereo",
-                        bands=filters,
-                    )
+                settings = build_peq_settings(source_name, filters, channel_mode)
                 await safe_write.execute(source_name, settings)
                 results.append(
                     SourceCopyResult(
@@ -355,20 +343,9 @@ class SecondaryWorkflowManager(QObject):
                     )
 
                     # Build settings respecting channel mode
-                    if channel_mode in ("lr", "l/r"):
-                        mid = len(filters) // 2
-                        settings = PEQSettings(
-                            source_name=source_name,
-                            channel_mode="lr",
-                            bands_l=filters[:mid],
-                            bands_r=filters[mid:],
-                        )
-                    else:
-                        settings = PEQSettings(
-                            source_name=source_name,
-                            channel_mode="stereo",
-                            bands=filters,
-                        )
+                    settings = build_peq_settings(
+                        source_name, filters, channel_mode
+                    )
                     await safe_write.execute(source_name, settings)
 
                     results.append(
@@ -463,11 +440,9 @@ class SecondaryWorkflowManager(QObject):
             adapter = self._wiim_adapter_factory(target_ip)
             safe_write = self._safe_write_factory(adapter)
 
-            settings = PEQSettings(
-                source_name=source_name,
-                channel_mode="stereo",
-                bands=filters,
-            )
+            # TODO: This method does not receive channel_mode from caller.
+            # It should be passed through so L/R presets are handled correctly.
+            settings = build_peq_settings(source_name, filters, "stereo")
             await safe_write.execute(source_name, settings)
 
             self.copy_to_device_complete.emit(

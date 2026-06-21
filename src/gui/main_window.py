@@ -65,12 +65,20 @@ from src.gui.secondary_workflows import (
     SecondaryWorkflowManager,
     SourceCopyResult,
 )
+from src.gui.shared_helpers import (
+    build_peq_settings,
+    build_profile,
+    extract_filters,
+    is_lr_mode,
+    split_lr_filters,
+)
 from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
 from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetsDeviceView
 from src.gui.views.settings_view import SettingsView
 from src.gui.wizard_controller import FlowType, WizardController, WizardStep
+from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
 from src.models.errors import (
     ParseError,
@@ -835,15 +843,11 @@ class MainWindow(QMainWindow):
             if channel_mode_raw in ("left", "right"):
                 filters_l = backup_data.get("filters_l", [])
                 filters_r = backup_data.get("filters_r", [])
-                from src.models.canonical import CanonicalFilter
-
                 bands = [CanonicalFilter(**f) for f in filters_l] + [
                     CanonicalFilter(**f) for f in filters_r
                 ]
             else:
                 filters_raw = backup_data.get("filters", [])
-                from src.models.canonical import CanonicalFilter
-
                 bands = [CanonicalFilter(**f) for f in filters_raw]
 
             if not bands:
@@ -1106,10 +1110,10 @@ class MainWindow(QMainWindow):
                 channel = "L/R"
                 # Use explicit L/R bands from the PEQSettings object
                 self._review_page.set_lr_filters(list(bands_l), list(bands_r))
-            elif channel.lower() in ("l/r", "lr"):
+            elif is_lr_mode(channel):
                 # Fallback: split combined list evenly
-                mid = len(filters) // 2
-                self._review_page.set_lr_filters(filters[:mid], filters[mid:])
+                left, right = split_lr_filters(filters)
+                self._review_page.set_lr_filters(left, right)
             else:
                 self._review_page.set_filters(filters)
 
@@ -1329,49 +1333,34 @@ class MainWindow(QMainWindow):
             filters: Combined filter list from wizard state.
             channel_mode: Channel mode string ("Stereo", "L/R", "lr", etc.).
         """
-        from src.models.profile import Profile
-
-        # Sanitize name for filesystem (remove / \ : * ? " < > |)
-        safe_name = name.translate(str.maketrans("", "", '/\\:*?"<>|'))
-        if not safe_name:
-            safe_name = "Untitled Preset"
-
-        # Build Profile with correct channel mode
-        if channel_mode.lower() in ("l/r", "lr", "left", "right"):
-            mid = len(filters) // 2
-            profile = Profile(
-                name=safe_name,
-                channel_mode="left",
-                filters_l=filters[:mid],
-                filters_r=filters[mid:],
-            )
-        else:
-            profile = Profile(
-                name=safe_name,
-                channel_mode="stereo",
-                filters=filters,
-            )
+        profile = build_profile(name, filters, channel_mode)
 
         self._profile_repository.save(profile)
 
         # Refresh MyPresetsView
+        self._refresh_presets_view()
+
+        self._status_banner.show_success(
+            f"Saved '{profile.name}' to My Presets"
+        )
+        logger.info("Saved preset: %s (%s)", profile.name, channel_mode)
+
+    def _refresh_presets_view(self) -> None:
+        """Refresh MyPresetsView from the profile repository."""
         all_profiles = self._profile_repository.list()
         self._my_presets_view.set_presets(all_profiles)
-
-        self._status_banner.show_success(f"Saved '{safe_name}' to My Presets")
-        logger.info("Saved preset: %s (%s)", safe_name, channel_mode)
 
     def _export_filters_as_rew(self, filters: list, channel_mode: str) -> None:
         """Show export dialog and write REW file(s) (shared by all export triggers).
 
-        For stereo: single file dialog → single .txt file.
-        For L/R: ExportDialog with dual paths → two .txt files (_L, _R).
+        For stereo: single file dialog -> single .txt file.
+        For L/R: ExportDialog with dual paths -> two .txt files (_L, _R).
 
         Args:
             filters: Combined filter list.
             channel_mode: Channel mode string ("Stereo", "L/R", "lr", etc.).
         """
-        if channel_mode.lower() in ("l/r", "lr", "left", "right"):
+        if is_lr_mode(channel_mode):
             # L/R mode: use ExportDialog for dual-file selection
             from src.gui.dialogs.export_dialog import ExportDialog
 
@@ -1381,9 +1370,7 @@ class MainWindow(QMainWindow):
                 return
 
             path_l, path_r = paths
-            mid = len(filters) // 2
-            filters_l = filters[:mid]
-            filters_r = filters[mid:]
+            filters_l, filters_r = split_lr_filters(filters)
 
             self._bridge.run_async(
                 self._bridge_wrapper(
@@ -1493,8 +1480,6 @@ class MainWindow(QMainWindow):
         self._wizard_controller.state.channel_mode = "L/R"
 
         # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
-        from src.models.peq import PEQSettings
-
         peq_data = PEQSettings(
             source_name=self._wizard_controller.state.selected_source or "wifi",
             channel_mode="lr",
@@ -1522,11 +1507,7 @@ class MainWindow(QMainWindow):
         peq_settings = await self._wiim_adapter.read_peq(source_name)
 
         # Extract filters based on channel mode
-        if peq_settings.channel_mode == "lr":
-            # For L/R mode, combine both channels
-            filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-        else:
-            filters = peq_settings.bands
+        filters, _ = extract_filters(peq_settings)
 
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
@@ -1547,19 +1528,18 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
         source_name = self._wizard_controller.state.selected_source or "wifi"
 
-        peq_settings = await self._wiim_adapter.read_roomfit(source_name, profile_name)
+        peq_settings = await self._wiim_adapter.read_roomfit(
+            source_name, profile_name
+        )
 
         # Extract filters based on channel mode
-        if peq_settings.channel_mode == "lr":
-            filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-        else:
-            filters = peq_settings.bands
+        filters, _ = extract_filters(peq_settings)
 
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.device_filters = filters
 
-        # Emit result signal (triggers _on_peq_ready → Review page)
+        # Emit result signal (triggers _on_peq_ready -> Review page)
         self._bridge.peq_ready.emit(peq_settings)
 
     async def _do_load_peq_preset(self, preset_name: str) -> None:
@@ -1580,10 +1560,7 @@ class MainWindow(QMainWindow):
         peq_settings = await self._wiim_adapter.read_peq(source_name)
 
         # Extract filters
-        if peq_settings.channel_mode == "lr":
-            filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-        else:
-            filters = peq_settings.bands
+        filters, _ = extract_filters(peq_settings)
 
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
@@ -1620,21 +1597,17 @@ class MainWindow(QMainWindow):
             peq_settings = await self._wiim_adapter.read_roomfit(
                 source_name, preset_name
             )
-            if peq_settings.channel_mode == "lr":
-                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-            else:
-                filters = peq_settings.bands
+            filters, channel_mode = extract_filters(peq_settings)
         else:
             # Load PEQ preset, then read
             await self._wiim_adapter.load_peq_profile(source_name, preset_name)
             peq_settings = await self._wiim_adapter.read_peq(source_name)
-            if peq_settings.channel_mode == "lr":
-                filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-            else:
-                filters = peq_settings.bands
+            filters, channel_mode = extract_filters(peq_settings)
 
         if not filters:
-            self._status_banner.show_error(f"Preset '{preset_name}' has no filters to copy")
+            self._status_banner.show_error(
+                f"Preset '{preset_name}' has no filters to copy"
+            )
             return
 
         # Step 2: Connect to target device and save as named preset
@@ -1645,17 +1618,19 @@ class MainWindow(QMainWindow):
 
             if preset_type == "RoomFit":
                 # RoomFit: write as RoomFit profile on target (smoke #34)
-                await target_adapter.write_roomfit(target_source, preset_name, filters)
+                await target_adapter.write_roomfit(
+                    target_source, preset_name, filters
+                )
             else:
                 # PEQ: write filters then save as named PEQ preset
-                settings = PEQSettings(
-                    source_name=target_source,
-                    channel_mode="stereo",
-                    bands=filters,
+                settings = build_peq_settings(
+                    target_source, filters, channel_mode
                 )
                 safe_write = SafeWrite(target_adapter, self._backup_manager)
                 await safe_write.execute(target_source, settings)
-                await target_adapter.save_peq_profile(target_source, preset_name)
+                await target_adapter.save_peq_profile(
+                    target_source, preset_name
+                )
 
             self._status_banner.show_success(
                 f"Preset '{preset_name}' saved to {target_ip} on source '{target_source}'"
@@ -1788,7 +1763,7 @@ class MainWindow(QMainWindow):
     async def _do_preset_save(self, preset_name: str, preset_type: str) -> None:
         """Read a preset from device and save to local profile repository.
 
-        Uses the shared _save_filters_to_presets helper for consistent behavior.
+        Uses build_profile helper for consistent Profile construction.
         Note: the helper is safe to call here because AsyncBridge signals
         are delivered via QueuedConnection (thread-safe).
 
@@ -1801,18 +1776,15 @@ class MainWindow(QMainWindow):
 
         # Read preset filters from device
         if preset_type == "RoomFit":
-            peq_settings = await self._wiim_adapter.read_roomfit(source_name, preset_name)
+            peq_settings = await self._wiim_adapter.read_roomfit(
+                source_name, preset_name
+            )
         else:
             await self._wiim_adapter.load_peq_profile(source_name, preset_name)
             peq_settings = await self._wiim_adapter.read_peq(source_name)
 
         # Determine channel mode and filter list
-        if peq_settings.channel_mode == "lr":
-            filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-            channel_mode = "L/R"
-        else:
-            filters = peq_settings.bands
-            channel_mode = "Stereo"
+        filters, channel_mode = extract_filters(peq_settings)
 
         if not filters:
             self._status_banner.show_error(
@@ -1821,30 +1793,13 @@ class MainWindow(QMainWindow):
             return
 
         # Save directly (Profile construction + file write is thread-safe)
-        from src.models.profile import Profile
-
-        safe_name = preset_name.translate(str.maketrans("", "", '/\\:*?"<>|'))
-        if not safe_name:
-            safe_name = "Untitled Preset"
-
-        if channel_mode == "L/R":
-            mid = len(filters) // 2
-            profile = Profile(
-                name=safe_name,
-                channel_mode="left",
-                filters_l=filters[:mid],
-                filters_r=filters[mid:],
-            )
-        else:
-            profile = Profile(
-                name=safe_name,
-                channel_mode="stereo",
-                filters=filters,
-            )
+        profile = build_profile(preset_name, filters, channel_mode)
 
         self._profile_repository.save(profile)
-        # UI updates via progress_update signal (thread-safe, delivered on main thread)
-        self._bridge.progress_update.emit(f"Saved '{safe_name}' to My Presets")
+        # UI updates via progress_update signal (thread-safe)
+        self._bridge.progress_update.emit(
+            f"Saved '{profile.name}' to My Presets"
+        )
 
     async def _do_rew_list_measurements(self) -> None:
         """List available measurements from REW API.
@@ -1934,15 +1889,15 @@ class MainWindow(QMainWindow):
                 self._bridge.progress_update.emit(
                     f"Writing RoomFit profile '{profile_name}'..."
                 )
-                if channel_mode in ("lr", "l/r"):
-                    mid = len(filters) // 2
+                if is_lr_mode(channel_mode):
+                    left, right = split_lr_filters(filters)
                     await self._wiim_adapter.write_roomfit(
                         source_name,
                         profile_name,
                         filters,
                         channel_mode="lr",
-                        filters_l=filters[:mid],
-                        filters_r=filters[mid:],
+                        filters_l=left,
+                        filters_r=right,
                     )
                 else:
                     await self._wiim_adapter.write_roomfit(
@@ -1961,20 +1916,7 @@ class MainWindow(QMainWindow):
             # PEQ: use SafeWrite protocol
             assert self._safe_write is not None
 
-            if channel_mode in ("lr", "l/r"):
-                mid = len(filters) // 2
-                settings = PEQSettings(
-                    source_name=source_name,
-                    channel_mode="lr",
-                    bands_l=filters[:mid],
-                    bands_r=filters[mid:],
-                )
-            else:
-                settings = PEQSettings(
-                    source_name=source_name,
-                    channel_mode="stereo",
-                    bands=filters,
-                )
+            settings = build_peq_settings(source_name, filters, channel_mode)
 
             result = await self._safe_write.execute(source_name, settings)
 
@@ -2204,8 +2146,7 @@ class MainWindow(QMainWindow):
             self._load_device_presets()
         elif view_key == "my_presets":
             # Refresh local presets from repository (smoke #31)
-            all_profiles = self._profile_repository.list()
-            self._my_presets_view.set_presets(all_profiles)
+            self._refresh_presets_view()
 
     # ------------------------------------------------------------------
     # Settings Wiring
@@ -2730,8 +2671,7 @@ class MainWindow(QMainWindow):
         """Handle MyPresetsView rename action."""
         try:
             self._profile_repository.rename(old_name, new_name)
-            all_profiles = self._profile_repository.list()
-            self._my_presets_view.set_presets(all_profiles)
+            self._refresh_presets_view()
             self._status_banner.show_success(f"Renamed '{old_name}' to '{new_name}'")
         except Exception as exc:
             self._status_banner.show_error(f"Rename failed: {exc}")
@@ -2742,8 +2682,7 @@ class MainWindow(QMainWindow):
         try:
             new_name = f"{name} (copy)"
             self._profile_repository.duplicate(name, new_name)
-            all_profiles = self._profile_repository.list()
-            self._my_presets_view.set_presets(all_profiles)
+            self._refresh_presets_view()
             self._status_banner.show_success(f"Duplicated '{name}'")
         except Exception as exc:
             self._status_banner.show_error(f"Duplicate failed: {exc}")
@@ -2753,8 +2692,7 @@ class MainWindow(QMainWindow):
         """Handle MyPresetsView delete action."""
         try:
             self._profile_repository.delete(name)
-            all_profiles = self._profile_repository.list()
-            self._my_presets_view.set_presets(all_profiles)
+            self._refresh_presets_view()
             self._status_banner.show_success(f"Deleted '{name}'")
         except Exception as exc:
             self._status_banner.show_error(f"Delete failed: {exc}")
@@ -2778,7 +2716,7 @@ class MainWindow(QMainWindow):
         channel_mode = getattr(item, "channel_mode", "Stereo")
 
         # Use the same dialog pattern as ReviewPage export
-        if channel_mode.lower() in ("l/r", "lr"):
+        if is_lr_mode(channel_mode):
             from src.gui.dialogs.export_dialog import ExportDialog
 
             paths = ExportDialog.get_paths(channel_mode="lr", parent=self)
