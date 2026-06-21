@@ -3,6 +3,8 @@
 Provides raw command input, response display, capability dump, and log tail
 for debugging. Intended for use inside a QDockWidget. This panel does NOT
 execute commands itself - it emits signals for the controller layer to handle.
+
+The entire content is wrapped in a QScrollArea for usability at any window size.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -42,6 +45,9 @@ def _monospace_font() -> QFont:
 class DiagnosticsPanel(QWidget):
     """Developer diagnostics panel for raw device interaction and log viewing.
 
+    All content is inside a vertical scroll area so it remains accessible
+    regardless of window size.
+
     Signals:
         raw_command_requested: Emitted with the command text when Send is clicked.
     """
@@ -59,14 +65,24 @@ class DiagnosticsPanel(QWidget):
         self._connect_signals()
 
     def _setup_ui(self) -> None:
-        """Build the panel layout with header, command input, and displays."""
-        layout = QVBoxLayout(self)
+        """Build the panel layout inside a scroll area."""
+        # Outer layout holds the scroll area
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        # Inner content widget
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
         # --- Warning header ---
         header_label = QLabel(
-            "\u26a0 Developer Diagnostics - Not for production use"
+            "\u26a0 Developer Diagnostics \u2014 raw device access"
         )
         header_label.setStyleSheet("font-weight: bold; color: #e67e22;")
         layout.addWidget(header_label)
@@ -75,7 +91,9 @@ class DiagnosticsPanel(QWidget):
         cmd_group = QGroupBox("Raw Command")
         cmd_layout = QHBoxLayout(cmd_group)
         self._command_input = QLineEdit()
-        self._command_input.setPlaceholderText("Enter httpapi command...")
+        self._command_input.setPlaceholderText(
+            "Enter httpapi command (e.g. getStatusEx)..."
+        )
         cmd_layout.addWidget(self._command_input)
         self._send_btn = QPushButton("Send")
         self._send_btn.setFixedWidth(80)
@@ -83,44 +101,68 @@ class DiagnosticsPanel(QWidget):
         layout.addWidget(cmd_group)
 
         # --- Response display ---
-        resp_group = QGroupBox("Raw Response")
+        resp_group = QGroupBox("Response")
         resp_layout = QVBoxLayout(resp_group)
         self._response_display = QTextEdit()
         self._response_display.setReadOnly(True)
         self._response_display.setFont(_monospace_font())
-        self._response_display.setMaximumHeight(150)
+        self._response_display.setMinimumHeight(80)
+        self._response_display.setMaximumHeight(200)
         resp_layout.addWidget(self._response_display)
         layout.addWidget(resp_group)
 
         # --- Capability dump ---
-        caps_group = QGroupBox("Device Capabilities")
+        caps_group = QGroupBox("Device Capabilities (auto-populated on connect)")
         caps_layout = QVBoxLayout(caps_group)
         self._capabilities_display = QTextEdit()
         self._capabilities_display.setReadOnly(True)
         self._capabilities_display.setFont(_monospace_font())
-        self._capabilities_display.setMaximumHeight(200)
+        self._capabilities_display.setMinimumHeight(80)
+        self._capabilities_display.setMaximumHeight(250)
         caps_layout.addWidget(self._capabilities_display)
         layout.addWidget(caps_group)
 
         # --- Log tail ---
         log_group = QGroupBox("Log Tail (wiim_api.log)")
         log_layout = QVBoxLayout(log_group)
+
+        log_toolbar = QHBoxLayout()
+        self._refresh_log_btn = QPushButton("Refresh")
+        self._refresh_log_btn.setFixedWidth(80)
+        log_toolbar.addWidget(self._refresh_log_btn)
+        log_toolbar.addStretch()
+        log_layout.addLayout(log_toolbar)
+
         self._log_display = QTextEdit()
         self._log_display.setReadOnly(True)
         self._log_display.setFont(_monospace_font())
+        self._log_display.setMinimumHeight(100)
         log_layout.addWidget(self._log_display)
         layout.addWidget(log_group)
+
+        layout.addStretch()
+
+        scroll.setWidget(content)
+        outer_layout.addWidget(scroll)
 
     def _connect_signals(self) -> None:
         """Wire internal widget signals."""
         self._send_btn.clicked.connect(self._on_send_clicked)
         self._command_input.returnPressed.connect(self._on_send_clicked)
+        self._refresh_log_btn.clicked.connect(self._on_refresh_log_clicked)
 
     def _on_send_clicked(self) -> None:
         """Handle Send button click or Enter key in command input."""
         command = self._command_input.text().strip()
         if command:
             self.raw_command_requested.emit(command)
+
+    def _on_refresh_log_clicked(self) -> None:
+        """Refresh the log tail display."""
+        from src.utils.app_dirs import get_log_dir
+
+        log_path = get_log_dir() / "wiim_api.log"
+        self.refresh_log_tail(log_path)
 
     # --- Public slots ---
 

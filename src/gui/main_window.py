@@ -1138,6 +1138,9 @@ class MainWindow(QMainWindow):
         active_source = getattr(caps, "active_source", "")
         self._source_page.set_sources(source_names, active_source)
 
+        # Populate diagnostics panel capabilities display
+        self._diagnostics_panel.on_capabilities_ready(caps)  # type: ignore[arg-type]
+
     @Slot(object)
     def _on_peq_ready(self, peq_data: object) -> None:
         """Handle PEQ data ready — populate ReviewPage and advance wizard.
@@ -1196,6 +1199,7 @@ class MainWindow(QMainWindow):
             if getattr(self, "_sidebar_load_in_progress", False):
                 # Sidebar load: navigate directly to Review (smoke #87)
                 self._sidebar_load_in_progress = False
+                self._wizard_controller.state.current_step = WizardStep.REVIEW
                 self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
             else:
                 self._wizard_controller.advance(summary=f"{count} filters")
@@ -2974,7 +2978,9 @@ class MainWindow(QMainWindow):
         active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
         self._review_page.set_summary(device, source, channel, active_bands)
 
-        # Navigate to Review step
+        # Navigate to Review step — update both wizard state and stacked widget
+        # so that subsequent navigation/step_changed doesn't override (smoke #87)
+        self._wizard_controller.state.current_step = WizardStep.REVIEW
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
         self._status_banner.show_success(
             f"Profile loaded: {active_bands} bands ready for review"
