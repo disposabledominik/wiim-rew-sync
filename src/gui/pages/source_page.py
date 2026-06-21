@@ -127,7 +127,11 @@ class SourcePage(QWidget):
         content_layout.addWidget(title)
 
         # Explanatory note (Req 3.4)
-        note = QLabel("PEQ settings are per-source. Choose which input to configure.")
+        note = QLabel(
+            "PEQ settings are stored per-source. Select the input you want to apply EQ to.\n"
+            "Tip: 'wifi' covers Wi-Fi, Ethernet, and USB playback. "
+            "Sound/Lite models use 'auxIn' instead of 'line-in'."
+        )
         note.setObjectName("source_page_note")
         note.setWordWrap(True)
         note.setStyleSheet("color: #616161; font-size: 13px;")

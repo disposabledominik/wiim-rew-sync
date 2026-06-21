@@ -956,16 +956,17 @@ class MainWindow(QMainWindow):
         # Source names: WiiM API has no reliable source enumeration endpoint.
         # getStatusEx may or may not include InputList (see corrections.md 2026-06-12).
         # The PEQ engine accepts ANY source name, so showing extra sources is harmless —
-        # the user just picks which input to apply EQ to. We use the device-reported
-        # list if available, otherwise show all common sources for the product line.
+        # the user just picks which input to apply EQ to.
+        # Source names are model-dependent (see docs/wiim_api_notes.md):
+        #   Mini: wifi, bluetooth, line-in
+        #   Pro/Pro Plus/Amp/Ultra: wifi, bluetooth, line-in, optical, HDMI
+        #   Sound/Sound Lite: wifi, bluetooth, auxIn (NOT line-in)
+        # We show a superset; extras just sit unused in device PEQ slots.
         source_names = getattr(caps, "source_names", [])
         if not source_names:
-            # All WiiM devices support PEQ on these common sources.
-            # Showing an extra source that doesn't physically exist is harmless
-            # (PEQ data just sits unused in that slot).
-            source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
+            source_names = ["wifi", "bluetooth", "line-in", "auxIn", "optical", "HDMI"]
             logger.info(
-                "Device reported no source_names; showing all common sources"
+                "Device reported no source_names; showing all known WiiM sources"
             )
 
         # Store capabilities for later use (smoke #35, #36)
