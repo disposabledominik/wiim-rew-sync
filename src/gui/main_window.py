@@ -725,11 +725,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_export_requested(self) -> None:
-        """Handle export request from ReviewPage — open file dialog and write REW file.
-
-        For stereo mode: single file via QFileDialog.
-        For L/R mode: dual-file export via ExportDialog (smoke #29).
-        Ensures .txt extension is appended when missing (smoke #30).
+        """Handle export request from ReviewPage — delegate to shared helper.
 
         Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
         """
@@ -737,55 +733,10 @@ class MainWindow(QMainWindow):
             return
 
         state = self._wizard_controller.state
-        channel_mode = (state.channel_mode or "Stereo").lower()
+        channel_mode = state.channel_mode or "Stereo"
         filters = state.current_filters
 
-        if channel_mode in ("l/r", "lr"):
-            # L/R mode: use ExportDialog for dual-file selection (smoke #29)
-            from src.gui.dialogs.export_dialog import ExportDialog
-
-            paths = ExportDialog.get_paths(channel_mode="lr", parent=self)
-            if paths is None:
-                logger.debug("L/R export cancelled by user")
-                return
-
-            path_l, path_r = paths
-            # Split filters into L/R halves
-            mid = len(filters) // 2
-            filters_l = filters[:mid]
-            filters_r = filters[mid:]
-
-            self._bridge.run_async(
-                self._bridge_wrapper(
-                    "export_lr",
-                    self._do_export_lr(filters_l, filters_r, path_l, path_r),
-                )
-            )
-            logger.info("Export as L/R REW files requested: %s, %s", path_l, path_r)
-        else:
-            # Stereo mode: single file dialog
-            default_dir = self._settings.rew_export_folder or str(Path.home())
-
-            path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Export REW EQ File",
-                default_dir,
-                "REW EQ Files (*.txt)",
-            )
-
-            # User cancelled the dialog
-            if not path:
-                logger.debug("Export cancelled by user")
-                return
-
-            # Ensure .txt extension (smoke #30)
-            if not path.lower().endswith(".txt"):
-                path += ".txt"
-
-            self._bridge.run_async(
-                self._bridge_wrapper("export", self._do_export(filters, path))
-            )
-            logger.info("Export as REW file requested: %s", path)
+        self._export_filters_as_rew(filters, channel_mode)
 
     @Slot(str)
     def _on_name_confirmed(self, name: str) -> None:
@@ -1242,6 +1193,108 @@ class MainWindow(QMainWindow):
         return False
 
     # ------------------------------------------------------------------
+    # Shared action helpers (used by multiple trigger points)
+    # ------------------------------------------------------------------
+
+    def _save_filters_to_presets(
+        self, name: str, filters: list, channel_mode: str
+    ) -> None:
+        """Save filters to local profile repository (shared by all save triggers).
+
+        Sanitizes the name for filesystem safety, constructs a Profile with
+        correct channel mode, persists it, and refreshes the MyPresetsView.
+
+        Args:
+            name: Desired preset name (will be sanitized for filesystem).
+            filters: Combined filter list from wizard state.
+            channel_mode: Channel mode string ("Stereo", "L/R", "lr", etc.).
+        """
+        from src.models.profile import Profile
+
+        # Sanitize name for filesystem (remove / \ : * ? " < > |)
+        safe_name = name.translate(str.maketrans("", "", '/\\:*?"<>|'))
+        if not safe_name:
+            safe_name = "Untitled Preset"
+
+        # Build Profile with correct channel mode
+        if channel_mode.lower() in ("l/r", "lr", "left", "right"):
+            mid = len(filters) // 2
+            profile = Profile(
+                name=safe_name,
+                channel_mode="left",
+                filters_l=filters[:mid],
+                filters_r=filters[mid:],
+            )
+        else:
+            profile = Profile(
+                name=safe_name,
+                channel_mode="stereo",
+                filters=filters,
+            )
+
+        self._profile_repository.save(profile)
+
+        # Refresh MyPresetsView
+        all_profiles = self._profile_repository.list()
+        self._my_presets_view.set_presets(all_profiles)
+
+        self._status_banner.show_success(f"Saved '{safe_name}' to My Presets")
+        logger.info("Saved preset: %s (%s)", safe_name, channel_mode)
+
+    def _export_filters_as_rew(self, filters: list, channel_mode: str) -> None:
+        """Show export dialog and write REW file(s) (shared by all export triggers).
+
+        For stereo: single file dialog → single .txt file.
+        For L/R: ExportDialog with dual paths → two .txt files (_L, _R).
+
+        Args:
+            filters: Combined filter list.
+            channel_mode: Channel mode string ("Stereo", "L/R", "lr", etc.).
+        """
+        if channel_mode.lower() in ("l/r", "lr", "left", "right"):
+            # L/R mode: use ExportDialog for dual-file selection
+            from src.gui.dialogs.export_dialog import ExportDialog
+
+            paths = ExportDialog.get_paths(channel_mode="lr", parent=self)
+            if paths is None:
+                logger.debug("L/R export cancelled by user")
+                return
+
+            path_l, path_r = paths
+            mid = len(filters) // 2
+            filters_l = filters[:mid]
+            filters_r = filters[mid:]
+
+            self._bridge.run_async(
+                self._bridge_wrapper(
+                    "export_lr",
+                    self._do_export_lr(filters_l, filters_r, path_l, path_r),
+                )
+            )
+            logger.info("Export L/R REW: %s, %s", path_l, path_r)
+        else:
+            # Stereo mode: single file dialog
+            default_dir = self._settings.rew_export_folder or str(Path.home())
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export REW EQ File",
+                default_dir,
+                "REW EQ Files (*.txt)",
+            )
+            if not path:
+                logger.debug("Export cancelled by user")
+                return
+
+            # Ensure .txt extension
+            if not path.lower().endswith(".txt"):
+                path += ".txt"
+
+            self._bridge.run_async(
+                self._bridge_wrapper("export", self._do_export(filters, path))
+            )
+            logger.info("Export REW: %s", path)
+
+    # ------------------------------------------------------------------
     # Async operation coroutines (Req 1.1-1.7, 2.1-2.7)
     # ------------------------------------------------------------------
 
@@ -1576,7 +1629,7 @@ class MainWindow(QMainWindow):
     async def _do_preset_save(self, preset_name: str, preset_type: str) -> None:
         """Read a preset from device and save to local profile repository.
 
-        Preserves L/R channel mode when saving (not flattened to stereo).
+        Uses the shared _save_filters_to_presets helper for consistent behavior.
 
         Args:
             preset_name: Name of the preset to save.
@@ -1592,43 +1645,22 @@ class MainWindow(QMainWindow):
             await self._wiim_adapter.load_peq_profile(source_name, preset_name)
             peq_settings = await self._wiim_adapter.read_peq(source_name)
 
-        # Save to local profile repository preserving channel mode
-        from src.models.profile import Profile
-
+        # Determine channel mode and filter list
         if peq_settings.channel_mode == "lr":
-            filters_l = peq_settings.bands_l or []
-            filters_r = peq_settings.bands_r or []
-            if not filters_l and not filters_r:
-                self._status_banner.show_error(
-                    f"Preset '{preset_name}' has no filters to save"
-                )
-                return
-            profile = Profile(
-                name=preset_name,
-                channel_mode="left",
-                filters_l=filters_l,
-                filters_r=filters_r,
-            )
+            filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+            channel_mode = "L/R"
         else:
             filters = peq_settings.bands
-            if not filters:
-                self._status_banner.show_error(
-                    f"Preset '{preset_name}' has no filters to save"
-                )
-                return
-            profile = Profile(
-                name=preset_name,
-                channel_mode="stereo",
-                filters=filters,
+            channel_mode = "Stereo"
+
+        if not filters:
+            self._status_banner.show_error(
+                f"Preset '{preset_name}' has no filters to save"
             )
+            return
 
-        self._profile_repository.save(profile)
-
-        # Refresh MyPresetsView so the new preset is visible (smoke #31)
-        all_profiles = self._profile_repository.list()
-        self._my_presets_view.set_presets(all_profiles)
-
-        self._status_banner.show_success(f"Saved '{preset_name}' to My Presets")
+        # Use shared save helper (runs on main thread via signal)
+        self._save_filters_to_presets(preset_name, filters, channel_mode)
 
     async def _do_rew_list_measurements(self) -> None:
         """List available measurements from REW API.
@@ -2394,8 +2426,8 @@ class MainWindow(QMainWindow):
     def _on_review_save_preset(self) -> None:
         """Handle ReviewPage 'Save to My Presets' — save current filters locally.
 
-        Saves the wizard's current_filters to the local profile repository
-        using a generated name, then refreshes MyPresetsView.
+        Uses the shared _save_filters_to_presets helper for consistent behavior
+        regardless of which view triggers the save.
         """
         state = self._wizard_controller.state
         filters = state.current_filters
@@ -2411,33 +2443,9 @@ class MainWindow(QMainWindow):
                 break
         source = state.selected_source or "wifi"
         channel = state.channel_mode or "Stereo"
+        preset_name = f"{device_name} - {source} ({channel})"
 
-        from src.models.profile import Profile
-
-        # Determine channel mode for the Profile model
-        if channel.lower() in ("l/r", "lr"):
-            mid = len(filters) // 2
-            profile = Profile(
-                name=f"{device_name} - {source} ({channel})",
-                channel_mode="left",
-                filters_l=filters[:mid],
-                filters_r=filters[mid:],
-            )
-        else:
-            profile = Profile(
-                name=f"{device_name} - {source} ({channel})",
-                channel_mode="stereo",
-                filters=filters,
-            )
-
-        self._profile_repository.save(profile)
-
-        # Refresh MyPresetsView
-        all_profiles = self._profile_repository.list()
-        self._my_presets_view.set_presets(all_profiles)
-
-        self._status_banner.show_success(f"Saved '{profile.name}' to My Presets")
-        logger.info("Review save preset: %s", profile.name)
+        self._save_filters_to_presets(preset_name, filters, channel)
 
     @Slot(str, str)
     def _on_profile_rename_requested(self, old_name: str, new_name: str) -> None:
@@ -2477,7 +2485,8 @@ class MainWindow(QMainWindow):
     def _on_preset_export_requested(self, items: list) -> None:
         """Handle PresetsDeviceView "Export as REW File" for selected presets.
 
-        Reads each preset's filters from device, then exports as REW text file.
+        Shows the appropriate file dialog (stereo or L/R based on item metadata),
+        then reads from device and writes to file.
 
         Args:
             items: List of PresetItem objects selected for export.
@@ -2485,30 +2494,46 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
-        # Open save dialog
-        default_dir = self._settings.rew_export_folder or str(Path.home())
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Preset as REW File",
-            str(Path(default_dir) / f"{items[0].name}.txt"),
-            "REW EQ Files (*.txt)",
-        )
-        if not path:
-            logger.debug("Export preset cancelled by user")
-            return
-
-        # Read first item's filters from device, then export
         item = items[0]
         preset_name = getattr(item, "name", "")
         preset_type = getattr(item, "preset_type", "PEQ")
+        channel_mode = getattr(item, "channel_mode", "Stereo")
+
+        # Use the same dialog pattern as ReviewPage export
+        if channel_mode.lower() in ("l/r", "lr"):
+            from src.gui.dialogs.export_dialog import ExportDialog
+
+            paths = ExportDialog.get_paths(channel_mode="lr", parent=self)
+            if paths is None:
+                logger.debug("L/R preset export cancelled")
+                return
+            # Pass base path (first path's stem without _L suffix)
+            path_l, _path_r = paths
+            # Use the left path — _do_preset_export handles L/R splitting internally
+            export_path = str(path_l.parent / path_l.stem.replace("_L", "")) + ".txt"
+        else:
+            default_dir = self._settings.rew_export_folder or str(Path.home())
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Preset as REW File",
+                str(Path(default_dir) / f"{preset_name}.txt"),
+                "REW EQ Files (*.txt)",
+            )
+            if not path:
+                logger.debug("Preset export cancelled")
+                return
+            if not path.lower().endswith(".txt"):
+                path += ".txt"
+            export_path = path
+
         self._status_banner.show_progress(f"Exporting '{preset_name}'...")
         self._bridge.run_async(
             self._bridge_wrapper(
                 "preset_export",
-                self._do_preset_export(preset_name, preset_type, path),
+                self._do_preset_export(preset_name, preset_type, export_path),
             )
         )
-        logger.info("Preset export requested: %s -> %s", preset_name, path)
+        logger.info("Preset export requested: %s -> %s", preset_name, export_path)
 
     @Slot(list)
     def _on_preset_save_requested(self, items: list) -> None:

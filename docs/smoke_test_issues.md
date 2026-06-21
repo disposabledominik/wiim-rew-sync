@@ -54,3 +54,7 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 41 | Back-nav to Connect → selecting new device keeps old flow type | FIXED | NO | `d6983fb` | _on_device_selected resets flow_type to PEQ before probing |
 | 42 | WiiM Mini missing line-in source in Source page | FIXED | NO | `d6983fb` | Reverted to showing all common sources (PEQ accepts any name; no model filtering needed) |
 | 43 | Sound/Sound Lite shows optical and HDMI sources (not applicable) | WONTFIX | N/A | — | PEQ engine accepts any source name; showing extra sources is harmless. No reliable way to probe physical inputs. |
+| 44 | ReviewPage "Save to My Presets" crashes with FileNotFoundError for L/R names | FIXED | NO | current | Name contained "/" from channel mode; added filesystem-safe name sanitization in shared helper |
+| 45 | Export from Review vs Presets on Device shows different dialogs | FIXED | NO | current | Consolidated into shared _export_filters_as_rew helper; both use ExportDialog for L/R |
+| 46 | My Saved Presets: no visible action buttons (only right-click context menu) | FIXED | NO | `e921182` | Added visible toolbar (Load/Rename/Duplicate/Delete) that appears on item selection |
+| 47 | Duplicate save/export logic across trigger points (architectural) | FIXED | NO | current | Created shared helpers: _save_filters_to_presets, _export_filters_as_rew; all triggers converge |
