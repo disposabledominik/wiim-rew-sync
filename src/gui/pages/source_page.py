@@ -61,10 +61,13 @@ class SourcePage(QWidget):
 
         Args:
             sources: List of available audio source names (e.g. "wifi", "HDMI").
-            active_source: The currently active source on the device. This
-                source will be pre-selected and labelled "(currently active)".
+            active_source: The currently active source on the device (if known).
+                If empty, defaults to "wifi" as the recommended pre-selection.
         """
         self._active_source = active_source
+
+        # Default to "wifi" if no active source detected (most common use case)
+        default_source = active_source if active_source else "wifi"
 
         # Clear existing source buttons
         self._source_buttons.clear()
@@ -76,15 +79,17 @@ class SourcePage(QWidget):
         # Create a radio button for each source
         for source in sources:
             label = source
-            if source == active_source:
-                label = f"{source} (currently active)"
+            if source == active_source and active_source:
+                label = f"{source}  —  currently active"
+            elif source == default_source and not active_source:
+                label = f"{source}  —  recommended default"
 
             radio = QRadioButton(label)
             radio.setObjectName(f"source_radio_{source}")
             radio.setMinimumHeight(LIST_ITEM_HEIGHT)
             radio.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-            if source == active_source:
+            if source == default_source:
                 radio.setStyleSheet(f"QRadioButton {{ color: {ACCENT_COLOR}; }}")
                 radio.setChecked(True)
 
