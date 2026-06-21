@@ -308,9 +308,10 @@ class FiltersPage(QWidget):
         self._rew_api_card.setVisible(False)  # Available via "Presets on Device" sidebar
         content_layout.addWidget(self._rew_api_card)
 
-        # Drag-and-drop zone (Req 9.3)
+        # Drag-and-drop zone — hidden (stereo/L/R choice dialog handles import flow)
         self._drop_zone = _DropZone(content_wrapper)
         self._drop_zone.file_dropped.connect(self._on_file_dropped)
+        self._drop_zone.setVisible(False)
         content_layout.addWidget(self._drop_zone)
 
         # L/R dual file picker section (hidden in stereo mode)

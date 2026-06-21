@@ -796,6 +796,9 @@ class MainWindow(QMainWindow):
     def _on_step_changed(self, step: object) -> None:
         """Handle step change — update StepIndicator and switch QStackedWidget page.
 
+        Also clears completion badges for steps that are no longer in the
+        wizard's completed_steps dict (back-navigation invalidation).
+
         Args:
             step: The new WizardStep enum value.
         """
@@ -817,11 +820,18 @@ class MainWindow(QMainWindow):
         if page_key and page_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
 
-        # Update StepIndicator current position
+        # Update StepIndicator: set current and clear steps no longer completed
         sequence = self._wizard_controller.get_steps()
+        completed = self._wizard_controller.completed_steps
+
         if step in sequence:
             step_index = sequence.index(step)
             self._step_indicator.set_current(step_index)
+
+            # Clear visual completion for steps that were invalidated
+            for i, s in enumerate(sequence):
+                if s not in completed and i != step_index:
+                    self._step_indicator.clear_completed(i)
 
     @Slot(object)
     def _on_flow_type_changed(self, flow_type: object) -> None:
@@ -1802,7 +1812,7 @@ class MainWindow(QMainWindow):
         channel_mode = state.channel_mode.lower()
 
         # Build PEQSettings from wizard state
-        if channel_mode == "lr":
+        if channel_mode in ("lr", "l/r"):
             # Split filters evenly between L and R channels
             mid = len(filters) // 2
             settings = PEQSettings(
@@ -2438,7 +2448,9 @@ class MainWindow(QMainWindow):
             len(selected_devices),
             len(filters),
         )
-        self._secondary_workflows.apply_to_devices(filters, request)
+        self._secondary_workflows.apply_to_devices(
+            filters, request, state.channel_mode.lower()
+        )
 
     @Slot(list)
     def _on_copy_to_device_requested(self, items: list) -> None:

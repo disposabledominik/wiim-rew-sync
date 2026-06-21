@@ -280,6 +280,7 @@ class SecondaryWorkflowManager(QObject):
         self,
         filters: list[CanonicalFilter],
         request: MultiDeviceRequest,
+        channel_mode: str = "stereo",
     ) -> None:
         """Apply filters to multiple devices sequentially.
 
@@ -295,16 +296,18 @@ class SecondaryWorkflowManager(QObject):
         Args:
             filters: The canonical filters to push to each device/source.
             request: MultiDeviceRequest specifying device→source mappings.
+            channel_mode: "stereo" or "lr" — determines how filters are split.
 
         Requirements: 10.3, 10.4, 10.5, 10.6, 10.7.
         """
         assert self._bridge is not None
-        self._bridge.run_async(self._do_apply_to_devices(filters, request))
+        self._bridge.run_async(self._do_apply_to_devices(filters, request, channel_mode))
 
     async def _do_apply_to_devices(
         self,
         filters: list[CanonicalFilter],
         request: MultiDeviceRequest,
+        channel_mode: str = "stereo",
     ) -> None:
         """Execute multi-device push with fault isolation per device.
 
@@ -337,11 +340,21 @@ class SecondaryWorkflowManager(QObject):
                         source_name,
                     )
 
-                    settings = PEQSettings(
-                        source_name=source_name,
-                        channel_mode="stereo",
-                        bands=filters,
-                    )
+                    # Build settings respecting channel mode
+                    if channel_mode in ("lr", "l/r"):
+                        mid = len(filters) // 2
+                        settings = PEQSettings(
+                            source_name=source_name,
+                            channel_mode="lr",
+                            bands_l=filters[:mid],
+                            bands_r=filters[mid:],
+                        )
+                    else:
+                        settings = PEQSettings(
+                            source_name=source_name,
+                            channel_mode="stereo",
+                            bands=filters,
+                        )
                     await safe_write.execute(source_name, settings)
 
                     results.append(

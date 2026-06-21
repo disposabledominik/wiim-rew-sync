@@ -253,6 +253,25 @@ class StepIndicator(QWidget):
         if index < len(self._connectors):
             self._connectors[index].setStyleSheet(f"background-color: {ACCENT_COLOR};")
 
+    def clear_completed(self, index: int) -> None:
+        """Remove the completed state from a step (revert to upcoming).
+
+        Used when back-navigation invalidates subsequent steps.
+
+        Args:
+            index: Zero-based index of the step to uncomplete.
+        """
+        if not self._steps or index < 0 or index >= len(self._steps):
+            return
+
+        step = self._steps[index]
+        if step.state == _StepState.COMPLETED:
+            step.set_state(_StepState.UPCOMING)
+            step.clear_summary()
+            # Revert connector line color
+            if index < len(self._connectors):
+                self._connectors[index].setStyleSheet("background-color: #E0E0E0;")
+
     def invalidate_from(self, index: int) -> None:
         """Remove completed state from this index onward.
 

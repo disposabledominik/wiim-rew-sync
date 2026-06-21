@@ -65,3 +65,7 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 52 | FiltersPage shows "Pull from Device" and "Pull from REW API" options | FIXED | N/A | current | Hidden — these workflows are accessible via "Presets on Device" sidebar |
 | 53 | PushPage "Export" and "Save to My Presets" buttons do nothing | FIXED | NO | current | Wired push_page.export_requested and save_preset_requested to shared handlers |
 | 54 | Push step doesn't show checkmark on success | FIXED | NO | current | _on_write_complete now marks PUSH step completed in step indicator |
+| 55 | Push sends L/R filters as stereo (channel_mode "L/R" != "lr") | FIXED | NO | current | _do_push now checks both "lr" and "l/r" in channel_mode comparison |
+| 56 | Drag-and-drop zone confusing for L/R (which file is L vs R?) | FIXED | N/A | current | Drop zone hidden — import flow uses explicit Stereo/L/R choice dialog |
+| 57 | Back-navigation from Push keeps all steps checked | FIXED | NO | current | _on_step_changed now clears completion badges for invalidated steps via clear_completed() |
+| 58 | Multi-device push always uses stereo PEQ regardless of context | FIXED | NO | current | apply_to_devices now receives channel_mode from wizard state; builds L/R PEQSettings when appropriate |
