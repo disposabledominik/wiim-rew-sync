@@ -1,8 +1,9 @@
-"""FilterTable — read-only filter display with fixed column widths.
+"""FilterTable — read-only filter display with stretch columns.
 
-Displays parametric EQ filter bands in a compact table format. Supports
-stereo display, L/R tabbed display, and comparison (diff) mode with
-visual indicators for disabled bands and clamped values.
+Displays parametric EQ filter bands in a table that expands to fill
+available width. Supports stereo display, L/R tabbed display, and
+comparison (diff) mode with visual indicators for disabled bands and
+clamped values.
 
 Requirements referenced: 5.1, 5.2, 5.3, 5.5, 19.2, 19.3.
 """
@@ -13,7 +14,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QHBoxLayout,
     QHeaderView,
     QSizePolicy,
     QTableWidget,
@@ -23,25 +23,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.constants import (
-    FILTER_COL_BAND,
-    FILTER_COL_FREQ,
-    FILTER_COL_GAIN,
-    FILTER_COL_Q,
-    FILTER_COL_TYPE,
-    FILTER_TABLE_MAX_WIDTH,
-    WARNING_COLOR,
-)
+from src.gui.constants import WARNING_COLOR
 from src.models.canonical import CanonicalFilter
 
 _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
-_COL_WIDTHS = [
-    FILTER_COL_BAND,
-    FILTER_COL_TYPE,
-    FILTER_COL_FREQ,
-    FILTER_COL_GAIN,
-    FILTER_COL_Q,
-]
 
 _DISABLED_OPACITY = 0.5
 _HIGHLIGHT_ALPHA = 40  # Accent background alpha for comparison highlights
@@ -63,15 +48,14 @@ class FilterTable(QWidget):
         super().__init__(parent)
         self.setObjectName("FilterTable")
 
-        # Main layout centers the content with max width constraint
-        outer_layout = QHBoxLayout(self)
+        # Let table expand to fill available parent space
+        outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.addStretch()
+        outer_layout.setSpacing(0)
 
         self._container = QWidget(self)
-        self._container.setMaximumWidth(FILTER_TABLE_MAX_WIDTH)
         self._container.setSizePolicy(
-            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
         self._container_layout = QVBoxLayout(self._container)
@@ -79,7 +63,6 @@ class FilterTable(QWidget):
         self._container_layout.setSpacing(0)
 
         outer_layout.addWidget(self._container)
-        outer_layout.addStretch()
 
         # Lazily created widgets
         self._table: QTableWidget | None = None
@@ -176,7 +159,7 @@ class FilterTable(QWidget):
             self._tab_widget = None
 
     def _create_table(self) -> QTableWidget:
-        """Create a configured QTableWidget with fixed column widths."""
+        """Create a configured QTableWidget with stretch columns."""
         table = QTableWidget(0, len(_HEADERS), self._container)
         table.setObjectName("FilterTableGrid")
         table.setHorizontalHeaderLabels(_HEADERS)
@@ -185,13 +168,13 @@ class FilterTable(QWidget):
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        # Fixed column widths
+        # Columns stretch to fill available width
         header = table.horizontalHeader()
-        for col, width in enumerate(_COL_WIDTHS):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Fixed)
-            table.setColumnWidth(col, width)
+        header.setStretchLastSection(True)
+        for col in range(len(_HEADERS)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
 
-        # Disable horizontal scrollbar — columns fit within max width
+        # Disable horizontal scrollbar — all columns visible
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         return table

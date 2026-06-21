@@ -592,8 +592,10 @@ class MainWindow(QMainWindow):
         """
         if eq_type == "peq":
             self._wizard_controller.set_flow_type(FlowType.PEQ)
+            self._filters_page.set_roomfit_mode(False)
         elif eq_type == "roomfit":
             self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
+            self._filters_page.set_roomfit_mode(True)
 
         self._wizard_controller.advance(summary=eq_type.upper())
 
@@ -1319,6 +1321,56 @@ class MainWindow(QMainWindow):
         else:
             self._bridge.progress_update.emit("File exported successfully")
 
+    def _load_device_presets(self) -> None:
+        """Fetch and display device presets in the PresetsDeviceView.
+
+        If no device is connected, shows the empty state. Otherwise
+        fetches preset list via the adapter and populates the view.
+        """
+        if self._wiim_adapter is None:
+            self._presets_device_view.set_no_device()
+            return
+
+        # Check if profile enumeration is supported
+        caps = getattr(self._wiim_adapter, "capabilities", None)
+        if caps and not getattr(caps, "supports_profile_enumeration", False):
+            self._presets_device_view.set_peq_unavailable()
+            return
+
+        # Fetch presets asynchronously
+        self._bridge.run_async(
+            self._bridge_wrapper("list_presets", self._do_list_presets())
+        )
+
+    async def _do_list_presets(self) -> None:
+        """Fetch device PEQ preset list and populate PresetsDeviceView."""
+        assert self._wiim_adapter is not None
+
+        source_name = self._wizard_controller.state.selected_source or "wifi"
+        try:
+            presets = await self._wiim_adapter.list_peq_profiles(source_name)
+        except Exception:
+            logger.warning("Failed to list device presets", exc_info=True)
+            self._presets_device_view.set_peq_unavailable()
+            return
+
+        if not presets:
+            self._presets_device_view.set_peq_unavailable()
+            return
+
+        # Convert preset dicts (keys: Name, channelMode, Type) to PresetItem objects
+        from src.gui.views.presets_device_view import PresetItem
+
+        items = [
+            PresetItem(
+                name=p.get("Name", "Unnamed"),
+                preset_type="PEQ",
+                channel_mode=p.get("channelMode", "Stereo"),
+            )
+            for p in presets
+        ]
+        self._presets_device_view.set_peq_presets(items)
+
     # ------------------------------------------------------------------
     # Navigation handlers
     # ------------------------------------------------------------------
@@ -1358,6 +1410,10 @@ class MainWindow(QMainWindow):
 
         if view_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[view_key])
+
+        # Trigger data fetch for views that need it
+        if view_key == "presets_device":
+            self._load_device_presets()
 
     # ------------------------------------------------------------------
     # Settings Wiring
