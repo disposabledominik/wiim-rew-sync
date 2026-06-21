@@ -128,7 +128,7 @@ class DiagnosticsPanel(QWidget):
 
         log_toolbar = QHBoxLayout()
         self._refresh_log_btn = QPushButton("Refresh")
-        self._refresh_log_btn.setFixedWidth(80)
+        self._refresh_log_btn.setMinimumWidth(100)
         log_toolbar.addWidget(self._refresh_log_btn)
         log_toolbar.addStretch()
         log_layout.addLayout(log_toolbar)

@@ -1199,7 +1199,14 @@ class MainWindow(QMainWindow):
             if getattr(self, "_sidebar_load_in_progress", False):
                 # Sidebar load: navigate directly to Review (smoke #87)
                 self._sidebar_load_in_progress = False
-                self._wizard_controller.state.current_step = WizardStep.REVIEW
+                state = self._wizard_controller.state
+                state.current_step = WizardStep.REVIEW
+                # Mark FILTERS step as completed
+                if WizardStep.FILTERS not in state.completed_steps:
+                    state.completed_steps[WizardStep.FILTERS] = f"{count} filters"
+                # Emit step summaries for the step indicator
+                for step, summary in state.completed_steps.items():
+                    self._wizard_controller.step_summary_updated.emit(step, summary)
                 self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
             else:
                 self._wizard_controller.advance(summary=f"{count} filters")
@@ -2982,6 +2989,11 @@ class MainWindow(QMainWindow):
         # so that subsequent navigation/step_changed doesn't override (smoke #87)
         self._wizard_controller.state.current_step = WizardStep.REVIEW
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
+
+        # Emit step summaries for the step indicator (smoke #87)
+        for step, summary in state.completed_steps.items():
+            self._wizard_controller.step_summary_updated.emit(step, summary)
+
         self._status_banner.show_success(
             f"Profile loaded: {active_bands} bands ready for review"
         )
@@ -3010,7 +3022,8 @@ class MainWindow(QMainWindow):
 
         If no device is connected, shows error and returns False.
         If EQ type or source is missing, shows QuickSetupDialog.
-        On cancel, returns False. On confirm, updates wizard state and returns True.
+        On cancel, returns False. On confirm, updates wizard state, marks
+        EQ_TYPE/SOURCE/FILTERS steps completed, and returns True.
 
         Returns:
             True if state is ready for loading, False if cancelled or blocked.
@@ -3025,20 +3038,22 @@ class MainWindow(QMainWindow):
             return False
 
         # Determine what's missing
-        # Need EQ type if the user hasn't explicitly chosen (EQ_TYPE step not completed)
         need_eq_type = WizardStep.EQ_TYPE not in state.completed_steps
-
-        # Need source if: PEQ flow, no source selected, and SOURCE step not completed
-        # (RoomFit is device-global — no source needed)
+        # For PEQ flow, need source if not already set
+        # (also ask if EQ_TYPE not yet decided — user might pick PEQ)
         flow_type = self._wizard_controller.flow_type
         need_source = (
-            flow_type != FlowType.ROOMFIT
-            and not state.selected_source
-            and WizardStep.SOURCE not in state.completed_steps
+            not state.selected_source
+            and flow_type != FlowType.ROOMFIT
         )
+        # If EQ_TYPE is already completed as RoomFit, no source needed
+        if not need_eq_type and flow_type == FlowType.ROOMFIT:
+            need_source = False
 
         # Nothing missing — proceed
         if not need_eq_type and not need_source:
+            # All prior steps should be marked completed
+            self._mark_prior_steps_completed(state)
             return True
 
         # Show dialog
@@ -3058,21 +3073,49 @@ class MainWindow(QMainWindow):
 
         eq_type, sources = result
 
-        # Apply to wizard state
+        # Apply EQ type to wizard state
         if need_eq_type:
             if eq_type == "roomfit":
                 self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
+                state.completed_steps[WizardStep.EQ_TYPE] = "RoomFit"
             else:
                 self._wizard_controller.set_flow_type(FlowType.PEQ)
-            # Mark EQ_TYPE as completed so we don't ask again
-            state.completed_steps[WizardStep.EQ_TYPE] = eq_type
+                state.completed_steps[WizardStep.EQ_TYPE] = "PEQ"
 
-        if sources:
+        # Apply source to wizard state (PEQ only)
+        current_flow = self._wizard_controller.flow_type
+        if current_flow != FlowType.ROOMFIT and sources:
             state.selected_source = ",".join(sources)
-            # Mark SOURCE as completed
             state.completed_steps[WizardStep.SOURCE] = ",".join(sources)
 
+        # Mark FILTERS as completed (we're loading filters from sidebar)
+        state.completed_steps[WizardStep.FILTERS] = "Loaded from preset"
+
         return True
+
+    def _mark_prior_steps_completed(self, state: object) -> None:
+        """Mark EQ_TYPE, SOURCE, FILTERS steps as completed if not already.
+
+        Called when all info is already present so the step indicator shows
+        proper checkmarks when navigating to Review from sidebar.
+        """
+        from src.gui.wizard_controller import WizardState
+
+        assert isinstance(state, WizardState)
+        flow_type = self._wizard_controller.flow_type
+
+        if WizardStep.EQ_TYPE not in state.completed_steps:
+            if flow_type == FlowType.ROOMFIT:
+                state.completed_steps[WizardStep.EQ_TYPE] = "RoomFit"
+            elif flow_type == FlowType.PEQ:
+                state.completed_steps[WizardStep.EQ_TYPE] = "PEQ"
+
+        if flow_type != FlowType.ROOMFIT and WizardStep.SOURCE not in state.completed_steps:
+            source = state.selected_source or "wifi"
+            state.completed_steps[WizardStep.SOURCE] = source
+
+        if WizardStep.FILTERS not in state.completed_steps:
+            state.completed_steps[WizardStep.FILTERS] = "Loaded from preset"
 
     # ------------------------------------------------------------------
     # Close Event
