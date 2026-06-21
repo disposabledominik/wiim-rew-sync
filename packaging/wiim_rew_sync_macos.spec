@@ -60,7 +60,10 @@ excluded_modules = [
 
 # Data files to bundle (help articles for in-app user guide)
 import os
-help_src = os.path.join("..", "src", "gui", "assets", "help")
+_SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
+_PROJECT_ROOT = os.path.join(_SPEC_DIR, '..')
+
+help_src = os.path.join(_PROJECT_ROOT, "src", "gui", "assets", "help")
 datas_list = []
 if os.path.isdir(help_src):
     for f in os.listdir(help_src):
@@ -68,6 +71,22 @@ if os.path.isdir(help_src):
             datas_list.append(
                 (os.path.join(help_src, f), os.path.join("src", "gui", "assets", "help"))
             )
+
+# Bundle app icon (SVG/PNG) for runtime window icon
+icons_src = os.path.join(_PROJECT_ROOT, "src", "gui", "assets", "icons")
+for icon_file in ("app_icon.svg", "app_icon.png"):
+    _icon_path = os.path.join(icons_src, icon_file)
+    if os.path.isfile(_icon_path):
+        datas_list.append(
+            (_icon_path, os.path.join("src", "gui", "assets", "icons"))
+        )
+
+# macOS icon: prefer .icns, fall back to .png
+_MACOS_ICON = os.path.join(icons_src, 'app_icon.icns')
+if not os.path.isfile(_MACOS_ICON):
+    _MACOS_ICON = os.path.join(icons_src, 'app_icon.png')
+if not os.path.isfile(_MACOS_ICON):
+    _MACOS_ICON = None
 
 a = Analysis(
     ["entry_gui.py"],
@@ -105,7 +124,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='../src/gui/assets/icons/app_icon.icns',
+    icon=_MACOS_ICON,
 )
 
 coll = COLLECT(
@@ -122,7 +141,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="WiiM-REW-Sync.app",
-    icon='../src/gui/assets/icons/app_icon.icns',
+    icon=_MACOS_ICON,
     bundle_identifier="com.wiim-rew-sync.app",
     info_plist={
         "CFBundleDisplayName": "WiiM-REW-Sync",
