@@ -78,7 +78,6 @@ from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetsDeviceView
 from src.gui.views.settings_view import SettingsView
 from src.gui.wizard_controller import FlowType, WizardController, WizardStep
-from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
 from src.models.errors import (
     ParseError,
@@ -823,10 +822,11 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Restore a RoomFit profile from backup.
 
-        Reads the backup JSON, extracts filters, and writes them back to
-        the same profile name via write_roomfit.
+        Reads the backup JSON via shared parse_backup_filters helper, then
+        writes the filters back to the same profile name via write_roomfit.
         """
         assert self._wiim_adapter is not None
+        from src.gui.shared_helpers import parse_backup_filters
 
         path = Path(backup_path) if backup_path else Path(".")
         if not path.exists() or not path.is_file():
@@ -837,18 +837,7 @@ class MainWindow(QMainWindow):
             import json
 
             backup_data = json.loads(path.read_text(encoding="utf-8"))
-
-            # Extract filters from backup
-            channel_mode_raw = backup_data.get("channel_mode", "stereo")
-            if channel_mode_raw in ("left", "right"):
-                filters_l = backup_data.get("filters_l", [])
-                filters_r = backup_data.get("filters_r", [])
-                bands = [CanonicalFilter(**f) for f in filters_l] + [
-                    CanonicalFilter(**f) for f in filters_r
-                ]
-            else:
-                filters_raw = backup_data.get("filters", [])
-                bands = [CanonicalFilter(**f) for f in filters_raw]
+            bands, _channel_mode = parse_backup_filters(backup_data)
 
             if not bands:
                 self._status_banner.show_error("Backup contains no filters")

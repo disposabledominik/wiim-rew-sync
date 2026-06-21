@@ -9,7 +9,7 @@ Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -116,7 +116,7 @@ class SourcePage(QWidget):
     def _setup_ui(self) -> None:
         """Build the page layout."""
         outer_layout = QVBoxLayout(self)
-        outer_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        outer_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
 
         # Content container with max width
         content = QWidget()

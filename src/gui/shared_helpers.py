@@ -94,3 +94,29 @@ def build_profile(
         channel_mode="stereo",
         filters=filters,
     )
+
+
+def parse_backup_filters(backup_data: dict) -> tuple[list[CanonicalFilter], str]:
+    """Parse a backup JSON dict into a filter list and channel_mode.
+
+    Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
+    (MainWindow) to avoid duplicating backup parsing logic.
+
+    Args:
+        backup_data: Parsed JSON dict from a backup file.
+
+    Returns:
+        Tuple of (filters, channel_mode) where channel_mode is "lr" or "stereo".
+    """
+    channel_mode_raw = backup_data.get("channel_mode", "stereo")
+
+    if channel_mode_raw in ("left", "right"):
+        filters_l_raw = backup_data.get("filters_l", [])
+        filters_r_raw = backup_data.get("filters_r", [])
+        filters = [CanonicalFilter(**f) for f in filters_l_raw] + [
+            CanonicalFilter(**f) for f in filters_r_raw
+        ]
+        return filters, "lr"
+
+    filters_raw = backup_data.get("filters", [])
+    return [CanonicalFilter(**f) for f in filters_raw], "stereo"

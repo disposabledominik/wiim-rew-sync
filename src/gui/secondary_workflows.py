@@ -28,7 +28,6 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from src.gui.shared_helpers import build_peq_settings
 from src.models.canonical import CanonicalFilter
-from src.models.peq import PEQSettings
 
 if TYPE_CHECKING:
     from src.adapters.safe_write import SafeWrite
@@ -407,6 +406,7 @@ class SecondaryWorkflowManager(QObject):
         preset_filters: list[CanonicalFilter],
         target_device_ip: str,
         target_source: str = "",
+        channel_mode: str = "stereo",
     ) -> None:
         """Copy a device preset to a different device.
 
@@ -418,12 +418,15 @@ class SecondaryWorkflowManager(QObject):
             target_device_ip: IP address of the target device.
             target_source: Target source name on the device (PEQ only).
                           Empty string for RoomFit (device-global).
+            channel_mode: "stereo" or "lr" for correct channel splitting.
 
         Requirements: 15.3, 15.4, 15.5, 15.6.
         """
         assert self._bridge is not None
         self._bridge.run_async(
-            self._do_copy_preset_to_device(preset_filters, target_device_ip, target_source)
+            self._do_copy_preset_to_device(
+                preset_filters, target_device_ip, target_source, channel_mode
+            )
         )
 
     async def _do_copy_preset_to_device(
@@ -431,6 +434,7 @@ class SecondaryWorkflowManager(QObject):
         filters: list[CanonicalFilter],
         target_ip: str,
         source_name: str,
+        channel_mode: str = "stereo",
     ) -> None:
         """Execute copy-preset-to-device via SafeWrite on target device."""
         assert self._wiim_adapter_factory is not None
@@ -440,9 +444,7 @@ class SecondaryWorkflowManager(QObject):
             adapter = self._wiim_adapter_factory(target_ip)
             safe_write = self._safe_write_factory(adapter)
 
-            # TODO: This method does not receive channel_mode from caller.
-            # It should be passed through so L/R presets are handled correctly.
-            settings = build_peq_settings(source_name, filters, "stereo")
+            settings = build_peq_settings(source_name, filters, channel_mode)
             await safe_write.execute(source_name, settings)
 
             self.copy_to_device_complete.emit(
@@ -539,35 +541,14 @@ class SecondaryWorkflowManager(QObject):
             return
 
         try:
-            # Read backup data from JSON file
+            # Read and parse backup using shared helper
+            from src.gui.shared_helpers import parse_backup_filters
+
             backup_data = json.loads(path.read_text(encoding="utf-8"))
+            filters, channel_mode = parse_backup_filters(backup_data)
 
-            # Reconstruct PEQSettings from backup record
-            channel_mode_raw = backup_data.get("channel_mode", "stereo")
-            # BackupRecord uses "stereo"/"left"/"right"; PEQSettings uses "stereo"/"lr"
-            peq_channel_mode: str = (
-                "stereo" if channel_mode_raw == "stereo" else "lr"
-            )
-
-            if peq_channel_mode == "stereo":
-                filters_raw = backup_data.get("filters", [])
-                bands = [CanonicalFilter(**f) for f in filters_raw]
-                settings = PEQSettings(
-                    source_name=source_name,
-                    channel_mode="stereo",
-                    bands=bands,
-                )
-            else:
-                filters_l_raw = backup_data.get("filters_l", [])
-                filters_r_raw = backup_data.get("filters_r", [])
-                bands_l = [CanonicalFilter(**f) for f in filters_l_raw]
-                bands_r = [CanonicalFilter(**f) for f in filters_r_raw]
-                settings = PEQSettings(
-                    source_name=source_name,
-                    channel_mode="lr",
-                    bands_l=bands_l,
-                    bands_r=bands_r,
-                )
+            # Build PEQSettings from parsed filters
+            settings = build_peq_settings(source_name, filters, channel_mode)
 
             # Execute SafeWrite with the restored settings
             safe_write = self._safe_write_factory(self._current_adapter)
