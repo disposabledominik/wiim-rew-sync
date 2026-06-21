@@ -187,18 +187,18 @@ class FiltersPage(QWidget):
         self._rew_api_card.setVisible(available)
 
     def set_roomfit_mode(self, enabled: bool) -> None:
-        """Toggle RoomFit profile dropdown vs file picker display.
+        """Toggle RoomFit mode flag (no longer shows profile dropdown here).
 
-        When enabled, shows the profile dropdown and hides the file picker
-        and drag-drop zone.
+        RoomFit profile pull is accessible via the "Presets on Device" sidebar.
+        The Filters page always shows the file import flow regardless of EQ type.
 
         Args:
-            enabled: True for RoomFit pull mode, False for normal file import.
+            enabled: True for RoomFit flow, False for PEQ flow.
         """
         self._roomfit_mode = enabled
-        self._roomfit_section.setVisible(enabled)
-        self._drop_zone.setVisible(not enabled)
-        self._file_picker_section.setVisible(not enabled)
+        # RoomFit section hidden — pull from device is via sidebar only
+        self._roomfit_section.setVisible(False)
+        self._file_picker_section.setVisible(True)
 
     def set_roomfit_profiles(self, profiles: list[str]) -> None:
         """Populate the RoomFit profile dropdown.
