@@ -90,7 +90,7 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 77 | Multi-source PEQ push: Undo doesn't restore all sources | FIXED | NO | `d6b9288` | _do_push now stores per-source backup paths; _do_undo_multi_source restores each source from its own backup |
 | 78 | Copy to another device: status message says "N presets" when only 1 preset copied to N devices | FIXED | NO | `d6b9288` | Status now reads "1 preset(s) copied to 3 device(s)" reflecting actual items × devices |
 | 79 | Copy to another device: L/R RoomFit profiles stored as Stereo on target | FIXED | NO | `d6b9288` | _do_copy_preset_to_device now passes channel_mode with filters_l/filters_r for L/R RoomFit |
-| 80 | Dry Run mode: Push proceeds to device anyway, no dry-run acknowledgment in Push step | FIXED | NO | `d6b9288` | _on_push_requested now checks state.dry_run; shows set_dry_run_result instead of writing to device |
+| 80 | Dry Run mode: Push proceeds to device anyway, no dry-run acknowledgment in Push step | FIXED | NO | `d6b9288`, `bd5e86b` | Checks state.dry_run; for RoomFit advances twice (skips NAME_PROFILE) to reach PUSH page with dry-run result |
 | 81 | "Compare with device" toggle does nothing (dead UI) | FIXED | N/A | `d6b9288` | Removed toggle, signal, and methods entirely; no functional comparison was implemented |
 | 82 | My Saved Presets and Connect step still have narrow/condensed content layout | FIXED | N/A | `d6b9288` | Removed AlignHCenter from ConnectPage, ReviewPage, MyPresetsView outer layouts |
 | 83 | File>Import/Export menu items do nothing; Help>About not wired | FIXED | N/A | `d6b9288` | Removed File>Import/Export (redundant with UI); wired Help>About with product description dialog |
