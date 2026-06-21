@@ -1193,7 +1193,12 @@ class MainWindow(QMainWindow):
             self._review_page.set_summary(device_name, source, channel, active_bands)
 
             # Advance wizard to REVIEW step
-            self._wizard_controller.advance(summary=f"{count} filters")
+            if getattr(self, "_sidebar_load_in_progress", False):
+                # Sidebar load: navigate directly to Review (smoke #87)
+                self._sidebar_load_in_progress = False
+                self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
+            else:
+                self._wizard_controller.advance(summary=f"{count} filters")
 
             # Show success in status banner (delayed so finish_operation clear passes)
             QTimer.singleShot(
@@ -1252,9 +1257,18 @@ class MainWindow(QMainWindow):
     def _on_progress_update(self, message: str) -> None:
         """Handle progress update — show in StatusBanner.
 
+        Also routes raw command responses to the diagnostics panel
+        (to avoid cross-thread GUI access from async worker).
+
         Args:
             message: Progress status message.
         """
+        # Intercept raw command responses (smoke #85 — thread-safe delivery)
+        if message.startswith("__raw_response__"):
+            response_text = message[len("__raw_response__"):]
+            self._diagnostics_panel.on_raw_response(response_text)
+            return
+
         self._status_banner.show_progress(message)
 
     @Slot(list)
@@ -2300,9 +2314,10 @@ class MainWindow(QMainWindow):
                 formatted = json.dumps(response, indent=2, ensure_ascii=False)
             else:
                 formatted = str(response)
-            self._diagnostics_panel.on_raw_response(formatted)
+            # Emit via signal to avoid cross-thread GUI access (smoke #85 segfault fix)
+            self._bridge.progress_update.emit(f"__raw_response__{formatted}")
         except Exception as exc:
-            self._diagnostics_panel.on_raw_response(f"Error: {exc}")
+            self._bridge.progress_update.emit(f"__raw_response__Error: {exc}")
 
     @Slot(str)
     def _on_navigation_requested(self, view_key: str) -> None:
@@ -2895,6 +2910,8 @@ class MainWindow(QMainWindow):
         if not self._ensure_wizard_state_for_load():
             return
 
+        # Set flag so _on_peq_ready navigates directly to Review (smoke #87)
+        self._sidebar_load_in_progress = True
         self._status_banner.show_progress(f"Loading preset '{name}'...")
         if preset_type == "RoomFit":
             self._bridge.run_async(
@@ -3002,16 +3019,17 @@ class MainWindow(QMainWindow):
             return False
 
         # Determine what's missing
-        flow_type = self._wizard_controller.flow_type
-        need_eq_type = flow_type == FlowType.PEQ  # Default — if no explicit choice yet
-        # If flow_type was explicitly set (EQ_TYPE step completed), we don't need it
-        if WizardStep.EQ_TYPE in state.completed_steps:
-            need_eq_type = False
+        # Need EQ type if the user hasn't explicitly chosen (EQ_TYPE step not completed)
+        need_eq_type = WizardStep.EQ_TYPE not in state.completed_steps
 
-        need_source = not state.selected_source and flow_type != FlowType.ROOMFIT
-        # If source step completed, we don't need it
-        if WizardStep.SOURCE in state.completed_steps:
-            need_source = False
+        # Need source if: PEQ flow, no source selected, and SOURCE step not completed
+        # (RoomFit is device-global — no source needed)
+        flow_type = self._wizard_controller.flow_type
+        need_source = (
+            flow_type != FlowType.ROOMFIT
+            and not state.selected_source
+            and WizardStep.SOURCE not in state.completed_steps
+        )
 
         # Nothing missing — proceed
         if not need_eq_type and not need_source:
@@ -3040,9 +3058,13 @@ class MainWindow(QMainWindow):
                 self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
             else:
                 self._wizard_controller.set_flow_type(FlowType.PEQ)
+            # Mark EQ_TYPE as completed so we don't ask again
+            state.completed_steps[WizardStep.EQ_TYPE] = eq_type
 
-        if need_source and sources:
+        if sources:
             state.selected_source = ",".join(sources)
+            # Mark SOURCE as completed
+            state.completed_steps[WizardStep.SOURCE] = ",".join(sources)
 
         return True
 

@@ -160,8 +160,10 @@ class QuickSetupDialog(QDialog):
 
             layout.addWidget(eq_section)
 
-        # Source section (only for PEQ — RoomFit is device-global)
-        if self._need_source:
+        # Source section — shown for PEQ when source not already set.
+        # Also created when need_eq_type is True (shown/hidden based on radio choice).
+        show_source = self._need_source or self._need_eq_type
+        if show_source:
             self._source_section = QWidget()
             source_layout = QVBoxLayout(self._source_section)
             source_layout.setContentsMargins(0, 0, 0, 0)

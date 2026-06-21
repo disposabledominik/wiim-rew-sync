@@ -189,6 +189,7 @@ class ConnectPage(QWidget):
     def _build_scanning_widget(self, parent: QWidget) -> QWidget:
         """Build the scanning animation state widget."""
         widget = QWidget(parent)
+        widget.setMinimumHeight(120)
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, SPACING_LG, 0, SPACING_LG)
         layout.setSpacing(SPACING_MD)
