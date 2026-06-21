@@ -72,4 +72,4 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 59 | RoomFit: Filters page shows "Select RoomFit profile to pull" dropdown | FIXED | N/A | `7e6cc12` | Hidden — RoomFit profile pull is via "Presets on Device" sidebar only |
 | 60 | RoomFit: NameProfilePage "Existing profiles" list is empty | FIXED | NO | `0a132e4` | Added _populate_name_profile_page() that fetches profiles when navigating to NAME_PROFILE step |
 | 61 | RoomFit: Push ignores profile name from "Name Profile" step (uses "My RoomFit") | FIXED | NO | current | _on_push_requested defers push for RoomFit; push fires from _on_name_confirmed after name is stored |
-| 62 | RoomFit: Undo button crashes with "Is a directory" error | FIXED | N/A | current | Undo hidden for RoomFit (named profiles have no rollback concept) |
+| 62 | RoomFit: Undo button crashes with "Is a directory" error | FIXED | NO | current | Undo now works for RoomFit: backs up existing profile before overwrite; hidden for new profiles only |

@@ -788,12 +788,76 @@ class MainWindow(QMainWindow):
     def _on_undo_requested(self) -> None:
         """Handle undo request from PushPage — restore from last backup.
 
+        For PEQ: delegates to SecondaryWorkflowManager (SafeWrite restore).
+        For RoomFit: reads backup, writes bands back to the same profile name.
+
         Requirement 18.1: Prominent "Undo" action available after push.
         Requirement 18.2: Restore from most recent backup.
         """
-        backup_path = getattr(self._wizard_controller.state, "last_backup_path", "")
-        source_name = getattr(self._wizard_controller.state, "selected_source", "")
-        self._secondary_workflows.undo_last_push(source_name, backup_path)
+        backup_path = self._wizard_controller.state.last_backup_path
+        source_name = self._wizard_controller.state.selected_source or "wifi"
+
+        if self._wizard_controller.flow_type == FlowType.ROOMFIT:
+            # RoomFit undo: restore backed-up bands to the same profile name
+            profile_name = self._wizard_controller.state.roomfit_profile_name
+            self._bridge.run_async(
+                self._bridge_wrapper(
+                    "undo_roomfit",
+                    self._do_undo_roomfit(backup_path, source_name, profile_name),
+                )
+            )
+        else:
+            # PEQ undo: delegate to SecondaryWorkflowManager
+            self._secondary_workflows.undo_last_push(source_name, backup_path)
+
+    async def _do_undo_roomfit(
+        self, backup_path: str, source_name: str, profile_name: str
+    ) -> None:
+        """Restore a RoomFit profile from backup.
+
+        Reads the backup JSON, extracts filters, and writes them back to
+        the same profile name via write_roomfit.
+        """
+        assert self._wiim_adapter is not None
+
+        path = Path(backup_path) if backup_path else Path(".")
+        if not path.exists() or not path.is_file():
+            self._status_banner.show_error("No backup available for undo")
+            return
+
+        try:
+            import json
+
+            backup_data = json.loads(path.read_text(encoding="utf-8"))
+
+            # Extract filters from backup
+            channel_mode_raw = backup_data.get("channel_mode", "stereo")
+            if channel_mode_raw in ("left", "right"):
+                filters_l = backup_data.get("filters_l", [])
+                filters_r = backup_data.get("filters_r", [])
+                from src.models.canonical import CanonicalFilter
+
+                bands = [CanonicalFilter(**f) for f in filters_l] + [
+                    CanonicalFilter(**f) for f in filters_r
+                ]
+            else:
+                filters_raw = backup_data.get("filters", [])
+                from src.models.canonical import CanonicalFilter
+
+                bands = [CanonicalFilter(**f) for f in filters_raw]
+
+            if not bands:
+                self._status_banner.show_error("Backup contains no filters")
+                return
+
+            self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
+            await self._wiim_adapter.write_roomfit(source_name, profile_name, bands)
+            self._status_banner.show_success(
+                f"Profile '{profile_name}' restored from backup"
+            )
+        except Exception as exc:
+            logger.exception("RoomFit undo failed")
+            self._status_banner.show_error(f"Undo failed: {exc}")
 
     @Slot()
     def _on_done_acknowledged(self) -> None:
@@ -1102,8 +1166,8 @@ class MainWindow(QMainWindow):
             # Mark PUSH step as completed in the step indicator
             self._wizard_controller.state.completed_steps[WizardStep.PUSH] = "Done"
             self._wizard_controller.step_summary_updated.emit(WizardStep.PUSH, "Done")
-            # Hide Undo for RoomFit (saving to a named profile has no rollback)
-            if self._wizard_controller.flow_type == FlowType.ROOMFIT:
+            # Hide Undo for RoomFit when writing a NEW profile (no backup to restore)
+            if self._wizard_controller.flow_type == FlowType.ROOMFIT and not backup_path:
                 self._push_page._undo_button.setVisible(False)
             self._status_banner.show_success("Filters pushed successfully")
         else:
@@ -1843,17 +1907,41 @@ class MainWindow(QMainWindow):
                 return
 
             try:
-                # For L/R mode, write_roomfit currently only supports stereo.
-                # Pass the full filter list — the adapter handles band allocation.
+                # Check if profile already exists — if so, back up its bands first
+                backup_path = ""
+                existing_profiles = await self._wiim_adapter.list_roomfit_profiles(
+                    source_name
+                )
+                existing_names = [p.get("Name", "") for p in existing_profiles]
+
+                if profile_name in existing_names:
+                    # Read existing profile bands for backup
+                    self._bridge.progress_update.emit(
+                        f"Backing up existing '{profile_name}'..."
+                    )
+                    # Load profile into buffer then read
+                    existing_settings = await self._wiim_adapter.read_roomfit(
+                        source_name, profile_name
+                    )
+                    # Store backup via BackupManager
+                    caps = self._wiim_adapter.capabilities
+                    bp = self._backup_manager.create_backup(
+                        existing_settings, caps, trigger="pre_write"
+                    )
+                    backup_path = str(bp)
+
+                # Write new bands to the named profile
+                self._bridge.progress_update.emit(
+                    f"Writing RoomFit profile '{profile_name}'..."
+                )
                 await self._wiim_adapter.write_roomfit(source_name, profile_name, filters)
 
-                result = WriteResult(success=True, backup_path="")
+                result = WriteResult(success=True, backup_path=backup_path)
                 self._bridge.progress_update.emit(
                     f"RoomFit profile '{profile_name}' saved"
                 )
                 self._bridge.write_complete.emit(result)
             except Exception as exc:
-
                 result = WriteResult(success=False, error=str(exc), backup_path="")
                 self._bridge.write_complete.emit(result)
         else:
