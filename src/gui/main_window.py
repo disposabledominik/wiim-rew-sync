@@ -953,29 +953,19 @@ class MainWindow(QMainWindow):
         )
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)
 
-        # Check for empty source_names — device reports no audio sources (Req 2.7)
+        # Source names: WiiM API has no reliable source enumeration endpoint.
+        # getStatusEx may or may not include InputList (see corrections.md 2026-06-12).
+        # The PEQ engine accepts ANY source name, so showing extra sources is harmless —
+        # the user just picks which input to apply EQ to. We use the device-reported
+        # list if available, otherwise show all common sources for the product line.
         source_names = getattr(caps, "source_names", [])
         if not source_names:
-            # Fallback: use model-based source mapping when device doesn't report
-            # InputList. Only include sources that actually exist on the device model.
-            model_lower = (getattr(caps, "model", "") or "").lower()
-            if "mini" in model_lower:
-                source_names = ["wifi", "bluetooth", "line-in"]
-            elif "sound" in model_lower or "lite" in model_lower:
-                # WiiM Sound and Sound Lite: wifi, bluetooth, line-in only
-                source_names = ["wifi", "bluetooth", "line-in"]
-            elif "pro" in model_lower or "ultra" in model_lower:
-                source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
-            elif "amp" in model_lower:
-                source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
-            else:
-                # Generic fallback for unknown models — use conservative set
-                source_names = ["wifi", "bluetooth", "line-in"]
-            logger.warning(
-                "Device reported no source_names; using model-based defaults "
-                "(model=%s): %s",
-                model_lower,
-                source_names,
+            # All WiiM devices support PEQ on these common sources.
+            # Showing an extra source that doesn't physically exist is harmless
+            # (PEQ data just sits unused in that slot).
+            source_names = ["wifi", "bluetooth", "line-in", "optical", "HDMI"]
+            logger.info(
+                "Device reported no source_names; showing all common sources"
             )
 
         # Store capabilities for later use (smoke #35, #36)

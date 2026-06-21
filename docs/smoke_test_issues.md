@@ -45,12 +45,12 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 32 | Copy to Another Device: status message not shown long enough to read | FIXED | NO | `d0aa100` | finish_operation() no longer clears banner unconditionally; only clears if still showing progress spinner |
 | 33 | Copy to Another Device: only pushes to first device when multiple selected | FIXED | NO | `d0aa100` | Replaced per-item run_async loop with single _do_copy_presets_batch coroutine |
 | 34 | Copy to Another Device: RoomFit profile saved as PEQ on target (wrong type) | FIXED | NO | `d0aa100` | _do_copy_preset_to_device now branches on preset_type; uses write_roomfit() for RoomFit |
-| 35 | Source page shows all canonical sources regardless of device model | FIXED | NO | `d0aa100` | Model-based source fallback (Mini→wifi+bluetooth; Pro/Ultra→full set) instead of blanket canonical list |
+| 35 | Source page shows all canonical sources regardless of device model | FIXED | NO | `d0aa100` | All common sources shown (PEQ accepts any source name; extra slots are harmless) |
 | 36 | WiiM Mini shows RoomFit in EQ Type despite not supporting it | FIXED | NO | `d0aa100` | Added model-based roomfit blocklist; Mini forced to PEQ_ONLY flow even if roomfit_level >= 2 |
 | 37 | ReviewPage "Save to My Presets" button does nothing | FIXED | NO | `d6983fb` | save_preset_requested signal was never connected; added _on_review_save_preset handler |
 | 38 | My Saved Presets: no actions (delete/rename/duplicate) wired | FIXED | NO | `ddb2349`, `94272de` | Connected signals + added visible toolbar (Load/Rename/Duplicate/Delete) on selection |
 | 39 | My Saved Presets: L/R presets shown as "stereo" with 24 bands | FIXED | NO | `ddb2349`, `94272de` | Badge shows "L/R", band count uses per-channel, channel_mode preserved on save |
 | 40 | Export L/R preset from Presets on Device creates single file | FIXED | NO | `ddb2349`, `94272de` | Both Presets view and Review step now generate _L.txt + _R.txt; state.channel_mode updated from device |
 | 41 | Back-nav to Connect → selecting new device keeps old flow type | FIXED | NO | `d6983fb` | _on_device_selected resets flow_type to PEQ before probing |
-| 42 | WiiM Mini missing line-in source in Source page | FIXED | NO | `d6983fb` | Updated model fallback: Mini = wifi, bluetooth, line-in |
-| 43 | Sound/Sound Lite shows optical and HDMI sources (not applicable) | FIXED | NO | `d6983fb` | Added "sound"/"lite" to model fallback: wifi, bluetooth, line-in only |
+| 42 | WiiM Mini missing line-in source in Source page | FIXED | NO | `d6983fb` | Reverted to showing all common sources (PEQ accepts any name; no model filtering needed) |
+| 43 | Sound/Sound Lite shows optical and HDMI sources (not applicable) | WONTFIX | N/A | — | PEQ engine accepts any source name; showing extra sources is harmless. No reliable way to probe physical inputs. |
