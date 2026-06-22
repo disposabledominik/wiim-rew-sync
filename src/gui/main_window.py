@@ -980,6 +980,10 @@ class MainWindow(QMainWindow):
         if page_key and page_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
 
+        # Reset Push page when entering the PUSH step (clear stale dry run results)
+        if step == WizardStep.PUSH:
+            self._push_page.reset()
+
         # Populate NameProfilePage when entering that step (RoomFit flow)
         if step == WizardStep.NAME_PROFILE:
             self._populate_name_profile_page()
