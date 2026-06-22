@@ -76,3 +76,5 @@ the change if needed.
   and the User Guide at any time during the workflow.
 - **Presets on Device** in the sidebar lets you browse, export, and copy
   existing PEQ presets and RoomFit profiles directly from your WiiM device.
+- **Pull from REW** in the sidebar imports filters directly from REW's HTTP
+  API if REW is running with the API enabled (no file export needed).
