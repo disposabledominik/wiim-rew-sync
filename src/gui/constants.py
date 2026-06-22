@@ -231,7 +231,7 @@ LIST_ITEM_HEIGHT: int = 44
 STEP_INDICATOR_HEIGHT: int = 56
 """Step indicator bar height in pixels."""
 
-STATUS_BANNER_HEIGHT: int = 40
+STATUS_BANNER_HEIGHT: int = 44
 """Status banner height in pixels."""
 
 # ---------------------------------------------------------------------------

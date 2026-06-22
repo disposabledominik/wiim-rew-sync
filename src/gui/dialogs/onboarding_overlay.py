@@ -184,7 +184,7 @@ class OnboardingOverlay(QWidget):
             f"color: {text_primary};"
             "background: transparent;"
         )
-        title.setMinimumHeight(FONT_SIZE_TITLE + SPACING_MD)
+        title.setMinimumHeight(FONT_SIZE_TITLE + SPACING_LG)
         card_layout.addWidget(title)
 
         # --- Subtitle ---
@@ -200,7 +200,7 @@ class OnboardingOverlay(QWidget):
             f"color: {text_secondary};"
             "background: transparent;"
         )
-        subtitle.setMinimumHeight(FONT_SIZE_BODY + SPACING_MD)
+        subtitle.setMinimumHeight(FONT_SIZE_BODY * 2 + SPACING_MD)
         card_layout.addWidget(subtitle)
 
         # --- Capability cards row ---
@@ -303,7 +303,7 @@ class OnboardingOverlay(QWidget):
         title_label.setObjectName(f"cap_title_{cap_title.lower().replace(' ', '_')}")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setWordWrap(True)
-        title_label.setMinimumHeight(FONT_SIZE_HEADING - 4 + SPACING_SM)
+        title_label.setMinimumHeight(FONT_SIZE_HEADING + SPACING_SM)
         title_label.setStyleSheet(
             f"font-family: {FONT_FAMILY};"
             f"font-size: {FONT_SIZE_HEADING - 4}px;"
@@ -318,7 +318,7 @@ class OnboardingOverlay(QWidget):
         desc_label.setObjectName(f"cap_desc_{cap_title.lower().replace(' ', '_')}")
         desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_label.setWordWrap(True)
-        desc_label.setMinimumHeight(FONT_SIZE_CAPTION * 2 + SPACING_SM)
+        desc_label.setMinimumHeight(FONT_SIZE_CAPTION * 3 + SPACING_SM)
         desc_label.setStyleSheet(
             f"font-family: {FONT_FAMILY};"
             f"font-size: {FONT_SIZE_CAPTION}px;"

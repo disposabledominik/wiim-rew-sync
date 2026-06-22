@@ -443,7 +443,7 @@ class MainWindow(QMainWindow):
             self._presets_device_view,  # 7: presets_device
             self._my_presets_view,     # 8: my_presets
             self._settings_view,      # 9: settings
-            self._help_view,          # 10: help
+            QWidget(),                # 10: placeholder (Help is now a separate window)
         ]
         for page in pages:
             self._stacked_widget.addWidget(page)
@@ -481,6 +481,8 @@ class MainWindow(QMainWindow):
         help_layout = QVBoxLayout(self._help_dialog)
         help_layout.setContentsMargins(0, 0, 0, 0)
         help_layout.addWidget(self._help_view)
+        # Ensure HelpView is visible (it may have been hidden by QStackedWidget)
+        self._help_view.setVisible(True)
 
     def _setup_menus(self) -> None:
         """Create the menu bar: File, View, Help."""

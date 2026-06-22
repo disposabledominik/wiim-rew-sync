@@ -838,3 +838,16 @@ QFrame[status="warning"] {
     color: #B0B0B0;
     border: 1px solid #404040;
 }
+
+/* Prevent alternating backgrounds inside Settings groupboxes */
+#SettingsView QGroupBox QWidget {
+    background-color: transparent;
+}
+
+#SettingsView QGroupBox QLineEdit {
+    background-color: #2D2D2D;
+}
+
+#SettingsView QGroupBox QComboBox {
+    background-color: #2D2D2D;
+}
