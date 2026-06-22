@@ -1317,28 +1317,62 @@ class MainWindow(QMainWindow):
     def _on_measurements_listed(self, measurements: list[Any]) -> None:
         """Handle REW measurements listed — open picker dialog for user selection.
 
-        After the bridge emits rew_measurements_ready with the measurement list,
-        this handler opens MeasurementPickerDialog for the user to choose one.
-        On selection, triggers _do_rew_get_filters via the bridge.
+        For Stereo mode: user picks 1 measurement.
+        For L/R mode: user picks 2 measurements (Left channel, then Right channel).
 
         Requirements: 5.2, 5.7.
 
         Args:
             measurements: List of MeasurementSummary objects from REW API.
         """
-        # Open the measurement picker dialog
-        measurement = MeasurementPickerDialog.get_measurement(self, measurements)
+        lr_mode = getattr(self, "_rew_pull_lr_mode", False)
 
-        # User cancelled the dialog
-        if measurement is None:
-            self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
-            return
+        if lr_mode:
+            # L/R mode: pick Left measurement
+            measurement_l = MeasurementPickerDialog.get_measurement(
+                self, measurements, title="Select LEFT Channel Measurement"
+            )
+            if measurement_l is None:
+                self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
+                self._sidebar_load_in_progress = False
+                return
 
-        # Fetch filters for the selected measurement
-        self._bridge.run_async(
-            self._bridge_wrapper("rew_filters", self._do_rew_get_filters(measurement.uuid))
-        )
-        logger.info("REW measurement selected: %s", measurement.name)
+            # Pick Right measurement
+            measurement_r = MeasurementPickerDialog.get_measurement(
+                self, measurements, title="Select RIGHT Channel Measurement"
+            )
+            if measurement_r is None:
+                self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
+                self._sidebar_load_in_progress = False
+                return
+
+            # Fetch filters for both measurements
+            self._bridge.run_async(
+                self._bridge_wrapper(
+                    "rew_filters_lr",
+                    self._do_rew_get_filters_lr(measurement_l.uuid, measurement_r.uuid),
+                )
+            )
+            logger.info(
+                "REW L/R measurements selected: L=%s, R=%s",
+                measurement_l.name,
+                measurement_r.name,
+            )
+        else:
+            # Stereo mode: pick one measurement
+            measurement = MeasurementPickerDialog.get_measurement(self, measurements)
+            if measurement is None:
+                self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
+                self._sidebar_load_in_progress = False
+                return
+
+            # Fetch filters for the selected measurement
+            self._bridge.run_async(
+                self._bridge_wrapper(
+                    "rew_filters", self._do_rew_get_filters(measurement.uuid)
+                )
+            )
+            logger.info("REW measurement selected: %s", measurement.name)
 
     @Slot(list)
     def _on_rew_filters_ready(self, filters: list[CanonicalFilter]) -> None:
@@ -2031,9 +2065,37 @@ class MainWindow(QMainWindow):
 
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
+        self._wizard_controller.state.channel_mode = "Stereo"
 
         # Emit result signal
         self._bridge.rew_filters_ready.emit(filters)
+
+    async def _do_rew_get_filters_lr(self, uuid_l: str, uuid_r: str) -> None:
+        """Fetch filters for Left and Right REW measurements.
+
+        Calls get_filters for each UUID, combines into L+R format,
+        and emits peq_ready with the combined result.
+
+        Args:
+            uuid_l: UUID of the Left channel measurement.
+            uuid_r: UUID of the Right channel measurement.
+        """
+        filters_l = await self._rew_client.get_filters(uuid_l)
+        filters_r = await self._rew_client.get_filters(uuid_r)
+
+        # Combine L+R into flat list and set L/R channel mode
+        filters = filters_l + filters_r
+        self._wizard_controller.state.current_filters = filters
+        self._wizard_controller.state.channel_mode = "L/R"
+
+        # Emit peq_ready with a PEQSettings carrying L/R bands
+        peq_data = PEQSettings(
+            source_name=self._wizard_controller.state.selected_source or "wifi",
+            channel_mode="lr",
+            bands_l=filters_l,
+            bands_r=filters_r,
+        )
+        self._bridge.peq_ready.emit(peq_data)
 
     async def _do_push(self) -> None:
         """Execute push to device — PEQ via SafeWrite, or RoomFit via write_roomfit.
@@ -2430,9 +2492,9 @@ class MainWindow(QMainWindow):
     def _on_rew_pull_requested(self) -> None:
         """Handle sidebar 'Pull from REW' click — check availability and start workflow.
 
-        If REW HTTP API is reachable, initiates measurement listing.
-        If not, shows an instructional message on how to enable it.
-        Requires wizard state to be ready for loading (device connected, etc.).
+        Shows a Stereo/L/R choice dialog, then connects to REW to list measurements.
+        For Stereo: user picks 1 measurement.
+        For L/R: user picks 2 measurements (Left then Right).
         """
         if self._is_busy():
             return
@@ -2440,6 +2502,41 @@ class MainWindow(QMainWindow):
         # Ensure wizard state is complete enough to load filters
         if not self._ensure_wizard_state_for_load():
             return
+
+        # Ask user for Stereo vs L/R mode
+        from PySide6.QtWidgets import (
+            QDialog,
+            QDialogButtonBox,
+            QLabel,
+            QRadioButton,
+            QVBoxLayout,
+        )
+
+        mode_dialog = QDialog(self)
+        mode_dialog.setWindowTitle("Channel Mode")
+        mode_dialog.setMinimumWidth(300)
+        mode_layout = QVBoxLayout(mode_dialog)
+        mode_layout.addWidget(QLabel("Select channel mode for REW import:"))
+
+        radio_stereo = QRadioButton("Stereo (one measurement)")
+        radio_stereo.setChecked(True)
+        mode_layout.addWidget(radio_stereo)
+
+        radio_lr = QRadioButton("L/R (separate Left and Right measurements)")
+        mode_layout.addWidget(radio_lr)
+
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(mode_dialog.accept)
+        btn_box.rejected.connect(mode_dialog.reject)
+        mode_layout.addWidget(btn_box)
+
+        if mode_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Store the chosen mode for later use in the measurement handler
+        self._rew_pull_lr_mode = radio_lr.isChecked()
 
         # Set flag so _on_peq_ready navigates directly to Review
         self._sidebar_load_in_progress = True

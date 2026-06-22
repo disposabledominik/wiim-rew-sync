@@ -104,6 +104,7 @@ class MeasurementPickerDialog(QDialog):
     def get_measurement(
         parent: QWidget | None,
         measurements: list[MeasurementSummary],
+        title: str = "Select REW Measurement",
     ) -> MeasurementSummary | None:
         """Show the measurement picker and return the selected measurement.
 
@@ -113,11 +114,13 @@ class MeasurementPickerDialog(QDialog):
         Args:
             parent: Parent widget (may be None).
             measurements: List of available REW measurements.
+            title: Dialog window title (default "Select REW Measurement").
 
         Returns:
             The selected MeasurementSummary if accepted, or None if cancelled.
         """
         dialog = MeasurementPickerDialog(parent, measurements)
+        dialog.setWindowTitle(title)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.selected_measurement()
         return None
