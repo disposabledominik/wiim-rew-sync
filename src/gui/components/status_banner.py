@@ -70,16 +70,16 @@ class StatusBanner(QFrame):
         )
         layout.addWidget(self._message_label)
 
-        # Close button — explicitly styled for visibility
-        self._close_button = QPushButton("\u2715", self)
+        # Close button — styled as a visible "Dismiss" text button
+        self._close_button = QPushButton("Dismiss", self)
         self._close_button.setObjectName("StatusBannerClose")
-        self._close_button.setFixedSize(28, 28)
-        self._close_button.setFlat(True)
-        self._close_button.setToolTip("Dismiss")
+        self._close_button.setFixedHeight(26)
+        self._close_button.setToolTip("Dismiss this message")
         self._close_button.setStyleSheet(
-            "QPushButton { font-size: 14px; font-weight: bold; border: none; "
-            "border-radius: 14px; background: transparent; }"
-            "QPushButton:hover { background: rgba(128, 128, 128, 0.3); }"
+            "QPushButton { font-size: 12px; font-weight: 600; color: inherit; "
+            "border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 4px; "
+            "background: transparent; padding: 2px 10px; }"
+            "QPushButton:hover { background: rgba(128, 128, 128, 0.2); }"
         )
         self._close_button.clicked.connect(self._on_close_clicked)
         self._close_button.setVisible(False)
