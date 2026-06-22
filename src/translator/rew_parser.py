@@ -94,28 +94,18 @@ _LEGACY_FULL_RE = re.compile(
 # Default Butterworth Q value
 _BUTTERWORTH_Q = 0.707
 
-# REW text type token -> Canonical filter type
+# ---------------------------------------------------------------------------
+# Unified type map and skip types (shared by text file parser and API parser)
+# ---------------------------------------------------------------------------
+
+# All known filter type tokens -> Canonical filter type
 _TYPE_MAP: dict[str, str] = {
     "PK": "PEAK",
     "LS": "LS",
     "HS": "HS",
     "LP": "LP",
     "HP": "HP",
-}
-
-# Unsupported filter types that should emit a warning and be skipped
-_UNSUPPORTED_TYPES: set[str] = {
-    "Modal", "LP1", "HP1", "Notch", "L-T",
-}
-
-# REW HTTP API type field -> Canonical filter type (same mapping)
-_API_TYPE_MAP: dict[str, str] = {
-    "PK": "PEAK",
-    "LS": "LS",
-    "HS": "HS",
-    "LP": "LP",
-    "HP": "HP",
-    # Shelf variants — map to closest supported type
+    # Shelf variants
     "LS 6dB": "LS",
     "HS 6dB": "HS",
     "LS 12dB": "LS",
@@ -127,17 +117,17 @@ _API_TYPE_MAP: dict[str, str] = {
     "HP1": "HP",
     "LP Q": "LP",
     "HP Q": "HP",
-    # Notch filters — closest is PEAK with deep negative gain
+    # Notch -> PEAK equivalent
     "Notch": "PEAK",
     "Notch Q": "PEAK",
 }
 
-# Filter types that should be silently skipped (not translatable to WiiM PEQ)
-_API_SKIP_TYPES: set[str] = {
-    "None",       # Empty/disabled slot in REW
-    "Modal",      # Modal decay target — not a PEQ filter
-    "All pass",   # Phase-only filter — not supported by WiiM
-    "L-T",        # Linkwitz Transform — dual-frequency, not translatable
+# Filter types that should be skipped (not translatable to WiiM PEQ)
+_SKIP_TYPES: set[str] = {
+    "None",       # Empty/disabled slot
+    "Modal",      # Modal decay target
+    "All pass",   # Phase-only filter
+    "L-T",        # Linkwitz Transform
 }
 
 
@@ -150,17 +140,44 @@ def _validate_frequency(freq: float, *, line_number: int | None = None) -> None:
         raise ValidationError(msg)
 
 
+def _classify_filter_type(type_token: str, index: int) -> str | None:
+    """Classify a filter type token into a canonical type string.
+
+    Returns the canonical type ("PEAK", "LS", "HS", "LP", "HP") if supported,
+    or None if the filter should be skipped.
+
+    Logs a warning for unknown types.
+    """
+    if type_token in _SKIP_TYPES:
+        logger.debug("Filter %d: skipping type '%s' (not translatable)", index, type_token)
+        return None
+    if type_token in _TYPE_MAP:
+        return _TYPE_MAP[type_token]
+    # Unknown type - skip with warning
+    logger.warning("Filter %d: unknown type '%s' - skipping", index, type_token)
+    return None
+
+
+def _clamp_frequency(freq: float) -> float:
+    """Clamp frequency to valid WiiM range (10-22000 Hz)."""
+    return max(10.0, min(freq, 22000.0))
+
+
 def _is_unsupported_filter(body: str) -> str | None:
     """Check if the filter body starts with an unsupported type token.
 
     Returns the unsupported type name if found, None otherwise.
+    Uses _SKIP_TYPES for known skip types, plus regex for text-format variants.
     """
-    # Check explicit unsupported types
-    for utype in _UNSUPPORTED_TYPES:
+    # Check explicit skip types by prefix (exclude "None" — handled by _NONE_RE,
+    # and "All pass" — handled by regex below for hyphenated return value)
+    for utype in _SKIP_TYPES:
+        if utype in ("None", "All pass"):
+            continue
         if body.startswith(utype):
             return utype
 
-    # Check patterns like "LS 6dB", "HS 6dB" (unsupported slope variants)
+    # Check patterns like "LS 6dB", "HS 6dB" (unsupported slope variants in text files)
     ls_6db = re.match(r"^LS\s+6dB\b", body)
     if ls_6db:
         return "LS 6dB"
@@ -168,10 +185,23 @@ def _is_unsupported_filter(body: str) -> str | None:
     if hs_6db:
         return "HS 6dB"
 
-    # Check "Notch Q" variant
+    # Check "Notch Q" variant (multi-word before single "Notch" check)
     notch_q = re.match(r"^Notch\s+Q\b", body)
     if notch_q:
         return "Notch Q"
+
+    # Check single "Notch" (now in _TYPE_MAP but unsupported in text file context)
+    notch = re.match(r"^Notch\b", body)
+    if notch:
+        return "Notch"
+
+    # Check "LP1" / "HP1" variants
+    lp1 = re.match(r"^LP1\b", body)
+    if lp1:
+        return "LP1"
+    hp1 = re.match(r"^HP1\b", body)
+    if hp1:
+        return "HP1"
 
     # Check "All pass" or "All-pass"
     allpass = re.match(r"^All[\s-]?pass\b", body)
@@ -506,37 +536,24 @@ class REWParser:
             enabled = setting.get("enabled", setting.get("on", True))
             type_token = str(setting.get("type", ""))
 
-            # Skip unsupported/untranslatable filter types
-            if type_token in _API_SKIP_TYPES:
-                logger.debug(
-                    "Filter %d: skipping unsupported type '%s'", i + 1, type_token
-                )
-                continue
-
-            # Validate type token — skip unknown types with warning
-            if type_token not in _API_TYPE_MAP:
-                logger.warning(
-                    "Filter %d: unknown type '%s' — skipping", i + 1, type_token
-                )
+            canonical_type = _classify_filter_type(type_token, i + 1)
+            if canonical_type is None:
                 continue
 
             # Parse numeric fields (REW uses "gaindB" or "gain", "frequency" or "freq")
-            freq = float(
-                setting.get("frequency", setting.get("freq", 1000.0))  # type: ignore[arg-type]
+            freq = _clamp_frequency(
+                float(
+                    setting.get("frequency", setting.get("freq", 1000.0))  # type: ignore[arg-type]
+                )
             )
             gain = float(
                 setting.get("gaindB", setting.get("gain", 0.0))  # type: ignore[arg-type]
             )
             q = float(setting.get("q", 1.0))  # type: ignore[arg-type]
 
-            # Clamp frequency to valid range (don't reject — just clamp)
-            freq = max(10.0, min(freq, 22000.0))
-
             # Determine canonical type
             if not enabled:
                 canonical_type = "OFF"
-            else:
-                canonical_type = _API_TYPE_MAP[type_token]
 
             filters.append(
                 CanonicalFilter(
