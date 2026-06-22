@@ -126,6 +126,7 @@ class MyPresetsView(QWidget):
 
         self._presets: list[Profile] = []
         self._rename_item: QListWidgetItem | None = None
+        self._rename_hidden_widget: QWidget | None = None
 
         self._setup_ui()
 
@@ -305,8 +306,10 @@ class MyPresetsView(QWidget):
         self._rename_item = item
         profile: Profile = item.data(Qt.ItemDataRole.UserRole)
 
-        # Hide the item widget to prevent text overlap
+        # Hide the item widget to prevent text overlap during editing.
+        # Store a reference so we can restore it later.
         item_widget = self._list_widget.itemWidget(item)
+        self._rename_hidden_widget = item_widget
         if item_widget:
             item_widget.setVisible(False)
 
@@ -317,6 +320,7 @@ class MyPresetsView(QWidget):
         self._rename_editor.selectAll()
         self._rename_editor.setVisible(True)
         self._rename_editor.setFocus()
+        self._rename_editor.raise_()
 
     def _on_rename_finished(self) -> None:
         """Complete the inline rename operation."""
@@ -325,9 +329,9 @@ class MyPresetsView(QWidget):
             return
 
         # Restore item widget visibility
-        item_widget = self._list_widget.itemWidget(self._rename_item)
-        if item_widget:
-            item_widget.setVisible(True)
+        if self._rename_hidden_widget is not None:
+            self._rename_hidden_widget.setVisible(True)
+            self._rename_hidden_widget = None
 
         profile: Profile = self._rename_item.data(Qt.ItemDataRole.UserRole)
         new_name = self._rename_editor.text().strip()
@@ -342,10 +346,9 @@ class MyPresetsView(QWidget):
     def _cancel_rename(self) -> None:
         """Cancel any in-progress rename operation."""
         # Restore item widget visibility if renaming was in progress
-        if self._rename_item is not None:
-            item_widget = self._list_widget.itemWidget(self._rename_item)
-            if item_widget:
-                item_widget.setVisible(True)
+        if self._rename_hidden_widget is not None:
+            self._rename_hidden_widget.setVisible(True)
+            self._rename_hidden_widget = None
         self._rename_editor.setVisible(False)
         self._rename_item = None
 

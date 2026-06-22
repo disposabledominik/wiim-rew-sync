@@ -159,10 +159,14 @@ class ExportDialog(QDialog):
 
     def _browse_left(self) -> None:
         """Open a save file dialog for left channel."""
+        # Use default name as initial suggestion in the native dialog
+        initial_path = ""
+        if self._default_name:
+            initial_path = str(Path.home() / f"{self._default_name}_L.txt")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Left Channel EQ File",
-            "",
+            initial_path,
             "REW EQ Files (*.txt);;All Files (*)",
         )
         if file_path:
@@ -185,10 +189,14 @@ class ExportDialog(QDialog):
 
     def _browse_right(self) -> None:
         """Open a save file dialog for right channel."""
+        # Use default name as initial suggestion in the native dialog
+        initial_path = ""
+        if self._default_name:
+            initial_path = str(Path.home() / f"{self._default_name}_R.txt")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Right Channel EQ File",
-            "",
+            initial_path,
             "REW EQ Files (*.txt);;All Files (*)",
         )
         if file_path:

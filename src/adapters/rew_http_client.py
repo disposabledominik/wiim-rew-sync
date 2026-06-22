@@ -86,7 +86,8 @@ class REWHttpApiClient:
         except httpx.ConnectError as exc:
             logger.error("CONNECT_ERR -> %s: %s", url, exc)
             raise REWNotConnectedError(
-                f"Cannot connect to REW API at {self._base_url}: {exc}"
+                "REW is not connected. Please ensure REW is running and "
+                "its HTTP API is enabled (localhost:4735)."
             ) from exc
 
         logger.debug(
@@ -94,12 +95,34 @@ class REWHttpApiClient:
         )
 
         data = response.json()
+        logger.debug("REW measurements response: %s", repr(data)[:500])
+
+        # Handle both bare array and wrapped object responses
+        items: list[dict[str, object]] = []
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            # Try common wrapper keys
+            for key in ("measurements", "data", "items"):
+                if key in data and isinstance(data[key], list):
+                    items = data[key]
+                    break
+            if not items:
+                # Maybe it's a single-item dict at top level
+                logger.warning("Unexpected REW response format: %s", repr(data)[:200])
+                return []
+
         summaries: list[MeasurementSummary] = []
-        for i, item in enumerate(data):
+        for i, item in enumerate(items):
+            # Support multiple field name variants
+            uuid = str(item.get("uuid") or item.get("id") or item.get("UUID") or f"idx_{i}")
+            name = str(
+                item.get("title") or item.get("name") or item.get("Title") or f"Measurement {i + 1}"
+            )
             summaries.append(
                 MeasurementSummary(
-                    uuid=item["uuid"],
-                    name=item["title"],
+                    uuid=uuid,
+                    name=name,
                     index=i,
                 )
             )
@@ -126,7 +149,8 @@ class REWHttpApiClient:
         except httpx.ConnectError as exc:
             logger.error("CONNECT_ERR -> %s: %s", url, exc)
             raise REWNotConnectedError(
-                f"Cannot connect to REW API at {self._base_url}: {exc}"
+                "REW is not connected. Please ensure REW is running and "
+                "its HTTP API is enabled (localhost:4735)."
             ) from exc
 
         logger.debug(
