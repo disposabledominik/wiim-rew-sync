@@ -852,21 +852,30 @@ class TestParseFilterSettings:
         assert filters[0].frequency_hz == 500.0
         assert filters[1].type == "OFF"
 
-    def test_unknown_type_raises_validation_error(self, parser: REWParser) -> None:
+    def test_unknown_type_skipped(self, parser: REWParser) -> None:
+        """Unknown filter types are skipped (not raised as errors)."""
         settings = [
             {"enabled": True, "type": "NO", "frequency": 100.0, "gain": 0.0, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 200.0, "gaindB": -3.0, "q": 1.41},
         ]
 
-        with pytest.raises(ValidationError, match="Unknown filter type 'NO'"):
-            parser.parse_filter_settings(settings)
+        result = parser.parse_filter_settings(settings)
+        # Only the PK filter should be in the result (NO was skipped)
+        assert len(result) == 1
+        assert result[0].type == "PEAK"
+        assert result[0].frequency_hz == 200.0
 
-    def test_frequency_out_of_range_raises_validation_error(self, parser: REWParser) -> None:
+    def test_frequency_out_of_range_clamped(self, parser: REWParser) -> None:
+        """Frequencies outside valid range are clamped (not rejected)."""
         settings = [
-            {"enabled": True, "type": "PK", "frequency": 5.0, "gain": 0.0, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 5.0, "gaindB": 0.0, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 30000.0, "gaindB": 0.0, "q": 1.0},
         ]
 
-        with pytest.raises(ValidationError, match="outside valid range"):
-            parser.parse_filter_settings(settings)
+        result = parser.parse_filter_settings(settings)
+        assert len(result) == 2
+        assert result[0].frequency_hz == 10.0   # Clamped to minimum
+        assert result[1].frequency_hz == 22000.0  # Clamped to maximum
 
 
 class TestParseFilterSettingsLPHP:

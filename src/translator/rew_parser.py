@@ -7,12 +7,15 @@ types, and duplicate measurement sections.
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
 from src.models.canonical import CanonicalFilter
 from src.models.errors import ParseError, ValidationError
 from src.translator._warnings import ValidationWarning
+
+logger = logging.getLogger("wiim_rew_sync.rew_api")
 
 # ---------------------------------------------------------------------------
 # Filter line regex — matches the "Filter  N:" prefix and captures state
@@ -112,6 +115,29 @@ _API_TYPE_MAP: dict[str, str] = {
     "HS": "HS",
     "LP": "LP",
     "HP": "HP",
+    # Shelf variants — map to closest supported type
+    "LS 6dB": "LS",
+    "HS 6dB": "HS",
+    "LS 12dB": "LS",
+    "HS 12dB": "HS",
+    "LS Q": "LS",
+    "HS Q": "HS",
+    # LP/HP variants
+    "LP1": "LP",
+    "HP1": "HP",
+    "LP Q": "LP",
+    "HP Q": "HP",
+    # Notch filters — closest is PEAK with deep negative gain
+    "Notch": "PEAK",
+    "Notch Q": "PEAK",
+}
+
+# Filter types that should be silently skipped (not translatable to WiiM PEQ)
+_API_SKIP_TYPES: set[str] = {
+    "None",       # Empty/disabled slot in REW
+    "Modal",      # Modal decay target — not a PEQ filter
+    "All pass",   # Phase-only filter — not supported by WiiM
+    "L-T",        # Linkwitz Transform — dual-frequency, not translatable
 }
 
 
@@ -469,30 +495,42 @@ class REWParser:
         """Parse REW HTTP API FilterSetting objects into CanonicalFilters.
 
         Each FilterSetting has: enabled (bool), type (str), frequency (float),
-        gain (float), q (float).
+        gaindB (float), q (float). Some filters have no frequency/gain (e.g. None type).
 
-        Same validation rules as parse_file.
+        Unsupported filter types (Modal, All pass, L-T, None) are skipped
+        with a logged warning rather than raising a hard error.
         """
         filters: list[CanonicalFilter] = []
 
         for i, setting in enumerate(filter_settings):
             enabled = setting.get("enabled", setting.get("on", True))
             type_token = str(setting.get("type", ""))
-            freq = float(setting.get("frequency", setting.get("freq", 0.0)))  # type: ignore[arg-type]
-            gain = float(setting.get("gain", 0.0))  # type: ignore[arg-type]
+
+            # Skip unsupported/untranslatable filter types
+            if type_token in _API_SKIP_TYPES:
+                logger.debug(
+                    "Filter %d: skipping unsupported type '%s'", i + 1, type_token
+                )
+                continue
+
+            # Validate type token — skip unknown types with warning
+            if type_token not in _API_TYPE_MAP:
+                logger.warning(
+                    "Filter %d: unknown type '%s' — skipping", i + 1, type_token
+                )
+                continue
+
+            # Parse numeric fields (REW uses "gaindB" or "gain", "frequency" or "freq")
+            freq = float(
+                setting.get("frequency", setting.get("freq", 1000.0))  # type: ignore[arg-type]
+            )
+            gain = float(
+                setting.get("gaindB", setting.get("gain", 0.0))  # type: ignore[arg-type]
+            )
             q = float(setting.get("q", 1.0))  # type: ignore[arg-type]
 
-            # Validate type token
-            if type_token not in _API_TYPE_MAP:
-                raise ValidationError(
-                    f"Filter {i + 1}: Unknown filter type '{type_token}'"
-                )
-
-            # Validate frequency
-            if not (10.0 <= freq <= 22000.0):
-                raise ValidationError(
-                    f"Filter {i + 1}: Frequency {freq} Hz is outside valid range 10-22000 Hz"
-                )
+            # Clamp frequency to valid range (don't reject — just clamp)
+            freq = max(10.0, min(freq, 22000.0))
 
             # Determine canonical type
             if not enabled:
