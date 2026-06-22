@@ -108,19 +108,7 @@ class UnsavedChangesDialog(QDialog):
         # Cancel button (ghost/text style) - leftmost
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.setObjectName("cancel_button")
-        self._cancel_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: transparent;"
-            f"  border: 1px solid transparent;"
-            f"  border-radius: {BUTTON_RADIUS}px;"
-            f"  padding: 8px 16px;"
-            f"  color: inherit;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background-color: rgba(0, 0, 0, 0.05);"
-            f"  border: 1px solid rgba(0, 0, 0, 0.1);"
-            f"}}"
-        )
+        self._cancel_btn.setProperty("class", "ghost")
         self._cancel_btn.clicked.connect(self._on_cancel)
         button_layout.addWidget(self._cancel_btn)
 

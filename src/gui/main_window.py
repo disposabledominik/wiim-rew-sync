@@ -2638,11 +2638,16 @@ class MainWindow(QMainWindow):
             self._onboarding_overlay.raise_()
 
         # 5. Populate SettingsView with current settings
+        log_dir = self._settings.log_directory or str(get_log_dir())
+        presets_dir = (
+            self._settings.presets_directory or str(self._profile_repository.storage_root)
+        )
+        rew_export = self._settings.rew_export_folder
         self._settings_view.set_settings({
             "theme": self._settings.theme,
-            "log_directory": self._settings.log_directory,
-            "presets_directory": self._settings.presets_directory,
-            "rew_export_folder": self._settings.rew_export_folder,
+            "log_directory": log_dir,
+            "presets_directory": presets_dir,
+            "rew_export_folder": rew_export,
             "discovery_timeout": self._settings.discovery_timeout,
             "dry_run_default": self._settings.dry_run_default,
             "last_device": self._settings.last_device,

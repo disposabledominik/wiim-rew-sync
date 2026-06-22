@@ -25,6 +25,7 @@ from src.gui.constants import (
     ACCENT_COLOR,
     BUTTON_RADIUS,
     CARD_RADIUS,
+    COLORS_DARK,
     COLORS_LIGHT,
     FONT_FAMILY,
     FONT_SIZE_BODY,
@@ -99,8 +100,38 @@ class OnboardingOverlay(QWidget):
         )
         self._setup_ui()
 
+    def _get_colors(self) -> tuple[str, str, str, str, str, str]:
+        """Return theme-appropriate colors.
+
+        Returns a tuple of (surface, text_primary, text_secondary,
+        text_on_accent, background, border_subtle).
+        """
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        # Detect if dark theme is active by checking the app stylesheet
+        is_dark = False
+        if app is not None:
+            stylesheet = app.styleSheet()  # type: ignore[union-attr]
+            if stylesheet and "background-color: #1E1E1E" in stylesheet:
+                is_dark = True
+
+        colors = COLORS_DARK if is_dark else COLORS_LIGHT
+        return (
+            colors.surface,
+            colors.text_primary,
+            colors.text_secondary,
+            colors.text_on_accent,
+            colors.background,
+            colors.border_subtle,
+        )
+
     def _setup_ui(self) -> None:
         """Build the overlay layout."""
+        surface, text_primary, text_secondary, text_on_accent, background, border_subtle = (
+            self._get_colors()
+        )
+
         # Root layout: centers the card
         root_layout = QVBoxLayout(self)
         root_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -112,7 +143,7 @@ class OnboardingOverlay(QWidget):
         card.setMaximumWidth(600)
         card.setStyleSheet(
             f"QWidget#onboarding_card {{"
-            f"  background-color: {COLORS_LIGHT.surface};"
+            f"  background-color: {surface};"
             f"  border-radius: {CARD_RADIUS + 4}px;"
             f"  padding: {SPACING_XL}px;"
             f"}}"
@@ -136,9 +167,10 @@ class OnboardingOverlay(QWidget):
             f"font-family: {FONT_FAMILY};"
             f"font-size: {FONT_SIZE_TITLE}px;"
             "font-weight: 700;"
-            f"color: {COLORS_LIGHT.text_primary};"
+            f"color: {text_primary};"
             "background: transparent;"
         )
+        title.setMinimumHeight(FONT_SIZE_TITLE + SPACING_MD)
         card_layout.addWidget(title)
 
         # --- Subtitle ---
@@ -151,9 +183,10 @@ class OnboardingOverlay(QWidget):
         subtitle.setStyleSheet(
             f"font-family: {FONT_FAMILY};"
             f"font-size: {FONT_SIZE_BODY}px;"
-            f"color: {COLORS_LIGHT.text_secondary};"
+            f"color: {text_secondary};"
             "background: transparent;"
         )
+        subtitle.setMinimumHeight(FONT_SIZE_BODY + SPACING_MD)
         card_layout.addWidget(subtitle)
 
         # --- Capability cards row ---
@@ -165,7 +198,10 @@ class OnboardingOverlay(QWidget):
         cards_layout.setContentsMargins(0, SPACING_MD, 0, SPACING_MD)
 
         for emoji, cap_title, cap_desc in _CAPABILITY_CARDS:
-            cap_card = self._build_capability_card(emoji, cap_title, cap_desc)
+            cap_card = self._build_capability_card(
+                emoji, cap_title, cap_desc,
+                background, text_primary, text_secondary, border_subtle,
+            )
             cards_layout.addWidget(cap_card)
 
         card_layout.addWidget(cards_row)
@@ -187,7 +223,7 @@ class OnboardingOverlay(QWidget):
         get_started_btn.setFixedWidth(200)
         get_started_btn.setStyleSheet(
             f"background-color: {ACCENT_COLOR};"
-            f"color: {COLORS_LIGHT.text_on_accent};"
+            f"color: {text_on_accent};"
             f"border-radius: {BUTTON_RADIUS}px;"
             f"font-family: {FONT_FAMILY};"
             f"font-size: {FONT_SIZE_BODY}px;"
@@ -203,7 +239,7 @@ class OnboardingOverlay(QWidget):
         skip_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
         skip_link.setCursor(Qt.CursorShape.PointingHandCursor)
         skip_link.setStyleSheet(
-            f"color: {COLORS_LIGHT.text_secondary};"
+            f"color: {text_secondary};"
             f"font-family: {FONT_FAMILY};"
             f"font-size: {FONT_SIZE_CAPTION}px;"
             "text-decoration: underline;"
@@ -218,7 +254,14 @@ class OnboardingOverlay(QWidget):
         root_layout.addWidget(card)
 
     def _build_capability_card(
-        self, emoji: str, cap_title: str, cap_desc: str
+        self,
+        emoji: str,
+        cap_title: str,
+        cap_desc: str,
+        background: str,
+        text_primary: str,
+        text_secondary: str,
+        border_subtle: str,
     ) -> QWidget:
         """Build a single capability card widget.
 
@@ -226,6 +269,10 @@ class OnboardingOverlay(QWidget):
             emoji: Emoji icon string.
             cap_title: Card title text.
             cap_desc: Card description text.
+            background: Background color for the card.
+            text_primary: Primary text color.
+            text_secondary: Secondary text color.
+            border_subtle: Subtle border color.
 
         Returns:
             QWidget containing the formatted card.
@@ -234,9 +281,9 @@ class OnboardingOverlay(QWidget):
         card.setObjectName(f"cap_card_{cap_title.lower().replace(' ', '_')}")
         card.setStyleSheet(
             f"QWidget#{card.objectName()} {{"
-            f"  background-color: {COLORS_LIGHT.background};"
+            f"  background-color: {background};"
             f"  border-radius: {CARD_RADIUS}px;"
-            f"  border: 1px solid {COLORS_LIGHT.border_subtle};"
+            f"  border: 1px solid {border_subtle};"
             f"  padding: {SPACING_MD}px;"
             f"}}"
         )
@@ -258,11 +305,12 @@ class OnboardingOverlay(QWidget):
         title_label.setObjectName(f"cap_title_{cap_title.lower().replace(' ', '_')}")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setWordWrap(True)
+        title_label.setMinimumHeight(FONT_SIZE_HEADING - 4 + SPACING_SM)
         title_label.setStyleSheet(
             f"font-family: {FONT_FAMILY};"
             f"font-size: {FONT_SIZE_HEADING - 4}px;"
             "font-weight: 600;"
-            f"color: {COLORS_LIGHT.text_primary};"
+            f"color: {text_primary};"
             "background: transparent;"
         )
         layout.addWidget(title_label)
@@ -272,10 +320,11 @@ class OnboardingOverlay(QWidget):
         desc_label.setObjectName(f"cap_desc_{cap_title.lower().replace(' ', '_')}")
         desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_label.setWordWrap(True)
+        desc_label.setMinimumHeight(FONT_SIZE_CAPTION * 2 + SPACING_SM)
         desc_label.setStyleSheet(
             f"font-family: {FONT_FAMILY};"
             f"font-size: {FONT_SIZE_CAPTION}px;"
-            f"color: {COLORS_LIGHT.text_secondary};"
+            f"color: {text_secondary};"
             "background: transparent;"
         )
         layout.addWidget(desc_label)
