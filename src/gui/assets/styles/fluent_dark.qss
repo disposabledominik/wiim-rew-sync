@@ -793,3 +793,48 @@ QFrame[status="warning"] {
     background-color: #3A2E1B;
     border-left: 3px solid #FFA726;
 }
+
+/* ---------------------------------------------------------------------------
+   Settings & Diagnostics Dialog Polish
+   --------------------------------------------------------------------------- */
+
+#DiagnosticsDialog,
+#HelpDialog {
+    background-color: #1E1E1E;
+}
+
+#DiagnosticsDialog QGroupBox,
+#SettingsView QGroupBox {
+    background-color: #2D2D2D;
+    border: 1px solid #404040;
+    border-radius: 8px;
+    margin-top: 20px;
+    padding: 16px 12px 12px 12px;
+}
+
+#DiagnosticsDialog QGroupBox::title,
+#SettingsView QGroupBox::title {
+    color: #F5F5F5;
+    font-weight: 600;
+    font-size: 13px;
+}
+
+#DiagnosticsDialog QTextEdit {
+    background-color: #1E1E1E;
+    color: #F5F5F5;
+    border: 1px solid #404040;
+    border-radius: 4px;
+}
+
+#DiagnosticsDialog QLineEdit {
+    background-color: #2D2D2D;
+    color: #F5F5F5;
+    border: 1px solid #404040;
+    border-radius: 4px;
+}
+
+#SettingsView QLineEdit[readOnly="true"] {
+    background-color: #333333;
+    color: #B0B0B0;
+    border: 1px solid #404040;
+}

@@ -22,6 +22,7 @@ from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
@@ -448,17 +449,38 @@ class MainWindow(QMainWindow):
             self._stacked_widget.addWidget(page)
 
     def _setup_dock_widget(self) -> None:
-        """Create the diagnostics dock widget (hidden by default)."""
+        """Create standalone windows for Help and Diagnostics.
+
+        These open as separate OS-level windows with native title bar controls
+        (minimize, maximize, close) per smoke #112.
+        """
+        # --- Diagnostics window ---
+        self._diagnostics_dialog = QDialog(self)
+        self._diagnostics_dialog.setWindowTitle("Diagnostics")
+        self._diagnostics_dialog.setObjectName("DiagnosticsDialog")
+        self._diagnostics_dialog.resize(700, 500)
+        diag_layout = QVBoxLayout(self._diagnostics_dialog)
+        diag_layout.setContentsMargins(0, 0, 0, 0)
+        self._diagnostics_panel = DiagnosticsPanel()
+        diag_layout.addWidget(self._diagnostics_panel)
+
+        # Keep a hidden dock for backward compat with view menu action wiring
         self._diagnostics_dock = QDockWidget("Diagnostics", self)
         self._diagnostics_dock.setObjectName("diagnostics_dock")
-
-        self._diagnostics_panel = DiagnosticsPanel()
-        self._diagnostics_dock.setWidget(self._diagnostics_panel)
-
+        self._diagnostics_dock.setVisible(False)
+        self._diagnostics_dock.setAllowedAreas(Qt.DockWidgetArea.NoDockWidgetArea)
         self.addDockWidget(
             Qt.DockWidgetArea.BottomDockWidgetArea, self._diagnostics_dock
         )
-        self._diagnostics_dock.setVisible(False)
+
+        # --- Help window ---
+        self._help_dialog = QDialog(self)
+        self._help_dialog.setWindowTitle("User Guide")
+        self._help_dialog.setObjectName("HelpDialog")
+        self._help_dialog.resize(750, 600)
+        help_layout = QVBoxLayout(self._help_dialog)
+        help_layout.setContentsMargins(0, 0, 0, 0)
+        help_layout.addWidget(self._help_view)
 
     def _setup_menus(self) -> None:
         """Create the menu bar: File, View, Help."""
@@ -478,12 +500,8 @@ class MainWindow(QMainWindow):
         view_menu = menu_bar.addMenu("&View")
 
         self._diagnostics_action = QAction("&Diagnostics", self)
-        self._diagnostics_action.setCheckable(True)
-        self._diagnostics_action.setChecked(False)
-        self._diagnostics_action.toggled.connect(self._diagnostics_dock.setVisible)
-        self._diagnostics_dock.visibilityChanged.connect(
-            self._diagnostics_action.setChecked
-        )
+        self._diagnostics_action.setCheckable(False)
+        self._diagnostics_action.triggered.connect(self._show_diagnostics_window)
         view_menu.addAction(self._diagnostics_action)
 
         # --- Help menu ---
@@ -2496,8 +2514,15 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_help_close_requested(self) -> None:
-        """Handle HelpView close button — navigate back to the current wizard step."""
-        self._on_step_changed(self._wizard_controller.current_step)
+        """Handle HelpView close button — close the help dialog window."""
+        self._help_dialog.hide()
+
+    @Slot()
+    def _show_diagnostics_window(self) -> None:
+        """Open the Diagnostics window as a separate OS window."""
+        self._diagnostics_dialog.show()
+        self._diagnostics_dialog.raise_()
+        self._diagnostics_dialog.activateWindow()
 
     @Slot(str)
     def _on_raw_command_requested(self, command: str) -> None:
@@ -2558,6 +2583,11 @@ class MainWindow(QMainWindow):
         if view_key == "rew_api":
             # REW API pull — trigger measurement listing workflow
             self._on_rew_pull_requested()
+            return
+
+        if view_key == "help":
+            # Open Help as a separate window (smoke #112)
+            self._on_user_guide_triggered()
             return
 
         if view_key in PAGE_INDICES:
@@ -2805,8 +2835,10 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_user_guide_triggered(self) -> None:
-        """Switch stacked widget to help view (Help > User Guide)."""
-        self._stacked_widget.setCurrentIndex(PAGE_INDICES["help"])
+        """Open the Help window (Help > User Guide or sidebar Help)."""
+        self._help_dialog.show()
+        self._help_dialog.raise_()
+        self._help_dialog.activateWindow()
 
     @Slot()
     def _on_about_triggered(self) -> None:
