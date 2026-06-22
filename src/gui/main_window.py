@@ -1270,11 +1270,8 @@ class MainWindow(QMainWindow):
                 self._sidebar_load_in_progress = False
                 state = self._wizard_controller.state
                 state.current_step = WizardStep.REVIEW
-                # Mark FILTERS step as completed
-                if WizardStep.FILTERS not in state.completed_steps:
-                    state.completed_steps[WizardStep.FILTERS] = (
-                        f"{validated_count} filters"
-                    )
+                # Mark all prior steps as completed for step indicator
+                self._mark_prior_steps_completed(state)
                 # Emit step summaries for the step indicator
                 for step, summary in state.completed_steps.items():
                     self._wizard_controller.step_summary_updated.emit(step, summary)
@@ -3338,11 +3335,32 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error("Connect to a device first")
             return False
 
+        # If user is already at FILTERS step or beyond, all context is set
+        current_step = self._wizard_controller.current_step
+        sequence = self._wizard_controller.get_steps()
+        if current_step in sequence:
+            current_idx = sequence.index(current_step)
+            filters_idx = (
+                sequence.index(WizardStep.FILTERS)
+                if WizardStep.FILTERS in sequence
+                else -1
+            )
+            if filters_idx >= 0 and current_idx >= filters_idx:
+                # Already at or past Filters — all state is populated
+                self._mark_prior_steps_completed(state)
+                return True
+
         # Determine what's missing
-        need_eq_type = WizardStep.EQ_TYPE not in state.completed_steps
-        # For PEQ flow, need source if SOURCE step not completed in current run
-        # (even if selected_source has a stale value from a prior session)
         flow_type = self._wizard_controller.flow_type
+
+        # EQ_TYPE is only needed if the device supports both PEQ and RoomFit
+        # (PEQ_ONLY flow has no EQ_TYPE step, so it's never "needed")
+        need_eq_type = (
+            WizardStep.EQ_TYPE not in state.completed_steps
+            and flow_type == FlowType.PEQ  # Only PEQ flow has EQ_TYPE step
+        )
+
+        # For PEQ/PEQ_ONLY flow, need source if SOURCE step not completed
         need_source = (
             WizardStep.SOURCE not in state.completed_steps
             and flow_type != FlowType.ROOMFIT
@@ -3405,18 +3423,26 @@ class MainWindow(QMainWindow):
         assert isinstance(state, WizardState)
         flow_type = self._wizard_controller.flow_type
 
-        if WizardStep.EQ_TYPE not in state.completed_steps:
-            if flow_type == FlowType.ROOMFIT:
-                state.completed_steps[WizardStep.EQ_TYPE] = "RoomFit"
-            elif flow_type == FlowType.PEQ:
-                state.completed_steps[WizardStep.EQ_TYPE] = "PEQ"
+        # EQ_TYPE step — only exists in PEQ and ROOMFIT flows (not PEQ_ONLY)
+        if flow_type == FlowType.PEQ and WizardStep.EQ_TYPE not in state.completed_steps:
+            state.completed_steps[WizardStep.EQ_TYPE] = "PEQ"
+        elif flow_type == FlowType.ROOMFIT and WizardStep.EQ_TYPE not in state.completed_steps:
+            state.completed_steps[WizardStep.EQ_TYPE] = "RoomFit"
 
+        # SOURCE step — only needed for PEQ/PEQ_ONLY flows (not ROOMFIT)
         if flow_type != FlowType.ROOMFIT and WizardStep.SOURCE not in state.completed_steps:
             source = state.selected_source or "wifi"
+            if not source:
+                source = "wifi"
+            state.selected_source = source
             state.completed_steps[WizardStep.SOURCE] = source
 
+        # FILTERS step
         if WizardStep.FILTERS not in state.completed_steps:
-            state.completed_steps[WizardStep.FILTERS] = "Loaded from preset"
+            n_filters = len(state.current_filters)
+            state.completed_steps[WizardStep.FILTERS] = (
+                f"{n_filters} filters" if n_filters else "Loaded"
+            )
 
     # ------------------------------------------------------------------
     # Close Event
