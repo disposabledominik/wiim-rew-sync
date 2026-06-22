@@ -31,9 +31,37 @@ def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], s
 def split_lr_filters(
     filters: list[CanonicalFilter],
 ) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
-    """Split a combined L+R filter list into (left, right) halves."""
+    """Split a combined L+R filter list into (left, right) halves.
+
+    DEPRECATED: Only used as a last-resort fallback when no explicit L/R
+    data is available. Prefer using state.filters_l/filters_r directly.
+    """
     mid = len(filters) // 2
     return filters[:mid], filters[mid:]
+
+
+def get_lr_filters(
+    state: object,
+    combined: list[CanonicalFilter],
+) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
+    """Get L/R filter lists from wizard state, with fallback to naive split.
+
+    Prefers explicit state.filters_l/filters_r (set during validation).
+    Only falls back to 50/50 split when state doesn't have separate lists.
+
+    Args:
+        state: WizardState object with filters_l/filters_r fields.
+        combined: The combined filter list for fallback splitting.
+
+    Returns:
+        Tuple of (left_filters, right_filters).
+    """
+    left = getattr(state, "filters_l", None) or []
+    right = getattr(state, "filters_r", None) or []
+    if left or right:
+        return left, right
+    # Last resort: naive split (only for legacy paths)
+    return split_lr_filters(combined)
 
 
 def is_lr_mode(channel_mode: str) -> bool:

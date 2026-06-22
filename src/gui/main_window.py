@@ -67,6 +67,7 @@ from src.gui.shared_helpers import (
     build_peq_settings,
     build_profile,
     extract_filters,
+    get_lr_filters,
     is_lr_mode,
     split_lr_filters,
 )
@@ -1632,10 +1633,7 @@ class MainWindow(QMainWindow):
             path_l, path_r = paths
             # Use stored L/R lists; fallback only for defensive safety
             state = self._wizard_controller.state
-            filters_l = state.filters_l if state.filters_l else None
-            filters_r = state.filters_r if state.filters_r else None
-            if not filters_l or not filters_r:
-                filters_l, filters_r = split_lr_filters(filters)
+            filters_l, filters_r = get_lr_filters(state, filters)
 
             self._bridge.run_async(
                 self._bridge_wrapper(
@@ -1905,10 +1903,7 @@ class MainWindow(QMainWindow):
                 if is_lr_mode(channel_mode):
                     # Use stored L/R lists from wizard state
                     state = self._wizard_controller.state
-                    left = state.filters_l if state.filters_l else None
-                    right = state.filters_r if state.filters_r else None
-                    if not left or not right:
-                        left, right = split_lr_filters(filters)
+                    left, right = get_lr_filters(state, filters)
                     await target_adapter.write_roomfit(
                         target_source, preset_name, filters,
                         channel_mode="lr",
@@ -2298,10 +2293,7 @@ class MainWindow(QMainWindow):
                 )
                 if is_lr_mode(channel_mode):
                     # Use stored L/R lists if available (avoids naive 50/50 split)
-                    left = state.filters_l if state.filters_l else None
-                    right = state.filters_r if state.filters_r else None
-                    if not left or not right:
-                        left, right = split_lr_filters(filters)
+                    left, right = get_lr_filters(state, filters)
                     await self._wiim_adapter.write_roomfit(
                         source_name,
                         profile_name,
@@ -3391,11 +3383,7 @@ class MainWindow(QMainWindow):
         channel = state.channel_mode or "Stereo"
         if is_lr_mode(channel):
             # Use stored L/R lists (set by recall_profile before emitting signal)
-            left = state.filters_l
-            right = state.filters_r
-            if not left and not right:
-                # Shouldn't happen, but defensive fallback
-                left, right = split_lr_filters(filters)
+            left, right = get_lr_filters(state, filters)
             self._review_page.set_lr_filters(left, right)
         else:
             self._review_page.set_filters(filters)
