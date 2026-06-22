@@ -97,20 +97,24 @@ class REWHttpApiClient:
         data = response.json()
         logger.debug("REW measurements response: %s", repr(data)[:500])
 
-        # Handle both bare array and wrapped object responses
+        # Handle both bare array and dict-keyed responses
         items: list[dict[str, object]] = []
         if isinstance(data, list):
             items = data
         elif isinstance(data, dict):
-            # Try common wrapper keys
+            # Try common wrapper keys first
             for key in ("measurements", "data", "items"):
                 if key in data and isinstance(data[key], list):
                     items = data[key]
                     break
             if not items:
-                # Maybe it's a single-item dict at top level
-                logger.warning("Unexpected REW response format: %s", repr(data)[:200])
-                return []
+                # REW returns measurements as a dict keyed by index ("1", "2", ...)
+                # where each value is a measurement object with title, uuid, etc.
+                if data and all(isinstance(v, dict) for v in data.values()):
+                    items = list(data.values())
+                else:
+                    logger.warning("Unexpected REW response format: %s", repr(data)[:200])
+                    return []
 
         summaries: list[MeasurementSummary] = []
         for i, item in enumerate(items):

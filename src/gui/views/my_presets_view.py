@@ -126,7 +126,6 @@ class MyPresetsView(QWidget):
 
         self._presets: list[Profile] = []
         self._rename_item: QListWidgetItem | None = None
-        self._rename_hidden_widget: QWidget | None = None
 
         self._setup_ui()
 
@@ -306,12 +305,12 @@ class MyPresetsView(QWidget):
         self._rename_item = item
         profile: Profile = item.data(Qt.ItemDataRole.UserRole)
 
-        # Hide the item widget to prevent text overlap during editing.
-        # Store a reference so we can restore it later.
+        # Completely remove the item widget to prevent any background text showing.
+        # Qt may repaint item widgets even when hidden; removing is the only reliable fix.
         item_widget = self._list_widget.itemWidget(item)
-        self._rename_hidden_widget = item_widget
         if item_widget:
-            item_widget.setVisible(False)
+            self._list_widget.removeItemWidget(item)
+            item_widget.deleteLater()
 
         # Position the editor over the item
         rect = self._list_widget.visualItemRect(item)
@@ -328,16 +327,14 @@ class MyPresetsView(QWidget):
             self._rename_editor.setVisible(False)
             return
 
-        # Restore item widget visibility
-        if self._rename_hidden_widget is not None:
-            self._rename_hidden_widget.setVisible(True)
-            self._rename_hidden_widget = None
-
         profile: Profile = self._rename_item.data(Qt.ItemDataRole.UserRole)
         new_name = self._rename_editor.text().strip()
         old_name = profile.name
 
         self._rename_editor.setVisible(False)
+
+        # Rebuild the item widget (was removed during rename)
+        self._rebuild_item_widget(self._rename_item, profile)
         self._rename_item = None
 
         if new_name and new_name != old_name:
@@ -345,12 +342,22 @@ class MyPresetsView(QWidget):
 
     def _cancel_rename(self) -> None:
         """Cancel any in-progress rename operation."""
-        # Restore item widget visibility if renaming was in progress
-        if self._rename_hidden_widget is not None:
-            self._rename_hidden_widget.setVisible(True)
-            self._rename_hidden_widget = None
+        if self._rename_item is not None:
+            profile: Profile = self._rename_item.data(Qt.ItemDataRole.UserRole)
+            self._rebuild_item_widget(self._rename_item, profile)
         self._rename_editor.setVisible(False)
         self._rename_item = None
+
+    def _rebuild_item_widget(self, item: QListWidgetItem, profile: Profile) -> None:
+        """Recreate the item widget after inline editing is complete."""
+        active_bands, total_bands = _count_bands(profile)
+        new_widget = _PresetItemWidget(
+            name=profile.name,
+            channel_mode=profile.channel_mode,
+            active_bands=active_bands,
+            total_bands=total_bands,
+        )
+        self._list_widget.setItemWidget(item, new_widget)
 
     # ------------------------------------------------------------------
     # Context menu
