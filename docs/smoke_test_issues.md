@@ -28,6 +28,8 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 15 | RoomFit flow: Connect step missing checkmark after flow type switch | FIXED | YES | `791f04a` | _on_flow_type_changed now replays completed step summaries |
 | 16 | RoomFit flow: "No source selected" when pulling from device | FIXED | YES | `791f04a` | Defaults to "wifi" when no source explicitly set (RoomFit is device-global) |
 | 17 | Home button appears to do nothing | WONTFIX | N/A | — | Working as designed: "home" = return to current wizard step. If already there, no visible change. |
+| 18 | App crashes on startup: `ProfileRepository` has no `storage_root` attribute | FIXED | YES | — | Added `storage_root` property to expose `_profiles_dir.parent` |
+| 19 | Theme setting has no effect in compiled app (always dark) | FIXED | N/A | — | QSS stylesheets not bundled in PyInstaller spec; added to `datas_list` in all platform specs |
 | 18 | Filter table too narrow (400px cap), only 3 columns visible | FIXED | N/A | `791f04a`, `5f355b5` | Removed max-width/centering, columns now stretch to fill available width |
 | 19 | RoomFit mode: FiltersPage shows PEQ options instead of RoomFit UI | FIXED | YES | `5f355b5` | _on_eq_type_selected now calls set_roomfit_mode(True/False) |
 | 20 | Presets on Device view shows nothing when navigated to | FIXED | YES | `5f355b5` | Added _load_device_presets() trigger on navigation + _do_list_presets async |
@@ -102,7 +104,6 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 89 | Cancel button invisible in dark theme (UnsavedChangesDialog) | FIXED | NO | — | Removed hardcoded inline styles from Cancel button; uses ghost class from QSS theme |
 | 90 | Settings screen paths not pre-populated; theme change + log buttons broken | FIXED | NO | — | _apply_settings now passes computed paths (get_log_dir, profile_repository.storage_root) when settings have empty defaults; theme wiring was already correct |
 | 91 | Onboarding overlay uses hardcoded COLORS_LIGHT; text clipped in dark mode | FIXED | NO | — | Overlay now detects active theme and uses COLORS_DARK/COLORS_LIGHT dynamically; added minHeight to labels to prevent clipping |
-
 | 92 | Pull from REW: L/R filters pushed to RoomFit profile result in empty/flat bands | OPEN | NO | — | Filters loaded correctly (11 after validation) but push may use PEQ path instead of RoomFit; diagnostic logging added — needs re-test to confirm flow_type at push time |
 | 93 | Pull from REW: subsequent pull after preset load uses stale filters from preset | OPEN | NO | — | state.current_filters not updated correctly when switching between sidebar sources; diagnostic logging added for post-mortem |
 | 94 | Connect step loses checkmark/context after RoomFit push via REW API | FIXED | NO | — | _mark_prior_steps_completed now explicitly marks CONNECT as completed when device is selected |

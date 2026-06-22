@@ -72,6 +72,15 @@ if os.path.isdir(help_src):
                 (os.path.join(help_src, f), os.path.join("src", "gui", "assets", "help"))
             )
 
+# Bundle QSS stylesheets for theme support
+styles_src = os.path.join(_PROJECT_ROOT, "src", "gui", "assets", "styles")
+if os.path.isdir(styles_src):
+    for f in os.listdir(styles_src):
+        if f.endswith(".qss"):
+            datas_list.append(
+                (os.path.join(styles_src, f), os.path.join("src", "gui", "assets", "styles"))
+            )
+
 # Bundle app icon (SVG) for runtime window icon
 icons_src = os.path.join(_PROJECT_ROOT, "src", "gui", "assets", "icons")
 for icon_file in ("app_icon.svg", "app_icon.ico", "app_icon.png"):

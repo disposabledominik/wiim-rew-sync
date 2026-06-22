@@ -25,6 +25,11 @@ class ProfileRepository:
         self._profiles_dir = storage_root / "profiles"
         self._profiles_dir.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def storage_root(self) -> Path:
+        """Return the base storage directory (parent of profiles subdir)."""
+        return self._profiles_dir.parent
+
     def _profile_path(self, name: str) -> Path:
         """Return the file path for a profile by name."""
         return self._profiles_dir / f"{name}.json"
