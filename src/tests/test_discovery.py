@@ -15,9 +15,10 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from src.discovery.discovery_module import DiscoveryModule
-from src.discovery.subnet_scanner import SubnetScanner, _is_recognised_project
+from src.discovery.subnet_scanner import SubnetScanner
 from src.discovery.zeroconf_discover import ZeroconfDiscover
 from src.models.capabilities import DeviceInfo
+from src.utils.device_identity import is_wiim_device
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -190,8 +191,8 @@ async def test_refresh_clears_previous_results_and_rediscovers() -> None:
     ],
 )
 def test_is_recognised_project(project: str, expected: bool) -> None:
-    """_is_recognised_project accepts WiiM devices and rejects others."""
-    assert _is_recognised_project(project) is expected
+    """is_wiim_device accepts WiiM devices and rejects others."""
+    assert is_wiim_device(project) is expected
 
 
 async def test_subnet_scanner_accepts_wiim_project() -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.models.canonical import CanonicalFilter
+from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.models.peq import PEQSettings
 from src.models.profile import Profile
 
@@ -128,11 +129,11 @@ def parse_backup_filters(backup_data: dict[str, Any]) -> tuple[list[CanonicalFil
 # Import validation — truncation and clamping detection
 # ---------------------------------------------------------------------------
 
-# WiiM hardware limits
-_GAIN_MIN: float = -12.0
-_GAIN_MAX: float = 12.0
-_Q_MIN: float = 0.01
-_Q_MAX: float = 24.0
+# Private aliases for module-internal use
+_GAIN_MIN = GAIN_MIN
+_GAIN_MAX = GAIN_MAX
+_Q_MIN = Q_MIN
+_Q_MAX = Q_MAX
 
 
 def validate_filters_for_device(

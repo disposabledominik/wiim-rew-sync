@@ -17,59 +17,12 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from src.models.capabilities import DeviceInfo
+from src.utils.device_identity import is_wiim_device
 
 if TYPE_CHECKING:
     from src.adapters.wiim_http import WiiMHttpClient
 
 logger = logging.getLogger("wiim_rew_sync.discovery")
-
-# Known WiiM project field values — used to filter genuine WiiM devices
-# from generic LinkPlay or other httpapi.asp responders.
-# Source: docs/wiim_api_notes.md — Capability Nuances table
-KNOWN_WIIM_PROJECTS: frozenset[str] = frozenset({
-    "WiiM_Ultra",
-    "WiiM_Amp_Ultra",
-    "WiiM_Amp_Pro",
-    "WiiM_Pro",
-    "WiiM_Pro_Plus",
-    "WiiM_Amp",
-    "WiiM_Sound",
-    "WiiM_Sound_Lite",
-    "WiiM_Mini",
-    "Muzo_Mini",
-    # Common variations (underscore vs space, case variations)
-    "WiiM Ultra",
-    "WiiM Amp Ultra",
-    "WiiM Amp Pro",
-    "WiiM Pro",
-    "WiiM Pro Plus",
-    "WiiM Amp",
-    "WiiM Sound",
-    "WiiM Sound Lite",
-    "WiiM Mini",
-})
-
-
-def _is_recognised_project(project: str) -> bool:
-    """Check if a project field value indicates a WiiM device.
-
-    Performs case-insensitive prefix matching against known WiiM project names.
-
-    Args:
-        project: The `project` field value from a getStatusEx response.
-
-    Returns:
-        True if the project field indicates a WiiM device.
-    """
-    if not project:
-        return False
-    # Check exact match first (case-insensitive)
-    normalised = project.lower().replace(" ", "_")
-    if normalised in {p.lower().replace(" ", "_") for p in KNOWN_WIIM_PROJECTS}:
-        return True
-    # Also accept any value starting with "WiiM" (case-insensitive) to be
-    # forward-compatible with new WiiM models
-    return project.lower().startswith("wiim")
 
 
 def _get_local_ip() -> str | None:
@@ -207,7 +160,7 @@ class SubnetScanner:
             return None
 
         project = response.get("project", "")
-        if not _is_recognised_project(project):
+        if not is_wiim_device(project):
             logger.debug("Host %s excluded: unrecognised project '%s'", ip, project)
             return None
 

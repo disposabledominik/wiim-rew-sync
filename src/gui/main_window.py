@@ -114,11 +114,17 @@ def _crash_handler(
 ) -> None:
     """Global exception handler installed via sys.excepthook.
 
-    Logs the unhandled exception and shows the CrashDialog (Req 24.6).
+    Logs the unhandled exception to app.log (with flush for persistence)
+    and shows the CrashDialog (Req 24.6).
     """
     # Format traceback for logging
     tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
-    logger.critical("Unhandled exception:\n%s", "".join(tb_lines))
+    tb_text = "".join(tb_lines)
+    logger.critical("Unhandled exception:\n%s", tb_text)
+
+    # Flush all handlers to ensure the crash is persisted to disk
+    for handler in logger.handlers:
+        handler.flush()
 
     log_path = str(get_log_dir() / "app.log")
     error_message = f"{exc_type.__name__}: {exc_value}"

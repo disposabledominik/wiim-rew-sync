@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 
 from src.models.canonical import CanonicalFilter, FilterType
+from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.translator._warnings import ValidationWarning
 
 logger = logging.getLogger("wiim_rew_sync.app")
@@ -35,11 +36,11 @@ _TYPE_TO_MODE: dict[FilterType, int] = {
     "HP": 5,
 }
 
-# Hardware limits
-_GAIN_MIN: float = -12.0
-_GAIN_MAX: float = 12.0
-_Q_MIN: float = 0.01
-_Q_MAX: float = 24.0
+# Private aliases for module-internal use (shorter names in clamping logic)
+_GAIN_MIN = GAIN_MIN
+_GAIN_MAX = GAIN_MAX
+_Q_MIN = Q_MIN
+_Q_MAX = Q_MAX
 
 # Default OFF band values
 _OFF_FREQ: float = 1000.0

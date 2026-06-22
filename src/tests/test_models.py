@@ -18,7 +18,6 @@ from src.models.errors import (
     WiiMREWSyncError,
     WiiMTimeoutError,
 )
-from src.models.peq import PEQBand
 from src.models.profile import BackupRecord, Profile
 from src.translator import ValidationWarning
 
@@ -175,27 +174,6 @@ class TestProfileValidator:
                 filters_l=_sample_filters(),
                 filters_r=_sample_filters(),
             )
-
-
-# ---------------------------------------------------------------------------
-# PEQBand validation tests
-# ---------------------------------------------------------------------------
-
-
-class TestPEQBand:
-    """Tests for PEQBand field validation."""
-
-    def test_valid_band(self) -> None:
-        band = PEQBand(band_number=1, letter="a", mode=1, frequency=1000.0, q=1.0, gain=0.0)
-        assert band.band_number == 1
-
-    def test_band_number_below_minimum_rejected(self) -> None:
-        with pytest.raises(PydanticValidationError, match="band_number"):
-            PEQBand(band_number=0, letter="a", mode=1, frequency=1000.0, q=1.0, gain=0.0)
-
-    def test_band_number_above_maximum_rejected(self) -> None:
-        with pytest.raises(PydanticValidationError, match="band_number"):
-            PEQBand(band_number=13, letter="a", mode=1, frequency=1000.0, q=1.0, gain=0.0)
 
 
 # ---------------------------------------------------------------------------

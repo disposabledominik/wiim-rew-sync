@@ -15,7 +15,7 @@ from src.models.errors import (
     WiiMREWSyncError,
     WiiMTimeoutError,
 )
-from src.models.peq import PEQBand, PEQSettings
+from src.models.peq import PEQSettings
 from src.models.profile import BackupRecord, Profile
 
 __all__ = [
@@ -25,7 +25,6 @@ __all__ = [
     "DeviceCapabilities",
     "DeviceInfo",
     "FilterType",
-    "PEQBand",
     "PEQSettings",
     "ParseError",
     "Profile",

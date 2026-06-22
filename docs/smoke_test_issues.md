@@ -28,8 +28,8 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 15 | RoomFit flow: Connect step missing checkmark after flow type switch | FIXED | YES | `791f04a` | _on_flow_type_changed now replays completed step summaries |
 | 16 | RoomFit flow: "No source selected" when pulling from device | FIXED | YES | `791f04a` | Defaults to "wifi" when no source explicitly set (RoomFit is device-global) |
 | 17 | Home button appears to do nothing | WONTFIX | N/A | — | Working as designed: "home" = return to current wizard step. If already there, no visible change. |
-| 18 | App crashes on startup: `ProfileRepository` has no `storage_root` attribute | FIXED | YES | — | Added `storage_root` property to expose `_profiles_dir.parent` |
-| 19 | Theme setting has no effect in compiled app (always dark) | FIXED | N/A | — | QSS stylesheets not bundled in PyInstaller spec; added to `datas_list` in all platform specs |
+| 18 | App crashes on startup: `ProfileRepository` has no `storage_root` attribute | FIXED | YES | `ae787c2` | Added `storage_root` property to expose `_profiles_dir.parent` |
+| 19 | Theme setting has no effect in compiled app (always dark) | FIXED | N/A | `ae787c2` | QSS stylesheets not bundled in PyInstaller spec; added to `datas_list` in all platform specs |
 | 18 | Filter table too narrow (400px cap), only 3 columns visible | FIXED | N/A | `791f04a`, `5f355b5` | Removed max-width/centering, columns now stretch to fill available width |
 | 19 | RoomFit mode: FiltersPage shows PEQ options instead of RoomFit UI | FIXED | YES | `5f355b5` | _on_eq_type_selected now calls set_roomfit_mode(True/False) |
 | 20 | Presets on Device view shows nothing when navigated to | FIXED | YES | `5f355b5` | Added _load_device_presets() trigger on navigation + _do_list_presets async |
@@ -111,3 +111,9 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 96 | Pull from REW: measurement picker not shown (REW returns dict-keyed response) | FIXED | NO | — | rew_http_client now handles dict-keyed measurement responses (keys "1", "2", ...) |
 | 97 | Pull from REW: "Unknown filter type 'None'" error from REW API filters | FIXED | NO | — | Unified _TYPE_MAP handles all REW filter types; None/Modal/AllPass/L-T skipped; gain field reads "gaindB" |
 | 98 | Push page shows stale DRY RUN content from previous dry run after real push | FIXED | NO | — | PushPage.reset() called on every PUSH step entry via _on_step_changed |
+| 99 | Duplicated WiiM device identification logic in two modules | FIXED | YES | — | capability_prober and subnet_scanner had independent device lists with different entries and algorithms; unified into src/utils/device_identity.py |
+| 100 | Hardware limit constants (gain/Q) duplicated in translator and GUI | FIXED | NO | — | Identical _GAIN_MIN/MAX, _Q_MIN/MAX defined independently in wiim_generator.py and shared_helpers.py; consolidated into src/models/constants.py (indirectly tested via clamping tests) |
+| 101 | Band-param building logic repeated 4× in wiim_adapter.py | FIXED | NO | — | Manual loop building EQBand param dicts copy-pasted across _write_peq_batch, _write_peq_sequential, _write_peq_batch_lr, _write_peq_sequential_lr, and write_roomfit; extracted _flat_array_to_band_params() helper (indirectly tested via adapter write tests) |
+| 102 | Two crash handlers overwriting each other (logging vs GUI) | FIXED | NO | — | install_crash_handler (logging/setup.py) and _crash_handler (main_window.py) both set sys.excepthook; GUI handler now flushes all log handlers for persistence (install_crash_handler never called in production; GUI handler not unit-testable without Qt) |
+| 103 | Dead PEQBand model defined but never used in production code | FIXED | YES | — | PEQBand in models/peq.py had validators and was exported in __all__ but never instantiated anywhere; removed entirely |
+| 104 | Lazy `import json` (3×) inside methods in capability_prober.py | FIXED | YES | — | stdlib module imported at function scope for no reason; moved to module-level import |

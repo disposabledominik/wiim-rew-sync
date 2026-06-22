@@ -19,35 +19,18 @@ Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 from urllib.parse import quote
 
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
+from src.utils.device_identity import is_wiim_device
 
 logger = logging.getLogger("wiim_rew_sync.wiim_api")
 
-# Known WiiM device project prefixes.
-# Requirement 2.10: never hard-code capabilities by model name alone — but we
-# DO use the project field to distinguish WiiM from generic LinkPlay.
-# NOTE: Some WiiM devices report legacy project names (e.g. "Muzo_Mini" for
-# the WiiM Mini). These are still full WiiM devices with PEQ support.
-WIIM_PROJECT_PREFIXES = (
-    "WiiM_Mini",
-    "WiiM_Pro",
-    "WiiM_Amp",
-    "WiiM_Ultra",
-    "WiiM_Sound",
-    "Muzo_Mini",
-)
-
 PLUGIN_URI = "http://moddevices.com/plugins/caps/EqNp"
-
-
-def _is_wiim_device(project: str) -> bool:
-    """Return True if the project field indicates a WiiM device."""
-    return any(project.startswith(prefix) for prefix in WIIM_PROJECT_PREFIXES)
 
 
 class CapabilityProber:
@@ -74,7 +57,7 @@ class CapabilityProber:
         status = await self._probe_status(caps)
 
         # Determine if this is a WiiM device
-        is_wiim = _is_wiim_device(caps.model)
+        is_wiim = is_wiim_device(caps.model)
 
         if not is_wiim:
             # Generic LinkPlay or unrecognised — all-conservative defaults
@@ -137,8 +120,6 @@ class CapabilityProber:
             caps.source_names = [str(s) for s in input_list_raw]
         elif isinstance(input_list_raw, str) and input_list_raw:
             # InputList is often a JSON-encoded string, e.g. '["wifi","bluetooth"]'
-            import json
-
             try:
                 parsed = json.loads(input_list_raw)
                 if isinstance(parsed, list):
@@ -217,8 +198,6 @@ class CapabilityProber:
                 return
 
             # Build the write payload — write the same data back
-            import json
-
             payload: dict[str, Any] = {
                 "pluginURI": PLUGIN_URI,
                 "channelMode": channel_mode,
@@ -281,8 +260,6 @@ class CapabilityProber:
         Level 3: implicit from level 2 — band data is parseable (response is dict with bands)
         Level 4: EQSetLV2SourceBand + EQSourceSave + EQLevel:2 both succeed (write + save)
         """
-        import json
-
         caps.roomfit_level = 0
         caps.supports_roomfit = False
         caps.supports_roomfit_read = False

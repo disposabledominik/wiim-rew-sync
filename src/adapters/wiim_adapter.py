@@ -36,6 +36,31 @@ _PLUGIN_URI = "http://moddevices.com/plugins/caps/EqNp"
 _BAND_LETTERS = "abcdefghijkl"
 
 
+def _flat_array_to_band_params(
+    band_array: list[float], num_bands: int, *, start_band: int = 0
+) -> list[dict[str, str | float]]:
+    """Convert a flat band array into the WiiM EQBand parameter list format.
+
+    Args:
+        band_array: Flat list of [mode, freq, gain, q, mode, freq, ...] values.
+        num_bands: Number of bands to extract from the array.
+        start_band: Starting band index (0-based) for letter assignment.
+            Used when building params for a single band in sequential writes.
+
+    Returns:
+        List of {"param_name": "<letter>_<param>", "value": <float>} dicts.
+    """
+    params: list[dict[str, str | float]] = []
+    for i in range(num_bands):
+        offset = i * 4
+        letter = _BAND_LETTERS[start_band + i]
+        params.append({"param_name": f"{letter}_mode", "value": band_array[offset]})
+        params.append({"param_name": f"{letter}_freq", "value": band_array[offset + 1]})
+        params.append({"param_name": f"{letter}_gain", "value": band_array[offset + 2]})
+        params.append({"param_name": f"{letter}_q", "value": band_array[offset + 3]})
+    return params
+
+
 def _params_to_band_dicts(
     param_array: list[dict[str, Any]],
 ) -> list[dict[str, int | float | str]]:
@@ -395,16 +420,9 @@ class WiiMAdapter:
         channel_mode: str,
     ) -> None:
         """Write all bands in a single EQSetLV2SourceBand payload."""
-        # Build the EQBand parameter array from the flat band_array
-        eq_band_params: list[dict[str, str | float]] = []
-        num_bands = self._capabilities.max_filters
-        for i in range(num_bands):
-            offset = i * 4
-            letter = _BAND_LETTERS[i]
-            eq_band_params.append({"param_name": f"{letter}_mode", "value": band_array[offset]})
-            eq_band_params.append({"param_name": f"{letter}_freq", "value": band_array[offset + 1]})
-            eq_band_params.append({"param_name": f"{letter}_gain", "value": band_array[offset + 2]})
-            eq_band_params.append({"param_name": f"{letter}_q", "value": band_array[offset + 3]})
+        eq_band_params = _flat_array_to_band_params(
+            band_array, self._capabilities.max_filters
+        )
 
         payload = json.dumps({
             "pluginURI": _PLUGIN_URI,
@@ -425,15 +443,9 @@ class WiiMAdapter:
         """Write bands one at a time via queue with 100ms inter-command delay."""
         num_bands = self._capabilities.max_filters
         for i in range(num_bands):
-            offset = i * 4
-            letter = _BAND_LETTERS[i]
-
-            band_params: list[dict[str, str | float]] = [
-                {"param_name": f"{letter}_mode", "value": band_array[offset]},
-                {"param_name": f"{letter}_freq", "value": band_array[offset + 1]},
-                {"param_name": f"{letter}_gain", "value": band_array[offset + 2]},
-                {"param_name": f"{letter}_q", "value": band_array[offset + 3]},
-            ]
+            band_params = _flat_array_to_band_params(
+                band_array[i * 4:(i + 1) * 4], 1, start_band=i
+            )
 
             payload = json.dumps({
                 "pluginURI": _PLUGIN_URI,
@@ -479,20 +491,8 @@ class WiiMAdapter:
     ) -> None:
         """Write L/R bands in a single EQSetLV2SourceBand payload."""
         num_bands = self._capabilities.max_filters
-
-        eq_band_l: list[dict[str, str | float]] = []
-        eq_band_r: list[dict[str, str | float]] = []
-        for i in range(num_bands):
-            offset = i * 4
-            letter = _BAND_LETTERS[i]
-            eq_band_l.append({"param_name": f"{letter}_mode", "value": band_array_l[offset]})
-            eq_band_l.append({"param_name": f"{letter}_freq", "value": band_array_l[offset + 1]})
-            eq_band_l.append({"param_name": f"{letter}_gain", "value": band_array_l[offset + 2]})
-            eq_band_l.append({"param_name": f"{letter}_q", "value": band_array_l[offset + 3]})
-            eq_band_r.append({"param_name": f"{letter}_mode", "value": band_array_r[offset]})
-            eq_band_r.append({"param_name": f"{letter}_freq", "value": band_array_r[offset + 1]})
-            eq_band_r.append({"param_name": f"{letter}_gain", "value": band_array_r[offset + 2]})
-            eq_band_r.append({"param_name": f"{letter}_q", "value": band_array_r[offset + 3]})
+        eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
+        eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
 
         payload = json.dumps({
             "pluginURI": _PLUGIN_URI,
@@ -517,21 +517,12 @@ class WiiMAdapter:
         """
         num_bands = self._capabilities.max_filters
         for i in range(num_bands):
-            offset = i * 4
-            letter = _BAND_LETTERS[i]
-
-            band_l: list[dict[str, str | float]] = [
-                {"param_name": f"{letter}_mode", "value": band_array_l[offset]},
-                {"param_name": f"{letter}_freq", "value": band_array_l[offset + 1]},
-                {"param_name": f"{letter}_gain", "value": band_array_l[offset + 2]},
-                {"param_name": f"{letter}_q", "value": band_array_l[offset + 3]},
-            ]
-            band_r: list[dict[str, str | float]] = [
-                {"param_name": f"{letter}_mode", "value": band_array_r[offset]},
-                {"param_name": f"{letter}_freq", "value": band_array_r[offset + 1]},
-                {"param_name": f"{letter}_gain", "value": band_array_r[offset + 2]},
-                {"param_name": f"{letter}_q", "value": band_array_r[offset + 3]},
-            ]
+            band_l = _flat_array_to_band_params(
+                band_array_l[i * 4:(i + 1) * 4], 1, start_band=i
+            )
+            band_r = _flat_array_to_band_params(
+                band_array_r[i * 4:(i + 1) * 4], 1, start_band=i
+            )
 
             payload = json.dumps({
                 "pluginURI": _PLUGIN_URI,
@@ -763,21 +754,8 @@ class WiiMAdapter:
             band_array_l, _ = generate_wiim_band_array(filters_l, max_bands=num_bands)
             band_array_r, _ = generate_wiim_band_array(filters_r, max_bands=num_bands)
 
-            eq_band_l: list[dict[str, str | float]] = []
-            eq_band_r: list[dict[str, str | float]] = []
-            for i in range(num_bands):
-                offset = i * 4
-                letter = _BAND_LETTERS[i]
-                arr_l = band_array_l
-                arr_r = band_array_r
-                eq_band_l.append({"param_name": f"{letter}_mode", "value": arr_l[offset]})
-                eq_band_l.append({"param_name": f"{letter}_freq", "value": arr_l[offset + 1]})
-                eq_band_l.append({"param_name": f"{letter}_gain", "value": arr_l[offset + 2]})
-                eq_band_l.append({"param_name": f"{letter}_q", "value": arr_l[offset + 3]})
-                eq_band_r.append({"param_name": f"{letter}_mode", "value": arr_r[offset]})
-                eq_band_r.append({"param_name": f"{letter}_freq", "value": arr_r[offset + 1]})
-                eq_band_r.append({"param_name": f"{letter}_gain", "value": arr_r[offset + 2]})
-                eq_band_r.append({"param_name": f"{letter}_q", "value": arr_r[offset + 3]})
+            eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
+            eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
 
             write_payload = json.dumps({
                 "pluginURI": _PLUGIN_URI,
@@ -790,16 +768,7 @@ class WiiMAdapter:
         else:
             # Stereo mode: single EQBand array
             band_array, _warnings = generate_wiim_band_array(filters, max_bands=num_bands)
-
-            eq_band_params: list[dict[str, str | float]] = []
-            for i in range(num_bands):
-                offset = i * 4
-                letter = _BAND_LETTERS[i]
-                arr = band_array
-                eq_band_params.append({"param_name": f"{letter}_mode", "value": arr[offset]})
-                eq_band_params.append({"param_name": f"{letter}_freq", "value": arr[offset + 1]})
-                eq_band_params.append({"param_name": f"{letter}_gain", "value": arr[offset + 2]})
-                eq_band_params.append({"param_name": f"{letter}_q", "value": arr[offset + 3]})
+            eq_band_params = _flat_array_to_band_params(band_array, num_bands)
 
             write_payload = json.dumps({
                 "pluginURI": _PLUGIN_URI,
