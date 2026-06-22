@@ -122,10 +122,10 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 109 | Dry Run badge causes layout jitter on toggle | FIXED | YES | `e3636e1` | Badge always reserves space; uses transparent colors to hide instead of setVisible(false) |
 | 110 | L/R filter tabs show "L" / "R" instead of full channel names | FIXED | YES | `e3636e1` | Changed to "Left Channel" / "Right Channel" for readability |
 | 111 | Sidebar device label click does nothing (tooltip says "Go to Connect step") | FIXED | NO | `212f672` | Was emitting "home" (= current wizard step); changed to emit "connect" with direct navigation to Connect page |
-| 112 | Help/User Guide has no visible close button; Diagnostics dock awkward UX | OPEN | N/A | — | Both views embedded in stacked widget or dock; ideally should open as separate Qt windows with native window controls |
+| 112 | Help/User Guide has no visible close button; Diagnostics dock awkward UX | FIXED | NO | `b0c9900` | Both views now open as separate QDialog windows with native OS title bar controls |
 | 113 | Presets on Device loads stereo preset as L/R when previous load was L/R | FIXED | NO | `212f672` | _do_load_peq_preset never reset channel_mode; now reads channel_mode from PEQ device response before emitting |
 | 114 | Status banner close/dismiss button not fully visible (clipped) | FIXED | NO | `212f672` | Increased button size to 28×28, added explicit inline stylesheet with hover state for visibility |
 | 115 | Dark theme: text across multiple pages is dark/unreadable (no contrast) | FIXED | N/A | `212f672` | Replaced hardcoded `color: #616161` inline styles with QSS class properties (caption/secondary) that adapt to theme |
 | 116 | Light theme: EQ Type cards have dark background (should be light) | FIXED | N/A | `212f672` | Removed `background: palette(base)` and hardcoded border from inline style; cards now use QSS card rules |
 | 117 | Onboarding overlay always shows light theme; Skip button redundant | FIXED | NO | `212f672` | Removed Skip button; overlay now rebuilds UI on showEvent to pick up current theme |
-| 118 | Settings and Diagnostics views visually unpolished vs rest of app | OPEN | N/A | — | Hardcoded colors replaced with theme-aware class properties; further visual alignment may be needed |
+| 118 | Settings and Diagnostics views visually unpolished vs rest of app | FIXED | N/A | `b0c9900` | Added QSS rules for DiagnosticsDialog/SettingsView groupboxes, text edits, inputs for themed consistency |
