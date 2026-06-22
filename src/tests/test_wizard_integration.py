@@ -233,6 +233,9 @@ class TestRoomFitFlow:
         assert window.wizard_controller.current_step == WizardStep.REVIEW
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["review"]
 
+        # Disable dry_run (enabled by default via settings) so push takes RoomFit path
+        window._wizard_controller.state.dry_run = False
+
         # Review → NAME_PROFILE (not PUSH)
         window._on_push_requested()
         assert window.wizard_controller.current_step == WizardStep.NAME_PROFILE

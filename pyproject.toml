@@ -51,6 +51,11 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-fail-under=90",
 ]
+filterwarnings = [
+    # GUI tests mock the async bridge — coroutines created by _bridge_wrapper,
+    # _do_push, _do_probe, etc. are never awaited. This is expected and harmless.
+    "ignore::RuntimeWarning:unittest.mock",
+]
 
 # ---------------------------------------------------------------------------
 # Coverage
