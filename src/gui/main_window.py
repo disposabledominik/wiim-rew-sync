@@ -2642,13 +2642,18 @@ class MainWindow(QMainWindow):
             "<li>Local preset library with backup and undo</li>"
             "<li>Multi-source and multi-device operations</li>"
             "</ul>"
-            '<p><a href="https://github.com/disposabledominik/wiim-rew-sync">'
-            "GitHub Repository</a></p>"
-            "<p><small>Licensed under MIT License</small></p>"
-            "<p><small>This software is provided as-is with no warranty. "
+            "<p><small>Local-first \u2022 No cloud \u2022 No telemetry</small></p>"
+            "<hr>"
+            "<p><small><b>Trademark Notice:</b> "
+            "WiiM\u00AE is a trademark of Linkplay Technology Inc. "
+            "REW (Room EQ Wizard) is developed by John Mulcahy. "
+            "This tool is an independent project and is not affiliated with, "
+            "endorsed by, or sponsored by Linkplay Technology or the REW project."
+            "</small></p>"
+            "<p><small>Licensed under MIT License. "
+            "This software is provided as-is with no warranty. "
             "The authors assume no responsibility for any damage to your "
-            "devices. Use at your own risk.</small></p>"
-            "<p><small>Local-first \u2022 No cloud \u2022 No telemetry</small></p>",
+            "devices. Use at your own risk.</small></p>",
         )
 
     # ------------------------------------------------------------------
