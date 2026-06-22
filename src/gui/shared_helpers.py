@@ -79,11 +79,14 @@ def build_profile(
     name: str,
     filters: list[CanonicalFilter],
     channel_mode: str,
+    filters_l: list[CanonicalFilter] | None = None,
+    filters_r: list[CanonicalFilter] | None = None,
 ) -> Profile:
     """Sanitize name and construct Profile with correct channel mode.
 
     Removes filesystem-unsafe characters from name.
-    For L/R mode: splits filters into filters_l/filters_r.
+    For L/R mode: uses explicit filters_l/filters_r if provided, otherwise
+    splits combined list (fallback for equal-length channels).
     For stereo: uses filters directly.
     """
     safe_name = name.translate(str.maketrans("", "", '/\\:*?"<>|'))
@@ -91,7 +94,10 @@ def build_profile(
         safe_name = "Untitled Preset"
 
     if is_lr_mode(channel_mode):
-        left, right = split_lr_filters(filters)
+        if filters_l is not None and filters_r is not None:
+            left, right = filters_l, filters_r
+        else:
+            left, right = split_lr_filters(filters)
         return Profile(
             name=safe_name,
             channel_mode="left",

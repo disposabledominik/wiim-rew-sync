@@ -481,9 +481,13 @@ class SecondaryWorkflowManager(QObject):
             filters_l: list[CanonicalFilter] = getattr(profile, "filters_l", None) or []
             filters_r: list[CanonicalFilter] = getattr(profile, "filters_r", None) or []
             filters = filters_l + filters_r
+            # Store separate L/R lists in wizard state so downstream never re-splits
+            self._store_lr_state(filters_l, filters_r)
         else:
             # Stereo profile
             filters = getattr(profile, "filters", None) or []
+            # Clear L/R state for stereo profiles
+            self._store_lr_state([], [])
 
         if not filters:
             logger.warning(
@@ -500,6 +504,21 @@ class SecondaryWorkflowManager(QObject):
             channel_mode,
         )
         self.profile_recalled.emit(filters)
+
+    def _store_lr_state(
+        self, filters_l: list[CanonicalFilter], filters_r: list[CanonicalFilter]
+    ) -> None:
+        """Store L/R filter lists in the parent MainWindow's wizard state.
+
+        This avoids the need for naive 50/50 splitting when consumers
+        need separate channel lists.
+        """
+        # Access wizard state through the parent (MainWindow)
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "wizard_controller"):
+            state = parent.wizard_controller.state
+            state.filters_l = filters_l
+            state.filters_r = filters_r
 
     # ------------------------------------------------------------------
     # Workflow 5: Undo Last Push (Req 18)

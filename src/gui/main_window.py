@@ -1262,7 +1262,11 @@ class MainWindow(QMainWindow):
                     validated_l, validated_r, clamping_l, clamping_r
                 )
             elif is_lr_mode(channel):
-                # Fallback: split combined list evenly, then validate each half
+                # Fallback: split combined list evenly (only hit when source
+                # doesn't provide explicit L/R bands — e.g. legacy device reads)
+                logger.warning(
+                    "L/R mode without explicit bands_l/bands_r — using naive 50/50 split"
+                )
                 left, right = split_lr_filters(filters)
                 validated_l, warnings_l, clamping_l = validate_filters_for_device(
                     left, max_filters
@@ -1571,7 +1575,12 @@ class MainWindow(QMainWindow):
             filters: Combined filter list from wizard state.
             channel_mode: Channel mode string ("Stereo", "L/R", "lr", etc.).
         """
-        profile = build_profile(name, filters, channel_mode)
+        state = self._wizard_controller.state
+        profile = build_profile(
+            name, filters, channel_mode,
+            filters_l=state.filters_l or None,
+            filters_r=state.filters_r or None,
+        )
 
         self._profile_repository.save(profile)
 
@@ -1621,7 +1630,12 @@ class MainWindow(QMainWindow):
 
             assert isinstance(paths, tuple)
             path_l, path_r = paths
-            filters_l, filters_r = split_lr_filters(filters)
+            # Use stored L/R lists; fallback only for defensive safety
+            state = self._wizard_controller.state
+            filters_l = state.filters_l if state.filters_l else None
+            filters_r = state.filters_r if state.filters_r else None
+            if not filters_l or not filters_r:
+                filters_l, filters_r = split_lr_filters(filters)
 
             self._bridge.run_async(
                 self._bridge_wrapper(
@@ -1889,7 +1903,12 @@ class MainWindow(QMainWindow):
             if preset_type == "RoomFit":
                 # RoomFit: write as RoomFit profile on target (smoke #34, #79)
                 if is_lr_mode(channel_mode):
-                    left, right = split_lr_filters(filters)
+                    # Use stored L/R lists from wizard state
+                    state = self._wizard_controller.state
+                    left = state.filters_l if state.filters_l else None
+                    right = state.filters_r if state.filters_r else None
+                    if not left or not right:
+                        left, right = split_lr_filters(filters)
                     await target_adapter.write_roomfit(
                         target_source, preset_name, filters,
                         channel_mode="lr",
@@ -1902,8 +1921,11 @@ class MainWindow(QMainWindow):
                     )
             else:
                 # PEQ: write filters then save as named PEQ preset
+                state = self._wizard_controller.state
                 settings = build_peq_settings(
-                    target_source, filters, channel_mode
+                    target_source, filters, channel_mode,
+                    filters_l=state.filters_l or None,
+                    filters_r=state.filters_r or None,
                 )
                 safe_write = SafeWrite(target_adapter, self._backup_manager)
                 await safe_write.execute(target_source, settings)
@@ -2126,7 +2148,13 @@ class MainWindow(QMainWindow):
             return
 
         # Save directly (Profile construction + file write is thread-safe)
-        profile = build_profile(preset_name, filters, channel_mode)
+        # For L/R, pass explicit channel lists from peq_settings
+        is_lr = peq_settings.channel_mode == "lr"
+        f_l = list(peq_settings.bands_l) if is_lr and peq_settings.bands_l else None
+        f_r = list(peq_settings.bands_r) if is_lr and peq_settings.bands_r else None
+        profile = build_profile(
+            preset_name, filters, channel_mode, filters_l=f_l, filters_r=f_r
+        )
 
         self._profile_repository.save(profile)
         # UI updates via progress_update signal (thread-safe)
@@ -3362,7 +3390,12 @@ class MainWindow(QMainWindow):
         # Populate ReviewPage with the recalled filters (L/R aware)
         channel = state.channel_mode or "Stereo"
         if is_lr_mode(channel):
-            left, right = split_lr_filters(filters)
+            # Use stored L/R lists (set by recall_profile before emitting signal)
+            left = state.filters_l
+            right = state.filters_r
+            if not left and not right:
+                # Shouldn't happen, but defensive fallback
+                left, right = split_lr_filters(filters)
             self._review_page.set_lr_filters(left, right)
         else:
             self._review_page.set_filters(filters)
