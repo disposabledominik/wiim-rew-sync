@@ -2581,9 +2581,8 @@ class MainWindow(QMainWindow):
             return
 
         if view_key == "connect":
-            # Navigate directly to Connect step
-            self._stacked_widget.setCurrentIndex(PAGE_INDICES["connect"])
-            self._step_indicator.set_current(0)
+            # Navigate to Connect step via wizard controller (same as step indicator click)
+            self._wizard_controller.go_to_step(WizardStep.CONNECT)
             return
 
         if view_key == "rew_api":
