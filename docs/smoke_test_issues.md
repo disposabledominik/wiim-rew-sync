@@ -134,3 +134,4 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 121 | Push with clamped values shows "Push failed: Unknown error" | FIXED | YES | `2bd835d` | _on_write_complete read `result.error` (doesn't exist) instead of `result.error_message`; now shows actual error |
 | 122 | Clamping UI always highlights gain even when Q is clamped | FIXED | YES | `2bd835d` | filter_table now checks reason text for "gain"/"q" and highlights the correct column independently |
 | 123 | L/R mode clamping on one channel marks same bands on other channel | FIXED | YES | `2bd835d` | set_lr_filters now accepts separate clamping_map_l and clamping_map_r; _on_peq_ready passes both |
+| 124 | Device label click skips wizard reset; navigates to wrong step after re-connect | FIXED | NO | `5c73b2a` | Was navigating directly to stacked widget index; now uses wizard_controller.go_to_step(CONNECT) same as step indicator |
