@@ -187,10 +187,10 @@ class TestOnboardingSignalWiring:
 
 
 class TestUserGuideAction:
-    """Help > User Guide navigates to help view."""
+    """Help > User Guide opens help dialog window."""
 
     def test_user_guide_switches_to_help_view(self, make_window) -> None:
-        """Triggering user guide action sets stacked widget to help page."""
+        """Triggering user guide action opens the help dialog window."""
         window = make_window()
         window._on_user_guide_triggered()
-        assert window.stacked_widget.currentIndex() == PAGE_INDICES["help"]
+        assert window._help_dialog.isVisible()

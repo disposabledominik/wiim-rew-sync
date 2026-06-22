@@ -402,7 +402,7 @@ class TestCrashDialog:
 
 
 # ---------------------------------------------------------------------------
-# OnboardingOverlay tests (Req 23.1, 23.2, 23.3, 23.4, 23.5, 23.7)
+# OnboardingOverlay tests (Req 23.1, 23.2, 23.3, 23.5, 23.7)
 # ---------------------------------------------------------------------------
 
 from src.gui.dialogs.onboarding_overlay import OnboardingOverlay  # noqa: E402
@@ -476,15 +476,6 @@ class TestOnboardingOverlay:
         assert btn is not None
         assert "Get Started" in btn.text()
 
-    def test_skip_link_present(self, qtbot) -> None:
-        """Overlay has a 'Skip' link (Req 23.4)."""
-        overlay = OnboardingOverlay()
-        qtbot.addWidget(overlay)
-
-        skip = overlay.findChild(QLabel, "skip_link")
-        assert skip is not None
-        assert "Skip" in skip.text()
-
     def test_get_started_emits_signal_and_hides(self, qtbot) -> None:
         """Clicking 'Get Started' emits get_started_clicked and hides overlay (Req 23.3)."""
         overlay = OnboardingOverlay()
@@ -493,17 +484,6 @@ class TestOnboardingOverlay:
 
         with qtbot.waitSignal(overlay.get_started_clicked, timeout=1000):
             overlay._on_get_started()
-
-        assert not overlay.isVisible()
-
-    def test_skip_emits_signal_and_hides(self, qtbot) -> None:
-        """Clicking 'Skip' emits skip_clicked and hides overlay (Req 23.4)."""
-        overlay = OnboardingOverlay()
-        qtbot.addWidget(overlay)
-        overlay.show()
-
-        with qtbot.waitSignal(overlay.skip_clicked, timeout=1000):
-            overlay._on_skip()
 
         assert not overlay.isVisible()
 

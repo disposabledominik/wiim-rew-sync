@@ -589,10 +589,11 @@ class TestSettingsUIState:
         assert hasattr(window._help_view, "close_requested")
 
     def test_issue9_help_close_navigates_back(self, window) -> None:
-        """#9: _on_help_close_requested navigates back to current wizard step."""
-        with patch.object(window, "_on_step_changed") as mock_step:
-            window._on_help_close_requested()
-            mock_step.assert_called_once_with(window._wizard_controller.current_step)
+        """#9: _on_help_close_requested hides the help dialog window."""
+        window._help_dialog.show()
+        assert window._help_dialog.isVisible()
+        window._on_help_close_requested()
+        assert not window._help_dialog.isVisible()
 
     # --- Issue #8: OperationFeedbackManager.finish_operation doesn't wipe success ---
 

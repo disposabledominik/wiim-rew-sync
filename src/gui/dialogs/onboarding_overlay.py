@@ -7,7 +7,7 @@ Shown only on first launch (when first_run_complete is False).
 The overlay itself does NOT check settings - the parent widget is
 responsible for showing/hiding it based on the first_run_complete flag.
 
-Requirements referenced: 23.1, 23.2, 23.3, 23.4, 23.5, 23.7.
+Requirements referenced: 23.1, 23.2, 23.3, 23.5, 23.7.
 """
 
 from __future__ import annotations

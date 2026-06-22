@@ -495,19 +495,19 @@ class TestSidebarNavigation:
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["filters"]
 
     def test_navigate_to_help_preserves_state(self, make_window) -> None:
-        """Navigate to help view preserves wizard step and returns correctly."""
+        """Navigate to help view opens dialog and preserves wizard step."""
         window = make_window()
 
         # At CONNECT (default)
         assert window.wizard_controller.current_step == WizardStep.CONNECT
 
-        # Navigate to help
+        # Navigate to help — opens dialog, stacked widget stays on current page
         window._on_navigation_requested("help")
-        assert window.stacked_widget.currentIndex() == PAGE_INDICES["help"]
+        assert window._help_dialog.isVisible()
 
         # Wizard state unchanged
         assert window.wizard_controller.current_step == WizardStep.CONNECT
 
-        # Return home
+        # Return home — stacked widget still shows connect
         window._on_navigation_requested("home")
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["connect"]

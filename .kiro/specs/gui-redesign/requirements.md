@@ -423,7 +423,7 @@ The GUI Redesign replaces the current panel-based layout of the WiiM ↔ REW PEQ
 1. WHEN the App is launched for the first time (no settings file exists), THE App SHALL display a welcome overlay with a brief explanation of what the app does: "Transfer room correction filters between REW and your WiiM device."
 2. THE onboarding overlay SHALL present 3 key capabilities as simple icons + one-sentence descriptions: (1) Import filters from REW, (2) Push to your WiiM device safely, (3) Save and manage presets.
 3. THE onboarding overlay SHALL include a "Get Started" button that dismisses the overlay and begins the wizard at the Connect step.
-4. THE onboarding overlay SHALL include a "Skip" link for returning users on a fresh install.
+4. ~~REMOVED~~ (Skip link was redundant — "Get Started" serves the same purpose.)
 5. THE App SHALL NOT show the onboarding overlay on subsequent launches.
 6. THE App SHALL auto-enable Dry Run mode for first-time users (Requirement 12.4) as an additional safety net.
 7. THE Settings view SHALL include a "Show onboarding again" option for users who want a refresher.
