@@ -289,7 +289,8 @@ class TestReviewPage:
 
         assert page._push_button.text() == "Preview Only"
         # Badge uses colored background when active (not transparent)
-        assert "transparent" not in page._dry_run_badge.styleSheet().split("background-color:")[1].split(";")[0]
+        badge_bg = page._dry_run_badge.styleSheet().split("background-color:")[1].split(";")[0]
+        assert "transparent" not in badge_bg
 
         page.set_dry_run(False)
 

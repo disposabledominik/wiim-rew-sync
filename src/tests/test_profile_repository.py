@@ -10,6 +10,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 from src.models.errors import ProfileNotFoundError
 from src.models.profile import Profile
 from src.repository.profile_repository import ProfileRepository
@@ -65,7 +66,7 @@ class TestSaveLoadRoundTrip:
         loaded = repo.load("test-profile")
 
         assert loaded.name == "test-profile"
-        assert loaded.channel_mode == "stereo"
+        assert loaded.channel_mode == ChannelMode.STEREO
         assert loaded.filters is not None
         assert len(loaded.filters) == 2
         assert loaded.filters[0].frequency_hz == 1000.0
@@ -79,7 +80,7 @@ class TestSaveLoadRoundTrip:
         loaded = repo.load("lr-profile")
 
         assert loaded.name == "lr-profile"
-        assert loaded.channel_mode == "left"
+        assert loaded.channel_mode == ChannelMode.LR
         assert loaded.filters_l is not None
         assert loaded.filters_r is not None
         assert len(loaded.filters_l) == 1
@@ -326,7 +327,7 @@ def test_channel_mode_key_invariant(profile: Profile, tmp_path: object) -> None:
     repo.save(profile)
     loaded = repo.load(profile.name)
 
-    if profile.channel_mode == "stereo":
+    if profile.channel_mode == ChannelMode.STEREO:
         assert loaded.filters is not None, "Stereo profile must have 'filters'"
         assert loaded.filters_l is None, "Stereo profile must not have 'filters_l'"
         assert loaded.filters_r is None, "Stereo profile must not have 'filters_r'"

@@ -10,22 +10,22 @@ from __future__ import annotations
 from typing import Any
 
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.models.peq import PEQSettings
 from src.models.profile import Profile
 
 
-def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], str]:
-    """Extract combined filter list and normalized channel_mode from PEQSettings.
+def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], ChannelMode]:
+    """Extract combined filter list and channel_mode from PEQSettings.
 
     Returns:
-        Tuple of (combined_filters, channel_mode) where channel_mode is
-        "L/R" or "Stereo".
+        Tuple of (combined_filters, channel_mode).
     """
-    if peq_settings.channel_mode == "lr":
+    if is_lr_mode(peq_settings.channel_mode):
         filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
-        return filters, "L/R"
-    return list(peq_settings.bands), "Stereo"
+        return filters, ChannelMode.LR
+    return list(peq_settings.bands), ChannelMode.STEREO
 
 
 def split_lr_filters(
@@ -64,18 +64,21 @@ def get_lr_filters(
     return split_lr_filters(combined)
 
 
-def is_lr_mode(channel_mode: str) -> bool:
-    """Check if a channel mode string represents L/R (dual-channel) mode.
+def is_lr_mode(channel_mode: str | ChannelMode) -> bool:
+    """Check if a channel mode represents L/R (dual-channel) mode.
 
-    Handles all variants: "lr", "l/r", "L/R", "left", "right".
+    Accepts both ChannelMode enum values and legacy string variants.
+    Handles all variants: "lr", "l/r", "L/R", "left", "right", ChannelMode.LR.
     """
-    return channel_mode.lower() in ("lr", "l/r", "left", "right")
+    if isinstance(channel_mode, ChannelMode):
+        return channel_mode.is_lr
+    return ChannelMode.from_any(channel_mode).is_lr
 
 
 def build_peq_settings(
     source_name: str,
     filters: list[CanonicalFilter],
-    channel_mode: str,
+    channel_mode: str | ChannelMode,
     filters_l: list[CanonicalFilter] | None = None,
     filters_r: list[CanonicalFilter] | None = None,
 ) -> PEQSettings:
@@ -85,20 +88,26 @@ def build_peq_settings(
     splits combined list evenly (fallback for equal-length channels).
     For stereo: uses the full list as bands.
     """
-    if is_lr_mode(channel_mode):
+    mode = (
+        channel_mode
+        if isinstance(channel_mode, ChannelMode)
+        else ChannelMode.from_any(channel_mode)
+    )
+
+    if mode.is_lr:
         if filters_l is not None and filters_r is not None:
             left, right = filters_l, filters_r
         else:
             left, right = split_lr_filters(filters)
         return PEQSettings(
             source_name=source_name,
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=left,
             bands_r=right,
         )
     return PEQSettings(
         source_name=source_name,
-        channel_mode="stereo",
+        channel_mode=ChannelMode.STEREO,
         bands=filters,
     )
 
@@ -106,7 +115,7 @@ def build_peq_settings(
 def build_profile(
     name: str,
     filters: list[CanonicalFilter],
-    channel_mode: str,
+    channel_mode: str | ChannelMode,
     filters_l: list[CanonicalFilter] | None = None,
     filters_r: list[CanonicalFilter] | None = None,
 ) -> Profile:
@@ -121,25 +130,31 @@ def build_profile(
     if not safe_name:
         safe_name = "Untitled Preset"
 
-    if is_lr_mode(channel_mode):
+    mode = (
+        channel_mode
+        if isinstance(channel_mode, ChannelMode)
+        else ChannelMode.from_any(channel_mode)
+    )
+
+    if mode.is_lr:
         if filters_l is not None and filters_r is not None:
             left, right = filters_l, filters_r
         else:
             left, right = split_lr_filters(filters)
         return Profile(
             name=safe_name,
-            channel_mode="left",
+            channel_mode=ChannelMode.LR,
             filters_l=left,
             filters_r=right,
         )
     return Profile(
         name=safe_name,
-        channel_mode="stereo",
+        channel_mode=ChannelMode.STEREO,
         filters=filters,
     )
 
 
-def parse_backup_filters(backup_data: dict[str, Any]) -> tuple[list[CanonicalFilter], str]:
+def parse_backup_filters(backup_data: dict[str, Any]) -> tuple[list[CanonicalFilter], ChannelMode]:
     """Parse a backup JSON dict into a filter list and channel_mode.
 
     Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
@@ -149,20 +164,21 @@ def parse_backup_filters(backup_data: dict[str, Any]) -> tuple[list[CanonicalFil
         backup_data: Parsed JSON dict from a backup file.
 
     Returns:
-        Tuple of (filters, channel_mode) where channel_mode is "lr" or "stereo".
+        Tuple of (filters, channel_mode).
     """
     channel_mode_raw = backup_data.get("channel_mode", "stereo")
+    mode = ChannelMode.from_profile(str(channel_mode_raw))
 
-    if channel_mode_raw in ("left", "right"):
+    if mode.is_lr:
         filters_l_raw = backup_data.get("filters_l", [])
         filters_r_raw = backup_data.get("filters_r", [])
         filters = [CanonicalFilter(**f) for f in filters_l_raw] + [
             CanonicalFilter(**f) for f in filters_r_raw
         ]
-        return filters, "lr"
+        return filters, ChannelMode.LR
 
     filters_raw = backup_data.get("filters", [])
-    return [CanonicalFilter(**f) for f in filters_raw], "stereo"
+    return [CanonicalFilter(**f) for f in filters_raw], ChannelMode.STEREO
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +200,7 @@ def validate_filters_for_device(
 
     Checks for:
     - More filters than device supports (truncates to max_filters)
-    - Gain values outside ±12 dB (flags for clamping)
+    - Gain values outside +/-12 dB (flags for clamping)
     - Q values outside 0.01-24 (flags for clamping)
 
     Does NOT modify gain/Q values — only flags them. Actual clamping is done

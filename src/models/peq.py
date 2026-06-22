@@ -1,10 +1,11 @@
 """PEQ settings model for WiiM device communication."""
 
-from typing import Literal
+from __future__ import annotations
 
 from pydantic import BaseModel
 
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode, ChannelModeField
 
 
 class PEQSettings(BaseModel):
@@ -13,15 +14,11 @@ class PEQSettings(BaseModel):
     For stereo mode: ``bands`` holds the shared filter list.
     For L/R mode: ``bands_l`` and ``bands_r`` hold per-channel filters;
     ``bands`` is left empty.
-
-    NOTE: ``channel_mode`` here uses "stereo"/"lr" (device state).
-    ``Profile.channel_mode`` uses "stereo"/"left"/"right" (saved snapshot).
-    Conversion between the two happens in the profile repository layer.
     """
 
     source_name: str
     enabled: bool = True
-    channel_mode: Literal["stereo", "lr"]
+    channel_mode: ChannelModeField = ChannelMode.STEREO
     name: str = ""
     bands: list[CanonicalFilter] = []
     bands_l: list[CanonicalFilter] = []

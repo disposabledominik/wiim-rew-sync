@@ -132,4 +132,4 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["src.tests.*"]
-disable_error_code = ["method-assign", "type-arg"]
+disable_error_code = ["method-assign", "type-arg", "arg-type"]

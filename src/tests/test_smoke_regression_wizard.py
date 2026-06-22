@@ -413,9 +413,10 @@ class TestIssue73StereoImportChannelMode:
     async def test_stereo_import_sets_channel_mode(self, window) -> None:
         """State has channel_mode='LR', do stereo import -> channel_mode becomes 'Stereo'."""
         from src.models.canonical import CanonicalFilter
+        from src.models.channel_mode import ChannelMode
 
         # Set stale L/R channel mode
-        window._wizard_controller.state.channel_mode = "L/R"
+        window._wizard_controller.state.channel_mode = ChannelMode.LR
 
         # Mock the REW parser to return some filters
         mock_filters = [
@@ -428,7 +429,7 @@ class TestIssue73StereoImportChannelMode:
             await window._do_file_import("/tmp/stereo_eq.txt")
 
         # channel_mode should now be "Stereo" (not stale "L/R")
-        assert window._wizard_controller.state.channel_mode == "Stereo"
+        assert window._wizard_controller.state.channel_mode == ChannelMode.STEREO
 
 
 # ---------------------------------------------------------------------------

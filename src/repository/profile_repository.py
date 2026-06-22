@@ -6,6 +6,7 @@ import builtins
 import json
 from pathlib import Path
 
+from src.models.channel_mode import ChannelMode
 from src.models.errors import ProfileNotFoundError
 from src.models.profile import Profile
 from src.translator.schema_migrator import migrate_profile
@@ -45,7 +46,7 @@ class ProfileRepository:
         path = self._profile_path(profile.name)
         data = profile.model_dump(mode="python")
         # Remove None filter keys to enforce channel-mode consistency in JSON
-        if profile.channel_mode == "stereo":
+        if profile.channel_mode == ChannelMode.STEREO:
             data.pop("filters_l", None)
             data.pop("filters_r", None)
         else:

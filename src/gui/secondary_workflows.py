@@ -28,6 +28,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from src.gui.shared_helpers import build_peq_settings
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 
 if TYPE_CHECKING:
     from src.adapters.safe_write import SafeWrite
@@ -194,7 +195,7 @@ class SecondaryWorkflowManager(QObject):
         self,
         filters: list[CanonicalFilter],
         target_sources: list[str],
-        channel_mode: str = "stereo",
+        channel_mode: str | ChannelMode = ChannelMode.STEREO,
     ) -> None:
         """Copy current filters to one or more target sources on the same device.
 
@@ -207,7 +208,7 @@ class SecondaryWorkflowManager(QObject):
         Args:
             filters: The canonical filters to push to each target source.
             target_sources: List of source names to copy filters to.
-            channel_mode: "stereo" or "lr" — determines how filters are split.
+            channel_mode: Channel mode — determines how filters are split.
 
         Requirements: 9.3, 9.4, 9.5, 9.6, 9.7.
         """
@@ -220,7 +221,7 @@ class SecondaryWorkflowManager(QObject):
         self,
         filters: list[CanonicalFilter],
         target_sources: list[str],
-        channel_mode: str = "stereo",
+        channel_mode: str | ChannelMode = ChannelMode.STEREO,
     ) -> None:
         """Execute copy-to-sources with fault isolation per source.
 
@@ -281,7 +282,7 @@ class SecondaryWorkflowManager(QObject):
         self,
         filters: list[CanonicalFilter],
         request: MultiDeviceRequest,
-        channel_mode: str = "stereo",
+        channel_mode: str | ChannelMode = ChannelMode.STEREO,
     ) -> None:
         """Apply filters to multiple devices sequentially.
 
@@ -297,7 +298,7 @@ class SecondaryWorkflowManager(QObject):
         Args:
             filters: The canonical filters to push to each device/source.
             request: MultiDeviceRequest specifying device→source mappings.
-            channel_mode: "stereo" or "lr" — determines how filters are split.
+            channel_mode: Channel mode — determines how filters are split.
 
         Requirements: 10.3, 10.4, 10.5, 10.6, 10.7.
         """
@@ -308,7 +309,7 @@ class SecondaryWorkflowManager(QObject):
         self,
         filters: list[CanonicalFilter],
         request: MultiDeviceRequest,
-        channel_mode: str = "stereo",
+        channel_mode: str | ChannelMode = ChannelMode.STEREO,
     ) -> None:
         """Execute multi-device push with fault isolation per device.
 
@@ -406,7 +407,7 @@ class SecondaryWorkflowManager(QObject):
         preset_filters: list[CanonicalFilter],
         target_device_ip: str,
         target_source: str = "",
-        channel_mode: str = "stereo",
+        channel_mode: str | ChannelMode = ChannelMode.STEREO,
     ) -> None:
         """Copy a device preset to a different device.
 
@@ -418,7 +419,7 @@ class SecondaryWorkflowManager(QObject):
             target_device_ip: IP address of the target device.
             target_source: Target source name on the device (PEQ only).
                           Empty string for RoomFit (device-global).
-            channel_mode: "stereo" or "lr" for correct channel splitting.
+            channel_mode: Channel mode for correct channel splitting.
 
         Requirements: 15.3, 15.4, 15.5, 15.6.
         """
@@ -434,7 +435,7 @@ class SecondaryWorkflowManager(QObject):
         filters: list[CanonicalFilter],
         target_ip: str,
         source_name: str,
-        channel_mode: str = "stereo",
+        channel_mode: str | ChannelMode = ChannelMode.STEREO,
     ) -> None:
         """Execute copy-preset-to-device via SafeWrite on target device."""
         assert self._wiim_adapter_factory is not None
@@ -473,10 +474,12 @@ class SecondaryWorkflowManager(QObject):
         Requirement 17.2: Profile Recall & Push flow.
         """
         profile_name: str = getattr(profile, "name", "Unknown")
-        channel_mode: str = getattr(profile, "channel_mode", "stereo")
+        channel_mode = getattr(profile, "channel_mode", ChannelMode.STEREO)
+        if isinstance(channel_mode, str):
+            channel_mode = ChannelMode.from_any(channel_mode)
 
         # Extract filters based on channel mode
-        if channel_mode in ("left", "right"):
+        if channel_mode.is_lr:
             # L/R profile: combine both channels into flat list
             filters_l: list[CanonicalFilter] = getattr(profile, "filters_l", None) or []
             filters_r: list[CanonicalFilter] = getattr(profile, "filters_r", None) or []

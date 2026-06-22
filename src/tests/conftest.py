@@ -60,7 +60,7 @@ def st_canonical_filter(draw: st.DrawFn) -> CanonicalFilter:
     freq = draw(st.floats(min_value=10.0, max_value=22000.0, allow_nan=False, allow_infinity=False))
     gain = draw(st.floats(min_value=-20.0, max_value=20.0, allow_nan=False, allow_infinity=False))
     q = draw(st.floats(min_value=0.01, max_value=24.0, allow_nan=False, allow_infinity=False))
-    return CanonicalFilter(type=filter_type, frequency_hz=freq, gain_db=gain, q=q)  # type: ignore[arg-type]
+    return CanonicalFilter(type=filter_type, frequency_hz=freq, gain_db=gain, q=q)
 
 
 @st.composite

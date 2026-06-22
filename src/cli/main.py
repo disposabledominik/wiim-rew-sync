@@ -31,6 +31,7 @@ from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
+from src.models.channel_mode import ChannelMode
 from src.models.errors import (
     ParseError,
     ValidationError,
@@ -103,7 +104,7 @@ def _select_bands(settings: PEQSettings, channel: str) -> list[CanonicalFilter]:
     if channel == "right":
         return settings.bands_r
     # "stereo" requested (default)
-    if settings.channel_mode == "lr" and not settings.bands:
+    if settings.channel_mode == ChannelMode.LR and not settings.bands:
         # Device is in L/R mode — fall back to left channel
         return settings.bands_l
     return settings.bands
@@ -292,10 +293,10 @@ def cmd_get_filters(
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Source: {settings.source_name} | Mode: {settings.channel_mode}")
+    print(f"Source: {settings.source_name} | Mode: {settings.channel_mode.value}")
     print()
 
-    if settings.channel_mode == "lr" and channel == "stereo":
+    if settings.channel_mode == ChannelMode.LR and channel == "stereo":
         # In L/R mode, show both channels when no explicit channel requested
         print("Left channel:")
         print(_format_table(_FILTER_HEADERS, _filter_rows(settings.bands_l)))
@@ -359,21 +360,21 @@ async def _set_filters(
         filters_r = TranslationEngine.parse_rew_file(Path(file_right))
         settings = PEQSettings(
             source_name=source or _DEFAULT_SOURCE,
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=filters,
             bands_r=filters_r,
         )
     elif channel in ("left", "right"):
         settings = PEQSettings(
             source_name=source or _DEFAULT_SOURCE,
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=filters if channel == "left" else [],
             bands_r=filters if channel == "right" else [],
         )
     else:
         settings = PEQSettings(
             source_name=source or _DEFAULT_SOURCE,
-            channel_mode="stereo",
+            channel_mode=ChannelMode.STEREO,
             bands=filters,
         )
 
@@ -554,10 +555,13 @@ def cmd_get_roomfit_filters(
             print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    print(f"RoomFit profile: {profile_name} | Source: {source} | Mode: {settings.channel_mode}")
+    print(
+        f"RoomFit profile: {profile_name} | Source: {source}"
+        f" | Mode: {settings.channel_mode.value}"
+    )
     print()
 
-    if settings.channel_mode == "lr":
+    if settings.channel_mode == ChannelMode.LR:
         print("Left channel:")
         print(_format_table(_FILTER_HEADERS, _filter_rows(settings.bands_l)))
         print()

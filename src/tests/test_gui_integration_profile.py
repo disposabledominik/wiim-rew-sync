@@ -33,10 +33,15 @@ def _make_filters(count: int = 3) -> list[CanonicalFilter]:
 
 def _make_profile(*, filters: list[CanonicalFilter] | None = None, name: str = "Test Profile"):
     """Create a mock profile object with filters and name attributes."""
+    from src.models.channel_mode import ChannelMode
+
     profile = MagicMock()
     if filters is not None:
         profile.filters = filters
     profile.name = name
+    profile.channel_mode = ChannelMode.STEREO
+    profile.filters_l = None
+    profile.filters_r = None
     return profile
 
 

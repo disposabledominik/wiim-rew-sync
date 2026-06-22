@@ -19,6 +19,7 @@ from urllib.parse import quote
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
+from src.models.channel_mode import ChannelMode
 from src.models.errors import WiiMConnectionError, WiiMResponseError
 from src.models.peq import PEQSettings
 from src.translator.wiim_generator import generate_wiim_band_array
@@ -199,7 +200,7 @@ class WiiMAdapter:
         return PEQSettings(
             source_name=source_name,
             enabled=enabled,
-            channel_mode="stereo",
+            channel_mode=ChannelMode.STEREO,
             name=name,
             bands=bands,
         )
@@ -232,7 +233,7 @@ class WiiMAdapter:
         return PEQSettings(
             source_name=source_name,
             enabled=enabled,
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             name=name,
             bands_l=bands_l,
             bands_r=bands_r,
@@ -373,7 +374,7 @@ class WiiMAdapter:
         """
 
         # Determine wire channel mode
-        if settings.channel_mode == "stereo":
+        if settings.channel_mode == ChannelMode.STEREO:
             channel_mode_wire = "Stereo"
         else:
             channel_mode_wire = "L/R"
@@ -717,7 +718,7 @@ class WiiMAdapter:
         source_name: str,
         profile_name: str,
         filters: list[CanonicalFilter],
-        channel_mode: str = "stereo",
+        channel_mode: str | ChannelMode = ChannelMode.STEREO,
         filters_l: list[CanonicalFilter] | None = None,
         filters_r: list[CanonicalFilter] | None = None,
     ) -> None:
@@ -733,9 +734,9 @@ class WiiMAdapter:
             source_name: Audio input source (e.g. "wifi", "bluetooth").
             profile_name: Name to save the RoomFit profile as.
             filters: List of CanonicalFilter objects (used for stereo mode).
-            channel_mode: "stereo" or "lr" — determines write format.
-            filters_l: Left channel filters (required when channel_mode="lr").
-            filters_r: Right channel filters (required when channel_mode="lr").
+            channel_mode: ChannelMode enum or string — determines write format.
+            filters_l: Left channel filters (required when channel_mode is LR).
+            filters_r: Right channel filters (required when channel_mode is LR).
 
         Raises:
             WiiMResponseError: RoomFit write not supported (level < 4) or
@@ -748,8 +749,13 @@ class WiiMAdapter:
             )
 
         num_bands = self._capabilities.max_filters
+        mode = (
+            channel_mode
+            if isinstance(channel_mode, ChannelMode)
+            else ChannelMode.from_any(channel_mode)
+        )
 
-        if channel_mode in ("lr", "l/r") and filters_l and filters_r:
+        if mode.is_lr and filters_l and filters_r:
             # L/R mode: build EQBandL and EQBandR arrays
             band_array_l, _ = generate_wiim_band_array(filters_l, max_bands=num_bands)
             band_array_r, _ = generate_wiim_band_array(filters_r, max_bands=num_bands)

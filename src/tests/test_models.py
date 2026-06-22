@@ -83,7 +83,7 @@ class TestCanonicalFilter:
 
     def test_invalid_type_rejected(self) -> None:
         with pytest.raises(PydanticValidationError):
-            CanonicalFilter(type="NOTCH", frequency_hz=1000.0, gain_db=0.0, q=1.0)  # type: ignore[arg-type]
+            CanonicalFilter(type="NOTCH", frequency_hz=1000.0, gain_db=0.0, q=1.0)
 
 
 # ---------------------------------------------------------------------------

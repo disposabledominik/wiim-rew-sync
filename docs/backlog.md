@@ -37,19 +37,19 @@ Items moved here from active specs. They are not planned for the current release
 
 ---
 
-## 3. Channel Mode Enum (Tech Debt)
+## 3. ~~Channel Mode Enum~~ (DONE)
 
-**Originally:** Code quality audit (2026-06-22)
+**Completed:** 2025-07-01
 
-**What:** The codebase uses multiple string conventions for the same channel concept: `"stereo"` / `"lr"` (PEQSettings), `"stereo"` / `"left"` / `"right"` (Profile), `"Stereo"` / `"L/R"` (wire format). A `ChannelMode` enum with `.wire_value`, `.profile_value`, and `.settings_value` properties would eliminate ad-hoc normalization scattered across `shared_helpers.is_lr_mode()` and multiple comparison sites.
+**What was done:** Introduced `ChannelMode` enum in `src/models/channel_mode.py` with `STEREO`/`LR` values and properties: `wire_value`, `profile_value`, `display_value`, `is_lr`. Used `Annotated[ChannelMode, BeforeValidator(...)]` (`ChannelModeField`) in Pydantic models for seamless string coercion. Replaced 38+ string comparison sites across 15 production files. `is_lr_mode()` retained as a backwards-compatible wrapper accepting both `str` and `ChannelMode`.
 
-**Why deferred:** Large surface area refactor touching models, adapters, GUI, repository, and persisted JSON profiles (requires migration). High regression risk for cosmetic improvement. Current ad-hoc normalization is tested and working.
+---
 
-**Backend status:**
-- `is_lr_mode()` in `shared_helpers.py` handles all known variants
-- At least 6 modules compare channel mode strings directly
+## ~~6. Remove Redundant `state.current_filters` for L/R Mode~~ (DONE)
 
-**To reactivate:** Define a `ChannelMode` enum in `src/models/`, add `.wire_value` / `.profile_value` computed properties, migrate all comparison sites, add schema migration for persisted profiles. Target for a major version bump.
+**Completed:** 2025-07-01
+
+**What was done:** Added computed `WizardState.filters` property that returns `filters_l + filters_r` when in L/R mode, or `current_filters` for stereo. This eliminates the desync risk — the property always computes the correct combined list from the authoritative per-channel fields. Bundled with item #3 as planned.
 
 ---
 

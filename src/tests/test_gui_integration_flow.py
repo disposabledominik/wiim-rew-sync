@@ -20,6 +20,7 @@ from src.gui.main_window import PAGE_INDICES, MainWindow
 from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
+from src.models.channel_mode import ChannelMode
 from src.models.errors import WiiMConnectionError, WiiMTimeoutError
 
 # ---------------------------------------------------------------------------
@@ -234,7 +235,7 @@ class TestFullWizardFlow:
         call_args = mock_safe_write.execute.call_args
         assert call_args[0][0] == "wifi"
         settings = call_args[0][1]
-        assert settings.channel_mode == "stereo"
+        assert settings.channel_mode == ChannelMode.STEREO
         assert settings.bands == filters
 
 

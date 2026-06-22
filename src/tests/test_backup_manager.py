@@ -10,6 +10,7 @@ import pytest
 
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
+from src.models.channel_mode import ChannelMode
 from src.models.errors import BackupError
 from src.models.peq import PEQSettings
 from src.repository.backup_manager import BackupManager
@@ -33,7 +34,7 @@ def stereo_settings() -> PEQSettings:
     return PEQSettings(
         source_name="wifi",
         enabled=True,
-        channel_mode="stereo",
+        channel_mode=ChannelMode.STEREO,
         bands=[
             CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.41),
         ],
@@ -102,7 +103,7 @@ class TestCreateBackup:
         lr_settings = PEQSettings(
             source_name="wifi",
             enabled=True,
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=[
                 CanonicalFilter(type="PEAK", frequency_hz=500.0, gain_db=2.0, q=1.0),
             ],
@@ -130,7 +131,7 @@ class TestCreateBackup:
         lr_settings = PEQSettings(
             source_name="wifi",
             enabled=True,
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=[
                 CanonicalFilter(type="PEAK", frequency_hz=250.0, gain_db=1.5, q=2.0),
                 CanonicalFilter(type="PEAK", frequency_hz=4000.0, gain_db=-2.0, q=1.0),
@@ -149,7 +150,7 @@ class TestCreateBackup:
         record = BackupRecord(**data)
 
         # Channel mode mapped to "left" as sentinel for L/R data
-        assert record.channel_mode == "left"
+        assert record.channel_mode == ChannelMode.LR
         assert record.filters is None
         assert record.filters_l is not None
         assert record.filters_r is not None
@@ -168,7 +169,7 @@ class TestCreateBackup:
         lr_settings = PEQSettings(
             source_name="wifi",
             enabled=True,
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=[
                 CanonicalFilter(type="PEAK", frequency_hz=500.0, gain_db=2.0, q=1.0),
             ],

@@ -15,6 +15,7 @@ import pytest
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
+from src.models.channel_mode import ChannelMode
 from src.models.errors import WiiMConnectionError, WiiMResponseError
 from src.models.peq import PEQSettings
 
@@ -131,7 +132,7 @@ class TestReadPeqStereo:
         result = await adapter.read_peq("wifi")
 
         assert result.source_name == "wifi"
-        assert result.channel_mode == "stereo"
+        assert result.channel_mode == ChannelMode.STEREO
         assert result.enabled is True
         assert result.name == "My Preset"
         assert len(result.bands) == 10
@@ -207,7 +208,7 @@ class TestReadPeqLR:
         result = await adapter.read_peq("wifi")
 
         assert result.source_name == "wifi"
-        assert result.channel_mode == "lr"
+        assert result.channel_mode == ChannelMode.LR
         assert result.enabled is True
         assert len(result.bands_l) == 10
         assert len(result.bands_r) == 10
@@ -837,7 +838,7 @@ class TestReadRoomfit:
         result = await adapter.read_roomfit("wifi", "My RoomFit")
 
         # Returns PEQSettings now
-        assert result.channel_mode == "stereo"
+        assert result.channel_mode == ChannelMode.STEREO
         assert len(result.bands) == 10
         assert result.bands[0].type == "PEAK"
         assert result.bands[0].frequency_hz == 80.0

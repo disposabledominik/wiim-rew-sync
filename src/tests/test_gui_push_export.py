@@ -20,6 +20,7 @@ from src.adapters.safe_write import WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 from src.translator._warnings import ValidationWarning
 
 # ---------------------------------------------------------------------------
@@ -77,7 +78,7 @@ def _setup_push_state(window) -> AsyncMock:
         _make_filter(200.0),
         _make_filter(500.0),
     ]
-    window._wizard_controller.state.channel_mode = "Stereo"
+    window._wizard_controller.state.channel_mode = ChannelMode.STEREO
     window._wizard_controller.state.dry_run = False
 
     # Provide a mocked WiiMAdapter (required by _do_push assert)
@@ -284,7 +285,7 @@ class TestPushChannelMode:
 
         call_args = mock_safe_write.execute.call_args
         settings = call_args[0][1]
-        assert settings.channel_mode == "stereo"
+        assert settings.channel_mode == ChannelMode.STEREO
         assert settings.bands == window._wizard_controller.state.current_filters
 
     @pytest.mark.asyncio
@@ -294,7 +295,7 @@ class TestPushChannelMode:
         Requirement: 6.1, 6.2
         """
         mock_safe_write = _setup_push_state(window)
-        window._wizard_controller.state.channel_mode = "LR"
+        window._wizard_controller.state.channel_mode = ChannelMode.LR
         # 4 filters: first 2 → bands_l, last 2 → bands_r
         filters = [_make_filter(f) for f in [100.0, 200.0, 500.0, 1000.0]]
         window._wizard_controller.state.current_filters = filters
@@ -305,7 +306,7 @@ class TestPushChannelMode:
 
         call_args = mock_safe_write.execute.call_args
         settings = call_args[0][1]
-        assert settings.channel_mode == "lr"
+        assert settings.channel_mode == ChannelMode.LR
         assert settings.bands_l == filters[:2]
         assert settings.bands_r == filters[2:]
 

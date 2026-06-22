@@ -40,6 +40,7 @@ from src.gui.constants import (
     SPACING_SM,
     SPACING_XS,
 )
+from src.models.channel_mode import ChannelMode
 from src.models.profile import Profile
 
 # Threshold: show search field when preset count exceeds this value.
@@ -56,7 +57,7 @@ class _PresetItemWidget(QWidget):
     def __init__(
         self,
         name: str,
-        channel_mode: str,
+        channel_mode: str | ChannelMode,
         active_bands: int,
         total_bands: int,
         parent: QWidget | None = None,
@@ -457,15 +458,17 @@ class MyPresetsView(QWidget):
 # ---------------------------------------------------------------------------
 
 
-def _channel_mode_display(mode: str) -> str:
+def _channel_mode_display(mode: str | ChannelMode) -> str:
     """Convert channel mode value to display badge text.
 
     Args:
-        mode: One of "stereo", "left", "right".
+        mode: ChannelMode enum or legacy string ("stereo", "left", "right").
 
     Returns:
         Display string: "Stereo" or "L/R".
     """
+    if isinstance(mode, ChannelMode):
+        return mode.display_value
     if mode in ("left", "right"):
         return "L/R"
     return "Stereo"
@@ -484,7 +487,7 @@ def _count_bands(profile: Profile) -> tuple[int, int]:
     Returns:
         Tuple of (active_band_count, total_band_count).
     """
-    if profile.channel_mode == "stereo":
+    if profile.channel_mode == ChannelMode.STEREO:
         filters = profile.filters or []
     else:
         # For L/R mode, show per-channel count (use left channel as representative)

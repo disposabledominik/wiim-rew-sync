@@ -79,6 +79,7 @@ from src.gui.views.settings_view import SettingsView
 from src.gui.wizard_controller import FlowType, WizardController, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
+from src.models.channel_mode import ChannelMode
 from src.models.errors import (
     ParseError,
     REWNotConnectedError,
@@ -666,7 +667,7 @@ class MainWindow(QMainWindow):
         """
         state = self._wizard_controller.state
         state.selected_source = source_name
-        state.channel_mode = channel_mode
+        state.channel_mode = ChannelMode.from_any(channel_mode)
 
         # Build summary label showing selected source(s)
         sources = [s.strip() for s in source_name.split(",") if s.strip()]
@@ -815,7 +816,7 @@ class MainWindow(QMainWindow):
             band_count = len(filters)
             sources = [s.strip() for s in (state.selected_source or "wifi").split(",") if s.strip()]
             source_info = ", ".join(sources) if sources else "wifi"
-            channel = state.channel_mode or "Stereo"
+            channel = state.channel_mode.display_value
             self._push_page.set_dry_run_result(
                 f"Dry run complete: {band_count} bands validated for "
                 f"{source_info} ({channel}). No changes were written to device."
@@ -842,7 +843,7 @@ class MainWindow(QMainWindow):
             return
 
         state = self._wizard_controller.state
-        channel_mode = state.channel_mode or "Stereo"
+        channel_mode = state.channel_mode
         filters = state.current_filters
 
         self._export_filters_as_rew(filters, channel_mode)
@@ -1231,17 +1232,22 @@ class MainWindow(QMainWindow):
 
             # Populate ReviewPage — branch on channel mode (smoke #28)
             state = self._wizard_controller.state
-            channel = state.channel_mode or "Stereo"
+            channel = state.channel_mode
 
             # Check if peq_data carries explicit L/R bands
             peq_channel = getattr(peq_data, "channel_mode", None)
             bands_l = getattr(peq_data, "bands_l", None)
             bands_r = getattr(peq_data, "bands_r", None)
 
-            if peq_channel == "lr" and bands_l is not None and bands_r is not None:
+            if (
+                peq_channel is not None
+                and is_lr_mode(peq_channel)
+                and bands_l is not None
+                and bands_r is not None
+            ):
                 # Update wizard state to reflect actual L/R mode from device
-                state.channel_mode = "L/R"
-                channel = "L/R"
+                state.channel_mode = ChannelMode.LR
+                channel = ChannelMode.LR
 
                 # Validate each channel independently
                 validated_l, warnings_l, clamping_l = validate_filters_for_device(
@@ -1262,7 +1268,7 @@ class MainWindow(QMainWindow):
                 self._review_page.set_lr_filters(
                     validated_l, validated_r, clamping_l, clamping_r
                 )
-            elif is_lr_mode(channel):
+            elif channel.is_lr:
                 # Fallback: split combined list evenly (only hit when source
                 # doesn't provide explicit L/R bands — e.g. legacy device reads)
                 logger.warning(
@@ -1305,7 +1311,7 @@ class MainWindow(QMainWindow):
             active_bands = sum(
                 1 for f in state.current_filters if getattr(f, "enabled", True)
             )
-            self._review_page.set_summary(device_name, source, channel, active_bands)
+            self._review_page.set_summary(device_name, source, channel.display_value, active_bands)
 
             # Advance wizard to REVIEW step
             if getattr(self, "_sidebar_load_in_progress", False):
@@ -1348,7 +1354,7 @@ class MainWindow(QMainWindow):
             "PEQ data ready: %d raw filters, %d after validation, channel=%s",
             count,
             len(self._wizard_controller.state.current_filters),
-            self._wizard_controller.state.channel_mode,
+            self._wizard_controller.state.channel_mode.value,
         )
 
     @Slot(object)
@@ -1564,7 +1570,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _save_filters_to_presets(
-        self, name: str, filters: list[CanonicalFilter], channel_mode: str
+        self, name: str, filters: list[CanonicalFilter], channel_mode: str | ChannelMode
     ) -> None:
         """Save filters to local profile repository (shared by all save triggers).
 
@@ -1574,7 +1580,7 @@ class MainWindow(QMainWindow):
         Args:
             name: Desired preset name (will be sanitized for filesystem).
             filters: Combined filter list from wizard state.
-            channel_mode: Channel mode string ("Stereo", "L/R", "lr", etc.).
+            channel_mode: Channel mode (ChannelMode enum or legacy string).
         """
         state = self._wizard_controller.state
         profile = build_profile(
@@ -1598,7 +1604,9 @@ class MainWindow(QMainWindow):
         all_profiles = self._profile_repository.list()
         self._my_presets_view.set_presets(all_profiles)
 
-    def _export_filters_as_rew(self, filters: list[CanonicalFilter], channel_mode: str) -> None:
+    def _export_filters_as_rew(
+        self, filters: list[CanonicalFilter], channel_mode: str | ChannelMode
+    ) -> None:
         """Show export dialog and write REW file(s) (shared by all export triggers).
 
         For stereo: single file dialog -> single .txt file.
@@ -1606,7 +1614,7 @@ class MainWindow(QMainWindow):
 
         Args:
             filters: Combined filter list.
-            channel_mode: Channel mode string ("Stereo", "L/R", "lr", etc.).
+            channel_mode: Channel mode (ChannelMode enum or legacy string).
         """
         if is_lr_mode(channel_mode):
             # L/R mode: use ExportDialog for dual-file selection
@@ -1719,7 +1727,7 @@ class MainWindow(QMainWindow):
 
         # Store in wizard state — explicitly set Stereo channel mode (smoke #72)
         self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = "Stereo"
+        self._wizard_controller.state.channel_mode = ChannelMode.STEREO
 
         # Notify FiltersPage of success via peq_ready signal
         self._bridge.peq_ready.emit(filters)
@@ -1750,12 +1758,12 @@ class MainWindow(QMainWindow):
         # Combine L+R into flat list and set L/R channel mode
         filters = filters_l + filters_r
         self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = "L/R"
+        self._wizard_controller.state.channel_mode = ChannelMode.LR
 
         # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
         peq_data = PEQSettings(
             source_name=self._wizard_controller.state.selected_source or "wifi",
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=filters_l,
             bands_r=filters_r,
         )
@@ -1836,10 +1844,10 @@ class MainWindow(QMainWindow):
 
         # Determine channel_mode from the device data and update wizard state
         peq_channel = getattr(peq_settings, "channel_mode", None)
-        if peq_channel == "lr":
-            self._wizard_controller.state.channel_mode = "L/R"
+        if is_lr_mode(peq_channel) if peq_channel else False:
+            self._wizard_controller.state.channel_mode = ChannelMode.LR
         else:
-            self._wizard_controller.state.channel_mode = "Stereo"
+            self._wizard_controller.state.channel_mode = ChannelMode.STEREO
 
         # Extract filters
         filters, _ = extract_filters(peq_settings)
@@ -2185,7 +2193,7 @@ class MainWindow(QMainWindow):
 
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = "Stereo"
+        self._wizard_controller.state.channel_mode = ChannelMode.STEREO
 
         # Emit result signal
         self._bridge.rew_filters_ready.emit(filters)
@@ -2206,12 +2214,12 @@ class MainWindow(QMainWindow):
         # Combine L+R into flat list and set L/R channel mode
         filters = filters_l + filters_r
         self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = "L/R"
+        self._wizard_controller.state.channel_mode = ChannelMode.LR
 
         # Emit peq_ready with a PEQSettings carrying L/R bands
         peq_data = PEQSettings(
             source_name=self._wizard_controller.state.selected_source or "wifi",
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=filters_l,
             bands_r=filters_r,
         )
@@ -2236,12 +2244,12 @@ class MainWindow(QMainWindow):
         state = self._wizard_controller.state
         source_names_raw = state.selected_source or "wifi"
         filters = state.current_filters
-        channel_mode = state.channel_mode.lower()
+        channel_mode = state.channel_mode
         flow_type = self._wizard_controller.flow_type
 
         logger.info(
             "Push initiated: flow=%s, channel=%s, filters=%d, source=%s",
-            flow_type.value, channel_mode, len(filters), source_names_raw,
+            flow_type.value, channel_mode.value, len(filters), source_names_raw,
         )
 
         # Parse comma-separated sources into a list
@@ -2291,14 +2299,14 @@ class MainWindow(QMainWindow):
                 self._bridge.progress_update.emit(
                     f"Writing RoomFit profile '{profile_name}'..."
                 )
-                if is_lr_mode(channel_mode):
+                if channel_mode.is_lr:
                     # Use stored L/R lists if available (avoids naive 50/50 split)
                     left, right = get_lr_filters(state, filters)
                     await self._wiim_adapter.write_roomfit(
                         source_name,
                         profile_name,
                         filters,
-                        channel_mode="lr",
+                        channel_mode=ChannelMode.LR,
                         filters_l=left,
                         filters_r=right,
                     )
@@ -3159,11 +3167,10 @@ class MainWindow(QMainWindow):
             return
 
         # Set channel_mode in wizard state from profile BEFORE recall emits
-        channel_mode = getattr(profile, "channel_mode", "stereo")
-        if is_lr_mode(channel_mode):
-            self._wizard_controller.state.channel_mode = "L/R"
-        else:
-            self._wizard_controller.state.channel_mode = "Stereo"
+        channel_mode = getattr(profile, "channel_mode", ChannelMode.STEREO)
+        if isinstance(channel_mode, str):
+            channel_mode = ChannelMode.from_any(channel_mode)
+        self._wizard_controller.state.channel_mode = channel_mode
         self._secondary_workflows.recall_profile(profile)
 
     @Slot()
@@ -3186,8 +3193,8 @@ class MainWindow(QMainWindow):
                 device_name = d.name
                 break
         source = state.selected_source or "wifi"
-        channel = state.channel_mode or "Stereo"
-        preset_name = f"{device_name} - {source} ({channel})"
+        channel = state.channel_mode
+        preset_name = f"{device_name} - {source} ({channel.display_value})"
 
         self._save_filters_to_presets(preset_name, filters, channel)
 
@@ -3380,8 +3387,8 @@ class MainWindow(QMainWindow):
         state.current_filters = filters
 
         # Populate ReviewPage with the recalled filters (L/R aware)
-        channel = state.channel_mode or "Stereo"
-        if is_lr_mode(channel):
+        channel = state.channel_mode
+        if channel.is_lr:
             # Use stored L/R lists (set by recall_profile before emitting signal)
             left, right = get_lr_filters(state, filters)
             self._review_page.set_lr_filters(left, right)
@@ -3392,7 +3399,7 @@ class MainWindow(QMainWindow):
         device = state.selected_device or "No device"
         source = state.selected_source or "Not selected"
         active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
-        self._review_page.set_summary(device, source, channel, active_bands)
+        self._review_page.set_summary(device, source, channel.display_value, active_bands)
 
         # Navigate to Review step — update both wizard state and stacked widget
         # so that subsequent navigation/step_changed doesn't override (smoke #87)

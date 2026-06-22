@@ -20,6 +20,7 @@ from src.adapters.safe_write import SafeWrite
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
+from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
 from src.repository.backup_manager import BackupManager
 
@@ -49,14 +50,14 @@ def _make_settings(
         return PEQSettings(
             source_name="wifi",
             enabled=True,
-            channel_mode="stereo",
+            channel_mode=ChannelMode.STEREO,
             bands=bands,
         )
     else:
         return PEQSettings(
             source_name="wifi",
             enabled=True,
-            channel_mode="lr",
+            channel_mode=ChannelMode.LR,
             bands_l=bands,
             bands_r=bands,
         )
@@ -425,7 +426,7 @@ class TestChannelModeAdaptation:
             # write_peq is called with the original stereo settings (not mutated to L/R)
             write_call = mock_adapter.write_peq.call_args
             written_settings = write_call[0][1]
-            assert written_settings.channel_mode == "stereo"
+            assert written_settings.channel_mode == ChannelMode.STEREO
             assert written_settings.bands == intended.bands
             assert result.success is True
             # Log indicates mode switch
@@ -557,6 +558,6 @@ class TestRollbackLR:
         # Verify rollback wrote back the L/R original settings
         rollback_call = mock_adapter.write_peq.call_args_list[1]
         restored_settings = rollback_call[0][1]
-        assert restored_settings.channel_mode == "lr"
+        assert restored_settings.channel_mode == ChannelMode.LR
         assert restored_settings.bands_l is not None
         assert restored_settings.bands_r is not None

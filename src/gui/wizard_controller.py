@@ -15,6 +15,7 @@ from enum import Enum
 from PySide6.QtCore import QObject, Signal
 
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 
 
 class WizardStep(Enum):
@@ -45,7 +46,7 @@ class WizardState:
     current_step: WizardStep = WizardStep.CONNECT
     selected_device: str | None = None
     selected_source: str = ""
-    channel_mode: str = "Stereo"
+    channel_mode: ChannelMode = ChannelMode.STEREO
     current_filters: list[CanonicalFilter] = field(default_factory=list)
     device_filters: list[CanonicalFilter] = field(default_factory=list)
     filters_l: list[CanonicalFilter] = field(default_factory=list)
@@ -55,6 +56,18 @@ class WizardState:
     dry_run: bool = False
     last_backup_path: str = ""
     completed_steps: dict[WizardStep, str] = field(default_factory=dict)
+
+    @property
+    def filters(self) -> list[CanonicalFilter]:
+        """Computed filter accessor — returns the correct list for the current mode.
+
+        For L/R mode: returns combined filters_l + filters_r (if populated).
+        For Stereo: returns current_filters directly.
+        Falls back to current_filters if L/R lists are empty.
+        """
+        if self.channel_mode.is_lr and (self.filters_l or self.filters_r):
+            return self.filters_l + self.filters_r
+        return self.current_filters
 
 
 def steps_for_flow(flow_type: FlowType) -> list[WizardStep]:

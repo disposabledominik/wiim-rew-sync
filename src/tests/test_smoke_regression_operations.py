@@ -23,6 +23,7 @@ from src.gui.shared_helpers import (
 )
 from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -105,7 +106,7 @@ class TestPushWriteOperations:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter(100), _make_filter(200)]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
 
         peq_data = MagicMock()
         peq_data.channel_mode = "stereo"
@@ -121,7 +122,7 @@ class TestPushWriteOperations:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
         # Set wizard to FILTERS step so it can advance
         window._wizard_controller.state.current_step = WizardStep.FILTERS
 
@@ -166,7 +167,7 @@ class TestPushWriteOperations:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
         state.dry_run = False
         state.flow_type = FlowType.ROOMFIT
         state.current_step = WizardStep.REVIEW
@@ -182,7 +183,7 @@ class TestPushWriteOperations:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
         state.dry_run = False
 
         with patch.object(window._wizard_controller, "advance"):
@@ -198,7 +199,7 @@ class TestPushWriteOperations:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter(100), _make_filter(200)]
-        state.channel_mode = "L/R"
+        state.channel_mode = ChannelMode.LR
         state.dry_run = False
         state.roomfit_profile_name = "TestProfile"
         state.flow_type = FlowType.ROOMFIT
@@ -223,7 +224,7 @@ class TestPushWriteOperations:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
         state.dry_run = False
         state.selected_source = "wifi, optical"
 
@@ -249,7 +250,7 @@ class TestPushWriteOperations:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
         state.dry_run = True
         state.selected_source = "wifi"
         window._wizard_controller.state.current_step = WizardStep.REVIEW
@@ -281,7 +282,7 @@ class TestImportExport:
         filters_l = [_make_filter(100), _make_filter(200)]
         filters_r = [_make_filter(300), _make_filter(400)]
         state.current_filters = filters_l + filters_r
-        state.channel_mode = "L/R"
+        state.channel_mode = ChannelMode.LR
 
         peq_data = MagicMock()
         peq_data.channel_mode = "lr"
@@ -301,7 +302,7 @@ class TestImportExport:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter(100), _make_filter(200)]
-        state.channel_mode = "L/R"
+        state.channel_mode = ChannelMode.LR
 
         with patch(
             "src.gui.dialogs.export_dialog.ExportDialog.get_paths", return_value=None
@@ -316,7 +317,7 @@ class TestImportExport:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
 
         with (
             patch(
@@ -374,7 +375,7 @@ class TestImportExport:
         with patch.object(window._secondary_workflows, "recall_profile"):
             window._on_profile_load_requested(profile)
 
-        assert state.channel_mode == "L/R"
+        assert state.channel_mode == ChannelMode.LR
 
     def test_issue65_profile_load_sets_channel_mode_stereo(self, window) -> None:
         """#65: Loading stereo profile sets state.channel_mode to Stereo."""
@@ -396,7 +397,7 @@ class TestImportExport:
         with patch.object(window._secondary_workflows, "recall_profile"):
             window._on_profile_load_requested(profile)
 
-        assert state.channel_mode == "Stereo"
+        assert state.channel_mode == ChannelMode.STEREO
 
 
 # ===========================================================================
@@ -483,7 +484,7 @@ class TestPresets:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
         state.selected_source = "wifi"
         window._discovered_devices = []
 
@@ -541,7 +542,7 @@ class TestPresets:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
         state.dry_run = False
         state.roomfit_profile_name = "Existing"
         state.flow_type = FlowType.ROOMFIT
@@ -642,7 +643,7 @@ class TestSettingsUIState:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = []  # Empty filters
-        state.channel_mode = "Stereo"
+        state.channel_mode = ChannelMode.STEREO
 
         peq_data = MagicMock(channel_mode="stereo", bands_l=None, bands_r=None)
         # _on_peq_ready with empty filters should trigger guidance message
@@ -718,13 +719,13 @@ class TestSettingsUIState:
         """#39: build_profile with L/R channel_mode stores 'left' (L/R indicator)."""
         filters = [_make_filter(100), _make_filter(200)]
         profile = build_profile("Test", filters, "L/R")
-        assert profile.channel_mode == "left"  # Internal L/R representation
+        assert profile.channel_mode == ChannelMode.LR  # Internal L/R representation
 
     def test_issue39_stereo_profile_channel_mode(self) -> None:
         """#39: build_profile with stereo stores 'stereo'."""
         filters = [_make_filter()]
         profile = build_profile("Test", filters, "Stereo")
-        assert profile.channel_mode == "stereo"
+        assert profile.channel_mode == ChannelMode.STEREO
 
     # --- Issue #42: Source page receives all common sources including line-in ---
 
@@ -806,7 +807,7 @@ class TestSettingsUIState:
             ],
         }
         filters, mode = parse_backup_filters(backup)
-        assert mode == "stereo"
+        assert mode == ChannelMode.STEREO
         assert len(filters) == 1
         assert filters[0].frequency_hz == 1000
 
@@ -822,14 +823,14 @@ class TestSettingsUIState:
             ],
         }
         filters, mode = parse_backup_filters(backup)
-        assert mode == "lr"
+        assert mode == ChannelMode.LR
         assert len(filters) == 2
 
     def test_issue70_parse_backup_empty(self) -> None:
         """#70: parse_backup_filters handles empty backup gracefully."""
         backup: dict[str, object] = {}
         filters, mode = parse_backup_filters(backup)
-        assert mode == "stereo"
+        assert mode == ChannelMode.STEREO
         assert filters == []
 
     # --- Issue #74: _do_copy_presets_batch_multi iterates all devices ---
@@ -1026,5 +1027,5 @@ class TestSharedHelpers:
             ],
         }
         filters, mode = parse_backup_filters(backup)
-        assert mode == "lr"
+        assert mode == ChannelMode.LR
         assert len(filters) == 2

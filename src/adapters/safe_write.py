@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
 from src.utils.fp_compare import band_matches
 
@@ -130,11 +131,11 @@ class SafeWrite:
         # The write_peq method already sends channelMode in its payload,
         # which implicitly switches the device. But to be safe and explicit,
         # we flag that a mode switch is needed.
-        if write_mode == "stereo" and device_mode == "lr":
+        if write_mode == ChannelMode.STEREO and device_mode == ChannelMode.LR:
             logger.info(
                 "Device is in L/R mode; switching to Stereo for this write."
             )
-        elif write_mode == "lr" and device_mode == "stereo":
+        elif write_mode == ChannelMode.LR and device_mode == ChannelMode.STEREO:
             logger.info(
                 "Device is in Stereo mode; switching to L/R for this write."
             )
@@ -149,7 +150,7 @@ class SafeWrite:
 
         Returns True if all bands match within tolerance.
         """
-        if intended.channel_mode == "stereo":
+        if intended.channel_mode == ChannelMode.STEREO:
             return self._compare_band_lists(intended.bands, read_back.bands)
         else:
             # L/R mode: verify both channels

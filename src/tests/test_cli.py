@@ -11,6 +11,7 @@ from src.adapters.safe_write import WriteResult
 from src.cli import main as cli
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
+from src.models.channel_mode import ChannelMode
 from src.models.errors import WiiMConnectionError
 from src.models.peq import PEQSettings
 
@@ -932,7 +933,7 @@ def test_set_filters_file_right_parses_both(
     assert code == 0
     assert len(captured_settings) == 1
     settings = captured_settings[0]
-    assert settings.channel_mode == "lr"
+    assert settings.channel_mode == ChannelMode.LR
     assert len(settings.bands_l) == 2
     assert len(settings.bands_r) == 2
     # Left channel first filter at 100 Hz

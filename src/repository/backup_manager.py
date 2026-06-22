@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from src.models.capabilities import DeviceCapabilities
+from src.models.channel_mode import ChannelMode
 from src.models.errors import BackupError
 from src.models.peq import PEQSettings
 from src.models.profile import BackupRecord
@@ -63,16 +64,12 @@ class BackupManager:
         timestamp = datetime.now(UTC).isoformat()
 
         # Map PEQSettings bands to BackupRecord filter fields
-        if settings.channel_mode == "stereo":
+        if settings.channel_mode == ChannelMode.STEREO:
             filters = settings.bands if settings.bands else None
             filters_l = None
             filters_r = None
         else:
-            # PEQSettings uses "lr" for dual-channel mode, but Profile/BackupRecord
-            # only accepts "stereo"/"left"/"right". We map "lr" -> "left" as a
-            # sentinel meaning "this backup contains L/R data" (the Profile model
-            # validator enforces that both filters_l and filters_r are present for
-            # any non-stereo channel_mode, so the data is always complete).
+            # L/R mode: both bands_l and bands_r must be populated
             if not settings.bands_l or not settings.bands_r:
                 raise BackupError(
                     "Cannot backup L/R mode settings: both bands_l and bands_r "
@@ -84,14 +81,12 @@ class BackupManager:
             filters_l = settings.bands_l
             filters_r = settings.bands_r
 
-        # Channel mode mapping: "stereo" -> "stereo", "lr" -> "left" (sentinel)
-        channel_mode: Literal["stereo", "left", "right"] = (
-            "stereo" if settings.channel_mode == "stereo" else "left"
-        )
+        # Channel mode for BackupRecord (Profile model)
+        record_channel_mode = settings.channel_mode
 
         record = BackupRecord(
             name=f"backup_{device_uuid}_{timestamp}",
-            channel_mode=channel_mode,
+            channel_mode=record_channel_mode,
             filters=filters,
             filters_l=filters_l,
             filters_r=filters_r,

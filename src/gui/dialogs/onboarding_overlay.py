@@ -108,9 +108,10 @@ class OnboardingOverlay(QWidget):
             # Delete all child widgets
             while old_layout.count():
                 item = old_layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater()
+                if item is not None:
+                    widget = item.widget()
+                    if widget is not None:
+                        widget.deleteLater()
             QWidget().setLayout(old_layout)  # Detach layout
         self._setup_ui()
 
@@ -125,8 +126,8 @@ class OnboardingOverlay(QWidget):
         app = QApplication.instance()
         # Detect if dark theme is active by checking the app stylesheet
         is_dark = False
-        if app is not None:
-            stylesheet = app.styleSheet()  # type: ignore[union-attr]
+        if app is not None and hasattr(app, "styleSheet"):
+            stylesheet = app.styleSheet()
             if stylesheet and "background-color: #1E1E1E" in stylesheet:
                 is_dark = True
 

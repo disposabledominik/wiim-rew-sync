@@ -2,6 +2,7 @@
 
 from src.models.canonical import CanonicalFilter, FilterType
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
+from src.models.channel_mode import ChannelMode
 from src.models.errors import (
     BackupError,
     ParseError,
@@ -22,6 +23,7 @@ __all__ = [
     "BackupError",
     "BackupRecord",
     "CanonicalFilter",
+    "ChannelMode",
     "DeviceCapabilities",
     "DeviceInfo",
     "FilterType",

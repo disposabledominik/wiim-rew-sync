@@ -84,7 +84,7 @@ def st_canonical_filter_wiim_safe(draw: st.DrawFn) -> CanonicalFilter:
     # Constrain gain and Q to WiiM limits so round-trip matches without clipping
     gain = draw(st.floats(min_value=-12.0, max_value=12.0, allow_nan=False, allow_infinity=False))
     q = draw(st.floats(min_value=0.01, max_value=24.0, allow_nan=False, allow_infinity=False))
-    return CanonicalFilter(type=filter_type, frequency_hz=freq, gain_db=gain, q=q)  # type: ignore[arg-type]
+    return CanonicalFilter(type=filter_type, frequency_hz=freq, gain_db=gain, q=q)
 
 
 @st.composite
@@ -190,7 +190,7 @@ def st_canonical_filter_outside_wiim_limits(draw: st.DrawFn) -> CanonicalFilter:
         st.floats(min_value=0.001, max_value=0.009, allow_nan=False, allow_infinity=False),
     ))
 
-    return CanonicalFilter(type=filter_type, frequency_hz=freq, gain_db=gain, q=q)  # type: ignore[arg-type]
+    return CanonicalFilter(type=filter_type, frequency_hz=freq, gain_db=gain, q=q)
 
 
 @st.composite
