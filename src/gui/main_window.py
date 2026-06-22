@@ -1174,11 +1174,12 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_peq_ready(self, peq_data: object) -> None:
-        """Handle PEQ data ready — populate ReviewPage and advance wizard.
+        """Handle PEQ data ready — validate, populate ReviewPage, and advance wizard.
 
-        After device pull or file import emits peq_ready, this handler
-        populates the ReviewPage with the loaded filters and advances
-        the wizard to the REVIEW step.
+        After device pull or file import emits peq_ready, this handler:
+        1. Validates filters against device limits (truncation + clamping)
+        2. Populates the ReviewPage with the validated filters
+        3. Advances the wizard to the REVIEW step
 
         For L/R channel mode, splits the combined filter list and uses
         set_lr_filters() to show separate L/R tabs (fix for smoke #28).
@@ -1186,10 +1187,17 @@ class MainWindow(QMainWindow):
         Args:
             peq_data: PEQ settings object or filter list from the operation.
         """
+        from src.gui.shared_helpers import validate_filters_for_device
+
         filters = self._wizard_controller.state.current_filters
         count = len(filters)
 
         if count > 0:
+            # Determine device max_filters
+            max_filters = 10  # Default
+            if self._device_caps is not None:
+                max_filters = getattr(self._device_caps, "max_filters", 10) or 10
+
             # Populate ReviewPage — branch on channel mode (smoke #28)
             state = self._wizard_controller.state
             channel = state.channel_mode or "Stereo"
@@ -1203,14 +1211,41 @@ class MainWindow(QMainWindow):
                 # Update wizard state to reflect actual L/R mode from device
                 state.channel_mode = "L/R"
                 channel = "L/R"
-                # Use explicit L/R bands from the PEQSettings object
-                self._review_page.set_lr_filters(list(bands_l), list(bands_r))
+
+                # Validate each channel independently
+                validated_l, warnings_l, clamping_l = validate_filters_for_device(
+                    list(bands_l), max_filters
+                )
+                validated_r, warnings_r, _clamping_r = validate_filters_for_device(
+                    list(bands_r), max_filters
+                )
+
+                # Merge warnings
+                all_warnings = warnings_l + warnings_r
+
+                # Update state with truncated filters
+                state.current_filters = validated_l + validated_r
+
+                self._review_page.set_lr_filters(validated_l, validated_r, clamping_l)
             elif is_lr_mode(channel):
-                # Fallback: split combined list evenly
+                # Fallback: split combined list evenly, then validate each half
                 left, right = split_lr_filters(filters)
-                self._review_page.set_lr_filters(left, right)
+                validated_l, warnings_l, clamping_l = validate_filters_for_device(
+                    left, max_filters
+                )
+                validated_r, warnings_r, _clamping_r = validate_filters_for_device(
+                    right, max_filters
+                )
+                all_warnings = warnings_l + warnings_r
+                state.current_filters = validated_l + validated_r
+                self._review_page.set_lr_filters(validated_l, validated_r, clamping_l)
             else:
-                self._review_page.set_filters(filters)
+                # Stereo: validate the full list
+                validated, all_warnings, clamping_map = validate_filters_for_device(
+                    filters, max_filters
+                )
+                state.current_filters = validated
+                self._review_page.set_filters(validated, clamping_map)
 
             # Set summary info
             device_ip = state.selected_device or "Unknown"
@@ -1223,7 +1258,10 @@ class MainWindow(QMainWindow):
                     device_name = d.name
                     break
 
-            active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
+            validated_count = len(state.current_filters)
+            active_bands = sum(
+                1 for f in state.current_filters if getattr(f, "enabled", True)
+            )
             self._review_page.set_summary(device_name, source, channel, active_bands)
 
             # Advance wizard to REVIEW step
@@ -1234,20 +1272,30 @@ class MainWindow(QMainWindow):
                 state.current_step = WizardStep.REVIEW
                 # Mark FILTERS step as completed
                 if WizardStep.FILTERS not in state.completed_steps:
-                    state.completed_steps[WizardStep.FILTERS] = f"{count} filters"
+                    state.completed_steps[WizardStep.FILTERS] = (
+                        f"{validated_count} filters"
+                    )
                 # Emit step summaries for the step indicator
                 for step, summary in state.completed_steps.items():
                     self._wizard_controller.step_summary_updated.emit(step, summary)
                 self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
             else:
-                self._wizard_controller.advance(summary=f"{count} filters")
+                self._wizard_controller.advance(summary=f"{validated_count} filters")
 
-            # Show success in status banner (delayed so finish_operation clear passes)
-            QTimer.singleShot(
-                150, lambda: self._status_banner.show_success(
-                    f"{count} filters loaded — ready for review"
+            # Show warnings or success in status banner
+            if all_warnings:
+                warning_text = " | ".join(all_warnings)
+                QTimer.singleShot(
+                    150, lambda: self._status_banner.show_info(
+                        warning_text, auto_dismiss=0
+                    )
                 )
-            )
+            else:
+                QTimer.singleShot(
+                    150, lambda: self._status_banner.show_success(
+                        f"{validated_count} filters loaded — ready for review"
+                    )
+                )
         else:
             QTimer.singleShot(
                 150, lambda: self._status_banner.show_info(
