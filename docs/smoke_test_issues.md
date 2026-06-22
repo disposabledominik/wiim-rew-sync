@@ -102,3 +102,11 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 89 | Cancel button invisible in dark theme (UnsavedChangesDialog) | FIXED | NO | — | Removed hardcoded inline styles from Cancel button; uses ghost class from QSS theme |
 | 90 | Settings screen paths not pre-populated; theme change + log buttons broken | FIXED | NO | — | _apply_settings now passes computed paths (get_log_dir, profile_repository.storage_root) when settings have empty defaults; theme wiring was already correct |
 | 91 | Onboarding overlay uses hardcoded COLORS_LIGHT; text clipped in dark mode | FIXED | NO | — | Overlay now detects active theme and uses COLORS_DARK/COLORS_LIGHT dynamically; added minHeight to labels to prevent clipping |
+
+| 92 | Pull from REW: L/R filters pushed to RoomFit profile result in empty/flat bands | OPEN | NO | — | Filters loaded correctly (11 after validation) but push may use PEQ path instead of RoomFit; diagnostic logging added — needs re-test to confirm flow_type at push time |
+| 93 | Pull from REW: subsequent pull after preset load uses stale filters from preset | OPEN | NO | — | state.current_filters not updated correctly when switching between sidebar sources; diagnostic logging added for post-mortem |
+| 94 | Connect step loses checkmark/context after RoomFit push via REW API | FIXED | NO | — | _mark_prior_steps_completed now explicitly marks CONNECT as completed when device is selected |
+| 95 | Pull from REW: Quick Setup dialog shown unnecessarily when already at Filters step | FIXED | NO | — | _ensure_wizard_state_for_load now checks if user is at/past FILTERS step and skips dialog; PEQ_ONLY flow no longer asks for EQ_TYPE |
+| 96 | Pull from REW: measurement picker not shown (REW returns dict-keyed response) | FIXED | NO | — | rew_http_client now handles dict-keyed measurement responses (keys "1", "2", ...) |
+| 97 | Pull from REW: "Unknown filter type 'None'" error from REW API filters | FIXED | NO | — | Unified _TYPE_MAP handles all REW filter types; None/Modal/AllPass/L-T skipped; gain field reads "gaindB" |
+| 98 | Push page shows stale DRY RUN content from previous dry run after real push | FIXED | NO | — | PushPage.reset() called on every PUSH step entry via _on_step_changed |
