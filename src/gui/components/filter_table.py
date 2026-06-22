@@ -95,25 +95,27 @@ class FilterTable(QWidget):
         self,
         left: list[CanonicalFilter],
         right: list[CanonicalFilter],
-        clamping_map: dict[int, list[str]] | None = None,
+        clamping_map_l: dict[int, list[str]] | None = None,
+        clamping_map_r: dict[int, list[str]] | None = None,
     ) -> None:
         """Display L/R channels as tabbed sections.
 
         Args:
             left: Filters for the left channel.
             right: Filters for the right channel.
-            clamping_map: Optional clamping map applied to both channels.
+            clamping_map_l: Optional clamping map for the left channel.
+            clamping_map_r: Optional clamping map for the right channel.
         """
         self._clear_widgets()
         tab_widget = QTabWidget(self._container)
         tab_widget.setObjectName("FilterTableTabs")
 
         left_table = self._create_table()
-        self._populate_table(left_table, left, clamping_map)
+        self._populate_table(left_table, left, clamping_map_l)
         tab_widget.addTab(left_table, "Left Channel")
 
         right_table = self._create_table()
-        self._populate_table(right_table, right, clamping_map)
+        self._populate_table(right_table, right, clamping_map_r)
         tab_widget.addTab(right_table, "Right Channel")
 
         self._container_layout.addWidget(tab_widget)
@@ -223,26 +225,38 @@ class FilterTable(QWidget):
 
             # Gain
             gain_text = self._format_gain(filt.gain_db)
-            if is_clamped:
-                reasons = clamping_map[row] if clamping_map else []
+            gain_clamped = False
+            if is_clamped and clamping_map is not None:
+                reasons = clamping_map[row]
+                gain_clamped = any("gain" in r.lower() for r in reasons)
+            if gain_clamped:
                 gain_text = f"\u25cf {gain_text}"  # Orange dot prefix
             gain_item = QTableWidgetItem(gain_text)
             gain_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
-            if is_clamped and clamping_map is not None:
-                reasons = clamping_map[row]
-                tooltip = "Clamped: " + "; ".join(reasons)
-                gain_item.setToolTip(tooltip)
+            if gain_clamped and clamping_map is not None:
+                gain_reasons = [r for r in clamping_map[row] if "gain" in r.lower()]
+                gain_item.setToolTip("Clamped: " + "; ".join(gain_reasons))
                 gain_item.setForeground(QColor(WARNING_COLOR))
             table.setItem(row, 3, gain_item)
 
             # Q factor
             q_text = f"{filt.q:.2f}"
+            q_clamped = False
+            if is_clamped and clamping_map is not None:
+                reasons = clamping_map[row]
+                q_clamped = any("q" in r.lower() for r in reasons)
+            if q_clamped:
+                q_text = f"\u25cf {q_text}"  # Orange dot prefix
             q_item = QTableWidgetItem(q_text)
             q_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
             )
+            if q_clamped and clamping_map is not None:
+                q_reasons = [r for r in clamping_map[row] if "q" in r.lower()]
+                q_item.setToolTip("Clamped: " + "; ".join(q_reasons))
+                q_item.setForeground(QColor(WARNING_COLOR))
             table.setItem(row, 4, q_item)
 
             # Disabled/OFF bands at reduced opacity

@@ -53,7 +53,9 @@ class TestStatusBanner:
         with qtbot.waitSignal(banner.dismissed, timeout=2000):
             pass
 
-        assert not banner.isVisible()
+        # Banner stays visible (reserves space) but enters idle state
+        assert banner.property("status") == "idle"
+        assert banner._message_label.text() == ""
 
     def test_show_error_persists(self, qtbot) -> None:
         """show_error keeps the banner visible (no auto-dismiss)."""
@@ -81,7 +83,7 @@ class TestStatusBanner:
         assert banner._message_label.text() == "Writing filters..."
 
     def test_clear_hides_and_emits_dismissed(self, qtbot) -> None:
-        """clear() hides the banner and emits the dismissed signal."""
+        """clear() resets the banner to idle and emits the dismissed signal."""
         banner = StatusBanner()
         qtbot.addWidget(banner)
 
@@ -91,10 +93,12 @@ class TestStatusBanner:
         with qtbot.waitSignal(banner.dismissed, timeout=1000):
             banner.clear()
 
-        assert not banner.isVisible()
+        # Banner stays visible (reserves space) but enters idle state
+        assert banner.property("status") == "idle"
+        assert banner._message_label.text() == ""
 
     def test_close_button_dismisses(self, qtbot) -> None:
-        """Clicking the close button hides the banner and emits dismissed."""
+        """Clicking the close button resets banner to idle and emits dismissed."""
         banner = StatusBanner()
         qtbot.addWidget(banner)
 
@@ -104,7 +108,9 @@ class TestStatusBanner:
         with qtbot.waitSignal(banner.dismissed, timeout=1000):
             qtbot.mouseClick(banner._close_button, Qt.MouseButton.LeftButton)
 
-        assert not banner.isVisible()
+        # Banner stays visible (reserves space) but enters idle state
+        assert banner.property("status") == "idle"
+        assert banner._message_label.text() == ""
 
 
 # ---------------------------------------------------------------------------
@@ -364,8 +370,8 @@ class TestFilterTable:
 
         assert table._tab_widget is not None
         assert table._tab_widget.count() == 2
-        assert table._tab_widget.tabText(0) == "L"
-        assert table._tab_widget.tabText(1) == "R"
+        assert table._tab_widget.tabText(0) == "Left Channel"
+        assert table._tab_widget.tabText(1) == "Right Channel"
 
     def test_comparison_highlights_changes(self, qtbot) -> None:
         """set_comparison highlights rows where filters differ."""

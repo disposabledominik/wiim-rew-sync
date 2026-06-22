@@ -78,16 +78,18 @@ class ReviewPage(QWidget):
         self,
         left: list[CanonicalFilter],
         right: list[CanonicalFilter],
-        clamping_map: dict[int, list[str]] | None = None,
+        clamping_map_l: dict[int, list[str]] | None = None,
+        clamping_map_r: dict[int, list[str]] | None = None,
     ) -> None:
         """Pass L/R filters through to the FilterTable.
 
         Args:
             left: Filters for the left channel.
             right: Filters for the right channel.
-            clamping_map: Optional clamping map applied to both channels.
+            clamping_map_l: Optional clamping map for the left channel.
+            clamping_map_r: Optional clamping map for the right channel.
         """
-        self._filter_table.set_lr_filters(left, right, clamping_map)
+        self._filter_table.set_lr_filters(left, right, clamping_map_l, clamping_map_r)
 
     def set_summary(
         self,

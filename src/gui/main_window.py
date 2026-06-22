@@ -1237,7 +1237,7 @@ class MainWindow(QMainWindow):
             bands_l = getattr(peq_data, "bands_l", None)
             bands_r = getattr(peq_data, "bands_r", None)
 
-            if peq_channel == "lr" and bands_l and bands_r:
+            if peq_channel == "lr" and bands_l is not None and bands_r is not None:
                 # Update wizard state to reflect actual L/R mode from device
                 state.channel_mode = "L/R"
                 channel = "L/R"
@@ -1246,7 +1246,7 @@ class MainWindow(QMainWindow):
                 validated_l, warnings_l, clamping_l = validate_filters_for_device(
                     list(bands_l), max_filters
                 )
-                validated_r, warnings_r, _clamping_r = validate_filters_for_device(
+                validated_r, warnings_r, clamping_r = validate_filters_for_device(
                     list(bands_r), max_filters
                 )
 
@@ -1256,19 +1256,23 @@ class MainWindow(QMainWindow):
                 # Update state with truncated filters
                 state.current_filters = validated_l + validated_r
 
-                self._review_page.set_lr_filters(validated_l, validated_r, clamping_l)
+                self._review_page.set_lr_filters(
+                    validated_l, validated_r, clamping_l, clamping_r
+                )
             elif is_lr_mode(channel):
                 # Fallback: split combined list evenly, then validate each half
                 left, right = split_lr_filters(filters)
                 validated_l, warnings_l, clamping_l = validate_filters_for_device(
                     left, max_filters
                 )
-                validated_r, warnings_r, _clamping_r = validate_filters_for_device(
+                validated_r, warnings_r, clamping_r = validate_filters_for_device(
                     right, max_filters
                 )
                 all_warnings = warnings_l + warnings_r
                 state.current_filters = validated_l + validated_r
-                self._review_page.set_lr_filters(validated_l, validated_r, clamping_l)
+                self._review_page.set_lr_filters(
+                    validated_l, validated_r, clamping_l, clamping_r
+                )
             else:
                 # Stereo: validate the full list
                 validated, all_warnings, clamping_map = validate_filters_for_device(
@@ -1359,7 +1363,7 @@ class MainWindow(QMainWindow):
                 self._push_page._undo_button.setVisible(False)
             self._status_banner.show_success("Filters pushed successfully")
         else:
-            error_msg = getattr(result, "error", "Unknown error")
+            error_msg = getattr(result, "error_message", None) or "Unknown error"
             critical = getattr(result, "critical", False)
             self._push_page.set_failure(error_msg, backup_path, critical)
             self._status_banner.show_error(f"Push failed: {error_msg}")
