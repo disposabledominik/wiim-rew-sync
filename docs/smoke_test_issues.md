@@ -30,6 +30,10 @@ Tracks issues found during manual smoke testing of the GUI integration.
 | 17 | Home button appears to do nothing | WONTFIX | N/A | — | Working as designed: "home" = return to current wizard step. If already there, no visible change. |
 | 18 | App crashes on startup: `ProfileRepository` has no `storage_root` attribute | FIXED | YES | `ae787c2` | Added `storage_root` property to expose `_profiles_dir.parent` |
 | 19 | Theme setting has no effect in compiled app (always dark) | FIXED | N/A | `ae787c2` | QSS stylesheets not bundled in PyInstaller spec; added to `datas_list` in all platform specs |
+| 20 | Light theme shows black backgrounds with dark text (unreadable) | FIXED | N/A | — | QWidget `background-color: transparent` rendered as black on Windows; changed to explicit bg color |
+| 21 | Status banner causes layout jumps (appears/disappears) | FIXED | YES | — | Banner now always reserves space (fixedHeight); uses idle state with transparent styling when empty |
+| 22 | Dry Run badge causes layout jitter on toggle | FIXED | YES | — | Badge always reserves space; uses transparent colors to hide instead of setVisible(false) |
+| 23 | L/R filter tabs show "L" / "R" instead of full channel names | FIXED | YES | — | Changed to "Left Channel" / "Right Channel" for readability |
 | 18 | Filter table too narrow (400px cap), only 3 columns visible | FIXED | N/A | `791f04a`, `5f355b5` | Removed max-width/centering, columns now stretch to fill available width |
 | 19 | RoomFit mode: FiltersPage shows PEQ options instead of RoomFit UI | FIXED | YES | `5f355b5` | _on_eq_type_selected now calls set_roomfit_mode(True/False) |
 | 20 | Presets on Device view shows nothing when navigated to | FIXED | YES | `5f355b5` | Added _load_device_presets() trigger on navigation + _do_list_presets async |

@@ -20,10 +20,17 @@ QMainWindow {
 }
 
 QWidget {
-    background-color: transparent;
+    background-color: #F5F5F5;
     color: #1A1A1A;
     font-family: "Segoe UI Variable", "Segoe UI", "SF Pro", system-ui, sans-serif;
     font-size: 14px;
+}
+
+/* Containers that must be transparent to let parent background show through */
+QStackedWidget,
+QScrollArea > QWidget > QWidget,
+QTabWidget::pane > QWidget {
+    background-color: transparent;
 }
 
 
@@ -855,4 +862,33 @@ QSplitter::handle:vertical {
 
 QSplitter::handle:hover {
     background-color: #00B4D8;
+}
+
+/* --------------------------------------------------------------------------
+   Status Colors (custom properties for StatusBanner)
+   -------------------------------------------------------------------------- */
+
+QFrame[status="idle"] {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame[status="info"] {
+    background-color: #E6F8FC;
+    border-left: 3px solid #00B4D8;
+}
+
+QFrame[status="success"] {
+    background-color: #E8F5E9;
+    border-left: 3px solid #2E7D32;
+}
+
+QFrame[status="error"] {
+    background-color: #FFEBEE;
+    border-left: 3px solid #C62828;
+}
+
+QFrame[status="warning"] {
+    background-color: #FFF3E0;
+    border-left: 3px solid #F57C00;
 }

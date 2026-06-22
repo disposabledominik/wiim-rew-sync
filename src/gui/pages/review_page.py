@@ -146,18 +146,18 @@ class ReviewPage(QWidget):
         self._summary_label.setStyleSheet("font-size: 13px; color: #616161;")
         content_layout.addWidget(self._summary_label)
 
-        # Dry Run badge (accent-colored pill, hidden by default)
+        # Dry Run badge (accent-colored pill, always reserves space)
         self._dry_run_badge = QLabel("DRY RUN", content_wrapper)
         self._dry_run_badge.setObjectName("ReviewPageDryRunBadge")
-        self._dry_run_badge.setStyleSheet(
-            f"background-color: {ACCENT_COLOR}; color: #FFFFFF; "
-            f"border-radius: 10px; padding: 2px 10px; font-size: 11px; "
-            f"font-weight: 600;"
-        )
         self._dry_run_badge.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )
-        self._dry_run_badge.setVisible(False)
+        # Start hidden visually (transparent) but still taking up layout space
+        self._dry_run_badge.setStyleSheet(
+            "background-color: transparent; color: transparent; "
+            "border-radius: 10px; padding: 2px 10px; font-size: 11px; "
+            "font-weight: 600;"
+        )
         content_layout.addWidget(self._dry_run_badge)
 
         # FilterTable (centered, ~400px max)
@@ -219,10 +219,18 @@ class ReviewPage(QWidget):
         """Sync UI elements with current dry run state."""
         if self._dry_run:
             self._push_button.setText("Preview Only")
-            self._dry_run_badge.setVisible(True)
+            self._dry_run_badge.setStyleSheet(
+                f"background-color: {ACCENT_COLOR}; color: #FFFFFF; "
+                f"border-radius: 10px; padding: 2px 10px; font-size: 11px; "
+                f"font-weight: 600;"
+            )
         else:
             self._push_button.setText("Push to Device")
-            self._dry_run_badge.setVisible(False)
+            self._dry_run_badge.setStyleSheet(
+                "background-color: transparent; color: transparent; "
+                "border-radius: 10px; padding: 2px 10px; font-size: 11px; "
+                "font-weight: 600;"
+            )
 
     @Slot(bool)
     def _on_dry_run_toggled(self, checked: bool) -> None:

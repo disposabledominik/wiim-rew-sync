@@ -40,8 +40,10 @@ class StatusBanner(QFrame):
         super().__init__(parent)
         self.setObjectName("StatusBanner")
         self.setFixedHeight(STATUS_BANNER_HEIGHT)
-        self.setProperty("status", "info")
-        self.setVisible(False)
+        self.setProperty("status", "idle")
+
+        # Always visible to reserve layout space; content hidden when idle.
+        self.setVisible(True)
 
         # --- Layout -----------------------------------------------------------
         layout = QHBoxLayout(self)
@@ -57,8 +59,12 @@ class StatusBanner(QFrame):
         self._progress_bar.setVisible(False)
         layout.addWidget(self._progress_bar)
 
-        # Message label
+        # Message label — larger, bolder for prominence
         self._message_label = QLabel(self)
+        self._message_label.setObjectName("StatusBannerMessage")
+        self._message_label.setStyleSheet(
+            "font-size: 14px; font-weight: 600; padding: 0px;"
+        )
         self._message_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
@@ -71,7 +77,11 @@ class StatusBanner(QFrame):
         self._close_button.setFlat(True)
         self._close_button.setToolTip("Dismiss")
         self._close_button.clicked.connect(self._on_close_clicked)
+        self._close_button.setVisible(False)
         layout.addWidget(self._close_button)
+
+        # Start in idle (empty) state
+        self._set_idle()
 
         # --- Auto-dismiss timer -----------------------------------------------
         self._auto_dismiss_timer = QTimer(self)
@@ -131,9 +141,9 @@ class StatusBanner(QFrame):
         )
 
     def clear(self) -> None:
-        """Hide the banner and emit the dismissed signal."""
+        """Reset the banner to idle (empty) state and emit the dismissed signal."""
         self._auto_dismiss_timer.stop()
-        self.setVisible(False)
+        self._set_idle()
         self.dismissed.emit()
 
     def is_progress(self) -> bool:
@@ -142,7 +152,7 @@ class StatusBanner(QFrame):
         Used by OperationFeedbackManager to decide whether finish_operation
         should clear the banner (only clears progress, not result messages).
         """
-        return self.isVisible() and self._progress_bar.isVisible()
+        return self._progress_bar.isVisible()
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -175,12 +185,22 @@ class StatusBanner(QFrame):
         self.style().polish(self)
 
         self._message_label.setText(message)
+        self._message_label.setVisible(True)
         self._progress_bar.setVisible(show_progress)
         self._close_button.setVisible(dismissible)
-        self.setVisible(True)
 
         if auto_dismiss_ms > 0:
             self._auto_dismiss_timer.start(auto_dismiss_ms)
+
+    def _set_idle(self) -> None:
+        """Reset banner to idle (reserved space, no content visible)."""
+        self.setProperty("status", "idle")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self._message_label.setText("")
+        self._message_label.setVisible(False)
+        self._progress_bar.setVisible(False)
+        self._close_button.setVisible(False)
 
     def _on_close_clicked(self) -> None:
         """Handle close button click."""

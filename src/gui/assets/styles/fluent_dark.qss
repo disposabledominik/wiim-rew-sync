@@ -39,8 +39,15 @@ QMainWindow {
    --------------------------------------------------------------------------- */
 
 QWidget {
-    background-color: transparent;
+    background-color: #1E1E1E;
     color: #F5F5F5;
+}
+
+/* Containers that must be transparent to let parent background show through */
+QStackedWidget,
+QScrollArea > QWidget > QWidget,
+QTabWidget::pane > QWidget {
+    background-color: transparent;
 }
 
 /* ---------------------------------------------------------------------------
@@ -761,6 +768,11 @@ QFrame[class="card"]:hover {
 /* ---------------------------------------------------------------------------
    Status Colors (custom properties for StatusBanner)
    --------------------------------------------------------------------------- */
+
+QFrame[status="idle"] {
+    background-color: transparent;
+    border: none;
+}
 
 QFrame[status="info"] {
     background-color: #2D2D2D;

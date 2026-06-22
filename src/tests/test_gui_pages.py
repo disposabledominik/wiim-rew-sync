@@ -280,7 +280,7 @@ class TestReviewPage:
         assert "wifi" in text
 
     def test_dry_run_toggle_changes_button(self, qtbot) -> None:
-        """Toggling dry run changes the push button text."""
+        """Toggling dry run changes the push button text and badge appearance."""
         page = ReviewPage()
         qtbot.addWidget(page)
         page.show()
@@ -288,12 +288,14 @@ class TestReviewPage:
         page.set_dry_run(True)
 
         assert page._push_button.text() == "Preview Only"
-        assert page._dry_run_badge.isVisible()
+        # Badge uses colored background when active (not transparent)
+        assert "transparent" not in page._dry_run_badge.styleSheet().split("background-color:")[1].split(";")[0]
 
         page.set_dry_run(False)
 
         assert page._push_button.text() == "Push to Device"
-        assert not page._dry_run_badge.isVisible()
+        # Badge uses transparent background when inactive (hidden visually)
+        assert "transparent" in page._dry_run_badge.styleSheet()
 
     def test_push_signal_emitted(self, qtbot) -> None:
         """Clicking push button emits push_requested."""

@@ -110,11 +110,11 @@ class FilterTable(QWidget):
 
         left_table = self._create_table()
         self._populate_table(left_table, left, clamping_map)
-        tab_widget.addTab(left_table, "L")
+        tab_widget.addTab(left_table, "Left Channel")
 
         right_table = self._create_table()
         self._populate_table(right_table, right, clamping_map)
-        tab_widget.addTab(right_table, "R")
+        tab_widget.addTab(right_table, "Right Channel")
 
         self._container_layout.addWidget(tab_widget)
         self._tab_widget = tab_widget
