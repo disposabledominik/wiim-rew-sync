@@ -77,7 +77,7 @@ async def test_list_measurements_connection_refused_raises_rew_not_connected(
         side_effect=httpx.ConnectError("Connection refused")
     )
 
-    with pytest.raises(REWNotConnectedError, match="Cannot connect to REW API"):
+    with pytest.raises(REWNotConnectedError, match="REW is not connected"):
         await client.list_measurements()
 
 
@@ -141,7 +141,7 @@ async def test_get_filters_connection_refused_raises_rew_not_connected(
         side_effect=httpx.ConnectError("Connection refused")
     )
 
-    with pytest.raises(REWNotConnectedError, match="Cannot connect to REW API"):
+    with pytest.raises(REWNotConnectedError, match="REW is not connected"):
         await client.get_filters(uuid)
 
 

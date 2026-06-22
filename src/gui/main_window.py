@@ -1305,7 +1305,12 @@ class MainWindow(QMainWindow):
                 )
             )
 
-        logger.info("PEQ data ready: %d filters", count)
+        logger.info(
+            "PEQ data ready: %d raw filters, %d after validation, channel=%s",
+            count,
+            len(self._wizard_controller.state.current_filters),
+            self._wizard_controller.state.channel_mode,
+        )
 
     @Slot(object)
     def _on_write_complete(self, result: object) -> None:
@@ -2167,6 +2172,11 @@ class MainWindow(QMainWindow):
         filters = state.current_filters
         channel_mode = state.channel_mode.lower()
         flow_type = self._wizard_controller.flow_type
+
+        logger.info(
+            "Push initiated: flow=%s, channel=%s, filters=%d, source=%s",
+            flow_type.value, channel_mode, len(filters), source_names_raw,
+        )
 
         # Parse comma-separated sources into a list
         source_list = [s.strip() for s in source_names_raw.split(",") if s.strip()]
@@ -3417,7 +3427,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _mark_prior_steps_completed(self, state: object) -> None:
-        """Mark EQ_TYPE, SOURCE, FILTERS steps as completed if not already.
+        """Mark CONNECT, EQ_TYPE, SOURCE, FILTERS steps as completed if not already.
 
         Called when all info is already present so the step indicator shows
         proper checkmarks when navigating to Review from sidebar.
@@ -3426,6 +3436,10 @@ class MainWindow(QMainWindow):
 
         assert isinstance(state, WizardState)
         flow_type = self._wizard_controller.flow_type
+
+        # CONNECT step — always mark if device is selected
+        if WizardStep.CONNECT not in state.completed_steps and state.selected_device:
+            state.completed_steps[WizardStep.CONNECT] = "Connected"
 
         # EQ_TYPE step — only exists in PEQ and ROOMFIT flows (not PEQ_ONLY)
         if flow_type == FlowType.PEQ and WizardStep.EQ_TYPE not in state.completed_steps:

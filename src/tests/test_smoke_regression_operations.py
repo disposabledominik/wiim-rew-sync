@@ -290,7 +290,9 @@ class TestImportExport:
 
         with patch.object(window._review_page, "set_lr_filters") as mock_lr:
             window._on_peq_ready(peq_data)
-            mock_lr.assert_called_once_with(list(filters_l), list(filters_r))
+            # validate_filters_for_device returns (filters, warnings, clamping_map)
+            # For in-range filters, clamping_map is empty dict {}
+            mock_lr.assert_called_once_with(list(filters_l), list(filters_r), {})
 
     # --- Issue #29: Export branches on channel_mode for L/R ---
 

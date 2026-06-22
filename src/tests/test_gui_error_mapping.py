@@ -60,7 +60,10 @@ def window(qtbot):
 KNOWN_EXCEPTION_MAP: dict[type[Exception], str] = {
     WiiMTimeoutError: "Device not responding",
     WiiMConnectionError: "Could not reach device",
-    REWNotConnectedError: "REW is not connected",
+    REWNotConnectedError: (
+        "REW is not connected. Please ensure REW is running and "
+        "its HTTP API is enabled (localhost:4735)."
+    ),
     FileNotFoundError: "File not found",
     PermissionError: "Permission denied",
     OSError: "File could not be written",
