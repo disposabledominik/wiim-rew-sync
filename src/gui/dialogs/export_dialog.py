@@ -32,16 +32,19 @@ class ExportDialog(QDialog):
     def __init__(
         self,
         channel_mode: str = "stereo",
+        default_name: str = "",
         parent: QWidget | None = None,
     ) -> None:
         """Initialize the export dialog.
 
         Args:
             channel_mode: Either "stereo" (single file) or "lr" (two files).
+            default_name: Optional default filename (without extension/suffix).
             parent: Optional parent widget.
         """
         super().__init__(parent)
         self._channel_mode = channel_mode
+        self._default_name = default_name
         self._export_path: Path | None = None
         self._export_path_l: Path | None = None
         self._export_path_r: Path | None = None
@@ -71,6 +74,10 @@ class ExportDialog(QDialog):
         self._button_box.accepted.connect(self._on_accept)
         self._button_box.rejected.connect(self.reject)
         layout.addWidget(self._button_box)
+
+        # Enable Export button if paths were pre-filled by default_name
+        if self._default_name:
+            self._update_export_button()
 
     def _setup_stereo_ui(self, layout: QVBoxLayout) -> None:
         """Set up UI for stereo mode (single path)."""
@@ -122,6 +129,16 @@ class ExportDialog(QDialog):
         row_r.addWidget(browse_r_btn)
 
         layout.addLayout(row_r)
+
+        # Pre-fill paths from default_name if provided
+        if self._default_name:
+            default_dir = Path.home()
+            left_path = default_dir / f"{self._default_name}_L.txt"
+            right_path = default_dir / f"{self._default_name}_R.txt"
+            self._left_path_edit.setText(str(left_path))
+            self._right_path_edit.setText(str(right_path))
+            self._export_path_l = left_path
+            self._export_path_r = right_path
 
     def _browse_stereo(self) -> None:
         """Open a save file dialog for stereo export."""
@@ -220,6 +237,7 @@ class ExportDialog(QDialog):
     @staticmethod
     def get_paths(
         channel_mode: str = "stereo",
+        default_name: str = "",
         parent: QWidget | None = None,
     ) -> Path | tuple[Path, Path] | None:
         """Show dialog and return export path(s), or None if cancelled.
@@ -228,11 +246,14 @@ class ExportDialog(QDialog):
 
         Args:
             channel_mode: Either "stereo" or "lr".
+            default_name: Optional default filename (without extension/suffix).
             parent: Optional parent widget.
 
         Returns:
             Path (stereo), tuple[Path, Path] (L/R), or None if cancelled.
         """
-        dialog = ExportDialog(channel_mode=channel_mode, parent=parent)
+        dialog = ExportDialog(
+            channel_mode=channel_mode, default_name=default_name, parent=parent
+        )
         dialog.exec()
         return dialog.get_export_paths()

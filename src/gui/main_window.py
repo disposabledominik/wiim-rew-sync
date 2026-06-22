@@ -1477,7 +1477,19 @@ class MainWindow(QMainWindow):
             # L/R mode: use ExportDialog for dual-file selection
             from src.gui.dialogs.export_dialog import ExportDialog
 
-            paths = ExportDialog.get_paths(channel_mode="lr", parent=self)
+            # Build a default filename from device name + source
+            state = self._wizard_controller.state
+            device_name = "WiiM"
+            for d in self._discovered_devices:
+                if d.ip == state.selected_device:
+                    device_name = d.name
+                    break
+            source = state.selected_source or "wifi"
+            default_name = f"{device_name} - {source}"
+
+            paths = ExportDialog.get_paths(
+                channel_mode="lr", default_name=default_name, parent=self
+            )
             if paths is None:
                 logger.debug("L/R export cancelled by user")
                 return
@@ -2397,6 +2409,11 @@ class MainWindow(QMainWindow):
             self._on_step_changed(self._wizard_controller.current_step)
             return
 
+        if view_key == "rew_api":
+            # REW API pull — trigger measurement listing workflow
+            self._on_rew_pull_requested()
+            return
+
         if view_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[view_key])
 
@@ -2406,6 +2423,27 @@ class MainWindow(QMainWindow):
         elif view_key == "my_presets":
             # Refresh local presets from repository (smoke #31)
             self._refresh_presets_view()
+
+    def _on_rew_pull_requested(self) -> None:
+        """Handle sidebar 'Pull from REW' click — check availability and start workflow.
+
+        If REW HTTP API is reachable, initiates measurement listing.
+        If not, shows an instructional message on how to enable it.
+        Requires wizard state to be ready for loading (device connected, etc.).
+        """
+        if self._is_busy():
+            return
+
+        # Ensure wizard state is complete enough to load filters
+        if not self._ensure_wizard_state_for_load():
+            return
+
+        # Set flag so _on_peq_ready navigates directly to Review
+        self._sidebar_load_in_progress = True
+        self._status_banner.show_progress("Connecting to REW...")
+        self._bridge.run_async(
+            self._bridge_wrapper("rew_list", self._do_rew_list_measurements())
+        )
 
     # ------------------------------------------------------------------
     # Settings Wiring
@@ -2946,7 +2984,9 @@ class MainWindow(QMainWindow):
         if is_lr_mode(channel_mode):
             from src.gui.dialogs.export_dialog import ExportDialog
 
-            paths = ExportDialog.get_paths(channel_mode="lr", parent=self)
+            paths = ExportDialog.get_paths(
+                channel_mode="lr", default_name=preset_name, parent=self
+            )
             if paths is None:
                 logger.debug("L/R preset export cancelled")
                 return

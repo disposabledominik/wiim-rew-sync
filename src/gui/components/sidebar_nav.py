@@ -107,6 +107,7 @@ class SidebarNav(QWidget):
         ("home", "Back", "\u2190"),
         ("presets_device", "Presets on Device", "\U0001F3B6"),
         ("my_presets", "My Saved Presets", "\U0001F4BE"),
+        ("rew_api", "Pull from REW", "\U0001F4C8"),
         ("settings", "Settings", "\u2699"),
         ("help", "Help", "\u2753"),
     )

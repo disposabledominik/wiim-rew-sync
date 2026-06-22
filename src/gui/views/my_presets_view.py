@@ -207,7 +207,11 @@ class MyPresetsView(QWidget):
         toolbar_layout.addWidget(self._delete_btn)
 
         toolbar_layout.addStretch()
-        self._toolbar.setVisible(False)
+        self._toolbar.setVisible(True)
+        self._load_btn.setEnabled(False)
+        self._rename_btn.setEnabled(False)
+        self._duplicate_btn.setEnabled(False)
+        self._delete_btn.setEnabled(False)
         content_layout.addWidget(self._toolbar)
 
         # Preset list
@@ -301,6 +305,11 @@ class MyPresetsView(QWidget):
         self._rename_item = item
         profile: Profile = item.data(Qt.ItemDataRole.UserRole)
 
+        # Hide the item widget to prevent text overlap
+        item_widget = self._list_widget.itemWidget(item)
+        if item_widget:
+            item_widget.setVisible(False)
+
         # Position the editor over the item
         rect = self._list_widget.visualItemRect(item)
         self._rename_editor.setGeometry(rect)
@@ -315,6 +324,11 @@ class MyPresetsView(QWidget):
             self._rename_editor.setVisible(False)
             return
 
+        # Restore item widget visibility
+        item_widget = self._list_widget.itemWidget(self._rename_item)
+        if item_widget:
+            item_widget.setVisible(True)
+
         profile: Profile = self._rename_item.data(Qt.ItemDataRole.UserRole)
         new_name = self._rename_editor.text().strip()
         old_name = profile.name
@@ -327,6 +341,11 @@ class MyPresetsView(QWidget):
 
     def _cancel_rename(self) -> None:
         """Cancel any in-progress rename operation."""
+        # Restore item widget visibility if renaming was in progress
+        if self._rename_item is not None:
+            item_widget = self._list_widget.itemWidget(self._rename_item)
+            if item_widget:
+                item_widget.setVisible(True)
         self._rename_editor.setVisible(False)
         self._rename_item = None
 
@@ -374,8 +393,12 @@ class MyPresetsView(QWidget):
     # ------------------------------------------------------------------
 
     def _on_selection_changed(self, current: QListWidgetItem | None, _prev: object) -> None:
-        """Show toolbar when an item is selected, hide when deselected."""
-        self._toolbar.setVisible(current is not None)
+        """Enable/disable toolbar buttons based on selection state."""
+        has_selection = current is not None
+        self._load_btn.setEnabled(has_selection)
+        self._rename_btn.setEnabled(has_selection)
+        self._duplicate_btn.setEnabled(has_selection)
+        self._delete_btn.setEnabled(has_selection)
 
     def _get_selected_profile(self) -> Profile | None:
         """Return the currently selected Profile, or None."""
