@@ -12,7 +12,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtWidgets import QPushButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 if TYPE_CHECKING:
     from src.gui.components.status_banner import StatusBanner
@@ -184,7 +184,9 @@ class OperationFeedbackManager(QObject):
         layout = self._status_banner.layout()
         if layout is not None and self._cancel_button.parent() is None:
             # Insert at position before last widget (close button)
-            layout.insertWidget(layout.count() - 1, self._cancel_button)
+            hbox = layout if isinstance(layout, QHBoxLayout) else None
+            if hbox is not None:
+                hbox.insertWidget(hbox.count() - 1, self._cancel_button)
 
         self._cancel_button.setVisible(True)
 

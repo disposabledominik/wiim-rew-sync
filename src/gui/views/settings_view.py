@@ -117,8 +117,10 @@ class SettingsView(QWidget):
         # Clear existing items
         while self._log_list_layout.count():
             item = self._log_list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item is not None:
+                w = item.widget()
+                if w is not None:
+                    w.deleteLater()
 
         for log_info in log_files:
             row = QWidget(self._log_list_widget)
@@ -535,7 +537,7 @@ class SettingsView(QWidget):
         """Open a folder in the OS file explorer."""
         system = sys.platform
         if system == "win32":
-            os.startfile(path)  # noqa: S606
+            os.startfile(path)  # type: ignore[attr-defined]  # noqa: S606
         elif system == "darwin":
             subprocess.Popen(["/usr/bin/open", path])  # noqa: S603
         else:

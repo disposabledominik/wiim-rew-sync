@@ -310,10 +310,16 @@ class TestFilterTable:
         assert table._table is not None
         assert table._table.rowCount() == 3
         # Band column shows 1-based index
-        assert table._table.item(0, 0).text() == "1"
+        item_0_0 = table._table.item(0, 0)
+        assert item_0_0 is not None
+        assert item_0_0.text() == "1"
         # Type column
-        assert table._table.item(0, 1).text() == "PK"
-        assert table._table.item(1, 1).text() == "LS"
+        item_0_1 = table._table.item(0, 1)
+        assert item_0_1 is not None
+        assert item_0_1.text() == "PK"
+        item_1_1 = table._table.item(1, 1)
+        assert item_1_1 is not None
+        assert item_1_1.text() == "LS"
 
     def test_clamping_indicator_shown(self, qtbot) -> None:
         """Clamped bands show an orange dot prefix in the gain column."""
@@ -324,7 +330,9 @@ class TestFilterTable:
         clamping_map = {0: ["gain exceeds +6 dB limit"]}
         table.set_filters(filters, clamping_map=clamping_map)
 
+        assert table._table is not None
         gain_item = table._table.item(0, 3)
+        assert gain_item is not None
         # Should start with the orange dot character
         assert gain_item.text().startswith("\u25cf")
         assert gain_item.toolTip() == "Clamped: gain exceeds +6 dB limit"
@@ -338,7 +346,9 @@ class TestFilterTable:
         table.set_filters(filters)
 
         # Row 2 is OFF - check that alpha is reduced
+        assert table._table is not None
         item = table._table.item(2, 1)
+        assert item is not None
         color = item.foreground().color()
         assert color.alphaF() < 1.0
 
@@ -370,6 +380,7 @@ class TestFilterTable:
         assert table._table is not None
         # Changed row should have a background color set (accent highlight)
         item = table._table.item(0, 0)
+        assert item is not None
         bg = item.background().color()
         assert bg.alpha() > 0  # Highlight applied
 

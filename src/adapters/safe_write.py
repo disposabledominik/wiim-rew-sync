@@ -36,7 +36,7 @@ class WriteResult:
 
     success: bool
     rollback_success: bool | None = None  # None if no rollback needed
-    backup_path: Path | None = None
+    backup_path: Path | str | None = None
     error_message: str | None = None
 
 

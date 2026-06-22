@@ -825,7 +825,7 @@ class TestSettingsUIState:
 
     def test_issue70_parse_backup_empty(self) -> None:
         """#70: parse_backup_filters handles empty backup gracefully."""
-        backup = {}
+        backup: dict[str, object] = {}
         filters, mode = parse_backup_filters(backup)
         assert mode == "stereo"
         assert filters == []

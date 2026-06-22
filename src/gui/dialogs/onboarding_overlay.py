@@ -194,7 +194,7 @@ class OnboardingOverlay(QWidget):
             "font-weight: 600;"
             "padding: 8px 24px;"
         )
-        get_started_btn.mousePressEvent = lambda _event: self._on_get_started()
+        get_started_btn.mousePressEvent = lambda _event: self._on_get_started()  # type: ignore[method-assign]
         buttons_layout.addWidget(get_started_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
         # Skip link (ghost/text)
@@ -210,7 +210,7 @@ class OnboardingOverlay(QWidget):
             "background: transparent;"
             "padding: 4px;"
         )
-        skip_link.mousePressEvent = lambda _event: self._on_skip()
+        skip_link.mousePressEvent = lambda _event: self._on_skip()  # type: ignore[method-assign]
         buttons_layout.addWidget(skip_link, 0, Qt.AlignmentFlag.AlignCenter)
 
         card_layout.addWidget(buttons_area)

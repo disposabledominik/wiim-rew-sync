@@ -13,7 +13,7 @@ Requirements referenced: 8.3, 8.4, 10.9.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QAction, QMouseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -334,9 +334,9 @@ class MyPresetsView(QWidget):
     # Context menu
     # ------------------------------------------------------------------
 
-    def _show_context_menu(self, position: object) -> None:
+    def _show_context_menu(self, position: QPoint) -> None:
         """Show right-click context menu for the item at position."""
-        item = self._list_widget.itemAt(position)  # type: ignore[arg-type]
+        item = self._list_widget.itemAt(position)
         if item is None:
             return
 
@@ -367,7 +367,7 @@ class MyPresetsView(QWidget):
         delete_action.triggered.connect(lambda: self.delete_requested.emit(profile.name))
         menu.addAction(delete_action)
 
-        menu.exec(self._list_widget.viewport().mapToGlobal(position))  # type: ignore[arg-type]
+        menu.exec(self._list_widget.viewport().mapToGlobal(position))
 
     # ------------------------------------------------------------------
     # Toolbar button handlers
@@ -382,7 +382,7 @@ class MyPresetsView(QWidget):
         item = self._list_widget.currentItem()
         if item is None:
             return None
-        return item.data(Qt.ItemDataRole.UserRole)
+        return item.data(Qt.ItemDataRole.UserRole)  # type: ignore[no-any-return]
 
     def _on_load_clicked(self) -> None:
         """Handle Load button click."""

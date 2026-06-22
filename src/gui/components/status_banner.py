@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QWidget,
 )
 
 from src.gui.constants import AUTO_DISMISS_MS, STATUS_BANNER_HEIGHT
@@ -35,7 +36,7 @@ class StatusBanner(QFrame):
 
     dismissed = Signal()
 
-    def __init__(self, parent: object = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("StatusBanner")
         self.setFixedHeight(STATUS_BANNER_HEIGHT)

@@ -87,7 +87,7 @@ class MeasurementPickerDialog(QDialog):
         items = self._list_widget.selectedItems()
         if not items:
             return None
-        return items[0].data(Qt.ItemDataRole.UserRole)  # type: ignore[return-value]
+        return items[0].data(Qt.ItemDataRole.UserRole)  # type: ignore[no-any-return]
 
     def accept(self) -> None:
         """Validate that a measurement is selected before accepting."""

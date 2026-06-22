@@ -8,6 +8,8 @@ Requirements referenced: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6.
 
 from __future__ import annotations
 
+from typing import Any
+
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QLabel,
@@ -72,7 +74,7 @@ class ConnectPage(QWidget):
             self._devices_scroll.setVisible(False)
             self._empty_widget.setVisible(False)
 
-    def set_devices(self, devices: list[dict]) -> None:
+    def set_devices(self, devices: list[dict[str, Any]]) -> None:
         """Populate the page with discovered device cards (replaces all current cards).
 
         Each dict should have keys: name, model, ip, firmware, role.
@@ -103,7 +105,7 @@ class ConnectPage(QWidget):
             if ip:
                 self.device_selected.emit(ip)
 
-    def update_devices(self, devices: list[dict]) -> None:
+    def update_devices(self, devices: list[dict[str, Any]]) -> None:
         """Progressively update device cards (add new ones, keep existing).
 
         Called during progressive discovery — adds cards for newly-discovered
@@ -288,7 +290,7 @@ class ConnectPage(QWidget):
             card.deleteLater()
         self._device_cards.clear()
 
-    def _add_device_card(self, device: dict) -> None:
+    def _add_device_card(self, device: dict[str, Any]) -> None:
         """Create and add a single device card to the layout."""
         card = DeviceCard(self._devices_container)
         card.set_device_info(

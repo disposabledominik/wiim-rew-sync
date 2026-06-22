@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QPushButton
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QPushButton, QWidget
 
 from src.gui.dialogs.push_confirmation import PushConfirmation
 
@@ -65,7 +65,7 @@ class TestPushConfirmation:
         qtbot.addWidget(dialog)
 
         # Find by object name - widget exists and is not explicitly hidden
-        dry_run_label = dialog.findChild(object, "dry_run_badge")
+        dry_run_label = dialog.findChild(QWidget, "dry_run_badge")
         assert dry_run_label is not None
         assert not dry_run_label.isHidden()
 
@@ -76,7 +76,7 @@ class TestPushConfirmation:
         )
         qtbot.addWidget(dialog)
 
-        dry_run_label = dialog.findChild(object, "dry_run_badge")
+        dry_run_label = dialog.findChild(QWidget, "dry_run_badge")
         assert dry_run_label is None
 
     def test_clamping_summary_shown(self, qtbot) -> None:
@@ -92,7 +92,7 @@ class TestPushConfirmation:
         )
         qtbot.addWidget(dialog)
 
-        clamping_label = dialog.findChild(object, "clamping_summary_label")
+        clamping_label = dialog.findChild(QLabel, "clamping_summary_label")
         assert clamping_label is not None
         assert "Band 3" in clamping_label.text()
 
@@ -103,7 +103,7 @@ class TestPushConfirmation:
         )
         qtbot.addWidget(dialog)
 
-        clamping_frame = dialog.findChild(object, "clamping_warning_frame")
+        clamping_frame = dialog.findChild(QWidget, "clamping_warning_frame")
         assert clamping_frame is None
 
     def test_mode_mismatch_warning_shown(self, qtbot) -> None:
@@ -119,7 +119,7 @@ class TestPushConfirmation:
         )
         qtbot.addWidget(dialog)
 
-        mismatch_label = dialog.findChild(object, "mode_mismatch_label")
+        mismatch_label = dialog.findChild(QLabel, "mode_mismatch_label")
         assert mismatch_label is not None
         assert "Stereo but device" in mismatch_label.text()
 
@@ -130,7 +130,7 @@ class TestPushConfirmation:
         )
         qtbot.addWidget(dialog)
 
-        mismatch_frame = dialog.findChild(object, "mode_mismatch_frame")
+        mismatch_frame = dialog.findChild(QWidget, "mode_mismatch_frame")
         assert mismatch_frame is None
 
     def test_ok_button_text_push(self, qtbot) -> None:
@@ -225,8 +225,8 @@ class TestPushConfirmation:
         qtbot.addWidget(dialog)
 
         # Both warning frames present in same dialog
-        clamping_frame = dialog.findChild(object, "clamping_warning_frame")
-        mismatch_frame = dialog.findChild(object, "mode_mismatch_frame")
+        clamping_frame = dialog.findChild(QWidget, "clamping_warning_frame")
+        mismatch_frame = dialog.findChild(QWidget, "mode_mismatch_frame")
         assert clamping_frame is not None
         assert mismatch_frame is not None
 

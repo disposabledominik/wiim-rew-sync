@@ -7,6 +7,8 @@ and Profile building.
 
 from __future__ import annotations
 
+from typing import Any
+
 from src.models.canonical import CanonicalFilter
 from src.models.peq import PEQSettings
 from src.models.profile import Profile
@@ -96,7 +98,7 @@ def build_profile(
     )
 
 
-def parse_backup_filters(backup_data: dict) -> tuple[list[CanonicalFilter], str]:
+def parse_backup_filters(backup_data: dict[str, Any]) -> tuple[list[CanonicalFilter], str]:
     """Parse a backup JSON dict into a filter list and channel_mode.
 
     Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo

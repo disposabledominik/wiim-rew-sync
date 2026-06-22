@@ -69,7 +69,7 @@ def _make_filter(freq: float = 1000.0, gain: float = -3.0) -> CanonicalFilter:
     )
 
 
-def _setup_push_state(window) -> None:
+def _setup_push_state(window) -> AsyncMock:
     """Set up wizard state required for a push operation."""
     window._wizard_controller.state.selected_source = "wifi"
     window._wizard_controller.state.current_filters = [
@@ -123,8 +123,8 @@ class TestPushHappyPath:
         window._bridge.write_complete.emit.assert_called_once()
         emitted_result = window._bridge.write_complete.emit.call_args[0][0]
         assert emitted_result.success is True
-        assert "wifi=" in emitted_result.backup_path
-        assert "/backups/wifi_backup.json" in emitted_result.backup_path
+        assert "wifi=" in str(emitted_result.backup_path)
+        assert "/backups/wifi_backup.json" in str(emitted_result.backup_path)
 
     @pytest.mark.asyncio
     async def test_push_rollback_success(self, window) -> None:

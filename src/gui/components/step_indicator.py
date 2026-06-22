@@ -305,8 +305,9 @@ class StepIndicator(QWidget):
         """Remove all widgets from the layout."""
         while self._layout.count():
             item = self._layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
         self._steps = []
         self._connectors = []

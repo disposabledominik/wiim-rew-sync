@@ -30,7 +30,7 @@ Items moved here from active specs. They are not planned for the current release
 **Why deferred:** Requires physical hardware testing. The PEQ toggle already works via CLI for users who want it. RoomFit toggle has no confirmed API command.
 
 **Backend status:**
-- ⏳ Not started — needs access to a RoomFit-capable WiiM device
+- ⏳ Not started — API commands still not found. Investigation steps documented in Task 58 didn't surface the required API calls.
 - Uncertainty Protocol applies: if confirmed, implement adapter methods; if not, document as unsupported
 
-**To reactivate:** Run the investigation steps documented in Task 58 against real hardware. If successful, implement adapter methods and optionally restore the GUI toggle.
+**To reactivate:** Reverse-engineer the API call against real hardware. If successful, implement adapter methods and optionally restore the GUI toggle.

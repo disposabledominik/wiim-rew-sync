@@ -77,8 +77,10 @@ class SourcePage(QWidget):
         self._source_checkboxes.clear()
         while self._source_list_layout.count():
             item = self._source_list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item is not None:
+                w = item.widget()
+                if w is not None:
+                    w.deleteLater()
 
         # Create a checkbox for each source
         for source in sources:

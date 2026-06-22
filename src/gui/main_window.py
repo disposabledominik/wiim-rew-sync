@@ -15,6 +15,7 @@ import sys
 import traceback
 from collections.abc import Coroutine
 from pathlib import Path
+from types import TracebackType
 from typing import Any, Literal
 
 from PySide6.QtCore import Qt, QTimer, Slot
@@ -74,6 +75,7 @@ from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetsDeviceView
 from src.gui.views.settings_view import SettingsView
 from src.gui.wizard_controller import FlowType, WizardController, WizardStep
+from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
 from src.models.errors import (
     ParseError,
@@ -108,7 +110,7 @@ PAGE_INDICES: dict[str, int] = {
 def _crash_handler(
     exc_type: type[BaseException],
     exc_value: BaseException,
-    exc_tb: object,
+    exc_tb: TracebackType | None,
 ) -> None:
     """Global exception handler installed via sys.excepthook.
 
@@ -1056,7 +1058,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     @Slot(list)
-    def _on_discovery_complete(self, devices: list) -> None:
+    def _on_discovery_complete(self, devices: list[Any]) -> None:
         """Handle discovery results — populate ConnectPage.
 
         Implements auto-advance: if single device found, ConnectPage
@@ -1069,7 +1071,7 @@ class MainWindow(QMainWindow):
         self._connect_page.set_devices(devices)
 
     @Slot(list)
-    def _on_discovery_progress(self, devices: list) -> None:
+    def _on_discovery_progress(self, devices: list[Any]) -> None:
         """Handle progressive discovery updates — add new device cards.
 
         Called as devices are found during parallel discovery. Updates the
@@ -1154,7 +1156,7 @@ class MainWindow(QMainWindow):
             self._wizard_controller.advance(summary="Connected")
 
         # Update sidebar with device info
-        device_name = caps.model or "WiiM Device"
+        device_name = getattr(caps, "model", "") or "WiiM Device"
         # Try to get the friendly name from discovered devices list
         selected_ip = self._wizard_controller.state.selected_device
         for d in self._discovered_devices:
@@ -1264,7 +1266,7 @@ class MainWindow(QMainWindow):
             result: WriteResult object from safe write protocol.
         """
         success = getattr(result, "success", False)
-        backup_path = getattr(result, "backup_path", "")
+        backup_path = str(getattr(result, "backup_path", "") or "")
 
         if success:
             self._push_page.set_success(backup_path)
@@ -1312,7 +1314,7 @@ class MainWindow(QMainWindow):
         self._status_banner.show_progress(message)
 
     @Slot(list)
-    def _on_measurements_listed(self, measurements: list) -> None:
+    def _on_measurements_listed(self, measurements: list[Any]) -> None:
         """Handle REW measurements listed — open picker dialog for user selection.
 
         After the bridge emits rew_measurements_ready with the measurement list,
@@ -1339,7 +1341,7 @@ class MainWindow(QMainWindow):
         logger.info("REW measurement selected: %s", measurement.name)
 
     @Slot(list)
-    def _on_rew_filters_ready(self, filters: list) -> None:
+    def _on_rew_filters_ready(self, filters: list[CanonicalFilter]) -> None:
         """Handle REW filters fetched — store in wizard state and populate FiltersPage.
 
         Args:
@@ -1432,7 +1434,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _save_filters_to_presets(
-        self, name: str, filters: list, channel_mode: str
+        self, name: str, filters: list[CanonicalFilter], channel_mode: str
     ) -> None:
         """Save filters to local profile repository (shared by all save triggers).
 
@@ -1461,7 +1463,7 @@ class MainWindow(QMainWindow):
         all_profiles = self._profile_repository.list()
         self._my_presets_view.set_presets(all_profiles)
 
-    def _export_filters_as_rew(self, filters: list, channel_mode: str) -> None:
+    def _export_filters_as_rew(self, filters: list[CanonicalFilter], channel_mode: str) -> None:
         """Show export dialog and write REW file(s) (shared by all export triggers).
 
         For stereo: single file dialog -> single .txt file.
@@ -1480,6 +1482,7 @@ class MainWindow(QMainWindow):
                 logger.debug("L/R export cancelled by user")
                 return
 
+            assert isinstance(paths, tuple)
             path_l, path_r = paths
             filters_l, filters_r = split_lr_filters(filters)
 
@@ -1770,7 +1773,7 @@ class MainWindow(QMainWindow):
 
     async def _do_copy_presets_batch(
         self,
-        items: list,
+        items: list[Any],
         target_ip: str,
         target_source: str,
     ) -> None:
@@ -1817,8 +1820,8 @@ class MainWindow(QMainWindow):
 
     async def _do_copy_presets_batch_multi(
         self,
-        items: list,
-        target_devices: list,
+        items: list[Any],
+        target_devices: list[DeviceInfo],
         target_source: str,
     ) -> None:
         """Copy presets to multiple target devices (smoke #73 fix).
@@ -2053,14 +2056,14 @@ class MainWindow(QMainWindow):
             profile_name = state.roomfit_profile_name
             if not profile_name:
                 result = WriteResult(
-                    success=False, error="No profile name specified", backup_path=""
+                    success=False, error_message="No profile name specified", backup_path=None
                 )
                 self._bridge.write_complete.emit(result)
                 return
 
             try:
                 # Check if profile already exists — if so, back up its bands first
-                backup_path = ""
+                backup_path: str | None = None
                 existing_profiles = await self._wiim_adapter.list_roomfit_profiles(
                     source_name
                 )
@@ -2101,13 +2104,16 @@ class MainWindow(QMainWindow):
                         source_name, profile_name, filters
                     )
 
-                result = WriteResult(success=True, backup_path=backup_path)
+                result = WriteResult(
+                    success=True,
+                    backup_path=Path(backup_path) if backup_path else None,
+                )
                 self._bridge.progress_update.emit(
                     f"RoomFit profile '{profile_name}' saved"
                 )
                 self._bridge.write_complete.emit(result)
             except Exception as exc:
-                result = WriteResult(success=False, error=str(exc), backup_path="")
+                result = WriteResult(success=False, error_message=str(exc), backup_path=None)
                 self._bridge.write_complete.emit(result)
         else:
             # PEQ: use SafeWrite protocol — push to ALL selected sources
@@ -2126,9 +2132,9 @@ class MainWindow(QMainWindow):
                 last_result = result
 
                 # Collect backup path for undo (smoke #77)
-                bp = getattr(result, "backup_path", "")
-                if bp:
-                    backup_paths.append(f"{source_name}={bp}")
+                bp_path = result.backup_path
+                if bp_path:
+                    backup_paths.append(f"{source_name}={bp_path}")
 
                 if not result.success:
                     # Abort on first failure
@@ -2138,14 +2144,16 @@ class MainWindow(QMainWindow):
             # All sources succeeded — store all backup paths as semicolon-joined
             if last_result and last_result.success:
                 # Encode multi-source backup paths for undo
-                combined_backup = ";".join(backup_paths) if backup_paths else ""
+                # Format: "source1=/path;source2=/path" — consumed by _do_undo_multi_source
+                combined_backup = ";".join(backup_paths) if backup_paths else None
                 result = WriteResult(
-                    success=True, backup_path=combined_backup
+                    success=True,
+                    backup_path=combined_backup,
                 )
                 self._bridge.progress_update.emit("Verifying...")
                 self._bridge.write_complete.emit(result)
 
-    async def _do_export(self, filters: list, path: str) -> None:
+    async def _do_export(self, filters: list[CanonicalFilter], path: str) -> None:
         """Generate a REW EQ text file from current filters.
 
         Calls REWGenerator.generate_file() and emits progress_update with
@@ -2173,8 +2181,8 @@ class MainWindow(QMainWindow):
 
     async def _do_export_lr(
         self,
-        filters_l: list,
-        filters_r: list,
+        filters_l: list[CanonicalFilter],
+        filters_r: list[CanonicalFilter],
         path_l: Path,
         path_r: Path,
     ) -> None:
@@ -2484,7 +2492,7 @@ class MainWindow(QMainWindow):
         self._settings.save()
 
     @Slot(dict)
-    def _on_settings_changed(self, settings_dict: dict) -> None:
+    def _on_settings_changed(self, settings_dict: dict[str, Any]) -> None:
         """Update AppSettings fields from SettingsView and persist.
 
         Args:
@@ -2520,7 +2528,7 @@ class MainWindow(QMainWindow):
 
         log_dir = get_log_dir()
         settings_path = (
-            self._settings.settings_path
+            self._settings.settings_path()
             if hasattr(self._settings, "settings_path")
             else None
         )
@@ -2781,7 +2789,7 @@ class MainWindow(QMainWindow):
     # --- Inbound handlers (page/view → workflow trigger) ---
 
     @Slot(list)
-    def _on_copy_to_device_requested(self, items: list) -> None:
+    def _on_copy_to_device_requested(self, items: list[Any]) -> None:
         """Handle PresetsDeviceView "Copy to Another Device" action.
 
         Opens a device picker for the target device selection, then
@@ -2917,7 +2925,7 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error(f"Delete failed: {exc}")
 
     @Slot(list)
-    def _on_preset_export_requested(self, items: list) -> None:
+    def _on_preset_export_requested(self, items: list[Any]) -> None:
         """Handle PresetsDeviceView "Export as REW File" for selected presets.
 
         Shows the appropriate file dialog (stereo or L/R based on item metadata),
@@ -2943,6 +2951,7 @@ class MainWindow(QMainWindow):
                 logger.debug("L/R preset export cancelled")
                 return
             # Pass base path (first path's stem without _L suffix)
+            assert isinstance(paths, tuple)
             path_l, _path_r = paths
             # Use the left path — _do_preset_export handles L/R splitting internally
             export_path = str(path_l.parent / path_l.stem.replace("_L", "")) + ".txt"
@@ -2971,7 +2980,7 @@ class MainWindow(QMainWindow):
         logger.info("Preset export requested: %s -> %s", preset_name, export_path)
 
     @Slot(list)
-    def _on_preset_save_requested(self, items: list) -> None:
+    def _on_preset_save_requested(self, items: list[Any]) -> None:
         """Handle PresetsDeviceView "Save to My Presets" for selected items.
 
         Reads filters from device for each selected item and saves to local
@@ -3050,7 +3059,7 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error(message)
 
     @Slot(list)
-    def _on_profile_recalled(self, filters: list) -> None:
+    def _on_profile_recalled(self, filters: list[CanonicalFilter]) -> None:
         """Handle profile recall — populate ReviewPage and navigate.
 
         Loads the recalled filters into the wizard state and ReviewPage,
