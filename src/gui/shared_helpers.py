@@ -48,14 +48,20 @@ def build_peq_settings(
     source_name: str,
     filters: list[CanonicalFilter],
     channel_mode: str,
+    filters_l: list[CanonicalFilter] | None = None,
+    filters_r: list[CanonicalFilter] | None = None,
 ) -> PEQSettings:
     """Construct PEQSettings with correct channel splitting.
 
-    For L/R mode: splits filters evenly into bands_l and bands_r.
+    For L/R mode: uses explicit filters_l/filters_r if provided, otherwise
+    splits combined list evenly (fallback for equal-length channels).
     For stereo: uses the full list as bands.
     """
     if is_lr_mode(channel_mode):
-        left, right = split_lr_filters(filters)
+        if filters_l is not None and filters_r is not None:
+            left, right = filters_l, filters_r
+        else:
+            left, right = split_lr_filters(filters)
         return PEQSettings(
             source_name=source_name,
             channel_mode="lr",

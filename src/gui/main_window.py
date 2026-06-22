@@ -1253,8 +1253,10 @@ class MainWindow(QMainWindow):
                 # Merge warnings
                 all_warnings = warnings_l + warnings_r
 
-                # Update state with truncated filters
+                # Update state with truncated filters and separate L/R lists
                 state.current_filters = validated_l + validated_r
+                state.filters_l = validated_l
+                state.filters_r = validated_r
 
                 self._review_page.set_lr_filters(
                     validated_l, validated_r, clamping_l, clamping_r
@@ -1270,6 +1272,8 @@ class MainWindow(QMainWindow):
                 )
                 all_warnings = warnings_l + warnings_r
                 state.current_filters = validated_l + validated_r
+                state.filters_l = validated_l
+                state.filters_r = validated_r
                 self._review_page.set_lr_filters(
                     validated_l, validated_r, clamping_l, clamping_r
                 )
@@ -2265,7 +2269,11 @@ class MainWindow(QMainWindow):
                     f"Writing RoomFit profile '{profile_name}'..."
                 )
                 if is_lr_mode(channel_mode):
-                    left, right = split_lr_filters(filters)
+                    # Use stored L/R lists if available (avoids naive 50/50 split)
+                    left = state.filters_l if state.filters_l else None
+                    right = state.filters_r if state.filters_r else None
+                    if not left or not right:
+                        left, right = split_lr_filters(filters)
                     await self._wiim_adapter.write_roomfit(
                         source_name,
                         profile_name,
@@ -2302,7 +2310,11 @@ class MainWindow(QMainWindow):
                         f"Pushing to {source_name} ({i + 1}/{len(source_list)})..."
                     )
 
-                settings = build_peq_settings(source_name, filters, channel_mode)
+                settings = build_peq_settings(
+                    source_name, filters, channel_mode,
+                    filters_l=state.filters_l or None,
+                    filters_r=state.filters_r or None,
+                )
                 result = await self._safe_write.execute(source_name, settings)
                 last_result = result
 

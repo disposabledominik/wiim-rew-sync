@@ -48,6 +48,8 @@ class WizardState:
     channel_mode: str = "Stereo"
     current_filters: list[CanonicalFilter] = field(default_factory=list)
     device_filters: list[CanonicalFilter] = field(default_factory=list)
+    filters_l: list[CanonicalFilter] = field(default_factory=list)
+    filters_r: list[CanonicalFilter] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     roomfit_profile_name: str = ""
     dry_run: bool = False
