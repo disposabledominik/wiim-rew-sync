@@ -70,7 +70,7 @@ class NameProfilePage(QWidget):
         # Helper text
         helper = QLabel("Choose a name for this RoomFit profile")
         helper.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        helper.setStyleSheet("font-size: 13px; color: #616161;")
+        helper.setProperty("class", "caption")
         layout.addWidget(helper)
 
         # Text input

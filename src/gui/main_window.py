@@ -1779,6 +1779,8 @@ class MainWindow(QMainWindow):
         """Load a named PEQ preset from device and emit peq_ready.
 
         Loads the preset via EQv2SourceLoad then reads the resulting bands.
+        Sets channel_mode in wizard state from the device response to avoid
+        stale L/R state from a previous load (smoke #111).
 
         Args:
             preset_name: Name of the PEQ preset to load.
@@ -1791,6 +1793,13 @@ class MainWindow(QMainWindow):
 
         # Read back the resulting PEQ state
         peq_settings = await self._wiim_adapter.read_peq(source_name)
+
+        # Determine channel_mode from the device data and update wizard state
+        peq_channel = getattr(peq_settings, "channel_mode", None)
+        if peq_channel == "lr":
+            self._wizard_controller.state.channel_mode = "L/R"
+        else:
+            self._wizard_controller.state.channel_mode = "Stereo"
 
         # Extract filters
         filters, _ = extract_filters(peq_settings)
@@ -2528,6 +2537,7 @@ class MainWindow(QMainWindow):
         """Handle sidebar navigation request — switch QStackedWidget page.
 
         When 'home' is selected, returns to the current wizard step page.
+        When 'connect' is selected, navigates directly to the Connect step.
         Otherwise navigates to the corresponding secondary view.
 
         Args:
@@ -2537,6 +2547,12 @@ class MainWindow(QMainWindow):
         if view_key == "home":
             # Return to current wizard step
             self._on_step_changed(self._wizard_controller.current_step)
+            return
+
+        if view_key == "connect":
+            # Navigate directly to Connect step
+            self._stacked_widget.setCurrentIndex(PAGE_INDICES["connect"])
+            self._step_indicator.set_current(0)
             return
 
         if view_key == "rew_api":

@@ -143,7 +143,7 @@ class ReviewPage(QWidget):
         # Summary header
         self._summary_label = QLabel("", content_wrapper)
         self._summary_label.setObjectName("ReviewPageSummary")
-        self._summary_label.setStyleSheet("font-size: 13px; color: #616161;")
+        self._summary_label.setProperty("class", "caption")
         content_layout.addWidget(self._summary_label)
 
         # Dry Run badge (accent-colored pill, always reserves space)

@@ -258,7 +258,7 @@ class ConnectPage(QWidget):
         )
         causes_label.setObjectName("ConnectPageEmptyCauses")
         causes_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        causes_label.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px; color: #616161;")
+        causes_label.setProperty("class", "secondary")
         causes_label.setWordWrap(True)
         layout.addWidget(causes_label)
 

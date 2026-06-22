@@ -145,7 +145,7 @@ class SourcePage(QWidget):
         )
         note.setObjectName("source_page_note")
         note.setWordWrap(True)
-        note.setStyleSheet("color: #616161; font-size: 13px;")
+        note.setProperty("class", "secondary")
         content_layout.addWidget(note)
 
         # Source list area

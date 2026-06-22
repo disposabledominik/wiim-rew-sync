@@ -204,7 +204,7 @@ class PresetsDeviceView(QWidget):
 
         message = QLabel("Connect a device to browse its presets and profiles")
         message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        message.setStyleSheet("font-size: 14px; color: #616161;")
+        message.setProperty("class", "secondary")
         message.setWordWrap(True)
         layout.addWidget(message)
 

@@ -58,7 +58,7 @@ class _EQCard(QFrame):
         desc_label.setObjectName("cardDescription")
         desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_label.setWordWrap(True)
-        desc_label.setStyleSheet("font-size: 13px; color: #616161;")
+        desc_label.setProperty("class", "secondary")
         layout.addWidget(desc_label)
 
         self._apply_style()
@@ -78,21 +78,22 @@ class _EQCard(QFrame):
         self.clicked.emit()
 
     def _apply_style(self) -> None:
-        """Apply border style based on selected state."""
+        """Apply border style based on selected state.
+
+        Uses class property for QSS-driven theming. The QSS card rules handle
+        background colors. We only add border emphasis here.
+        """
         if self._selected:
             self.setStyleSheet(
                 f"_EQCard {{"
                 f"  border: 2px solid {ACCENT_COLOR};"
                 f"  border-radius: {CARD_RADIUS}px;"
-                f"  background: palette(base);"
                 f"}}"
             )
         else:
             self.setStyleSheet(
                 f"_EQCard {{"
-                f"  border: 1px solid #E0E0E0;"
                 f"  border-radius: {CARD_RADIUS}px;"
-                f"  background: palette(base);"
                 f"}}"
             )
 

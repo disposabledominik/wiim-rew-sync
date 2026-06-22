@@ -162,7 +162,7 @@ class FiltersPage(QWidget):
             "Select channel mode and browse for your REW EQ text file(s)."
         )
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px; color: #616161;")
+        subtitle.setProperty("class", "secondary")
         page_layout.addWidget(subtitle)
 
         # --- Channel mode toggle ---
@@ -199,9 +199,7 @@ class FiltersPage(QWidget):
         stereo_layout.setSpacing(SPACING_MD)
 
         self._stereo_file_label = QLabel("No file selected")
-        self._stereo_file_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px; color: #616161;"
-        )
+        self._stereo_file_label.setProperty("class", "secondary")
         self._stereo_file_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
@@ -249,9 +247,7 @@ class FiltersPage(QWidget):
         left_row.addWidget(left_label)
 
         self._left_file_label = QLabel("No file selected")
-        self._left_file_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px; color: #616161;"
-        )
+        self._left_file_label.setProperty("class", "secondary")
         self._left_file_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
@@ -275,9 +271,7 @@ class FiltersPage(QWidget):
         right_row.addWidget(right_label)
 
         self._right_file_label = QLabel("No file selected")
-        self._right_file_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px; color: #616161;"
-        )
+        self._right_file_label.setProperty("class", "secondary")
         self._right_file_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )

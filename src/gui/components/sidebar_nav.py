@@ -240,8 +240,8 @@ class SidebarNav(QWidget):
 
     def _on_device_header_clicked(self) -> None:
         """Navigate to Connect step when device name is clicked."""
-        self.navigation_requested.emit("home")
-        # Update active state to home
+        self.navigation_requested.emit("connect")
+        # Update active state to home (connect = first wizard step)
         if self._active_key != "home":
             if self._active_key in self._nav_buttons:
                 self._nav_buttons[self._active_key].set_active(False)

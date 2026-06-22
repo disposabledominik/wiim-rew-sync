@@ -69,13 +69,12 @@ class OnboardingOverlay(QWidget):
     - Brief app description
     - 3 capability cards (Import, Push, Save)
     - "Get Started" primary button
-    - "Skip" text link
 
     Signals:
         get_started_clicked: Emitted when user clicks "Get Started".
-        skip_clicked: Emitted when user clicks "Skip".
+        skip_clicked: Emitted for backward compatibility (not used).
 
-    Both signals dismiss the overlay (the parent should hide/remove it).
+    The overlay rebuilds its UI on each show to pick up the active theme.
     """
 
     get_started_clicked = Signal()
@@ -98,6 +97,21 @@ class OnboardingOverlay(QWidget):
             "  background-color: rgba(0, 0, 0, 0.55);"
             "}"
         )
+        self._setup_ui()
+
+    def showEvent(self, event: object) -> None:
+        """Rebuild UI on show to pick up current theme colors."""
+        super().showEvent(event)  # type: ignore[arg-type]
+        # Remove old layout and rebuild with current theme
+        old_layout = self.layout()
+        if old_layout is not None:
+            # Delete all child widgets
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+            QWidget().setLayout(old_layout)  # Detach layout
         self._setup_ui()
 
     def _get_colors(self) -> tuple[str, str, str, str, str, str]:
@@ -232,22 +246,6 @@ class OnboardingOverlay(QWidget):
         )
         get_started_btn.mousePressEvent = lambda _event: self._on_get_started()  # type: ignore[method-assign]
         buttons_layout.addWidget(get_started_btn, 0, Qt.AlignmentFlag.AlignCenter)
-
-        # Skip link (ghost/text)
-        skip_link = QLabel("Skip")
-        skip_link.setObjectName("skip_link")
-        skip_link.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        skip_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        skip_link.setStyleSheet(
-            f"color: {text_secondary};"
-            f"font-family: {FONT_FAMILY};"
-            f"font-size: {FONT_SIZE_CAPTION}px;"
-            "text-decoration: underline;"
-            "background: transparent;"
-            "padding: 4px;"
-        )
-        skip_link.mousePressEvent = lambda _event: self._on_skip()  # type: ignore[method-assign]
-        buttons_layout.addWidget(skip_link, 0, Qt.AlignmentFlag.AlignCenter)
 
         card_layout.addWidget(buttons_area)
 

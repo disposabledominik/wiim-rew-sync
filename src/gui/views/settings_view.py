@@ -133,9 +133,7 @@ class SettingsView(QWidget):
             row_layout.addWidget(name_label)
 
             size_label = QLabel(log_info.get("size", ""), row)
-            size_label.setStyleSheet(
-                f"font-size: {FONT_SIZE_CAPTION}px; color: #616161;"
-            )
+            size_label.setProperty("class", "caption")
             row_layout.addWidget(size_label)
 
             row_layout.addStretch()
@@ -235,9 +233,7 @@ class SettingsView(QWidget):
             "Choose Light, Dark, or System (follows your OS preference).",
             group,
         )
-        description.setStyleSheet(
-            f"font-size: {FONT_SIZE_CAPTION}px; color: #616161;"
-        )
+        description.setProperty("class", "caption")
         description.setWordWrap(True)
         layout.addWidget(description)
 
@@ -284,9 +280,6 @@ class SettingsView(QWidget):
         )
         restart_note.setObjectName("SettingsPathRestartNote")
         restart_note.setProperty("class", "caption")
-        restart_note.setStyleSheet(
-            f"font-size: {FONT_SIZE_CAPTION}px; color: #616161;"
-        )
         layout.addWidget(restart_note)
 
         return group
@@ -374,9 +367,7 @@ class SettingsView(QWidget):
 
         self._last_device_label = QLabel("None", device_row)
         self._last_device_label.setObjectName("SettingsLastDeviceLabel")
-        self._last_device_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px; color: #616161;"
-        )
+        self._last_device_label.setProperty("class", "secondary")
         device_layout.addWidget(self._last_device_label)
 
         device_layout.addStretch()
@@ -442,9 +433,7 @@ class SettingsView(QWidget):
             "No user filter data or profiles are included.",
             group,
         )
-        bundle_desc.setStyleSheet(
-            f"font-size: {FONT_SIZE_CAPTION}px; color: #616161;"
-        )
+        bundle_desc.setProperty("class", "caption")
         bundle_desc.setWordWrap(True)
         layout.addWidget(bundle_desc)
 

@@ -123,7 +123,9 @@ class _StepWidget(QWidget):
             font.setBold(False)
             self._label.setFont(font)
             self.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._summary.setStyleSheet("color: #616161;")
+            self._summary.setProperty("class", "caption")
+            self._summary.style().unpolish(self._summary)
+            self._summary.style().polish(self._summary)
 
         elif self._state == _StepState.ACTIVE:
             self._circle.setStyleSheet(

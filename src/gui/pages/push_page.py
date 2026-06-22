@@ -344,7 +344,7 @@ class PushPage(QWidget):
         self._detail_label.setObjectName("PushPageDetailLabel")
         self._detail_label.setWordWrap(True)
         self._detail_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self._detail_label.setStyleSheet("font-size: 13px; color: #616161;")
+        self._detail_label.setProperty("class", "caption")
         self._detail_label.setVisible(False)
         result_layout.addWidget(self._detail_label)
 
