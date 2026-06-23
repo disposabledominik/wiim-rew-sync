@@ -74,3 +74,5 @@ Items moved here from active specs. They are not planned for the current release
 **Why deferred:** Renaming a public method on `ProfileRepository` would break the GUI layer, tests, and any code that calls `.list()`. Cosmetic improvement with non-trivial migration effort.
 
 **To reactivate:** Rename method to `list_all()`, update all call sites (~8 locations in GUI + tests). Bundle with other repository refactoring if it arises.
+
+## 6. Perform manual QA and write unit tests for issues found during smoke tests
