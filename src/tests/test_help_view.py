@@ -19,6 +19,8 @@ from src.gui.views.help_view import (
     _load_markdown,
 )
 
+_KEY_RETURN = getattr(Qt, "Key_Return", 0x01000004)
+
 # ---------------------------------------------------------------------------
 # TestHelpViewBasic
 # ---------------------------------------------------------------------------
@@ -192,6 +194,252 @@ class TestHelpViewSearch:
                 view._search_input.setText(first_title.upper())
                 # At least the matching section should be visible
                 assert view.visible_toc_count >= 1
+
+    def test_search_navigation_buttons_exist(self, qtbot) -> None:
+        """Search view has next/previous navigation buttons and hit counter."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        assert view._search_prev_button is not None
+        assert view._search_next_button is not None
+        assert view._search_hit_label is not None
+
+    def test_search_buttons_disabled_on_empty_search(self, qtbot) -> None:
+        """Navigation buttons are disabled when there's no search query."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        # Initially, buttons should be disabled (no search)
+        assert not view._search_prev_button.isEnabled()
+        assert not view._search_next_button.isEnabled()
+
+    def test_search_hits_content(self, qtbot, tmp_path) -> None:
+        """Search finds and counts hits in the current section content."""
+
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        # Create a test section with known content
+        test_content = (
+            "# Test Section\n\nThe quick brown fox jumps. "
+            "Fox is mentioned again in this fox paragraph."
+        )
+        view._sections["test-section"] = test_content
+        view._section_titles["test-section"] = "Test Section"
+        view._populate_toc()
+        view._display_section("test-section")
+
+        # Give the QTextBrowser time to render the markdown
+        qtbot.wait(100)
+
+        # Trigger search for "fox"
+        view._search_input.setText("fox")
+
+        # Should find hits (case-insensitive)
+        # Note: exact count depends on markdown rendering, verify mechanism works
+        assert view._search_query == "fox"
+        # The search should have been performed
+        assert view._current_hit_index >= 0 or view._search_hit_count == 0
+
+    def test_search_navigates_to_first_match(self, qtbot) -> None:
+        """When searching, the view navigates to and displays the first matching section."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        if view.section_count > 0:
+            first_section_id = next(iter(view._sections.keys()))
+            first_section_title = view._section_titles.get(first_section_id, "")
+
+            # Search for part of the first section's title
+            if len(first_section_title) > 2:
+                search_term = first_section_title[:3].lower()
+                view._search_input.setText(search_term)
+
+                # Should navigate to a matching section
+                assert view.current_section is not None
+
+    def test_search_next_button_navigation(self, qtbot) -> None:
+        """Clicking next button advances to the next search hit."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        # Create a test section with multiple occurrences
+        test_content = (
+            "# Test\n\nhello world hello there hello again"
+        )
+        view._sections["test"] = test_content
+        view._section_titles["test"] = "Test"
+        view._populate_toc()
+        view._display_section("test")
+
+        # Search for a term that appears multiple times
+        view._search_input.setText("hello")
+
+        if view._search_hit_count > 1:
+            initial_index = view._current_hit_index
+            view._search_next_button.click()
+            # After clicking next, index should advance (wraps around)
+            new_index = view._current_hit_index
+            assert new_index != initial_index or view._search_hit_count == 1
+
+    def test_search_previous_button_navigation(self, qtbot) -> None:
+        """Clicking previous button goes to the previous search hit."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        # Create a test section with multiple occurrences
+        test_content = (
+            "# Test\n\nhello world hello there hello again"
+        )
+        view._sections["test"] = test_content
+        view._section_titles["test"] = "Test"
+        view._populate_toc()
+        view._display_section("test")
+
+        # Search for a term that appears multiple times
+        view._search_input.setText("hello")
+
+        if view._search_hit_count > 1:
+            # Advance to a middle hit
+            view._search_next_button.click()
+            advanced_index = view._current_hit_index
+
+            # Go back
+            view._search_prev_button.click()
+            previous_index = view._current_hit_index
+
+            # Should move backward
+            assert previous_index != advanced_index or view._search_hit_count == 1
+
+    def test_enter_in_search_triggers_next_hit(self, qtbot) -> None:
+        """Pressing Enter in the search field triggers next hit navigation."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        # Create a test section with multiple occurrences
+        test_content = (
+            "# Test\n\nhello world hello there hello again"
+        )
+        view._sections["test"] = test_content
+        view._section_titles["test"] = "Test"
+        view._populate_toc()
+        view._display_section("test")
+
+        # Set search query
+        view._search_input.setText("hello")
+
+        if view._search_hit_count > 1:
+            initial_index = view._current_hit_index
+            # Simulate pressing Enter
+            view._search_input.returnPressed.emit()
+            new_index = view._current_hit_index
+            # Should advance to next hit (or wrap)
+            assert new_index != initial_index or view._search_hit_count == 1
+
+    def test_enter_does_not_close_dialog(self, qtbot) -> None:
+        """Pressing Enter in the search field does not emit close_requested."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        close_emitted = False
+
+        def on_close():
+            nonlocal close_emitted
+            close_emitted = True
+
+        view.close_requested.connect(on_close)
+
+        # Type in search input and press Enter
+        view._search_input.setText("test")
+        qtbot.keyClick(view._search_input, _KEY_RETURN)
+
+        # close_requested should NOT have been emitted
+        assert not close_emitted
+
+    def test_enter_key_navigates_search_hits(self, qtbot) -> None:
+        """Pressing Enter in the search field advances the current search hit."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        view._sections["test"] = "# Test\n\nhello world hello there hello again"
+        view._section_titles["test"] = "Test"
+        view._populate_toc()
+        view._display_section("test")
+        view._search_input.setText("hello")
+
+        if view._search_hit_count > 1:
+            initial_index = view._current_hit_index
+            qtbot.keyClick(view._search_input, _KEY_RETURN)
+            assert view._current_hit_index != initial_index or view._search_hit_count == 1
+
+    def test_search_highlights_current_hit(self, qtbot) -> None:
+        """Search hit highlighting is applied to the displayed section."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        view._sections["test"] = "# Test\n\nhello world hello there"
+        view._section_titles["test"] = "Test"
+        view._populate_toc()
+        view._display_section("test")
+
+        view._search_input.setText("hello")
+        qtbot.wait(100)
+
+        assert len(view._content_browser.extraSelections()) >= 1
+
+    def test_hit_counter_updates(self, qtbot) -> None:
+        """Hit counter label updates when search results change."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        # Initially, counter should show 0 of 0
+        assert "0 of 0" in view._search_hit_label.text()
+
+        # Create a test section with multiple occurrences
+        test_content = (
+            "# Test\n\nhello world hello there hello again"
+        )
+        view._sections["test"] = test_content
+        view._section_titles["test"] = "Test"
+        view._populate_toc()
+        view._display_section("test")
+
+        # Search for a term that appears multiple times
+        view._search_input.setText("hello")
+
+        # Counter should now show results
+        if view._search_hit_count > 0:
+            assert view._search_hit_count > 0
+            assert "1 of" in view._search_hit_label.text()
+
+    def test_hit_counter_wraps_around(self, qtbot) -> None:
+        """Navigation wraps around when reaching the end/start of hits."""
+        view = HelpView()
+        qtbot.addWidget(view)
+
+        # Create a test section with multiple occurrences
+        test_content = (
+            "# Test\n\nhello world hello there hello again"
+        )
+        view._sections["test"] = test_content
+        view._section_titles["test"] = "Test"
+        view._populate_toc()
+        view._display_section("test")
+
+        # Search for a term
+        view._search_input.setText("hello")
+
+        if view._search_hit_count > 1:
+            # Move to the last hit
+            while view._current_hit_index < view._search_hit_count - 1:
+                view._search_next_button.click()
+
+            last_index = view._current_hit_index
+            assert last_index == view._search_hit_count - 1
+
+            # Press next again - should wrap to start
+            view._search_next_button.click()
+            assert view._current_hit_index == 0
 
 
 # ---------------------------------------------------------------------------

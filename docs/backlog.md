@@ -75,4 +75,6 @@ Items moved here from active specs. They are not planned for the current release
 
 **To reactivate:** Rename method to `list_all()`, update all call sites (~8 locations in GUI + tests). Bundle with other repository refactoring if it arises.
 
-## 6. Perform manual QA and write unit tests for issues found during smoke tests
+## 6. Perform manual QA and write unit tests for issues found during smoke tests.
+
+## 7. Refactor Dark and Light styles to make them consistent - see if there is any chance to consolidate for easier maintenance. Review in-line styles in code, and remove where it makes sense.

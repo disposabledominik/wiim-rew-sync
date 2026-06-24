@@ -913,6 +913,7 @@ QFrame[status="warning"] {
 
 #DiagnosticsDialog QGroupBox::title,
 #SettingsView QGroupBox::title {
+    background-color: #F5F5F5;
     color: #1A1A1A;
     font-weight: 600;
     font-size: 13px;

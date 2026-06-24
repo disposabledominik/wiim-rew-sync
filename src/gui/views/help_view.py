@@ -12,7 +12,8 @@ from __future__ import annotations
 import importlib.resources
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtGui import QColor, QKeyEvent, QTextCursor
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QTextBrowser,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -36,6 +38,9 @@ from src.gui.constants import (
     SPACING_SM,
     SPACING_XS,
 )
+
+_KEY_RETURN = getattr(Qt, "Key_Return", 0x01000004)
+_KEY_ENTER = getattr(Qt, "Key_Enter", 0x01000005)
 
 # ---------------------------------------------------------------------------
 # Section-to-file mapping and wizard step context mapping
@@ -152,6 +157,12 @@ class HelpView(QFrame):
         self._sections: dict[str, str] = {}  # section_id -> markdown content
         self._section_titles: dict[str, str] = {}  # section_id -> display title
 
+        # Search state tracking
+        self._search_query: str = ""
+        self._search_matches: list[tuple[str, int]] = []
+        self._current_hit_index: int = -1
+        self._search_hit_count: int = 0
+
         self._build_ui()
         self._load_all_sections()
         self._populate_toc()
@@ -219,7 +230,12 @@ class HelpView(QFrame):
         toc_layout.setContentsMargins(SPACING_SM, SPACING_SM, SPACING_SM, SPACING_SM)
         toc_layout.setSpacing(SPACING_XS)
 
-        # Search input
+        # Search input with navigation controls below
+        search_container = QWidget()
+        search_layout = QVBoxLayout(search_container)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(SPACING_XS)
+
         self._search_input = QLineEdit()
         self._search_input.setObjectName("helpSearchInput")
         self._search_input.setPlaceholderText("Search topics...")
@@ -233,7 +249,75 @@ class HelpView(QFrame):
             f"}}"
         )
         self._search_input.textChanged.connect(self._on_search_changed)
-        toc_layout.addWidget(self._search_input)
+        self._search_input.returnPressed.connect(self._on_search_next)
+        self._search_input.installEventFilter(self)
+        search_layout.addWidget(self._search_input)
+
+        navigation_container = QWidget()
+        navigation_layout = QHBoxLayout(navigation_container)
+        navigation_layout.setContentsMargins(0, 0, 0, 0)
+        navigation_layout.setSpacing(SPACING_XS)
+
+        self._search_prev_button = QPushButton("◀")
+        self._search_prev_button.setObjectName("helpSearchPrevButton")
+        self._search_prev_button.setFixedSize(24, 24)
+        self._search_prev_button.setToolTip("Previous match")
+        self._search_prev_button.setStyleSheet(
+            "QPushButton {"
+            "  border: 1px solid #E0E0E0;"
+            "  border-radius: 3px;"
+            "  font-size: 10px;"
+            "  padding: 2px;"
+            "}"
+            "QPushButton:hover:!pressed {"
+            "  background: #F5F5F5;"
+            "}"
+            "QPushButton:pressed {"
+            "  background: #E0E0E0;"
+            "}"
+            "QPushButton:disabled {"
+            "  color: #CCC;"
+            "}"
+        )
+        self._search_prev_button.clicked.connect(self._on_search_previous)
+        self._search_prev_button.setEnabled(False)
+        navigation_layout.addWidget(self._search_prev_button)
+
+        self._search_next_button = QPushButton("▶")
+        self._search_next_button.setObjectName("helpSearchNextButton")
+        self._search_next_button.setFixedSize(24, 24)
+        self._search_next_button.setToolTip("Next match")
+        self._search_next_button.setStyleSheet(
+            "QPushButton {"
+            "  border: 1px solid #E0E0E0;"
+            "  border-radius: 3px;"
+            "  font-size: 10px;"
+            "  padding: 2px;"
+            "}"
+            "QPushButton:hover:!pressed {"
+            "  background: #F5F5F5;"
+            "}"
+            "QPushButton:pressed {"
+            "  background: #E0E0E0;"
+            "}"
+            "QPushButton:disabled {"
+            "  color: #CCC;"
+            "}"
+        )
+        self._search_next_button.clicked.connect(self._on_search_next)
+        self._search_next_button.setEnabled(False)
+        navigation_layout.addWidget(self._search_next_button)
+
+        navigation_layout.addStretch()
+
+        self._search_hit_label = QLabel("0 of 0")
+        self._search_hit_label.setStyleSheet(
+            f"font-size: {FONT_SIZE_CAPTION}px; color: #999;"
+        )
+        navigation_layout.addWidget(self._search_hit_label)
+
+        search_layout.addWidget(navigation_container)
+        toc_layout.addWidget(search_container)
 
         # TOC list
         self._toc_list = QListWidget()
@@ -300,6 +384,14 @@ class HelpView(QFrame):
         if self._toc_list.count() > 0:
             self._toc_list.setCurrentRow(0)
 
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """Intercept Enter/Return in the search field so the dialog does not accept."""
+        if obj is self._search_input and event.type() == QEvent.Type.KeyPress:
+            if isinstance(event, QKeyEvent) and event.key() in (_KEY_RETURN, _KEY_ENTER):
+                self._on_search_next()
+                return True
+        return super().eventFilter(obj, event)
+
     def _on_toc_item_changed(
         self, current: QListWidgetItem | None, _previous: QListWidgetItem | None
     ) -> None:
@@ -316,29 +408,141 @@ class HelpView(QFrame):
 
         # Use QTextBrowser's built-in markdown support (Qt 5.14+)
         self._content_browser.setMarkdown(content)
+        self._content_browser.setExtraSelections([])
         self.section_changed.emit(section_id)
 
     def _on_search_changed(self, text: str) -> None:
-        """Filter TOC items based on search text."""
-        search_lower = text.lower().strip()
+        """Perform search and filter TOC items based on search text."""
+        self._search_query = text.lower().strip()
+        self._current_hit_index = -1
+        self._search_matches = []
+        self._search_hit_count = 0
 
+        # Update button and label states
+        self._search_prev_button.setEnabled(False)
+        self._search_next_button.setEnabled(False)
+        self._search_hit_label.setText("0 of 0")
+
+        if not self._search_query:
+            # No search: show all TOC items
+            for i in range(self._toc_list.count()):
+                item = self._toc_list.item(i)
+                if item is not None:
+                    item.setHidden(False)
+            self._content_browser.setExtraSelections([])
+            return
+
+        # Search mode: filter TOC and build hit list across sections
         for i in range(self._toc_list.count()):
             item = self._toc_list.item(i)
             if item is None:
                 continue
 
-            if not search_lower:
-                item.setHidden(False)
-            else:
-                section_id = item.data(Qt.ItemDataRole.UserRole)
-                title = self._section_titles.get(section_id, "")
-                # Search in title and content
-                content = self._sections.get(section_id, "")
-                visible = (
-                    search_lower in title.lower()
-                    or search_lower in content.lower()
-                )
-                item.setHidden(not visible)
+            section_id = item.data(Qt.ItemDataRole.UserRole)
+            title = self._section_titles.get(section_id, "")
+            content = self._sections.get(section_id, "")
+            content_lower = content.lower()
+
+            is_match = (
+                self._search_query in title.lower()
+                or self._search_query in content_lower
+            )
+            item.setHidden(not is_match)
+
+            if is_match:
+                start = 0
+                occurrence = 0
+                while True:
+                    found = content_lower.find(self._search_query, start)
+                    if found == -1:
+                        break
+                    self._search_matches.append((section_id, occurrence))
+                    occurrence += 1
+                    start = found + len(self._search_query)
+
+        self._search_hit_count = len(self._search_matches)
+        if self._search_hit_count == 0:
+            self._content_browser.setExtraSelections([])
+
+        if self._search_hit_count > 0:
+            self._goto_search_hit(0)
+
+    def _goto_search_hit(self, hit_index: int) -> None:
+        """Jump to and highlight a specific hit across sections."""
+        if hit_index < 0 or hit_index >= self._search_hit_count:
+            return
+
+        self._current_hit_index = hit_index
+        section_id, _ = self._search_matches[hit_index]
+
+        # Select and display the target section
+        for i in range(self._toc_list.count()):
+            item = self._toc_list.item(i)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == section_id:
+                self._toc_list.setCurrentItem(item)
+                break
+
+        self._display_section(section_id)
+        self._highlight_current_hit()
+
+    def _highlight_current_hit(self) -> None:
+        """Highlight the current hit in the displayed section."""
+        if self._current_hit_index < 0 or self._current_hit_index >= self._search_hit_count:
+            return
+
+        section_id, local_occurrence = self._search_matches[self._current_hit_index]
+        if section_id != self._current_section:
+            self._display_section(section_id)
+
+        # Reset the browser cursor and search for the current hit in rendered text.
+        browser_cursor = self._content_browser.textCursor()
+        browser_cursor.movePosition(QTextCursor.MoveOperation.Start)
+        self._content_browser.setTextCursor(browser_cursor)
+
+        found = False
+        for _ in range(local_occurrence + 1):
+            found = self._content_browser.find(self._search_query)
+            if not found:
+                break
+
+        if not found:
+            self._content_browser.setExtraSelections([])
+            return
+
+        selection_cursor = self._content_browser.textCursor()
+        highlight_color = QColor(ACCENT_COLOR)
+        highlight_color.setAlpha(60)
+        selection = QTextEdit.ExtraSelection()
+        selection.cursor = selection_cursor
+        selection.format.setBackground(highlight_color)
+
+        self._content_browser.setExtraSelections([selection])
+
+        # Collapse the actual cursor and ensure the found hit is visible.
+        visible_cursor = QTextCursor(self._content_browser.document())
+        visible_cursor.setPosition(selection_cursor.selectionEnd())
+        self._content_browser.setTextCursor(visible_cursor)
+        self._content_browser.ensureCursorVisible()
+
+        self._search_hit_label.setText(f"{self._current_hit_index + 1} of {self._search_hit_count}")
+        self._search_prev_button.setEnabled(self._search_hit_count > 1)
+        self._search_next_button.setEnabled(self._search_hit_count > 1)
+
+    def _on_search_next(self) -> None:
+        """Navigate to the next search hit."""
+        if self._search_hit_count <= 0:
+            return
+
+        next_index = (self._current_hit_index + 1) % self._search_hit_count
+        self._goto_search_hit(next_index)
+
+    def _on_search_previous(self) -> None:
+        """Navigate to the previous search hit."""
+        if self._search_hit_count <= 0:
+            return
+
+        prev_index = (self._current_hit_index - 1) % self._search_hit_count
+        self._goto_search_hit(prev_index)
 
     def navigate_to_section(self, section_id: str) -> None:
         """Navigate to a specific help section by its ID.
