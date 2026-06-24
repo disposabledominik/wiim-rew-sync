@@ -134,6 +134,27 @@ class TestModeMapping:
         assert result[0] == 2.0
 
 
+class TestValuePrecision:
+    """WiiM write generation should round wire values to 3 decimal places."""
+
+    def test_values_are_rounded_to_three_decimals(self):
+        filters = [
+            CanonicalFilter(
+                type="PEAK",
+                frequency_hz=1234.56789,
+                gain_db=3.1415926,
+                q=0.1234567,
+            )
+        ]
+
+        result, warnings = generate_wiim_band_array(filters)
+
+        assert warnings == []
+        assert result[1] == 1234.568
+        assert result[2] == 3.142
+        assert result[3] == 0.123
+
+
 # ---------------------------------------------------------------------------
 # Test: Gain clipping
 # ---------------------------------------------------------------------------

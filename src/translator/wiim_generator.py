@@ -47,6 +47,9 @@ _OFF_FREQ: float = 1000.0
 _OFF_GAIN: float = 0.0
 _OFF_Q: float = 1.0
 
+# Number of decimal places the WiiM API likes for filter values.
+_WIIM_VALUE_PRECISION: int = 3
+
 # Total number of bands the WiiM API expects
 _MAX_BANDS: int = 10
 
@@ -171,7 +174,14 @@ def generate_wiim_band_array(
             )
             q = _Q_MIN
 
-        result.extend([mode, freq, gain, q])
+        result.extend(
+            [
+                mode,
+                round(freq, _WIIM_VALUE_PRECISION),
+                round(gain, _WIIM_VALUE_PRECISION),
+                round(q, _WIIM_VALUE_PRECISION),
+            ]
+        )
 
     # Pad remaining bands as OFF
     bands_to_pad = max_bands - len(filters)
