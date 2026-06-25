@@ -488,3 +488,23 @@ class TestIssue87SidebarPresetLoadChecks:
         # No need to patch QuickSetupDialog — it shouldn't be called
         result = window._ensure_wizard_state_for_load()
         assert result is True
+
+# ---------------------------------------------------------------------------
+# Issue #95: Wizard state skips QuickSetupDialog if current step is FILTERS or beyond
+# ---------------------------------------------------------------------------
+
+
+class TestIssue95WizardStateSkipsDialog:
+    def test_ensure_wizard_state_skips_dialog_if_at_filters_step(self, window) -> None:
+        """#95: If current step is FILTERS or beyond, skip dialog and return True."""
+        # Select device
+        window._on_device_selected("192.168.1.100")
+
+        # Advance wizard to FILTERS step
+        window._wizard_controller.state.current_step = WizardStep.FILTERS
+
+        # Verify it returns True without triggering QuickSetupDialog
+        with patch("src.gui.dialogs.quick_setup_dialog.QuickSetupDialog.get_setup") as mock_dialog:
+            result = window._ensure_wizard_state_for_load()
+            assert result is True
+            mock_dialog.assert_not_called()

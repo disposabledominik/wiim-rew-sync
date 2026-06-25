@@ -877,6 +877,23 @@ class TestParseFilterSettings:
         assert result[0].frequency_hz == 10.0   # Clamped to minimum
         assert result[1].frequency_hz == 22000.0  # Clamped to maximum
 
+    def test_filter_type_none_handling(self, parser: REWParser) -> None:
+        """Smoke #97: Filter type 'None' is handled (mapped to OFF or skipped)."""
+        # The REW API returns "type": "None" for empty slots.
+        # _classify_filter_type currently adds "None" to _SKIP_TYPES.
+        # This test documents the current behavior (skipping).
+        settings = [
+            {"enabled": True, "type": "None", "frequency": 100.0, "gain": 0.0, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 300.0, "gaindB": -3.0, "q": 1.41},
+        ]
+
+        filters = parser.parse_filter_settings(settings)
+
+        # 'None' is in _SKIP_TYPES, so it should be skipped.
+        assert len(filters) == 1
+        assert filters[0].type == "PEAK"
+
+
 
 class TestParseFilterSettingsLPHP:
     """Tests for LP/HP parsing from REW HTTP API FilterSetting objects."""

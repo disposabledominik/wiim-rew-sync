@@ -9,6 +9,7 @@ Each test validates the specific fix behavior to prevent regressions.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -959,10 +960,40 @@ class TestSettingsUIState:
 class TestSharedHelpers:
     """Direct unit tests for shared_helpers functions (no Qt needed)."""
 
-    # --- split_lr_filters ---
+    # --- Issue #93: Ensure filter values are rounded to expected precision ---
 
-    def test_split_lr_even(self) -> None:
-        """split_lr_filters splits evenly for even-length list."""
+    def test_issue93_rew_generator_rounding(self, tmp_path: Path) -> None:
+        """#93: REWGenerator rounds values for WiiM compatibility."""
+        from src.translator.rew_generator import REWGenerator
+        generator = REWGenerator()
+        out = tmp_path / "test_rounding.txt"
+
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=123.4567, gain_db=-3.5555, q=1.41421356)
+        ]
+
+        generator.generate_file(filters, out)
+        content = out.read_text()
+
+        # Freq: 8.2f (123.46), Gain: 6.2f (-3.56), Q: .3f (1.414)
+        assert "Fc   123.46 Hz" in content
+        assert "Gain  -3.56 dB" in content
+        assert "Q  1.414" in content
+
+    # --- Issue #92: L/R filtering logic ---
+
+    def test_issue92_lr_filter_splitting(self) -> None:
+        """#92: Ensure L/R filter lists are split and handled correctly."""
+        # Using the existing shared helper split_lr_filters
+        filters = [_make_filter(100), _make_filter(200), _make_filter(300)]
+        left, right = split_lr_filters(filters)
+
+        # split_lr_filters with 3 items results in 1 left, 2 right
+        assert len(left) == 1
+        assert len(right) == 2
+        assert left[0].frequency_hz == 100.0
+        assert right[0].frequency_hz == 200.0
+        assert right[1].frequency_hz == 300.0
         filters = [_make_filter(100 * (i + 1)) for i in range(6)]
         left, right = split_lr_filters(filters)
         assert len(left) == 3
