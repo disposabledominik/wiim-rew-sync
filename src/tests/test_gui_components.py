@@ -17,6 +17,7 @@ from src.gui.components.sidebar_nav import SidebarNav
 from src.gui.components.status_banner import StatusBanner
 from src.gui.components.step_indicator import StepIndicator
 from src.gui.constants import SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED
+from src.gui.pages.push_page import PushPage
 from src.models.canonical import CanonicalFilter
 
 # ---------------------------------------------------------------------------
@@ -485,3 +486,32 @@ class TestDeviceCard:
 
         with pytest.raises(ValueError, match="Invalid state"):
             card.set_state("broken")
+
+
+def test_pushpage_dry_run_badge_preserves_reserved_space(qtbot) -> None:
+    """#109: Dry-run badge keeps a stable size hint when toggled."""
+    page = PushPage()
+    qtbot.addWidget(page)
+    page.show()
+    qtbot.wait(10)
+
+    initial_badge_hint = page._dry_run_badge.sizeHint().height()
+    initial_page_hint = page.sizeHint().height()
+
+    page.set_dry_run_result("Preview")
+    qtbot.wait(10)
+
+    visible_badge_hint = page._dry_run_badge.sizeHint().height()
+    visible_page_hint = page.sizeHint().height()
+
+    page.reset()
+    qtbot.wait(10)
+
+    reset_badge_hint = page._dry_run_badge.sizeHint().height()
+    reset_page_hint = page.sizeHint().height()
+
+    assert initial_badge_hint > 0
+    assert visible_badge_hint == initial_badge_hint
+    assert reset_badge_hint == initial_badge_hint
+    assert visible_page_hint >= initial_page_hint
+    assert reset_page_hint >= initial_page_hint

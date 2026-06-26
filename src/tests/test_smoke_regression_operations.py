@@ -16,12 +16,14 @@ import pytest
 
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
+from src.gui.secondary_workflows import MultiDeviceRequest
 from src.gui.shared_helpers import (
     build_profile,
     is_lr_mode,
     parse_backup_filters,
     split_lr_filters,
 )
+from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
@@ -153,13 +155,28 @@ class TestPushWriteOperations:
     # --- Issue #58: Multi-device push passes channel_mode through ---
 
     def test_issue58_apply_to_devices_accepts_channel_mode(self, window) -> None:
-        """#58: apply_to_devices takes channel_mode param for L/R."""
+        """#58: apply_to_devices forwards channel_mode into async workflow."""
         swm = window._secondary_workflows
-        # Verify the method signature accepts channel_mode
-        import inspect
+        swm._bridge = MagicMock()
+        swm._bridge.run_async = MagicMock()
+        request = MultiDeviceRequest(
+            device_source_map={"192.168.1.201": ["wifi"]},
+            device_names={"192.168.1.201": "Living Room"},
+        )
+        filters = [_make_filter(100), _make_filter(200)]
 
-        sig = inspect.signature(swm.apply_to_devices)
-        assert "channel_mode" in sig.parameters
+        with (
+            patch.object(swm, "_do_apply_to_devices", new_callable=AsyncMock) as mock_do,
+            patch.object(swm._bridge, "run_async") as mock_run_async,
+        ):
+            swm.apply_to_devices(filters, request, ChannelMode.LR)
+
+        mock_do.assert_called_once_with(filters, request, ChannelMode.LR)
+        mock_run_async.assert_called_once()
+        scheduled_coro = mock_run_async.call_args[0][0]
+        close = getattr(scheduled_coro, "close", None)
+        if callable(close):
+            close()
 
     # --- Issue #61: RoomFit push deferred via _on_name_confirmed ---
 
@@ -192,6 +209,10 @@ class TestPushWriteOperations:
 
         assert state.roomfit_profile_name == "My RoomFit Profile"
         window._bridge.run_async.assert_called_once()
+        scheduled_coro = window._bridge.run_async.call_args[0][0]
+        close = getattr(scheduled_coro, "close", None)
+        if callable(close):
+            close()
 
     # --- Issue #63: write_roomfit accepts channel_mode parameter ---
 
@@ -329,6 +350,10 @@ class TestImportExport:
         ):
             window._export_filters_as_rew(state.current_filters, "Stereo")
             mock_run.assert_called_once()
+            scheduled_coro = mock_run.call_args[0][0]
+            close = getattr(scheduled_coro, "close", None)
+            if callable(close):
+                close()
 
     # --- Issue #44: build_profile sanitizes name ---
 
@@ -437,46 +462,144 @@ class TestPresets:
     # --- Issue #23: _on_eq_type_selected("roomfit") triggers async fetch ---
 
     def test_issue23_eq_type_roomfit_triggers_profile_fetch(self, window) -> None:
-        """#23: Selecting 'roomfit' EQ type triggers _do_list_roomfit_profiles."""
-        _setup_device(window)
-        # Simulate selecting roomfit eq type
-        with patch.object(window._bridge, "run_async") as mock_run:
+        """#23: Selecting 'roomfit' enables RoomFit mode and fetches profiles."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.roomfit_level = 2
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room"}, {"Name": "Office"}]
+        )
+
+        def _run_now(coro: object) -> None:
+            asyncio.run(coro)
+
+        with (
+            patch.object(window._bridge, "run_async", side_effect=_run_now) as mock_run,
+            patch.object(window._filters_page, "set_roomfit_profiles") as mock_set_profiles,
+        ):
             window._on_eq_type_selected("roomfit")
-            # Should call run_async for roomfit profile listing
-            assert mock_run.called
+
+        assert window._wizard_controller.flow_type == FlowType.ROOMFIT
+        assert window._filters_page._roomfit_mode is True
+        mock_run.assert_called_once()
+        mock_set_profiles.assert_called_once_with(["Living Room", "Office"])
 
     # --- Issue #24: PresetsDeviceView signals connected in MainWindow ---
 
     def test_issue24_presets_device_export_connected(self, window) -> None:
-        """#24: PresetsDeviceView export_requested signal is connected."""
-        assert window._presets_device_view.export_requested is not None
+        """#24: Export signal triggers preset export workflow."""
+        item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
+
+        with (
+            patch(
+                "src.gui.main_window.QFileDialog.getSaveFileName",
+                return_value=("/tmp/movie-night.txt", ""),
+            ),
+            patch.object(
+                window, "_do_preset_export", return_value=object()
+            ) as mock_export_workflow,
+            patch.object(window._status_banner, "show_progress") as mock_progress,
+            patch.object(window._bridge, "run_async") as mock_run,
+        ):
+            window._presets_device_view.export_requested.emit([item])
+
+        mock_progress.assert_called_once_with("Exporting 'Movie Night'...")
+        mock_export_workflow.assert_called_once_with("Movie Night", "PEQ", "/tmp/movie-night.txt")
+        mock_run.assert_called_once()
+        scheduled_coro = mock_run.call_args[0][0]
+        close = getattr(scheduled_coro, "close", None)
+        if callable(close):
+            close()
 
     def test_issue24_presets_device_save_connected(self, window) -> None:
-        """#24: PresetsDeviceView save_to_my_presets signal is connected."""
-        assert window._presets_device_view.save_to_my_presets is not None
+        """#24: Save signal triggers preset-save workflow."""
+        item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
+
+        with (
+            patch.object(window, "_do_preset_save", return_value=object()) as mock_save_workflow,
+            patch.object(window._status_banner, "show_progress") as mock_progress,
+            patch.object(window._bridge, "run_async") as mock_run,
+        ):
+            window._presets_device_view.save_to_my_presets.emit([item])
+
+        mock_progress.assert_called_once_with("Saving 'Movie Night' to My Presets...")
+        mock_save_workflow.assert_called_once_with("Movie Night", "PEQ")
+        mock_run.assert_called_once()
+        scheduled_coro = mock_run.call_args[0][0]
+        close = getattr(scheduled_coro, "close", None)
+        if callable(close):
+            close()
 
     def test_issue24_presets_device_load_connected(self, window) -> None:
-        """#24: PresetsDeviceView load_into_editor signal is connected."""
-        assert window._presets_device_view.load_into_editor is not None
+        """#24: Load signal triggers preset-load workflow."""
+        _setup_device(window)
+        item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
+
+        with (
+            patch.object(window, "_ensure_wizard_state_for_load", return_value=True),
+            patch.object(
+                window, "_do_load_peq_preset", return_value=object()
+            ) as mock_load_workflow,
+            patch.object(window._status_banner, "show_progress") as mock_progress,
+            patch.object(window._bridge, "run_async") as mock_run,
+        ):
+            window._presets_device_view.load_into_editor.emit(item)
+
+        mock_progress.assert_called_once_with("Loading preset 'Movie Night'...")
+        mock_load_workflow.assert_called_once_with("Movie Night")
+        mock_run.assert_called_once()
+        scheduled_coro = mock_run.call_args[0][0]
+        close = getattr(scheduled_coro, "close", None)
+        if callable(close):
+            close()
 
     # --- Issue #25: Selecting in one preset list clears the other ---
 
     def test_issue25_preset_list_mutual_exclusion(self, window) -> None:
-        """#25: PresetsDeviceView has mutual exclusion between PEQ and RoomFit lists."""
-        # Verify the view has the clear methods that enable mutual exclusion
+        """#25: Selecting one preset list clears the other list selection."""
         view = window._presets_device_view
-        assert hasattr(view, "clear_peq_selection") or hasattr(view, "_peq_list")
-        assert hasattr(view, "clear_roomfit_selection") or hasattr(view, "_roomfit_list")
+        peq_item = PresetItem(name="Movie", channel_mode="Stereo", preset_type="PEQ")
+        roomfit_item = PresetItem(name="RoomFit A", channel_mode="L/R", preset_type="RoomFit")
+
+        view.set_peq_presets([peq_item])
+        view.set_roomfit_profiles([roomfit_item])
+
+        view._roomfit_list.setCurrentRow(0)
+        assert len(view._roomfit_list.selectedItems()) == 1
+
+        view._peq_list.setCurrentRow(0)
+        assert len(view._peq_list.selectedItems()) == 1
+        assert view._roomfit_list.selectedItems() == []
+
+        view._roomfit_list.setCurrentRow(0)
+        assert len(view._roomfit_list.selectedItems()) == 1
+        assert view._peq_list.selectedItems() == []
 
 
     # --- Issue #27: RoomFit profile selection triggers read and advances ---
 
     def test_issue27_roomfit_profile_selected_triggers_pull(self, window) -> None:
-        """#27: roomfit_profile_selected triggers an async read operation."""
+        """#27: Selecting a RoomFit profile stores state and schedules pull."""
         _setup_device(window)
-        with patch.object(window._bridge, "run_async") as mock_run:
+        scheduled: list[object] = []
+
+        def _capture(coro: object) -> None:
+            scheduled.append(coro)
+
+        with (
+            patch.object(window._bridge, "run_async", side_effect=_capture) as mock_run,
+            patch.object(window._status_banner, "show_progress") as mock_progress,
+        ):
             window._on_roomfit_profile_selected("My Profile")
-            mock_run.assert_called_once()
+
+        assert window._wizard_controller.state.roomfit_profile_name == "My Profile"
+        mock_progress.assert_called_once_with("Loading RoomFit profile 'My Profile'...")
+        mock_run.assert_called_once()
+        assert len(scheduled) == 1
+        close = getattr(scheduled[0], "close", None)
+        if callable(close):
+            close()
 
     # --- Issue #31: Save to My Presets refreshes preset list ---
 
@@ -498,21 +621,44 @@ class TestPresets:
     # --- Issue #37: ReviewPage save_preset_requested signal connected ---
 
     def test_issue37_review_save_preset_signal_connected(self, window) -> None:
-        """#37: ReviewPage save_preset_requested is connected to handler."""
-        # The signal should be connected to _on_review_save_preset
-        # Verify by checking the signal exists and handler exists
-        assert hasattr(window._review_page, "save_preset_requested")
-        assert hasattr(window, "_on_review_save_preset")
+        """#37: ReviewPage save signal invokes preset-save handler path."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.selected_source = "wifi"
+
+        with patch.object(window, "_save_filters_to_presets") as mock_save:
+            window._review_page.save_preset_requested.emit()
+
+        mock_save.assert_called_once()
 
     # --- Issue #53: PushPage export + save signals connected ---
 
     def test_issue53_push_page_export_connected(self, window) -> None:
-        """#53: PushPage export_requested signal is connected."""
-        assert hasattr(window._push_page, "export_requested")
+        """#53: PushPage export signal invokes shared export helper."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+
+        with patch.object(window, "_export_filters_as_rew") as mock_export:
+            window._push_page.export_requested.emit()
+
+        mock_export.assert_called_once_with(state.current_filters, state.channel_mode)
 
     def test_issue53_push_page_save_preset_connected(self, window) -> None:
-        """#53: PushPage save_preset_requested signal is connected."""
-        assert hasattr(window._push_page, "save_preset_requested")
+        """#53: PushPage save signal invokes shared preset-save helper."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.selected_source = "wifi"
+
+        with patch.object(window, "_save_filters_to_presets") as mock_save:
+            window._push_page.save_preset_requested.emit()
+
+        mock_save.assert_called_once()
 
     # --- Issue #54: _on_write_complete marks PUSH step completed ---
 
@@ -529,11 +675,25 @@ class TestPresets:
     # --- Issue #60: NAME_PROFILE step populates existing profile list ---
 
     def test_issue60_name_profile_populated_on_navigation(self, window) -> None:
-        """#60: Navigating to NAME_PROFILE triggers _populate_name_profile_page."""
-        _setup_device(window)
-        with patch.object(window, "_populate_name_profile_page") as mock_pop:
+        """#60: Navigating to NAME_PROFILE populates existing profiles."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.roomfit_level = 2
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room"}, {"Name": "Office"}]
+        )
+
+        def _run_now(coro: object) -> None:
+            asyncio.run(coro)
+
+        with patch.object(window._bridge, "run_async", side_effect=_run_now) as mock_run:
             window._on_step_changed(WizardStep.NAME_PROFILE)
-            mock_pop.assert_called_once()
+
+        mock_run.assert_called_once()
+        assert window._name_profile_page._profiles_list.count() == 2
+        assert window._name_profile_page._profiles_list.item(0).text() == "Living Room"
+        assert window._name_profile_page._profiles_list.item(1).text() == "Office"
 
 
     # --- Issue #62: RoomFit undo creates backup before overwrite ---
@@ -614,29 +774,75 @@ class TestSettingsUIState:
 
     def test_issue10_picker_cancel_shows_info(self, window) -> None:
         """#10: Cancelling measurement picker shows 'Selection cancelled' info."""
-        # Verify the status banner has show_info method
-        assert hasattr(window._status_banner, "show_info")
-        # The method should be callable
-        assert callable(window._status_banner.show_info)
+        measurements = [MagicMock(name="M1", uuid="uuid-1")]
+
+        with (
+            patch(
+                "src.gui.main_window.MeasurementPickerDialog.get_measurement",
+                return_value=None,
+            ),
+            patch.object(window._status_banner, "show_info") as mock_info,
+            patch.object(window._bridge, "run_async") as mock_run_async,
+        ):
+            window._on_measurements_listed(measurements)
+
+        mock_info.assert_called_once_with("Selection cancelled", auto_dismiss=3000)
+        mock_run_async.assert_not_called()
 
     # --- Issue #11: FiltersPage retry shows option cards ---
 
     def test_issue11_filters_page_has_retry_mechanism(self, window) -> None:
-        """#11: FiltersPage has a method to show options after retry."""
+        """#11: Clearing error state fully resets FiltersPage for retry."""
         page = window._filters_page
-        # FiltersPage should have show_options or similar recovery method
-        assert hasattr(page, "show_error") or hasattr(page, "clear_results")
+        page.show_error("Parse failed")
+        page._stereo_path = "/tmp/rew.txt"
+        page._left_path = "/tmp/left.txt"
+        page._right_path = "/tmp/right.txt"
+        page._stereo_file_label.setText("rew.txt")
+        page._left_file_label.setText("left.txt")
+        page._right_file_label.setText("right.txt")
+        page._next_btn.setEnabled(True)
+        page._import_lr_btn.setEnabled(True)
+
+        page.clear_results()
+
+        assert page._error_section.isVisible() is False
+        assert page._warnings_section.isVisible() is False
+        assert page._stereo_path == ""
+        assert page._left_path == ""
+        assert page._right_path == ""
+        assert page._stereo_file_label.text() == "No file selected"
+        assert page._left_file_label.text() == "No file selected"
+        assert page._right_file_label.text() == "No file selected"
+        assert page._next_btn.isEnabled() is False
+        assert page._import_lr_btn.isEnabled() is False
 
     # --- Issue #12: Progress shown immediately before async call ---
 
     def test_issue12_device_pull_shows_progress(self, window) -> None:
         """#12: _on_device_pull_requested shows progress before async call."""
         _setup_device(window)
-        with patch.object(window._status_banner, "show_progress") as mock_prog:
+        call_order: list[str] = []
+
+        def _record_progress(message: str) -> None:
+            call_order.append(f"progress:{message}")
+
+        def _record_async(coro: object) -> None:
+            call_order.append("run_async")
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+
+        with (
+            patch.object(window._status_banner, "show_progress", side_effect=_record_progress),
+            patch.object(window._bridge, "run_async", side_effect=_record_async),
+        ):
             window._on_device_pull_requested()
-            # Progress should be shown (either via feedback_manager or directly)
-            # The feedback manager is triggered by bridge signals
-            assert mock_prog.called or window._bridge.run_async.called
+
+        assert call_order == [
+            "progress:Pulling filters from device...",
+            "run_async",
+        ]
 
     # --- Issue #13: Empty filters shows persistent guidance ---
 
@@ -648,27 +854,36 @@ class TestSettingsUIState:
         state.channel_mode = ChannelMode.STEREO
 
         peq_data = MagicMock(channel_mode="stereo", bands_l=None, bands_r=None)
-        # _on_peq_ready with empty filters should trigger guidance message
-        # (via QTimer.singleShot, so we just verify no crash)
-        window._on_peq_ready(peq_data)
-        # No exception = pass (timer-based assertion would require processEvents)
+        with (
+            patch("src.gui.main_window.QTimer.singleShot", side_effect=lambda _ms, fn: fn()),
+            patch.object(window._status_banner, "show_info") as mock_info,
+            patch.object(window._bridge, "run_async") as mock_run_async,
+        ):
+            window._on_peq_ready(peq_data)
+
+        mock_info.assert_called_once_with(
+            "Device has no active filters. Try importing from a REW file instead.",
+            auto_dismiss=0,
+        )
+        mock_run_async.assert_not_called()
 
     # --- Issue #32: finish_operation only clears if still showing progress ---
 
     def test_issue32_finish_clears_only_progress(self, window) -> None:
-        """#32: finish_operation only clears banner when is_progress() is True."""
+        """#32: finish_operation preserves results but clears active progress."""
         fm = window._feedback_manager
         banner = window._status_banner
 
-        # Show a non-progress message
-        banner.show_success("Operation succeeded")
-        fm._is_active = True
         with patch.object(banner, "clear") as mock_clear:
-            # If banner.is_progress() returns False, clear should NOT be called
-            if hasattr(banner, "is_progress"):
-                with patch.object(banner, "is_progress", return_value=False):
-                    fm.finish_operation()
-                    mock_clear.assert_not_called()
+            fm._is_active = True
+            with patch.object(banner, "is_progress", return_value=False):
+                fm.finish_operation()
+            mock_clear.assert_not_called()
+
+            fm._is_active = True
+            with patch.object(banner, "is_progress", return_value=True):
+                fm.finish_operation()
+            mock_clear.assert_called_once()
 
     # --- Issue #33: _do_copy_presets_batch iterates all selected devices ---
 
@@ -692,28 +907,130 @@ class TestSettingsUIState:
                 window._do_copy_presets_batch(items, "192.168.1.200", "wifi")
             )
             assert mock_copy.call_count == 2
+            # Verify each preset was processed with correct parameters
+            call_args_list = mock_copy.call_args_list
+            assert call_args_list[0][0][0] == "Preset1"
+            assert call_args_list[0][0][1] == "PEQ"
+            assert call_args_list[0][0][2] == "192.168.1.200"
+            assert call_args_list[0][0][3] == "wifi"
+            assert call_args_list[1][0][0] == "Preset2"
+            assert call_args_list[1][0][1] == "PEQ"
+            assert call_args_list[1][0][2] == "192.168.1.200"
+            assert call_args_list[1][0][3] == "wifi"
 
 
     # --- Issue #34: _do_copy_preset_to_device branches on preset_type ---
 
     def test_issue34_copy_branches_on_preset_type(self, window) -> None:
-        """#34: _do_copy_preset_to_device branches on PEQ vs RoomFit."""
+        """#34: _do_copy_preset_to_device uses PEQ and RoomFit write paths correctly."""
         _setup_device(window)
-        # Verify the method exists and accepts preset_type parameter
-        import inspect
+        source_adapter = window._wiim_adapter
 
-        sig = inspect.signature(window._do_copy_preset_to_device)
-        assert "preset_type" in sig.parameters
+        peq_settings = MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
+        source_adapter.load_peq_profile = AsyncMock()
+        source_adapter.read_peq = AsyncMock(return_value=peq_settings)
+
+        roomfit_settings = MagicMock(
+            channel_mode="lr",
+            bands=[_make_filter(100), _make_filter(200)],
+            bands_l=[_make_filter(100)],
+            bands_r=[_make_filter(200)],
+        )
+        source_adapter.read_roomfit = AsyncMock(return_value=roomfit_settings)
+        window._wizard_controller.state.filters_l = list(roomfit_settings.bands_l)
+        window._wizard_controller.state.filters_r = list(roomfit_settings.bands_r)
+
+        with (
+            patch("src.gui.main_window.WiiMHttpClient"),
+            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
+        ):
+            mock_prober = MagicMock()
+            mock_prober.probe = AsyncMock(return_value=_make_caps())
+            mock_prober_cls.return_value = mock_prober
+
+            mock_target_client = MagicMock()
+            mock_target_client.close = AsyncMock()
+
+            target_adapter = MagicMock()
+            target_adapter.write_roomfit = AsyncMock()
+            target_adapter.save_peq_profile = AsyncMock()
+            mock_adapter_cls.return_value = target_adapter
+            mock_wiim_http = MagicMock(return_value=mock_target_client)
+
+            safe_write = MagicMock()
+            safe_write.execute = AsyncMock()
+            mock_safe_write_cls.return_value = safe_write
+
+            import asyncio
+
+            with patch("src.gui.main_window.WiiMHttpClient", mock_wiim_http):
+                asyncio.run(
+                    window._do_copy_preset_to_device(
+                        "Movie Night", "PEQ", "192.168.1.200", "wifi"
+                    )
+                )
+                safe_write.execute.assert_called_once()
+                target_adapter.save_peq_profile.assert_called_once_with(
+                    "wifi", "Movie Night"
+                )
+                target_adapter.write_roomfit.assert_not_called()
+
+                safe_write.execute.reset_mock()
+                target_adapter.save_peq_profile.reset_mock()
+                target_adapter.write_roomfit.reset_mock()
+
+                asyncio.run(
+                    window._do_copy_preset_to_device(
+                        "RoomFit A", "RoomFit", "192.168.1.200", "wifi"
+                    )
+                )
+                target_adapter.write_roomfit.assert_called_once()
+                safe_write.execute.assert_not_called()
+                target_adapter.save_peq_profile.assert_not_called()
 
     # --- Issue #38: My Saved Presets view has toolbar buttons ---
 
-    def test_issue38_my_presets_view_has_toolbar(self, window) -> None:
-        """#38: MyPresetsView has toolbar action signals wired."""
+    def test_issue38_my_presets_view_has_toolbar(self, window, qtbot) -> None:
+        """#38: Toolbar actions emit for the selected preset."""
         view = window._my_presets_view
-        # Should have action signals for rename, delete, duplicate, load
-        assert hasattr(view, "load_requested") or hasattr(view, "profile_load_requested")
-        assert hasattr(view, "rename_requested") or hasattr(view, "profile_rename_requested")
-        assert hasattr(view, "delete_requested") or hasattr(view, "profile_delete_requested")
+        profile = build_profile("Jazz Night", [_make_filter()], "Stereo")
+
+        window._stacked_widget.setCurrentWidget(view)
+        window.show()
+        qtbot.wait(10)
+        view.set_presets([profile])
+
+        assert view._toolbar.isVisible() is True
+        assert view._load_btn.isEnabled() is False
+        assert view._rename_btn.isEnabled() is False
+        assert view._duplicate_btn.isEnabled() is False
+        assert view._delete_btn.isEnabled() is False
+
+        view._list_widget.setCurrentRow(0)
+        qtbot.wait(10)
+
+        assert view._load_btn.isEnabled() is True
+        assert view._rename_btn.isEnabled() is True
+        assert view._duplicate_btn.isEnabled() is True
+        assert view._delete_btn.isEnabled() is True
+
+        load_calls: list[object] = []
+        duplicate_calls: list[str] = []
+        delete_calls: list[str] = []
+
+        view.load_requested.connect(lambda selected: load_calls.append(selected))
+        view.duplicate_requested.connect(lambda name: duplicate_calls.append(name))
+        view.delete_requested.connect(lambda name: delete_calls.append(name))
+
+        view._load_btn.click()
+        view._duplicate_btn.click()
+        view._delete_btn.click()
+
+        assert load_calls == [profile]
+        assert duplicate_calls == ["Jazz Night"]
+        assert delete_calls == ["Jazz Night"]
 
     # --- Issue #39: L/R presets show "L/R" badge ---
 
@@ -732,15 +1049,41 @@ class TestSettingsUIState:
     # --- Issue #42: Source page receives all common sources including line-in ---
 
     def test_issue42_source_page_has_set_sources(self, window) -> None:
-        """#42: SourcePage can receive a list of sources including line-in."""
+        """#42: SourcePage populates all provided sources, including line-in."""
         page = window._source_page
-        assert hasattr(page, "set_sources") or hasattr(page, "set_source_options")
+        page.set_sources(["wifi", "line-in", "optical"])
+
+        assert list(page._source_checkboxes.keys()) == ["wifi", "line-in", "optical"]
+        assert page._source_checkboxes["wifi"].isChecked() is True
+        assert "recommended default" in page._source_checkboxes["wifi"].text()
+        assert page._source_checkboxes["line-in"].text() == "line-in"
+        assert page._continue_btn.isEnabled() is True
 
     # --- Issue #48: Preset save uses thread-safe pattern ---
 
     def test_issue48_save_filters_to_presets_callable(self, window) -> None:
-        """#48: _save_filters_to_presets is available (thread-safe save)."""
-        assert callable(window._save_filters_to_presets)
+        """#48: _save_filters_to_presets refreshes the visible presets view."""
+        filters = [_make_filter(100), _make_filter(200)]
+        state = window._wizard_controller.state
+        state.filters_l = []
+        state.filters_r = []
+
+        with (
+            patch.object(window._profile_repository, "save") as mock_save,
+            patch.object(window._profile_repository, "list", return_value=[]) as mock_list,
+            patch.object(window._my_presets_view, "set_presets") as mock_set_presets,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            window._save_filters_to_presets("Thread Safe Preset", filters, ChannelMode.STEREO)
+
+        mock_save.assert_called_once()
+        saved_profile = mock_save.call_args[0][0]
+        assert saved_profile.name == "Thread Safe Preset"
+        assert saved_profile.channel_mode == ChannelMode.STEREO
+        assert saved_profile.filters == filters
+        mock_list.assert_called_once()
+        mock_set_presets.assert_called_once_with([])
+        mock_success.assert_called_once_with("Saved 'Thread Safe Preset' to My Presets")
 
     # --- Issue #49: recall_profile handles L/R profiles ---
 
@@ -782,21 +1125,53 @@ class TestSettingsUIState:
     # --- Issue #50: Copy to another source reads from SourcePage source list ---
 
     def test_issue50_source_page_provides_sources(self, window) -> None:
-        """#50: SourcePage has set_sources method for populating source checkboxes."""
+        """#50: Dry-run summary uses SourcePage selections, not empty caps."""
         page = window._source_page
-        # SourcePage should have set_sources and the internal _source_checkboxes dict
-        assert hasattr(page, "set_sources")
-        assert hasattr(page, "_source_checkboxes")
+        page.set_sources(["wifi", "optical", "hdmi"], active_source="wifi")
+        page._source_checkboxes["wifi"].setChecked(False)
+        page._source_checkboxes["optical"].setChecked(True)
+        page._source_checkboxes["hdmi"].setChecked(True)
+
+        _setup_device(window).capabilities.source_names = []
+        state = window._wizard_controller.state
+        state.selected_source = ",".join(
+            source
+            for source, checkbox in page._source_checkboxes.items()
+            if checkbox.isChecked()
+        )
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = True
+
+        with patch.object(window._push_page, "set_dry_run_result") as mock_dry:
+            window._on_push_requested()
+
+        summary = mock_dry.call_args[0][0]
+        assert "optical, hdmi" in summary
 
     # --- Issue #69: SecondaryWorkflowManager.copy_preset_to_device accepts channel_mode ---
 
     def test_issue69_copy_preset_to_device_has_channel_mode(self, window) -> None:
-        """#69: copy_preset_to_device accepts channel_mode parameter."""
+        """#69: copy_preset_to_device forwards channel_mode into async workflow."""
         swm = window._secondary_workflows
-        import inspect
+        swm._bridge = MagicMock()
+        swm._bridge.run_async = MagicMock()
+        filters = [_make_filter()]
 
-        sig = inspect.signature(swm.copy_preset_to_device)
-        assert "channel_mode" in sig.parameters
+        with (
+            patch.object(
+                swm, "_do_copy_preset_to_device", new_callable=AsyncMock
+            ) as mock_do,
+            patch.object(swm._bridge, "run_async") as mock_run_async,
+        ):
+            swm.copy_preset_to_device(filters, "192.168.1.200", "wifi", ChannelMode.LR)
+
+        mock_do.assert_called_once_with(filters, "192.168.1.200", "wifi", ChannelMode.LR)
+        mock_run_async.assert_called_once()
+        scheduled_coro = mock_run_async.call_args[0][0]
+        close = getattr(scheduled_coro, "close", None)
+        if callable(close):
+            close()
 
     # --- Issue #70: parse_backup_filters handles stereo and L/R ---
 
@@ -935,8 +1310,21 @@ class TestSettingsUIState:
     # --- Issue #85: Diagnostics raw_command_requested connected ---
 
     def test_issue85_diagnostics_raw_command_connected(self, window) -> None:
-        """#85: Diagnostics panel raw_command_requested signal is connected."""
-        assert hasattr(window._diagnostics_panel, "raw_command_requested")
+        """#85: Diagnostics raw command signal triggers async command execution."""
+        _setup_device(window)
+        captured_coroutines: list[object] = []
+
+        def _capture_and_close(coro: object) -> None:
+            captured_coroutines.append(coro)
+            import asyncio
+
+            asyncio.run(coro)
+
+        with patch.object(window._bridge, "run_async", side_effect=_capture_and_close) as mock_run:
+            window._diagnostics_panel.raw_command_requested.emit("getStatusEx")
+
+        assert mock_run.call_count == 1
+        assert len(captured_coroutines) == 1
 
     def test_issue85_raw_command_handler_exists(self, window) -> None:
         """#85: _on_raw_command_requested handler exists and is callable."""
@@ -982,22 +1370,28 @@ class TestSharedHelpers:
 
     # --- Issue #92: L/R filtering logic ---
 
-    def test_issue92_lr_filter_splitting(self) -> None:
-        """#92: Ensure L/R filter lists are split and handled correctly."""
-        # Using the existing shared helper split_lr_filters
-        filters = [_make_filter(100), _make_filter(200), _make_filter(300)]
-        left, right = split_lr_filters(filters)
+    def test_issue92_lr_filter_splitting(self, window) -> None:
+        """#92: Explicit L/R bands are stored in wizard state without naive re-splitting."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        filters_l = [_make_filter(100)]
+        filters_r = [_make_filter(200), _make_filter(300)]
+        state.current_filters = filters_l + filters_r
+        state.channel_mode = ChannelMode.LR
 
-        # split_lr_filters with 3 items results in 1 left, 2 right
-        assert len(left) == 1
-        assert len(right) == 2
-        assert left[0].frequency_hz == 100.0
-        assert right[0].frequency_hz == 200.0
-        assert right[1].frequency_hz == 300.0
-        filters = [_make_filter(100 * (i + 1)) for i in range(6)]
-        left, right = split_lr_filters(filters)
-        assert len(left) == 3
-        assert len(right) == 3
+        peq_data = MagicMock(
+            channel_mode="lr",
+            bands_l=filters_l,
+            bands_r=filters_r,
+        )
+
+        with patch.object(window._review_page, "set_lr_filters") as mock_lr:
+            window._on_peq_ready(peq_data)
+
+        assert state.filters_l == filters_l
+        assert state.filters_r == filters_r
+        assert state.current_filters == filters_l + filters_r
+        mock_lr.assert_called_once_with(filters_l, filters_r, {}, {})
 
     def test_split_lr_odd(self) -> None:
         """split_lr_filters with odd count puts extra in right half."""
