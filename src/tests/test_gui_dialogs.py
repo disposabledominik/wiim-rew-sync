@@ -436,36 +436,32 @@ class TestOnboardingOverlay:
         overlay = OnboardingOverlay()
         qtbot.addWidget(overlay)
 
-        # Each card has a title label with object name cap_title_*
-        import_title = overlay.findChild(QLabel, "cap_title_import_filters")
-        push_title = overlay.findChild(QLabel, "cap_title_push_safely")
-        save_title = overlay.findChild(QLabel, "cap_title_save_presets")
+        # Title labels are tagged with the shared "onboardingCapTitle" QSS class
+        titles = [
+            lbl.text()
+            for lbl in overlay.findChildren(QLabel)
+            if lbl.property("class") == "onboardingCapTitle"
+        ]
 
-        assert import_title is not None
-        assert push_title is not None
-        assert save_title is not None
-
-        assert "Import Filters" in import_title.text()
-        assert "Push Safely" in push_title.text()
-        assert "Save Presets" in save_title.text()
+        assert "Import Filters" in titles
+        assert "Push Safely" in titles
+        assert "Save Presets" in titles
 
     def test_capability_card_descriptions(self, qtbot) -> None:
         """Each capability card has a one-sentence description (Req 23.2)."""
         overlay = OnboardingOverlay()
         qtbot.addWidget(overlay)
 
-        import_desc = overlay.findChild(QLabel, "cap_desc_import_filters")
-        push_desc = overlay.findChild(QLabel, "cap_desc_push_safely")
-        save_desc = overlay.findChild(QLabel, "cap_desc_save_presets")
+        # Description labels are tagged with the shared "onboardingCapDesc" QSS class
+        descriptions = [
+            lbl.text()
+            for lbl in overlay.findChildren(QLabel)
+            if lbl.property("class") == "onboardingCapDesc"
+        ]
 
-        assert import_desc is not None
-        assert "REW" in import_desc.text()
-
-        assert push_desc is not None
-        assert "backup" in push_desc.text()
-
-        assert save_desc is not None
-        assert "library" in save_desc.text()
+        assert any("REW" in text for text in descriptions)
+        assert any("backup" in text for text in descriptions)
+        assert any("library" in text for text in descriptions)
 
     def test_get_started_button_present(self, qtbot) -> None:
         """Overlay has a 'Get Started' button (Req 23.3)."""
@@ -488,13 +484,14 @@ class TestOnboardingOverlay:
         assert not overlay.isVisible()
 
     def test_overlay_has_semi_transparent_background(self, qtbot) -> None:
-        """Overlay background is semi-transparent (dark backdrop)."""
+        """Overlay is styled-background enabled so QSS can paint the dark backdrop."""
         overlay = OnboardingOverlay()
         qtbot.addWidget(overlay)
 
-        # The stylesheet should contain rgba with transparency
-        style = overlay.styleSheet()
-        assert "rgba(0, 0, 0, 0.55)" in style
+        # The semi-transparent backdrop color lives in the QSS theme files,
+        # targeted via objectName; this attribute is what makes that paint.
+        assert overlay.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        assert overlay.objectName() == "onboarding_overlay"
 
     def test_overlay_object_name(self, qtbot) -> None:
         """Overlay has proper object name for QSS targeting."""

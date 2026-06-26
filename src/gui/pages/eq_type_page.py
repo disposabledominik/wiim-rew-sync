@@ -18,8 +18,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
-    CARD_RADIUS,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
@@ -50,7 +48,7 @@ class _EQCard(QFrame):
         heading_label = QLabel(heading)
         heading_label.setObjectName("cardHeading")
         heading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        heading_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+        heading_label.setProperty("class", "sectionTitle")
         layout.addWidget(heading_label)
 
         # Description
@@ -78,24 +76,10 @@ class _EQCard(QFrame):
         self.clicked.emit()
 
     def _apply_style(self) -> None:
-        """Apply border style based on selected state.
-
-        Uses class property for QSS-driven theming. The QSS card rules handle
-        background colors. We only add border emphasis here.
-        """
-        if self._selected:
-            self.setStyleSheet(
-                f"_EQCard {{"
-                f"  border: 2px solid {ACCENT_COLOR};"
-                f"  border-radius: {CARD_RADIUS}px;"
-                f"}}"
-            )
-        else:
-            self.setStyleSheet(
-                f"_EQCard {{"
-                f"  border-radius: {CARD_RADIUS}px;"
-                f"}}"
-            )
+        """Apply border emphasis based on selected state via the QSS ``selected`` property."""
+        self.setProperty("selected", self._selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class EQTypePage(QWidget):
@@ -132,7 +116,7 @@ class EQTypePage(QWidget):
         # Title
         title = QLabel("Select EQ Type")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        title.setProperty("class", "pageTitle")
         container_layout.addWidget(title)
 
         # Cards layout (side by side)

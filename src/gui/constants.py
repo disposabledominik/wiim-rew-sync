@@ -1,133 +1,30 @@
 """GUI design constants: colors, typography, spacing, and sizing.
 
-Defines the visual design tokens used by theme.py and QSS stylesheets.
-Values follow Fluent Design principles (Microsoft's design language for Windows 11)
-with WiiM brand teal as the accent color.
+Defines the visual design tokens used by QSS stylesheets (see
+src/gui/assets/styles/fluent_dark.qss and fluent_light.qss) and by the small
+number of widgets that need a color value at runtime (e.g. dynamically built
+rich-text strings) rather than via QSS class/property selectors.
 
-Both light and dark mode color sets are provided. The active set is selected
-by ThemeManager at runtime based on user preference or OS detection.
+Theme color *palettes* live exclusively in the QSS files now — there is no
+Python-side ColorScheme/COLORS_LIGHT/COLORS_DARK mirror to keep in sync. Only
+add a color constant here if it is genuinely needed outside of QSS.
 """
 
 from __future__ import annotations
 
 import platform
-from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
 # Color Palette
 # ---------------------------------------------------------------------------
 
-
-@dataclass(frozen=True, slots=True)
-class ColorScheme:
-    """Color set for a single theme mode (light or dark)."""
-
-    # Accent
-    accent: str
-    accent_hover: str
-    accent_pressed: str
-    accent_subtle: str
-
-    # Semantic
-    success: str
-    error: str
-    warning: str
-
-    # Surfaces
-    background: str
-    surface: str
-    surface_hover: str
-    card: str
-
-    # Text
-    text_primary: str
-    text_secondary: str
-    text_disabled: str
-    text_on_accent: str
-
-    # Borders
-    border: str
-    border_subtle: str
-
-    # Status banner backgrounds
-    banner_info: str
-    banner_success: str
-    banner_error: str
-    banner_warning: str
-
-
-COLORS_LIGHT = ColorScheme(
-    # Accent - WiiM brand teal
-    accent="#00B4D8",
-    accent_hover="#0096B7",
-    accent_pressed="#007A96",
-    accent_subtle="#E6F8FC",
-    # Semantic
-    success="#2E7D32",
-    error="#C62828",
-    warning="#F57C00",
-    # Surfaces
-    background="#F5F5F5",
-    surface="#FFFFFF",
-    surface_hover="#F0F0F0",
-    card="#FFFFFF",
-    # Text
-    text_primary="#1A1A1A",
-    text_secondary="#616161",
-    text_disabled="#9E9E9E",
-    text_on_accent="#FFFFFF",
-    # Borders
-    border="#E0E0E0",
-    border_subtle="#EEEEEE",
-    # Status banner backgrounds
-    banner_info="#F5F5F5",
-    banner_success="#E8F5E9",
-    banner_error="#FFEBEE",
-    banner_warning="#FFF3E0",
-)
-
-COLORS_DARK = ColorScheme(
-    # Accent - WiiM brand teal (slightly brighter for dark mode)
-    accent="#00B4D8",
-    accent_hover="#33C5E1",
-    accent_pressed="#66D6EA",
-    accent_subtle="#1A2E33",
-    # Semantic
-    success="#66BB6A",
-    error="#EF5350",
-    warning="#FFA726",
-    # Surfaces
-    background="#1E1E1E",
-    surface="#2D2D2D",
-    surface_hover="#3A3A3A",
-    card="#2D2D2D",
-    # Text
-    text_primary="#F5F5F5",
-    text_secondary="#B0B0B0",
-    text_disabled="#6E6E6E",
-    text_on_accent="#FFFFFF",
-    # Borders
-    border="#404040",
-    border_subtle="#333333",
-    # Status banner backgrounds
-    banner_info="#2D2D2D",
-    banner_success="#1B3A1B",
-    banner_error="#3A1B1B",
-    banner_warning="#3A2E1B",
-)
-
-# Convenience aliases matching the design doc top-level names
+# Convenience aliases matching the design doc top-level names.
+# Only ACCENT_COLOR and WARNING_COLOR remain — they're used for runtime
+# QColor() calculations (table cell foreground, search highlight) that
+# QSS classes can't express. Color choices for everything else live in
+# fluent_dark.qss / fluent_light.qss.
 ACCENT_COLOR: str = "#00B4D8"
 """WiiM brand teal - primary accent throughout the UI."""
-
-ACCENT_HOVER: str = "#0096B7"
-"""Darker accent for hover states."""
-
-SUCCESS_COLOR: str = "#2E7D32"
-"""Green for success banners and checkmarks."""
-
-ERROR_COLOR: str = "#C62828"
-"""Red for error banners and critical states."""
 
 WARNING_COLOR: str = "#F57C00"
 """Orange for warnings and clamping indicators."""

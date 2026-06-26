@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
     LIST_ITEM_HEIGHT,
     SIDEBAR_COLLAPSED,
     SIDEBAR_EXPANDED,
@@ -44,6 +43,7 @@ class _NavItem(QPushButton):
         self.setCheckable(True)
         self.setText(f"{icon_char}  {label}" if icon_char else label)
         self.setToolTip(label)
+        self.setObjectName("SidebarNavItem")
         self._apply_style()
 
     def set_active(self, active: bool) -> None:
@@ -64,28 +64,9 @@ class _NavItem(QPushButton):
 
     def _apply_style(self) -> None:
         """Apply styling based on active state."""
-        if self._active:
-            self.setStyleSheet(
-                f"QPushButton {{"
-                f"  background-color: {ACCENT_COLOR}1A;"
-                f"  border-left: 3px solid {ACCENT_COLOR};"
-                f"  text-align: left;"
-                f"  padding-left: {SPACING_SM}px;"
-                f"  font-weight: 600;"
-                f"}}"
-            )
-        else:
-            self.setStyleSheet(
-                f"QPushButton {{"
-                f"  background-color: transparent;"
-                f"  border: none;"
-                f"  text-align: left;"
-                f"  padding-left: {SPACING_SM + 3}px;"
-                f"}}"
-                f"QPushButton:hover {{"
-                f"  background-color: rgba(0, 0, 0, 0.05);"
-                f"}}"
-            )
+        self.setProperty("class", "navItemActive" if self._active else "navItem")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class SidebarNav(QWidget):
@@ -135,12 +116,9 @@ class SidebarNav(QWidget):
         header_layout.setContentsMargins(SPACING_SM, SPACING_SM, SPACING_SM, SPACING_MD)
 
         self._device_label = QPushButton("No device")
+        self._device_label.setObjectName("SidebarDeviceLabel")
         self._device_label.setFlat(True)
         self._device_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._device_label.setStyleSheet(
-            "QPushButton { text-align: left; font-weight: 600; border: none; }"
-            "QPushButton:hover { text-decoration: underline; }"
-        )
         self._device_label.setToolTip("Go to Connect step")
         self._device_label.clicked.connect(self._on_device_header_clicked)
         header_layout.addWidget(self._device_label)
@@ -162,13 +140,10 @@ class SidebarNav(QWidget):
 
         # Collapse/expand toggle button
         self._toggle_btn = QPushButton("\u2630")  # Hamburger icon
+        self._toggle_btn.setObjectName("SidebarToggleButton")
         self._toggle_btn.setFixedHeight(LIST_ITEM_HEIGHT)
         self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._toggle_btn.setToolTip("Collapse sidebar")
-        self._toggle_btn.setStyleSheet(
-            "QPushButton { background: transparent; border: none; font-size: 18px; }"
-            "QPushButton:hover { background-color: rgba(0, 0, 0, 0.05); }"
-        )
         self._toggle_btn.clicked.connect(self._on_toggle_clicked)
         layout.addWidget(self._toggle_btn)
 

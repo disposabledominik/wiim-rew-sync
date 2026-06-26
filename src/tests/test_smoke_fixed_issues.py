@@ -208,18 +208,18 @@ def test_settings_apply_populates_default_paths(qtbot, tmp_path):
                 assert current["presets_directory"] == str(tmp_path)
 
 
-# Issue 91 & 117: Onboarding overlay rebuilds for dark theme and has no Skip button
+# Issue 91 & 117: Onboarding overlay themes via QSS and has no Skip button
 def test_onboarding_overlay_theme_and_no_skip(qtbot):
-    from PySide6.QtWidgets import QApplication
+    """Overlay colors come from the QSS theme files (objectName-targeted), not Python.
 
-    from src.gui.constants import COLORS_DARK
+    Regression note: this previously sniffed app.styleSheet() text for a dark-mode
+    marker and applied colors via setStyleSheet() in Python. That hack was removed
+    as part of the QSS decoupling refactor; theming is now handled entirely by the
+    QLabel#onboarding_title selector in fluent_dark.qss / fluent_light.qss.
+    """
+    from pathlib import Path
+
     from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
-
-    app = cast(QApplication, QApplication.instance())
-    assert app is not None
-
-    # Simulate dark theme via stylesheet detection string
-    app.setStyleSheet("background-color: #1E1E1E;")
 
     overlay = OnboardingOverlay(None)
     qtbot.addWidget(overlay)
@@ -229,7 +229,11 @@ def test_onboarding_overlay_theme_and_no_skip(qtbot):
 
     title = overlay.findChild(QLabel, "onboarding_title")
     assert title is not None
-    assert COLORS_DARK.text_primary in title.styleSheet()
+    # No more per-widget inline stylesheet; QSS theme files own the styling now.
+    assert title.styleSheet() == ""
+
+    dark_qss = Path("src/gui/assets/styles/fluent_dark.qss").read_text(encoding="utf-8")
+    assert "QLabel#onboarding_title" in dark_qss
 
     # Skip button was removed; ensure no skip_button exists
     skip = overlay.findChild(QLabel, "skip_button")

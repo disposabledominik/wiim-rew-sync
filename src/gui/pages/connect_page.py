@@ -22,10 +22,6 @@ from PySide6.QtWidgets import (
 
 from src.gui.components.device_card import DeviceCard
 from src.gui.constants import (
-    FONT_SIZE_BODY,
-    FONT_SIZE_CAPTION,
-    FONT_SIZE_HEADING,
-    FONT_WEIGHT_SEMIBOLD,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
@@ -165,9 +161,7 @@ class ConnectPage(QWidget):
         # Page title
         title = QLabel("Connect to Device", content_wrapper)
         title.setObjectName("ConnectPageTitle")
-        title.setStyleSheet(
-            f"font-size: {FONT_SIZE_HEADING}px; font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        title.setProperty("class", "heading")
         content_layout.addWidget(title)
 
         # --- Scanning state ---
@@ -216,16 +210,12 @@ class ConnectPage(QWidget):
         spinner_label = QLabel("\u25CF \u25CF \u25CF", widget)
         spinner_label.setObjectName("ConnectPageSpinner")
         spinner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        spinner_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_HEADING}px; color: #00B4D8; letter-spacing: 8px;"
-        )
         layout.addWidget(spinner_label)
 
         # Scanning message (Req 2.2)
         message = QLabel("Searching for WiiM devices on your network...", widget)
         message.setObjectName("ConnectPageScanningMessage")
         message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        message.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px;")
         message.setWordWrap(True)
         layout.addWidget(message)
 
@@ -243,9 +233,7 @@ class ConnectPage(QWidget):
         heading = QLabel("No devices found", widget)
         heading.setObjectName("ConnectPageEmptyHeading")
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        heading.setStyleSheet(
-            f"font-size: {FONT_SIZE_HEADING}px; font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        heading.setProperty("class", "heading")
         layout.addWidget(heading)
 
         # Common causes explanation
@@ -277,7 +265,7 @@ class ConnectPage(QWidget):
         )
         troubleshoot_label.setObjectName("ConnectPageTroubleshootLink")
         troubleshoot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        troubleshoot_label.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION}px;")
+        troubleshoot_label.setProperty("class", "caption")
         troubleshoot_label.setOpenExternalLinks(False)
         layout.addWidget(troubleshoot_label)
 

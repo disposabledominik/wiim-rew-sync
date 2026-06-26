@@ -22,9 +22,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
-    FONT_SIZE_BODY,
-    FONT_WEIGHT_SEMIBOLD,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
@@ -127,7 +124,6 @@ class QuickSetupDialog(QDialog):
             "Before loading, please confirm the following:"
         )
         instruction.setWordWrap(True)
-        instruction.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px;")
         layout.addWidget(instruction)
 
         # EQ Type section
@@ -138,9 +134,7 @@ class QuickSetupDialog(QDialog):
             eq_layout.setSpacing(SPACING_SM)
 
             eq_label = QLabel("EQ Type:")
-            eq_label.setStyleSheet(
-                f"font-size: {FONT_SIZE_BODY}px; font-weight: {FONT_WEIGHT_SEMIBOLD};"
-            )
+            eq_label.setProperty("class", "fieldLabel")
             eq_layout.addWidget(eq_label)
 
             eq_buttons = QHBoxLayout()
@@ -170,9 +164,7 @@ class QuickSetupDialog(QDialog):
             source_layout.setSpacing(SPACING_SM)
 
             source_label = QLabel("Target source(s):")
-            source_label.setStyleSheet(
-                f"font-size: {FONT_SIZE_BODY}px; font-weight: {FONT_WEIGHT_SEMIBOLD};"
-            )
+            source_label.setProperty("class", "fieldLabel")
             source_layout.addWidget(source_label)
 
             self._source_checkboxes: dict[str, QCheckBox] = {}
@@ -180,7 +172,7 @@ class QuickSetupDialog(QDialog):
                 cb = QCheckBox(source)
                 if source == "wifi":
                     cb.setChecked(True)
-                    cb.setStyleSheet(f"QCheckBox {{ color: {ACCENT_COLOR}; }}")
+                    cb.setProperty("class", "accent")
                 cb.toggled.connect(self._on_source_toggled)
                 source_layout.addWidget(cb)
                 self._source_checkboxes[source] = cb

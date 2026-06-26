@@ -19,9 +19,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    CARD_RADIUS,
-    ERROR_COLOR,
-    FONT_SIZE_CAPTION,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
@@ -84,15 +81,13 @@ class CrashDialog(QDialog):
 
         error_icon = QLabel("\u26a0")  # Warning sign (triangle with !)
         error_icon.setObjectName("crash_error_icon")
-        error_icon.setStyleSheet(
-            f"color: {ERROR_COLOR}; font-size: 28px; font-weight: bold;"
-        )
+        error_icon.setProperty("class", "warning")
         error_icon.setAlignment(Qt.AlignmentFlag.AlignTop)
         header_layout.addWidget(error_icon)
 
         header_label = QLabel("Unexpected Error")
         header_label.setObjectName("crash_header_label")
-        header_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+        header_label.setProperty("class", "title")
         header_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(header_label, 1)
 
@@ -107,36 +102,25 @@ class CrashDialog(QDialog):
         # --- Error message (monospace, code-style) ---
         error_label = QLabel(error_message)
         error_label.setObjectName("crash_error_message")
+        error_label.setProperty("class", "card")
         error_label.setWordWrap(True)
         error_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        error_label.setStyleSheet(
-            f"background-color: rgba(198, 40, 40, 0.06);"
-            f" border: 1px solid {ERROR_COLOR};"
-            f" border-radius: {CARD_RADIUS}px;"
-            f" padding: {SPACING_SM}px;"
-            f" font-family: Consolas, 'Courier New', monospace;"
-            f" font-size: {FONT_SIZE_CAPTION}px;"
         )
         layout.addWidget(error_label)
 
         # --- Log file path (selectable for easy copy) ---
         log_path_header = QLabel("Log file:")
-        log_path_header.setStyleSheet("font-weight: 600;")
+        log_path_header.setProperty("class", "subheading")
         layout.addWidget(log_path_header)
 
         log_path_label = QLabel(log_path)
         log_path_label.setObjectName("crash_log_path_label")
+        log_path_label.setProperty("class", "caption")
         log_path_label.setWordWrap(True)
         log_path_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
             | Qt.TextInteractionFlag.TextSelectableByKeyboard
-        )
-        log_path_label.setStyleSheet(
-            f"font-family: Consolas, 'Courier New', monospace;"
-            f" font-size: {FONT_SIZE_CAPTION}px;"
-            f" padding: {SPACING_SM // 2}px;"
         )
         layout.addWidget(log_path_label)
 

@@ -29,10 +29,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
-    FONT_SIZE_BODY,
-    FONT_SIZE_CAPTION,
-    FONT_WEIGHT_SEMIBOLD,
     LIST_ITEM_HEIGHT,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
@@ -72,9 +68,7 @@ class _PresetItemWidget(QWidget):
         # Preset name
         self._name_label = QLabel(name, self)
         self._name_label.setObjectName("PresetItemName")
-        self._name_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px; font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        self._name_label.setProperty("class", "subheading")
         self._name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout.addWidget(self._name_label)
 
@@ -82,13 +76,7 @@ class _PresetItemWidget(QWidget):
         badge_text = _channel_mode_display(channel_mode)
         self._mode_badge = QLabel(badge_text, self)
         self._mode_badge.setObjectName("PresetItemBadge")
-        self._mode_badge.setStyleSheet(
-            f"font-size: {FONT_SIZE_CAPTION}px; "
-            f"background-color: {ACCENT_COLOR}; "
-            "color: #FFFFFF; "
-            f"border-radius: {SPACING_XS}px; "
-            f"padding: 2px {SPACING_SM}px;"
-        )
+        self._mode_badge.setProperty("class", "badge")
         self._mode_badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         layout.addWidget(self._mode_badge)
 
@@ -96,7 +84,7 @@ class _PresetItemWidget(QWidget):
         band_text = f"{active_bands}/{total_bands} bands"
         self._band_label = QLabel(band_text, self)
         self._band_label.setObjectName("PresetItemBands")
-        self._band_label.setStyleSheet(f"font-size: {FONT_SIZE_CAPTION}px; color: #9E9E9E;")
+        self._band_label.setProperty("class", "caption")
         self._band_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         layout.addWidget(self._band_label)
 
@@ -172,7 +160,7 @@ class MyPresetsView(QWidget):
         # Title
         title = QLabel("My Saved Presets", content)
         title.setObjectName("MyPresetsTitle")
-        title.setStyleSheet(f"font-size: 18px; font-weight: {FONT_WEIGHT_SEMIBOLD};")
+        title.setProperty("class", "sectionTitle")
         content_layout.addWidget(title)
 
         # Search/filter field (hidden until > 10 items)
@@ -229,7 +217,7 @@ class MyPresetsView(QWidget):
         # Empty state label
         self._empty_label = QLabel("No saved presets yet.", content)
         self._empty_label.setObjectName("MyPresetsEmpty")
-        self._empty_label.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px; color: #9E9E9E;")
+        self._empty_label.setProperty("class", "secondary")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_label.setVisible(False)
         content_layout.addWidget(self._empty_label)

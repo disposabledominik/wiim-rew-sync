@@ -179,12 +179,6 @@ class OperationFeedbackManager(QObject):
             self._cancel_button.setObjectName("OperationCancelButton")
             self._cancel_button.setFixedHeight(28)
             self._cancel_button.setMinimumWidth(60)
-            self._cancel_button.setStyleSheet(
-                "QPushButton { font-size: 12px; font-weight: 600; "
-                "padding: 4px 12px; border: 1px solid rgba(128,128,128,0.5); "
-                "border-radius: 4px; background: transparent; }"
-                "QPushButton:hover { background: rgba(128, 128, 128, 0.2); }"
-            )
             self._cancel_button.clicked.connect(self._on_cancel_clicked)
 
         # Insert before the close button in the banner layout

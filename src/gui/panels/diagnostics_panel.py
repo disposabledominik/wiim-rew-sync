@@ -84,7 +84,10 @@ class DiagnosticsPanel(QWidget):
         header_label = QLabel(
             "\u26a0 Developer Diagnostics \u2014 raw device access"
         )
-        header_label.setStyleSheet("font-weight: bold; color: #e67e22;")
+        header_label.setProperty("class", "warning")
+        font = header_label.font()
+        font.setBold(True)
+        header_label.setFont(font)
         layout.addWidget(header_label)
 
         # --- Raw command input ---

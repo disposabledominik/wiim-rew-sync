@@ -28,10 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
     ANIMATION_NORMAL,
-    ERROR_COLOR,
-    FONT_SIZE_CAPTION,
     SPACING_MD,
     SPACING_SM,
     SPACING_XS,
@@ -64,9 +61,6 @@ class DeviceCard(QFrame):
         self.setProperty("state", "idle")
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self.setFrameShape(QFrame.Shape.StyledPanel)
-
-        # --- Stylesheet (inline for self-contained rendering) -----------------
-        self._apply_base_style()
 
         # --- Main layout ------------------------------------------------------
         self._main_layout = QVBoxLayout(self)
@@ -107,13 +101,6 @@ class DeviceCard(QFrame):
         self._role_badge = QLabel(self)
         self._role_badge.setObjectName("DeviceCardRoleBadge")
         self._role_badge.setVisible(False)
-        self._role_badge.setStyleSheet(
-            f"font-size: {FONT_SIZE_CAPTION}px; "
-            f"background-color: {ACCENT_COLOR}; "
-            "color: #FFFFFF; "
-            f"border-radius: {SPACING_SM}px; "
-            f"padding: {SPACING_XS}px {SPACING_SM}px;"
-        )
         self._role_badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self._main_layout.addWidget(self._role_badge)
 
@@ -126,9 +113,6 @@ class DeviceCard(QFrame):
 
         self._error_label = QLabel(self._error_widget)
         self._error_label.setObjectName("DeviceCardError")
-        self._error_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_CAPTION}px; color: {ERROR_COLOR};"
-        )
         self._error_label.setWordWrap(True)
         self._error_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
@@ -192,7 +176,8 @@ class DeviceCard(QFrame):
             raise ValueError(msg)
 
         self.setProperty("state", state)
-        self._apply_base_style()
+        self.style().unpolish(self)
+        self.style().polish(self)
 
         # Stop any existing animation
         self._stop_pulse()
@@ -231,20 +216,6 @@ class DeviceCard(QFrame):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
-
-    def _apply_base_style(self) -> None:
-        """Apply state-specific border styling via dynamic property, letting QSS handle colors."""
-        state = self.property("state") or "idle"
-        # Let QSS handle base card colors via QFrame[class="card"]
-        # Only add state-specific borders
-        if state == "connecting":
-            self.setStyleSheet(f"QFrame#DeviceCard {{ border: 2px solid {ACCENT_COLOR}; }}")
-        elif state == "connected":
-            self.setStyleSheet(f"QFrame#DeviceCard {{ border-left: 3px solid {ACCENT_COLOR}; }}")
-        elif state == "error":
-            self.setStyleSheet(f"QFrame#DeviceCard {{ border-left: 3px solid {ERROR_COLOR}; }}")
-        else:
-            self.setStyleSheet("")  # Let QSS handle everything
 
     def _start_pulse(self) -> None:
         """Start pulsing opacity animation for connecting state."""

@@ -29,15 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
-    ACCENT_HOVER,
-    CARD_RADIUS,
     LIST_ITEM_HEIGHT,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
-    WARNING_COLOR,
 )
 
 # ---------------------------------------------------------------------------
@@ -162,7 +158,7 @@ class PresetsDeviceView(QWidget):
         # Title
         title = QLabel("Presets on Device")
         title.setObjectName("view_title")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        title.setProperty("class", "sectionTitle")
         container_layout.addWidget(title)
 
         # Empty state widget
@@ -199,7 +195,7 @@ class PresetsDeviceView(QWidget):
 
         icon_label = QLabel("\U0001F50C")  # Plug emoji as placeholder icon
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet("font-size: 48px;")
+        icon_label.setObjectName("PresetsDeviceEmptyIcon")
         layout.addWidget(icon_label)
 
         message = QLabel("Connect a device to browse its presets and profiles")
@@ -220,16 +216,14 @@ class PresetsDeviceView(QWidget):
         # Section header
         header = QLabel("PEQ Presets")
         header.setObjectName("section_header_peq")
-        header.setStyleSheet("font-size: 15px; font-weight: 600;")
+        header.setProperty("class", "subheading")
         layout.addWidget(header)
 
         # Unavailable message (Req 15.10)
         self._peq_unavailable_label = QLabel(
             "Device presets not available on this model"
         )
-        self._peq_unavailable_label.setStyleSheet(
-            f"color: {WARNING_COLOR}; font-style: italic; padding: {SPACING_SM}px;"
-        )
+        self._peq_unavailable_label.setProperty("class", "warning")
         self._peq_unavailable_label.setVisible(False)
         layout.addWidget(self._peq_unavailable_label)
 
@@ -266,7 +260,7 @@ class PresetsDeviceView(QWidget):
         # Section header
         header = QLabel("RoomFit Profiles")
         header.setObjectName("section_header_roomfit")
-        header.setStyleSheet("font-size: 15px; font-weight: 600;")
+        header.setProperty("class", "subheading")
         layout.addWidget(header)
 
         # Search field (shown when > 10 items, Req 10.9)
@@ -303,18 +297,7 @@ class PresetsDeviceView(QWidget):
         self._export_btn = QPushButton("Export as REW File")
         self._export_btn.setObjectName("btn_export_rew")
         self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._export_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {ACCENT_COLOR};"
-            f"  color: white;"
-            f"  border: none;"
-            f"  border-radius: {CARD_RADIUS}px;"
-            f"  padding: {SPACING_SM}px {SPACING_MD}px;"
-            f"  font-weight: 600;"
-            f"}}"
-            f"QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}"
-            f"QPushButton:disabled {{ background-color: #CCCCCC; color: #888888; }}"
-        )
+        self._export_btn.setProperty("class", "primary")
         self._export_btn.clicked.connect(self._on_export_clicked)
         layout.addWidget(self._export_btn)
 
@@ -322,18 +305,7 @@ class PresetsDeviceView(QWidget):
         self._save_btn = QPushButton("Save to My Presets")
         self._save_btn.setObjectName("btn_save_presets")
         self._save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._save_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: transparent;"
-            f"  color: {ACCENT_COLOR};"
-            f"  border: 1px solid {ACCENT_COLOR};"
-            f"  border-radius: {CARD_RADIUS}px;"
-            f"  padding: {SPACING_SM}px {SPACING_MD}px;"
-            f"  font-weight: 600;"
-            f"}}"
-            f"QPushButton:hover {{ background-color: {ACCENT_COLOR}1A; }}"
-            f"QPushButton:disabled {{ color: #CCCCCC; border-color: #CCCCCC; }}"
-        )
+        self._save_btn.setProperty("class", "secondary")
         self._save_btn.clicked.connect(self._on_save_clicked)
         layout.addWidget(self._save_btn)
 
@@ -341,17 +313,7 @@ class PresetsDeviceView(QWidget):
         self._load_btn = QPushButton("Load into Editor")
         self._load_btn.setObjectName("btn_load_editor")
         self._load_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._load_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: transparent;"
-            f"  color: {ACCENT_COLOR};"
-            f"  border: 1px solid {ACCENT_COLOR};"
-            f"  border-radius: {CARD_RADIUS}px;"
-            f"  padding: {SPACING_SM}px {SPACING_MD}px;"
-            f"}}"
-            f"QPushButton:hover {{ background-color: {ACCENT_COLOR}1A; }}"
-            f"QPushButton:disabled {{ color: #CCCCCC; border-color: #CCCCCC; }}"
-        )
+        self._load_btn.setProperty("class", "secondary")
         self._load_btn.clicked.connect(self._on_load_clicked)
         layout.addWidget(self._load_btn)
 
@@ -359,17 +321,7 @@ class PresetsDeviceView(QWidget):
         self._copy_btn = QPushButton("Copy to Another Device")
         self._copy_btn.setObjectName("btn_copy_device")
         self._copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._copy_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: transparent;"
-            f"  color: {ACCENT_COLOR};"
-            f"  border: 1px solid {ACCENT_COLOR};"
-            f"  border-radius: {CARD_RADIUS}px;"
-            f"  padding: {SPACING_SM}px {SPACING_MD}px;"
-            f"}}"
-            f"QPushButton:hover {{ background-color: {ACCENT_COLOR}1A; }}"
-            f"QPushButton:disabled {{ color: #CCCCCC; border-color: #CCCCCC; }}"
-        )
+        self._copy_btn.setProperty("class", "secondary")
         self._copy_btn.clicked.connect(self._on_copy_clicked)
         layout.addWidget(self._copy_btn)
 

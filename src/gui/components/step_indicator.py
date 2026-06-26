@@ -13,7 +13,6 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from src.gui.constants import (
-    ACCENT_COLOR,
     FONT_SIZE_CAPTION,
     SPACING_MD,
     SPACING_SM,
@@ -107,18 +106,18 @@ class _StepWidget(QWidget):
             self.clicked.emit(self._index)
         super().mousePressEvent(event)
 
+    def _set_class(self, widget: QLabel, class_name: str) -> None:
+        """Set the QSS ``class`` property and force a style re-evaluation."""
+        widget.setProperty("class", class_name)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+
     def _apply_state(self) -> None:
         """Apply visual styling based on current state."""
         if self._state == _StepState.COMPLETED:
-            self._circle.setStyleSheet(
-                f"background-color: {ACCENT_COLOR};"
-                f"border-radius: 10px;"
-                f"color: white;"
-                f"font-weight: bold;"
-                f"font-size: 12px;"
-            )
+            self._set_class(self._circle, "stepCircleCompleted")
             self._circle.setText("\u2713")
-            self._label.setStyleSheet(f"color: {ACCENT_COLOR};")
+            self._set_class(self._label, "stepLabelCompleted")
             font = self._label.font()
             font.setBold(False)
             self._label.setFont(font)
@@ -128,16 +127,9 @@ class _StepWidget(QWidget):
             self._summary.style().polish(self._summary)
 
         elif self._state == _StepState.ACTIVE:
-            self._circle.setStyleSheet(
-                f"background-color: transparent;"
-                f"border: 2px solid {ACCENT_COLOR};"
-                f"border-radius: 10px;"
-                f"color: {ACCENT_COLOR};"
-                f"font-weight: bold;"
-                f"font-size: 12px;"
-            )
+            self._set_class(self._circle, "stepCircleActive")
             self._circle.setText("")
-            self._label.setStyleSheet(f"color: {ACCENT_COLOR}; font-weight: bold;")
+            self._set_class(self._label, "stepLabelActive")
             font = self._label.font()
             font.setBold(True)
             self._label.setFont(font)
@@ -145,14 +137,9 @@ class _StepWidget(QWidget):
             self._summary.hide()
 
         else:  # UPCOMING
-            self._circle.setStyleSheet(
-                "background-color: transparent;"
-                "border: 2px solid #9E9E9E;"
-                "border-radius: 10px;"
-                "color: #9E9E9E;"
-            )
+            self._set_class(self._circle, "stepCircleUpcoming")
             self._circle.setText("")
-            self._label.setStyleSheet("color: #9E9E9E;")
+            self._set_class(self._label, "stepLabelUpcoming")
             font = self._label.font()
             font.setBold(False)
             self._label.setFont(font)
@@ -167,7 +154,13 @@ class _ConnectorLine(QLabel):
         super().__init__(parent)
         self.setFixedHeight(2)
         self.setMinimumWidth(SPACING_MD)
-        self.setStyleSheet("background-color: #E0E0E0;")
+        self.setProperty("class", "stepConnector")
+
+    def set_active(self, active: bool) -> None:
+        """Toggle the connector's accent (completed) styling."""
+        self.setProperty("class", "stepConnectorActive" if active else "stepConnector")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class StepIndicator(QWidget):
@@ -253,7 +246,7 @@ class StepIndicator(QWidget):
 
         # Update connector line color to accent for completed connections
         if index < len(self._connectors):
-            self._connectors[index].setStyleSheet(f"background-color: {ACCENT_COLOR};")
+            self._connectors[index].set_active(True)
 
     def clear_completed(self, index: int) -> None:
         """Remove the completed state from a step (revert to upcoming).
@@ -272,7 +265,7 @@ class StepIndicator(QWidget):
             step.clear_summary()
             # Revert connector line color
             if index < len(self._connectors):
-                self._connectors[index].setStyleSheet("background-color: #E0E0E0;")
+                self._connectors[index].set_active(False)
 
     def invalidate_from(self, index: int) -> None:
         """Remove completed state from this index onward.
@@ -290,14 +283,14 @@ class StepIndicator(QWidget):
 
             # Reset connector lines from this point
             if i < len(self._connectors):
-                self._connectors[i].setStyleSheet("background-color: #E0E0E0;")
+                self._connectors[i].set_active(False)
 
         # Also reset connector before the invalidated step if it exists
         # (connector at index-1 connects step index-1 to step index)
         if index > 0 and index - 1 < len(self._connectors):
             prev_step = self._steps[index - 1]
             if prev_step.state != _StepState.COMPLETED:
-                self._connectors[index - 1].setStyleSheet("background-color: #E0E0E0;")
+                self._connectors[index - 1].set_active(False)
 
     def _on_step_clicked(self, index: int) -> None:
         """Forward step click to the public signal."""

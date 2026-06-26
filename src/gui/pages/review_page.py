@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 
 from src.gui.components.filter_table import FilterTable
 from src.gui.constants import (
-    ACCENT_COLOR,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
@@ -155,11 +154,7 @@ class ReviewPage(QWidget):
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )
         # Start hidden visually (transparent) but still taking up layout space
-        self._dry_run_badge.setStyleSheet(
-            "background-color: transparent; color: transparent; "
-            "border-radius: 10px; padding: 2px 10px; font-size: 11px; "
-            "font-weight: 600;"
-        )
+        self._dry_run_badge.setProperty("active", False)
         content_layout.addWidget(self._dry_run_badge)
 
         # FilterTable (centered, ~400px max)
@@ -219,20 +214,10 @@ class ReviewPage(QWidget):
 
     def _update_dry_run_ui(self) -> None:
         """Sync UI elements with current dry run state."""
-        if self._dry_run:
-            self._push_button.setText("Preview Only")
-            self._dry_run_badge.setStyleSheet(
-                f"background-color: {ACCENT_COLOR}; color: #FFFFFF; "
-                f"border-radius: 10px; padding: 2px 10px; font-size: 11px; "
-                f"font-weight: 600;"
-            )
-        else:
-            self._push_button.setText("Push to Device")
-            self._dry_run_badge.setStyleSheet(
-                "background-color: transparent; color: transparent; "
-                "border-radius: 10px; padding: 2px 10px; font-size: 11px; "
-                "font-weight: 600;"
-            )
+        self._push_button.setText("Preview Only" if self._dry_run else "Push to Device")
+        self._dry_run_badge.setProperty("active", self._dry_run)
+        self._dry_run_badge.style().unpolish(self._dry_run_badge)
+        self._dry_run_badge.style().polish(self._dry_run_badge)
 
     @Slot(bool)
     def _on_dry_run_toggled(self, checked: bool) -> None:

@@ -25,15 +25,9 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
-    ERROR_COLOR,
-    FONT_SIZE_BODY,
-    FONT_SIZE_HEADING,
-    FONT_WEIGHT_SEMIBOLD,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
-    WARNING_COLOR,
 )
 
 
@@ -151,10 +145,7 @@ class FiltersPage(QWidget):
         # Page title
         title = QLabel("Import REW Filters")
         title.setObjectName("FiltersPageTitle")
-        title.setStyleSheet(
-            f"font-size: {FONT_SIZE_HEADING}px;"
-            f" font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        title.setProperty("class", "heading")
         page_layout.addWidget(title)
 
         # Subtitle
@@ -172,10 +163,7 @@ class FiltersPage(QWidget):
         mode_layout.setSpacing(SPACING_MD)
 
         mode_label = QLabel("Channel mode:")
-        mode_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px;"
-            f" font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        mode_label.setProperty("class", "subheading")
         mode_layout.addWidget(mode_label)
 
         self._mode_group = QButtonGroup(self)
@@ -216,16 +204,7 @@ class FiltersPage(QWidget):
         self._next_btn = QPushButton("Next")
         self._next_btn.setMinimumWidth(140)
         self._next_btn.setEnabled(False)
-        self._next_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {ACCENT_COLOR}; color: white;"
-            f"  border: none; border-radius: 6px;"
-            f"  padding: 8px 16px; font-size: 13px;"
-            f"}}"
-            f"QPushButton:disabled {{"
-            f"  background-color: #CCCCCC; color: #888888;"
-            f"}}"
-        )
+        self._next_btn.setProperty("class", "primary")
         self._next_btn.clicked.connect(self._on_stereo_next)
         page_layout.addWidget(self._next_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -239,10 +218,7 @@ class FiltersPage(QWidget):
         left_row = QHBoxLayout()
         left_row.setSpacing(SPACING_MD)
         left_label = QLabel("Left channel:")
-        left_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px;"
-            f" font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        left_label.setProperty("class", "subheading")
         left_label.setMinimumWidth(100)
         left_row.addWidget(left_label)
 
@@ -263,10 +239,7 @@ class FiltersPage(QWidget):
         right_row = QHBoxLayout()
         right_row.setSpacing(SPACING_MD)
         right_label = QLabel("Right channel:")
-        right_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px;"
-            f" font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        right_label.setProperty("class", "subheading")
         right_label.setMinimumWidth(100)
         right_row.addWidget(right_label)
 
@@ -287,16 +260,7 @@ class FiltersPage(QWidget):
         self._import_lr_btn = QPushButton("Next")
         self._import_lr_btn.setMinimumWidth(140)
         self._import_lr_btn.setEnabled(False)
-        self._import_lr_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {ACCENT_COLOR}; color: white;"
-            f"  border: none; border-radius: 6px;"
-            f"  padding: 8px 16px; font-size: 13px;"
-            f"}}"
-            f"QPushButton:disabled {{"
-            f"  background-color: #CCCCCC; color: #888888;"
-            f"}}"
-        )
+        self._import_lr_btn.setProperty("class", "primary")
         self._import_lr_btn.clicked.connect(self._on_import_lr_confirmed)
         lr_layout.addWidget(
             self._import_lr_btn, alignment=Qt.AlignmentFlag.AlignLeft
@@ -337,32 +301,15 @@ class FiltersPage(QWidget):
         """Build the inline warnings display area."""
         widget = QWidget()
         widget.setObjectName("FiltersWarningsSection")
-        widget.setStyleSheet(
-            f"QWidget#FiltersWarningsSection {{"
-            f"  border: 1px solid {WARNING_COLOR};"
-            f"  border-radius: 6px;"
-            f"  padding: 12px;"
-            f"  background: #FFF8E1;"
-            f"}}"
-        )
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(SPACING_MD)
 
         heading = QLabel("Validation Warnings")
-        heading.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px;"
-            f" font-weight: {FONT_WEIGHT_SEMIBOLD};"
-            f" color: {WARNING_COLOR};"
-            " border: none; background: transparent;"
-        )
+        heading.setProperty("class", "warning")
         layout.addWidget(heading)
 
         self._warnings_label = QLabel("")
-        self._warnings_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px;"
-            " border: none; background: transparent;"
-        )
         self._warnings_label.setWordWrap(True)
         layout.addWidget(self._warnings_label)
 
@@ -376,32 +323,15 @@ class FiltersPage(QWidget):
         """Build the error display area with retry."""
         widget = QWidget()
         widget.setObjectName("FiltersErrorSection")
-        widget.setStyleSheet(
-            f"QWidget#FiltersErrorSection {{"
-            f"  border: 1px solid {ERROR_COLOR};"
-            f"  border-radius: 6px;"
-            f"  padding: 12px;"
-            f"  background: #FFEBEE;"
-            f"}}"
-        )
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(SPACING_MD)
 
         heading = QLabel("Error")
-        heading.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px;"
-            f" font-weight: {FONT_WEIGHT_SEMIBOLD};"
-            f" color: {ERROR_COLOR};"
-            " border: none; background: transparent;"
-        )
+        heading.setProperty("class", "error")
         layout.addWidget(heading)
 
         self._error_label = QLabel("")
-        self._error_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_BODY}px;"
-            " border: none; background: transparent;"
-        )
         self._error_label.setWordWrap(True)
         layout.addWidget(self._error_label)
 

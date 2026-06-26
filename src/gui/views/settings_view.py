@@ -34,10 +34,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    FONT_SIZE_BODY,
-    FONT_SIZE_CAPTION,
-    FONT_SIZE_HEADING,
-    FONT_WEIGHT_SEMIBOLD,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
@@ -129,7 +125,6 @@ class SettingsView(QWidget):
             row_layout.setSpacing(SPACING_SM)
 
             name_label = QLabel(log_info.get("name", ""), row)
-            name_label.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px;")
             row_layout.addWidget(name_label)
 
             size_label = QLabel(log_info.get("size", ""), row)
@@ -183,9 +178,7 @@ class SettingsView(QWidget):
         # Page title
         title = QLabel("Settings", content)
         title.setObjectName("SettingsViewTitle")
-        title.setStyleSheet(
-            f"font-size: {FONT_SIZE_HEADING}px; font-weight: {FONT_WEIGHT_SEMIBOLD};"
-        )
+        title.setProperty("class", "heading")
         content_layout.addWidget(title)
 
         # Build sections
@@ -215,7 +208,6 @@ class SettingsView(QWidget):
         theme_layout.setSpacing(SPACING_MD)
 
         theme_label = QLabel("Theme:", theme_row)
-        theme_label.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px;")
         theme_layout.addWidget(theme_label)
 
         self._theme_combo = QComboBox(theme_row)
@@ -267,9 +259,7 @@ class SettingsView(QWidget):
         # Validation message label
         self._path_validation_label = QLabel("", group)
         self._path_validation_label.setObjectName("SettingsPathValidation")
-        self._path_validation_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_CAPTION}px; color: #C62828;"
-        )
+        self._path_validation_label.setProperty("class", "pathError")
         self._path_validation_label.setWordWrap(True)
         self._path_validation_label.setVisible(False)
         layout.addWidget(self._path_validation_label)
@@ -294,7 +284,6 @@ class SettingsView(QWidget):
         row_layout.setSpacing(SPACING_SM)
 
         label = QLabel(label_text, row)
-        label.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px;")
         row_layout.addWidget(label)
 
         input_row = QWidget(row)
@@ -333,7 +322,6 @@ class SettingsView(QWidget):
         timeout_layout.setSpacing(SPACING_MD)
 
         timeout_label = QLabel("Discovery timeout (seconds):", timeout_row)
-        timeout_label.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px;")
         timeout_layout.addWidget(timeout_label)
 
         self._timeout_spin = QSpinBox(timeout_row)
@@ -351,7 +339,6 @@ class SettingsView(QWidget):
         # Dry Run default (Req 24.15)
         self._dry_run_check = QCheckBox("Enable Dry Run by default for new sessions", group)
         self._dry_run_check.setObjectName("SettingsDryRunCheck")
-        self._dry_run_check.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px;")
         self._dry_run_check.stateChanged.connect(self._on_setting_changed)
         layout.addWidget(self._dry_run_check)
 
@@ -362,7 +349,6 @@ class SettingsView(QWidget):
         device_layout.setSpacing(SPACING_MD)
 
         device_label = QLabel("Last-used device:", device_row)
-        device_label.setStyleSheet(f"font-size: {FONT_SIZE_BODY}px;")
         device_layout.addWidget(device_label)
 
         self._last_device_label = QLabel("None", device_row)

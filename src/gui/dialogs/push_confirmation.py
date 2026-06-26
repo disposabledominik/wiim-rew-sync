@@ -22,10 +22,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    CARD_RADIUS,
     SPACING_MD,
     SPACING_SM,
-    WARNING_COLOR,
 )
 
 
@@ -104,11 +102,6 @@ class PushConfirmation(QDialog):
         if dry_run:
             dry_run_label = QLabel("DRY RUN — no changes will be made to your device")
             dry_run_label.setObjectName("dry_run_badge")
-            dry_run_label.setStyleSheet(
-                f"background-color: {WARNING_COLOR}; color: #FFFFFF; "
-                f"padding: 4px 8px; border-radius: {CARD_RADIUS // 2}px; "
-                "font-weight: 600;"
-            )
             dry_run_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(dry_run_label)
 
@@ -130,20 +123,13 @@ class PushConfirmation(QDialog):
         if clamping_summary:
             clamping_frame = QFrame()
             clamping_frame.setObjectName("clamping_warning_frame")
-            clamping_frame.setStyleSheet(
-                f"QFrame#clamping_warning_frame {{"
-                f"  border: 1px solid {WARNING_COLOR};"
-                f"  border-radius: {CARD_RADIUS}px;"
-                f"  background-color: rgba(245, 124, 0, 0.08);"
-                f"  padding: {SPACING_SM}px;"
-                f"}}"
-            )
+            clamping_frame.setProperty("class", "warningBox")
             clamping_layout = QVBoxLayout(clamping_frame)
             clamping_layout.setSpacing(SPACING_SM)
 
             clamping_header = QLabel("<b>⚠ Values clamped to device limits</b>")
             clamping_header.setTextFormat(Qt.TextFormat.RichText)
-            clamping_header.setStyleSheet(f"color: {WARNING_COLOR};")
+            clamping_header.setProperty("class", "warning")
             clamping_layout.addWidget(clamping_header)
 
             clamping_body = QLabel(clamping_summary)
@@ -158,20 +144,13 @@ class PushConfirmation(QDialog):
         if mode_mismatch:
             mismatch_frame = QFrame()
             mismatch_frame.setObjectName("mode_mismatch_frame")
-            mismatch_frame.setStyleSheet(
-                f"QFrame#mode_mismatch_frame {{"
-                f"  border: 1px solid {WARNING_COLOR};"
-                f"  border-radius: {CARD_RADIUS}px;"
-                f"  background-color: rgba(245, 124, 0, 0.08);"
-                f"  padding: {SPACING_SM}px;"
-                f"}}"
-            )
+            mismatch_frame.setProperty("class", "warningBox")
             mismatch_layout = QVBoxLayout(mismatch_frame)
             mismatch_layout.setSpacing(SPACING_SM)
 
             mismatch_header = QLabel("<b>⚠ Channel mode mismatch</b>")
             mismatch_header.setTextFormat(Qt.TextFormat.RichText)
-            mismatch_header.setStyleSheet(f"color: {WARNING_COLOR};")
+            mismatch_header.setProperty("class", "warning")
             mismatch_layout.addWidget(mismatch_header)
 
             mismatch_body = QLabel(mode_mismatch)

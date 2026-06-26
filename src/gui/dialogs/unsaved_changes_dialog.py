@@ -24,14 +24,9 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
-    ACCENT_HOVER,
-    BUTTON_RADIUS,
-    ERROR_COLOR,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
-    WARNING_COLOR,
 )
 
 
@@ -75,15 +70,13 @@ class UnsavedChangesDialog(QDialog):
 
         icon_label = QLabel("\u26a0")  # Warning sign unicode
         icon_label.setObjectName("warning_icon")
-        icon_label.setStyleSheet(
-            f"font-size: 24px; color: {WARNING_COLOR};"
-        )
+        icon_label.setProperty("class", "warning")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(icon_label)
 
         title_label = QLabel("Unsaved Changes")
         title_label.setObjectName("dialog_title")
-        title_label.setStyleSheet("font-size: 18px; font-weight: 600;")
+        title_label.setProperty("class", "title")
         title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         header_layout.addWidget(title_label, 1)
 
@@ -95,7 +88,7 @@ class UnsavedChangesDialog(QDialog):
         )
         message_label.setObjectName("dialog_message")
         message_label.setWordWrap(True)
-        message_label.setStyleSheet("font-size: 13px;")
+        message_label.setProperty("class", "caption")
         layout.addWidget(message_label)
 
         # --- Spacer ---
@@ -117,38 +110,14 @@ class UnsavedChangesDialog(QDialog):
         # Discard button (destructive/warning)
         self._discard_btn = QPushButton("Discard")
         self._discard_btn.setObjectName("discard_button")
-        self._discard_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {ERROR_COLOR};"
-            f"  color: #FFFFFF;"
-            f"  border: none;"
-            f"  border-radius: {BUTTON_RADIUS}px;"
-            f"  padding: 8px 16px;"
-            f"  font-weight: 600;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background-color: #D32F2F;"
-            f"}}"
-        )
+        self._discard_btn.setProperty("class", "danger")
         self._discard_btn.clicked.connect(self._on_discard)
         button_layout.addWidget(self._discard_btn)
 
         # Save button (primary/accent)
         self._save_btn = QPushButton("Save")
         self._save_btn.setObjectName("save_button")
-        self._save_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {ACCENT_COLOR};"
-            f"  color: #FFFFFF;"
-            f"  border: none;"
-            f"  border-radius: {BUTTON_RADIUS}px;"
-            f"  padding: 8px 16px;"
-            f"  font-weight: 600;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background-color: {ACCENT_HOVER};"
-            f"}}"
-        )
+        self._save_btn.setProperty("class", "primary")
         self._save_btn.setDefault(True)
         self._save_btn.clicked.connect(self._on_save)
         button_layout.addWidget(self._save_btn)

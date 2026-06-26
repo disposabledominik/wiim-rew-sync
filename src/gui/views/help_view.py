@@ -31,9 +31,6 @@ from PySide6.QtWidgets import (
 
 from src.gui.constants import (
     ACCENT_COLOR,
-    FONT_SIZE_BODY,
-    FONT_SIZE_CAPTION,
-    FONT_SIZE_HEADING,
     SPACING_MD,
     SPACING_SM,
     SPACING_XS,
@@ -176,19 +173,11 @@ class HelpView(QFrame):
         # Header bar with title and close button
         header = QFrame()
         header.setObjectName("helpHeader")
-        header.setStyleSheet(
-            f"QFrame#helpHeader {{"
-            f"  border-bottom: 1px solid #E0E0E0;"
-            f"  padding: {SPACING_SM}px;"
-            f"}}"
-        )
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(SPACING_MD, SPACING_SM, SPACING_SM, SPACING_SM)
 
         title_label = QLabel("User Guide")
-        title_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_HEADING}px; font-weight: 600;"
-        )
+        title_label.setProperty("class", "heading")
         header_layout.addWidget(title_label)
         header_layout.addStretch()
 
@@ -196,17 +185,6 @@ class HelpView(QFrame):
         self._close_button.setObjectName("helpCloseButton")
         self._close_button.setFixedSize(28, 28)
         self._close_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._close_button.setStyleSheet(
-            "QPushButton {"
-            "  border: none;"
-            "  border-radius: 4px;"
-            "  font-size: 14px;"
-            "  background: transparent;"
-            "}"
-            "QPushButton:hover {"
-            "  background: #E0E0E0;"
-            "}"
-        )
         self._close_button.clicked.connect(self.close_requested.emit)
         header_layout.addWidget(self._close_button)
         root_layout.addWidget(header)
@@ -221,11 +199,6 @@ class HelpView(QFrame):
         toc_panel = QFrame()
         toc_panel.setObjectName("helpTocPanel")
         toc_panel.setFixedWidth(180)
-        toc_panel.setStyleSheet(
-            "QFrame#helpTocPanel {"
-            "  border-right: 1px solid #E0E0E0;"
-            "}"
-        )
         toc_layout = QVBoxLayout(toc_panel)
         toc_layout.setContentsMargins(SPACING_SM, SPACING_SM, SPACING_SM, SPACING_SM)
         toc_layout.setSpacing(SPACING_XS)
@@ -240,14 +213,6 @@ class HelpView(QFrame):
         self._search_input.setObjectName("helpSearchInput")
         self._search_input.setPlaceholderText("Search topics...")
         self._search_input.setClearButtonEnabled(True)
-        self._search_input.setStyleSheet(
-            f"QLineEdit {{"
-            f"  padding: {SPACING_XS}px {SPACING_SM}px;"
-            f"  border: 1px solid #E0E0E0;"
-            f"  border-radius: 4px;"
-            f"  font-size: {FONT_SIZE_CAPTION}px;"
-            f"}}"
-        )
         self._search_input.textChanged.connect(self._on_search_changed)
         self._search_input.returnPressed.connect(self._on_search_next)
         self._search_input.installEventFilter(self)
@@ -262,23 +227,6 @@ class HelpView(QFrame):
         self._search_prev_button.setObjectName("helpSearchPrevButton")
         self._search_prev_button.setFixedSize(24, 24)
         self._search_prev_button.setToolTip("Previous match")
-        self._search_prev_button.setStyleSheet(
-            "QPushButton {"
-            "  border: 1px solid #E0E0E0;"
-            "  border-radius: 3px;"
-            "  font-size: 10px;"
-            "  padding: 2px;"
-            "}"
-            "QPushButton:hover:!pressed {"
-            "  background: #F5F5F5;"
-            "}"
-            "QPushButton:pressed {"
-            "  background: #E0E0E0;"
-            "}"
-            "QPushButton:disabled {"
-            "  color: #CCC;"
-            "}"
-        )
         self._search_prev_button.clicked.connect(self._on_search_previous)
         self._search_prev_button.setEnabled(False)
         navigation_layout.addWidget(self._search_prev_button)
@@ -287,23 +235,6 @@ class HelpView(QFrame):
         self._search_next_button.setObjectName("helpSearchNextButton")
         self._search_next_button.setFixedSize(24, 24)
         self._search_next_button.setToolTip("Next match")
-        self._search_next_button.setStyleSheet(
-            "QPushButton {"
-            "  border: 1px solid #E0E0E0;"
-            "  border-radius: 3px;"
-            "  font-size: 10px;"
-            "  padding: 2px;"
-            "}"
-            "QPushButton:hover:!pressed {"
-            "  background: #F5F5F5;"
-            "}"
-            "QPushButton:pressed {"
-            "  background: #E0E0E0;"
-            "}"
-            "QPushButton:disabled {"
-            "  color: #CCC;"
-            "}"
-        )
         self._search_next_button.clicked.connect(self._on_search_next)
         self._search_next_button.setEnabled(False)
         navigation_layout.addWidget(self._search_next_button)
@@ -311,9 +242,7 @@ class HelpView(QFrame):
         navigation_layout.addStretch()
 
         self._search_hit_label = QLabel("0 of 0")
-        self._search_hit_label.setStyleSheet(
-            f"font-size: {FONT_SIZE_CAPTION}px; color: #999;"
-        )
+        self._search_hit_label.setObjectName("helpSearchHitLabel")
         navigation_layout.addWidget(self._search_hit_label)
 
         search_layout.addWidget(navigation_container)
@@ -322,20 +251,6 @@ class HelpView(QFrame):
         # TOC list
         self._toc_list = QListWidget()
         self._toc_list.setObjectName("helpTocList")
-        self._toc_list.setStyleSheet(
-            f"QListWidget {{"
-            f"  border: none;"
-            f"  font-size: {FONT_SIZE_BODY}px;"
-            f"}}"
-            f"QListWidget::item {{"
-            f"  padding: {SPACING_XS}px {SPACING_SM}px;"
-            f"  border-radius: 3px;"
-            f"}}"
-            f"QListWidget::item:selected {{"
-            f"  background: {ACCENT_COLOR};"
-            f"  color: white;"
-            f"}}"
-        )
         self._toc_list.currentItemChanged.connect(self._on_toc_item_changed)
         toc_layout.addWidget(self._toc_list)
 
@@ -345,13 +260,6 @@ class HelpView(QFrame):
         self._content_browser = QTextBrowser()
         self._content_browser.setObjectName("helpContentBrowser")
         self._content_browser.setOpenExternalLinks(True)
-        self._content_browser.setStyleSheet(
-            f"QTextBrowser {{"
-            f"  border: none;"
-            f"  padding: {SPACING_MD}px;"
-            f"  font-size: {FONT_SIZE_BODY}px;"
-            f"}}"
-        )
         content_layout.addWidget(self._content_browser)
 
         root_layout.addWidget(content_area)

@@ -22,12 +22,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
-    BUTTON_RADIUS,
-    CARD_RADIUS,
-    COLORS_DARK,
-    COLORS_LIGHT,
-    FONT_FAMILY,
     FONT_SIZE_BODY,
     FONT_SIZE_CAPTION,
     FONT_SIZE_HEADING,
@@ -92,61 +86,16 @@ class OnboardingOverlay(QWidget):
         if parent is not None:
             self.setGeometry(parent.rect())
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setStyleSheet(
-            "QWidget#onboarding_overlay {"
-            "  background-color: rgba(0, 0, 0, 0.55);"
-            "}"
-        )
         self._setup_ui()
 
     def showEvent(self, event: object) -> None:
-        """Rebuild UI on show to pick up current theme colors."""
+        """Ensure the overlay fills the parent's geometry when shown."""
         super().showEvent(event)  # type: ignore[arg-type]
-        # Remove old layout and rebuild with current theme
-        old_layout = self.layout()
-        if old_layout is not None:
-            # Delete all child widgets
-            while old_layout.count():
-                item = old_layout.takeAt(0)
-                if item is not None:
-                    widget = item.widget()
-                    if widget is not None:
-                        widget.deleteLater()
-            QWidget().setLayout(old_layout)  # Detach layout
-        self._setup_ui()
-
-    def _get_colors(self) -> tuple[str, str, str, str, str, str]:
-        """Return theme-appropriate colors.
-
-        Returns a tuple of (surface, text_primary, text_secondary,
-        text_on_accent, background, border_subtle).
-        """
-        from PySide6.QtWidgets import QApplication
-
-        app = QApplication.instance()
-        # Detect if dark theme is active by checking the app stylesheet
-        is_dark = False
-        if app is not None and hasattr(app, "styleSheet"):
-            stylesheet = app.styleSheet()
-            if stylesheet and "background-color: #1E1E1E" in stylesheet:
-                is_dark = True
-
-        colors = COLORS_DARK if is_dark else COLORS_LIGHT
-        return (
-            colors.surface,
-            colors.text_primary,
-            colors.text_secondary,
-            colors.text_on_accent,
-            colors.background,
-            colors.border_subtle,
-        )
+        if self.parent() is not None:
+            self.setGeometry(self.parent().rect())  # type: ignore[union-attr]
 
     def _setup_ui(self) -> None:
         """Build the overlay layout."""
-        surface, text_primary, text_secondary, text_on_accent, background, border_subtle = (
-            self._get_colors()
-        )
-
         # Root layout: centers the card
         root_layout = QVBoxLayout(self)
         root_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -156,13 +105,6 @@ class OnboardingOverlay(QWidget):
         card = QWidget()
         card.setObjectName("onboarding_card")
         card.setMaximumWidth(600)
-        card.setStyleSheet(
-            f"QWidget#onboarding_card {{"
-            f"  background-color: {surface};"
-            f"  border-radius: {CARD_RADIUS + 4}px;"
-            f"  padding: {SPACING_XL}px;"
-            f"}}"
-        )
         # Drop shadow for depth
         shadow = QGraphicsDropShadowEffect(card)
         shadow.setBlurRadius(40)
@@ -178,13 +120,6 @@ class OnboardingOverlay(QWidget):
         title = QLabel("Welcome to WiiM PEQ Sync")
         title.setObjectName("onboarding_title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet(
-            f"font-family: {FONT_FAMILY};"
-            f"font-size: {FONT_SIZE_TITLE}px;"
-            "font-weight: 700;"
-            f"color: {text_primary};"
-            "background: transparent;"
-        )
         title.setMinimumHeight(FONT_SIZE_TITLE + SPACING_LG)
         card_layout.addWidget(title)
 
@@ -195,35 +130,25 @@ class OnboardingOverlay(QWidget):
         subtitle.setObjectName("onboarding_subtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet(
-            f"font-family: {FONT_FAMILY};"
-            f"font-size: {FONT_SIZE_BODY}px;"
-            f"color: {text_secondary};"
-            "background: transparent;"
-        )
         subtitle.setMinimumHeight(FONT_SIZE_BODY * 2 + SPACING_MD)
         card_layout.addWidget(subtitle)
 
         # --- Capability cards row ---
         cards_row = QWidget()
         cards_row.setObjectName("capability_cards_row")
-        cards_row.setStyleSheet("background: transparent;")
         cards_layout = QHBoxLayout(cards_row)
         cards_layout.setSpacing(SPACING_MD)
         cards_layout.setContentsMargins(0, SPACING_MD, 0, SPACING_MD)
 
         for emoji, cap_title, cap_desc in _CAPABILITY_CARDS:
-            cap_card = self._build_capability_card(
-                emoji, cap_title, cap_desc,
-                background, text_primary, text_secondary, border_subtle,
-            )
+            cap_card = self._build_capability_card(emoji, cap_title, cap_desc)
             cards_layout.addWidget(cap_card)
 
         card_layout.addWidget(cards_row)
 
         # --- Buttons area ---
         buttons_area = QWidget()
-        buttons_area.setStyleSheet("background: transparent;")
+        buttons_area.setObjectName("onboarding_buttons_area")
         buttons_layout = QVBoxLayout(buttons_area)
         buttons_layout.setSpacing(SPACING_SM)
         buttons_layout.setContentsMargins(0, 0, 0, 0)
@@ -236,15 +161,6 @@ class OnboardingOverlay(QWidget):
         get_started_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         get_started_btn.setFixedHeight(40)
         get_started_btn.setFixedWidth(200)
-        get_started_btn.setStyleSheet(
-            f"background-color: {ACCENT_COLOR};"
-            f"color: {text_on_accent};"
-            f"border-radius: {BUTTON_RADIUS}px;"
-            f"font-family: {FONT_FAMILY};"
-            f"font-size: {FONT_SIZE_BODY}px;"
-            "font-weight: 600;"
-            "padding: 8px 24px;"
-        )
         get_started_btn.mousePressEvent = lambda _event: self._on_get_started()  # type: ignore[method-assign]
         buttons_layout.addWidget(get_started_btn, 0, Qt.AlignmentFlag.AlignCenter)
 
@@ -252,40 +168,19 @@ class OnboardingOverlay(QWidget):
 
         root_layout.addWidget(card)
 
-    def _build_capability_card(
-        self,
-        emoji: str,
-        cap_title: str,
-        cap_desc: str,
-        background: str,
-        text_primary: str,
-        text_secondary: str,
-        border_subtle: str,
-    ) -> QWidget:
+    def _build_capability_card(self, emoji: str, cap_title: str, cap_desc: str) -> QWidget:
         """Build a single capability card widget.
 
         Args:
             emoji: Emoji icon string.
             cap_title: Card title text.
             cap_desc: Card description text.
-            background: Background color for the card.
-            text_primary: Primary text color.
-            text_secondary: Secondary text color.
-            border_subtle: Subtle border color.
 
         Returns:
             QWidget containing the formatted card.
         """
         card = QWidget()
-        card.setObjectName(f"cap_card_{cap_title.lower().replace(' ', '_')}")
-        card.setStyleSheet(
-            f"QWidget#{card.objectName()} {{"
-            f"  background-color: {background};"
-            f"  border-radius: {CARD_RADIUS}px;"
-            f"  border: 1px solid {border_subtle};"
-            f"  padding: {SPACING_MD}px;"
-            f"}}"
-        )
+        card.setProperty("class", "onboardingCapCard")
         layout = QVBoxLayout(card)
         layout.setSpacing(SPACING_SM)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
@@ -293,39 +188,24 @@ class OnboardingOverlay(QWidget):
 
         # Emoji icon
         icon_label = QLabel(emoji)
+        icon_label.setObjectName("onboarding_cap_icon")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet(
-            "font-size: 32px; background: transparent;"
-        )
         layout.addWidget(icon_label)
 
         # Title
         title_label = QLabel(cap_title)
-        title_label.setObjectName(f"cap_title_{cap_title.lower().replace(' ', '_')}")
+        title_label.setProperty("class", "onboardingCapTitle")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setWordWrap(True)
         title_label.setMinimumHeight(FONT_SIZE_HEADING + SPACING_SM)
-        title_label.setStyleSheet(
-            f"font-family: {FONT_FAMILY};"
-            f"font-size: {FONT_SIZE_HEADING - 4}px;"
-            "font-weight: 600;"
-            f"color: {text_primary};"
-            "background: transparent;"
-        )
         layout.addWidget(title_label)
 
         # Description
         desc_label = QLabel(cap_desc)
-        desc_label.setObjectName(f"cap_desc_{cap_title.lower().replace(' ', '_')}")
+        desc_label.setProperty("class", "onboardingCapDesc")
         desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_label.setWordWrap(True)
         desc_label.setMinimumHeight(FONT_SIZE_CAPTION * 3 + SPACING_SM)
-        desc_label.setStyleSheet(
-            f"font-family: {FONT_FAMILY};"
-            f"font-size: {FONT_SIZE_CAPTION}px;"
-            f"color: {text_secondary};"
-            "background: transparent;"
-        )
         layout.addWidget(desc_label)
 
         return card

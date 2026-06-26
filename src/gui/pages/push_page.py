@@ -20,13 +20,9 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
-    ERROR_COLOR,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
-    SUCCESS_COLOR,
-    WARNING_COLOR,
 )
 
 # ---------------------------------------------------------------------------
@@ -59,8 +55,9 @@ class _StageRow(QWidget):
         self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._icon_label)
 
+        self._icon_label.setObjectName("PushPageStageIcon")
         self._text_label = QLabel(_STAGE_LABELS[stage_key], self)
-        self._text_label.setStyleSheet("font-size: 14px;")
+        self._text_label.setObjectName("PushPageStageText")
         layout.addWidget(self._text_label)
         layout.addStretch()
 
@@ -76,24 +73,17 @@ class _StageRow(QWidget):
             status: One of "pending", "active", "complete", "failed".
         """
         self._status = status
-        if status == "pending":
-            self._icon_label.setText("\u25CB")  # hollow circle
-            self._icon_label.setStyleSheet("font-size: 16px; color: #9E9E9E;")
-            self._text_label.setStyleSheet("font-size: 14px; color: #9E9E9E;")
-        elif status == "active":
-            self._icon_label.setText("\u25CF")  # filled circle (spinner placeholder)
-            self._icon_label.setStyleSheet(f"font-size: 16px; color: {ACCENT_COLOR};")
-            self._text_label.setStyleSheet(
-                f"font-size: 14px; font-weight: 600; color: {ACCENT_COLOR};"
-            )
-        elif status == "complete":
-            self._icon_label.setText("\u2713")  # checkmark
-            self._icon_label.setStyleSheet(f"font-size: 16px; color: {SUCCESS_COLOR};")
-            self._text_label.setStyleSheet(f"font-size: 14px; color: {SUCCESS_COLOR};")
-        elif status == "failed":
-            self._icon_label.setText("\u2717")  # X mark
-            self._icon_label.setStyleSheet(f"font-size: 16px; color: {ERROR_COLOR};")
-            self._text_label.setStyleSheet(f"font-size: 14px; color: {ERROR_COLOR};")
+        icons = {"pending": "\u25CB", "active": "\u25CF", "complete": "\u2713", "failed": "\u2717"}
+        self._icon_label.setText(icons[status])
+        self._set_class(self._icon_label, f"stage{status.capitalize()}")
+        self._set_class(self._text_label, f"stage{status.capitalize()}")
+
+    @staticmethod
+    def _set_class(widget: QLabel, class_name: str) -> None:
+        """Set the QSS ``class`` property and force a style re-evaluation."""
+        widget.setProperty("class", class_name)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
 
 
 class PushPage(QWidget):
@@ -159,9 +149,8 @@ class PushPage(QWidget):
 
         self._show_result_state()
         self._result_icon.setText("\u2713")
-        self._result_icon.setStyleSheet(f"font-size: 48px; color: {SUCCESS_COLOR};")
+        self._set_result_class("success")
         self._result_message.setText("Filters pushed successfully")
-        self._result_message.setStyleSheet(f"font-size: 16px; color: {SUCCESS_COLOR};")
         self._detail_label.setVisible(False)
 
         # Show success actions
@@ -190,9 +179,8 @@ class PushPage(QWidget):
         self._show_result_state()
         if critical:
             self._result_icon.setText("\u26A0")  # warning triangle
-            self._result_icon.setStyleSheet(f"font-size: 48px; color: {ERROR_COLOR};")
+            self._set_result_class("error")
             self._result_message.setText("Critical: Manual recovery required")
-            self._result_message.setStyleSheet(f"font-size: 16px; color: {ERROR_COLOR};")
             detail_text = (
                 f"{message}\n\n"
                 f"Recovery steps:\n"
@@ -203,9 +191,8 @@ class PushPage(QWidget):
             )
         else:
             self._result_icon.setText("\u26A0")  # warning triangle
-            self._result_icon.setStyleSheet(f"font-size: 48px; color: {WARNING_COLOR};")
+            self._set_result_class("warning")
             self._result_message.setText("Push failed - device safely restored")
-            self._result_message.setStyleSheet(f"font-size: 16px; color: {WARNING_COLOR};")
             detail_text = (
                 f"{message}\n\n"
                 f"Your device was safely restored to its previous state.\n"
@@ -236,9 +223,8 @@ class PushPage(QWidget):
         self._show_result_state()
         self._dry_run_badge.setVisible(True)
         self._result_icon.setText("\u2139")  # info icon
-        self._result_icon.setStyleSheet(f"font-size: 48px; color: {ACCENT_COLOR};")
+        self._set_result_class("info")
         self._result_message.setText("Translation Preview (Dry Run)")
-        self._result_message.setStyleSheet(f"font-size: 16px; color: {ACCENT_COLOR};")
         self._detail_label.setText(summary)
         self._detail_label.setVisible(True)
         self._backup_path_label.setVisible(False)
@@ -261,6 +247,13 @@ class PushPage(QWidget):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _set_result_class(self, status: str) -> None:
+        """Set the result icon/message QSS class (success/error/warning/info)."""
+        for widget in (self._result_icon, self._result_message):
+            widget.setProperty("class", status)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def _show_progress_state(self) -> None:
         """Ensure progress stepper is visible and result area hidden."""
@@ -289,11 +282,6 @@ class PushPage(QWidget):
         # Dry Run badge (hidden by default)
         self._dry_run_badge = QLabel("DRY RUN", content_wrapper)
         self._dry_run_badge.setObjectName("PushPageDryRunBadge")
-        self._dry_run_badge.setStyleSheet(
-            f"background-color: {ACCENT_COLOR}; color: #FFFFFF; "
-            f"border-radius: 10px; padding: 2px 10px; font-size: 11px; "
-            f"font-weight: 600;"
-        )
         self._dry_run_badge.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
         )
@@ -307,7 +295,7 @@ class PushPage(QWidget):
         progress_layout.setSpacing(4)
 
         progress_title = QLabel("Push Progress", self._progress_container)
-        progress_title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        progress_title.setProperty("class", "sectionTitle")
         progress_layout.addWidget(progress_title)
 
         self._stage_rows: dict[str, _StageRow] = {}
@@ -329,14 +317,12 @@ class PushPage(QWidget):
         self._result_icon = QLabel("", self._result_container)
         self._result_icon.setObjectName("PushPageResultIcon")
         self._result_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._result_icon.setStyleSheet("font-size: 48px;")
         result_layout.addWidget(self._result_icon)
 
         # Result message
         self._result_message = QLabel("", self._result_container)
         self._result_message.setObjectName("PushPageResultMessage")
         self._result_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._result_message.setStyleSheet("font-size: 16px;")
         result_layout.addWidget(self._result_message)
 
         # Detail/recovery text (multi-line)
@@ -354,10 +340,6 @@ class PushPage(QWidget):
         self._backup_path_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self._backup_path_label.setStyleSheet(
-            "font-size: 12px; font-family: monospace; "
-            "background-color: #F5F5F5; padding: 4px 8px; border-radius: 4px;"
-        )
         self._backup_path_label.setVisible(False)
         result_layout.addWidget(self._backup_path_label)
 
@@ -369,24 +351,14 @@ class PushPage(QWidget):
 
         self._ok_button = QPushButton("OK", self._result_container)
         self._ok_button.setObjectName("PushPageOKButton")
-        self._ok_button.setProperty("class", "primary")
-        self._ok_button.setStyleSheet(
-            f"QPushButton {{ background-color: {SUCCESS_COLOR}; color: #FFFFFF; "
-            f"padding: 8px 24px; border-radius: 6px; font-size: 14px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background-color: #1B5E20; }}"
-        )
+        self._ok_button.setProperty("class", "success")
         self._ok_button.clicked.connect(self.done_acknowledged.emit)
         self._ok_button.setVisible(False)
         action_layout.addWidget(self._ok_button)
 
         self._undo_button = QPushButton("Undo", self._result_container)
         self._undo_button.setObjectName("PushPageUndoButton")
-        self._undo_button.setProperty("class", "danger")
-        self._undo_button.setStyleSheet(
-            f"QPushButton {{ background-color: {WARNING_COLOR}; color: #FFFFFF; "
-            f"padding: 8px 24px; border-radius: 6px; font-size: 14px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background-color: #E65100; }}"
-        )
+        self._undo_button.setProperty("class", "warning")
         self._undo_button.clicked.connect(self.undo_requested.emit)
         self._undo_button.setVisible(False)
         action_layout.addWidget(self._undo_button)
@@ -404,23 +376,19 @@ class PushPage(QWidget):
         export_link.setObjectName("PushPageExportLink")
         export_link.setFlat(True)
         export_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        export_link.setStyleSheet(
-            f"color: {ACCENT_COLOR}; font-size: 13px; text-decoration: underline;"
-        )
+        export_link.setProperty("class", "linkButton")
         export_link.clicked.connect(self.export_requested.emit)
         secondary_layout.addWidget(export_link)
 
         separator = QLabel("|", self._secondary_row)
-        separator.setStyleSheet("color: #9E9E9E; font-size: 13px;")
+        separator.setObjectName("PushPageLinkSeparator")
         secondary_layout.addWidget(separator)
 
         save_link = QPushButton("Save to My Presets", self._secondary_row)
         save_link.setObjectName("PushPageSavePresetLink")
         save_link.setFlat(True)
         save_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        save_link.setStyleSheet(
-            f"color: {ACCENT_COLOR}; font-size: 13px; text-decoration: underline;"
-        )
+        save_link.setProperty("class", "linkButton")
         save_link.clicked.connect(self.save_preset_requested.emit)
         secondary_layout.addWidget(save_link)
 

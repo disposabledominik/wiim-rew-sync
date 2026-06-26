@@ -18,11 +18,10 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
-    WARNING_COLOR,
+    SPACING_SM,
 )
 
 
@@ -64,7 +63,7 @@ class NameProfilePage(QWidget):
         # Title
         title = QLabel("Name Your Profile")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
+        title.setProperty("class", "title")
         layout.addWidget(title)
 
         # Helper text
@@ -86,15 +85,14 @@ class NameProfilePage(QWidget):
             "You can save with a new name instead."
         )
         self._warning_label.setWordWrap(True)
-        self._warning_label.setStyleSheet(
-            f"color: {WARNING_COLOR}; font-size: 12px; padding: 4px 0px;"
-        )
+        self._warning_label.setProperty("class", "warning")
         self._warning_label.setVisible(False)
         layout.addWidget(self._warning_label)
 
         # Existing profiles section
         profiles_heading = QLabel("Existing Profiles")
-        profiles_heading.setStyleSheet("font-size: 14px; font-weight: 600; margin-top: 8px;")
+        profiles_heading.setProperty("class", "subheading")
+        layout.addSpacing(SPACING_SM)
         layout.addWidget(profiles_heading)
 
         self._profiles_list = QListWidget()
@@ -107,21 +105,7 @@ class NameProfilePage(QWidget):
         self._save_button = QPushButton("Save")
         self._save_button.setEnabled(False)
         self._save_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._save_button.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {ACCENT_COLOR};"
-            f"  color: white;"
-            f"  border: none;"
-            f"  border-radius: 6px;"
-            f"  padding: 10px 24px;"
-            f"  font-size: 14px;"
-            f"  font-weight: 600;"
-            f"}}"
-            f"QPushButton:disabled {{"
-            f"  background-color: #CCCCCC;"
-            f"  color: #888888;"
-            f"}}"
-        )
+        self._save_button.setProperty("class", "primary")
         self._save_button.clicked.connect(self._on_save_clicked)
         layout.addWidget(self._save_button, alignment=Qt.AlignmentFlag.AlignCenter)
 

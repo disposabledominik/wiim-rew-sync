@@ -62,9 +62,6 @@ class StatusBanner(QFrame):
         # Message label — larger, bolder for prominence
         self._message_label = QLabel(self)
         self._message_label.setObjectName("StatusBannerMessage")
-        self._message_label.setStyleSheet(
-            "font-size: 14px; font-weight: 600; padding: 0px;"
-        )
         self._message_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
@@ -75,12 +72,6 @@ class StatusBanner(QFrame):
         self._close_button.setObjectName("StatusBannerClose")
         self._close_button.setFixedHeight(22)
         self._close_button.setToolTip("Dismiss this message")
-        self._close_button.setStyleSheet(
-            "QPushButton { font-size: 11px; font-weight: 600; "
-            "border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 4px; "
-            "background: transparent; padding: 1px 8px; }"
-            "QPushButton:hover { background: rgba(128, 128, 128, 0.2); }"
-        )
         self._close_button.clicked.connect(self._on_close_clicked)
         self._close_button.setVisible(False)
         layout.addWidget(self._close_button)

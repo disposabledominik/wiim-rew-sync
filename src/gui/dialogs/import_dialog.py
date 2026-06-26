@@ -69,7 +69,7 @@ class ImportDialog(QDialog):
 
         # Error label (hidden by default)
         self._error_label = QLabel()
-        self._error_label.setStyleSheet("color: red; font-weight: bold;")
+        self._error_label.setProperty("class", "error")
         self._error_label.setWordWrap(True)
         self._error_label.hide()
         layout.addWidget(self._error_label)
@@ -88,11 +88,9 @@ class ImportDialog(QDialog):
 
         # Warning banner (hidden by default)
         self._warning_banner = QWidget()
+        self._warning_banner.setProperty("class", "card")
         banner_layout = QVBoxLayout(self._warning_banner)
         banner_layout.setContentsMargins(8, 8, 8, 8)
-        self._warning_banner.setStyleSheet(
-            "background-color: #FFF3CD; border: 1px solid #FFC107; border-radius: 4px;"
-        )
 
         self._warning_text = QLabel()
         self._warning_text.setWordWrap(True)

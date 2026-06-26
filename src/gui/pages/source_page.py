@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    ACCENT_COLOR,
     LIST_ITEM_HEIGHT,
     MAX_CONTENT_WIDTH,
     SPACING_LG,
@@ -96,7 +95,7 @@ class SourcePage(QWidget):
             checkbox.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
             if source == default_source:
-                checkbox.setStyleSheet(f"QCheckBox {{ color: {ACCENT_COLOR}; }}")
+                checkbox.setProperty("class", "accent")
                 checkbox.setChecked(True)
 
             checkbox.toggled.connect(self._on_source_toggled)
@@ -133,7 +132,7 @@ class SourcePage(QWidget):
         # Title
         title = QLabel("Select Audio Source(s)")
         title.setObjectName("source_page_title")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        title.setProperty("class", "sectionTitle")
         content_layout.addWidget(title)
 
         # Explanatory note (Req 3.4)
@@ -165,7 +164,7 @@ class SourcePage(QWidget):
 
         channel_label = QLabel("Channel Mode")
         channel_label.setObjectName("channel_mode_label")
-        channel_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+        channel_label.setProperty("class", "subheading")
         channel_layout.addWidget(channel_label)
 
         channel_buttons_widget = QWidget()
@@ -208,11 +207,7 @@ class SourcePage(QWidget):
         self._continue_btn.setObjectName("source_continue_btn")
         self._continue_btn.setEnabled(False)
         self._continue_btn.setMinimumHeight(LIST_ITEM_HEIGHT)
-        self._continue_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: white;"
-            f" border-radius: 6px; font-size: 14px; font-weight: 600; }}"
-            f" QPushButton:disabled {{ background-color: #CCCCCC; color: #888888; }}"
-        )
+        self._continue_btn.setProperty("class", "primary")
         self._continue_btn.clicked.connect(self._on_continue_clicked)
         content_layout.addWidget(self._continue_btn)
 
