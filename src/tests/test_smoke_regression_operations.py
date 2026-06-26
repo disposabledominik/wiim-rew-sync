@@ -9,6 +9,7 @@ Each test validates the specific fix behavior to prevent regressions.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -94,6 +95,27 @@ def _setup_device(window) -> MagicMock:
     return mock_adapter
 
 
+def _close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
+    """Close a coroutine and any nested coroutine locals it captures."""
+    if not inspect.iscoroutine(value):
+        return
+
+    if seen is None:
+        seen = set()
+
+    obj_id = id(value)
+    if obj_id in seen:
+        return
+    seen.add(obj_id)
+
+    frame = value.cr_frame
+    if frame is not None:
+        for local_value in frame.f_locals.values():
+            _close_coroutine_tree(local_value, seen)
+
+    value.close()
+
+
 # ===========================================================================
 # PUSH / WRITE OPERATIONS
 # ===========================================================================
@@ -173,10 +195,7 @@ class TestPushWriteOperations:
 
         mock_do.assert_called_once_with(filters, request, ChannelMode.LR)
         mock_run_async.assert_called_once()
-        scheduled_coro = mock_run_async.call_args[0][0]
-        close = getattr(scheduled_coro, "close", None)
-        if callable(close):
-            close()
+        _close_coroutine_tree(mock_run_async.call_args[0][0])
 
     # --- Issue #61: RoomFit push deferred via _on_name_confirmed ---
 
@@ -209,10 +228,7 @@ class TestPushWriteOperations:
 
         assert state.roomfit_profile_name == "My RoomFit Profile"
         window._bridge.run_async.assert_called_once()
-        scheduled_coro = window._bridge.run_async.call_args[0][0]
-        close = getattr(scheduled_coro, "close", None)
-        if callable(close):
-            close()
+        _close_coroutine_tree(window._bridge.run_async.call_args[0][0])
 
     # --- Issue #63: write_roomfit accepts channel_mode parameter ---
 
@@ -350,10 +366,7 @@ class TestImportExport:
         ):
             window._export_filters_as_rew(state.current_filters, "Stereo")
             mock_run.assert_called_once()
-            scheduled_coro = mock_run.call_args[0][0]
-            close = getattr(scheduled_coro, "close", None)
-            if callable(close):
-                close()
+            _close_coroutine_tree(mock_run.call_args[0][0])
 
     # --- Issue #44: build_profile sanitizes name ---
 
@@ -507,10 +520,7 @@ class TestPresets:
         mock_progress.assert_called_once_with("Exporting 'Movie Night'...")
         mock_export_workflow.assert_called_once_with("Movie Night", "PEQ", "/tmp/movie-night.txt")
         mock_run.assert_called_once()
-        scheduled_coro = mock_run.call_args[0][0]
-        close = getattr(scheduled_coro, "close", None)
-        if callable(close):
-            close()
+        _close_coroutine_tree(mock_run.call_args[0][0])
 
     def test_issue24_presets_device_save_connected(self, window) -> None:
         """#24: Save signal triggers preset-save workflow."""
@@ -526,10 +536,7 @@ class TestPresets:
         mock_progress.assert_called_once_with("Saving 'Movie Night' to My Presets...")
         mock_save_workflow.assert_called_once_with("Movie Night", "PEQ")
         mock_run.assert_called_once()
-        scheduled_coro = mock_run.call_args[0][0]
-        close = getattr(scheduled_coro, "close", None)
-        if callable(close):
-            close()
+        _close_coroutine_tree(mock_run.call_args[0][0])
 
     def test_issue24_presets_device_load_connected(self, window) -> None:
         """#24: Load signal triggers preset-load workflow."""
@@ -549,10 +556,7 @@ class TestPresets:
         mock_progress.assert_called_once_with("Loading preset 'Movie Night'...")
         mock_load_workflow.assert_called_once_with("Movie Night")
         mock_run.assert_called_once()
-        scheduled_coro = mock_run.call_args[0][0]
-        close = getattr(scheduled_coro, "close", None)
-        if callable(close):
-            close()
+        _close_coroutine_tree(mock_run.call_args[0][0])
 
     # --- Issue #25: Selecting in one preset list clears the other ---
 
@@ -597,9 +601,7 @@ class TestPresets:
         mock_progress.assert_called_once_with("Loading RoomFit profile 'My Profile'...")
         mock_run.assert_called_once()
         assert len(scheduled) == 1
-        close = getattr(scheduled[0], "close", None)
-        if callable(close):
-            close()
+        _close_coroutine_tree(scheduled[0])
 
     # --- Issue #31: Save to My Presets refreshes preset list ---
 
@@ -829,9 +831,7 @@ class TestSettingsUIState:
 
         def _record_async(coro: object) -> None:
             call_order.append("run_async")
-            close = getattr(coro, "close", None)
-            if callable(close):
-                close()
+            _close_coroutine_tree(coro)
 
         with (
             patch.object(window._status_banner, "show_progress", side_effect=_record_progress),
@@ -1168,10 +1168,7 @@ class TestSettingsUIState:
 
         mock_do.assert_called_once_with(filters, "192.168.1.200", "wifi", ChannelMode.LR)
         mock_run_async.assert_called_once()
-        scheduled_coro = mock_run_async.call_args[0][0]
-        close = getattr(scheduled_coro, "close", None)
-        if callable(close):
-            close()
+        _close_coroutine_tree(mock_run_async.call_args[0][0])
 
     # --- Issue #70: parse_backup_filters handles stereo and L/R ---
 
