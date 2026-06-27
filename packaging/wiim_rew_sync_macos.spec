@@ -90,6 +90,16 @@ for icon_file in ("app_icon.svg", "app_icon.png"):
             (_icon_path, os.path.join("src", "gui", "assets", "icons"))
         )
 
+# Bundle the default device capability override file (seeded into the
+# user's app data dir on first run -- see src/models/device_capability_file.py)
+capabilities_src = os.path.join(
+    _PROJECT_ROOT, "src", "models", "assets", "device_capabilities.json"
+)
+if os.path.isfile(capabilities_src):
+    datas_list.append(
+        (capabilities_src, os.path.join("src", "models", "assets"))
+    )
+
 # macOS icon: prefer .icns, fall back to .png
 _MACOS_ICON = os.path.join(icons_src, 'app_icon.icns')
 if not os.path.isfile(_MACOS_ICON):

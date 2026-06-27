@@ -90,6 +90,16 @@ for icon_file in ("app_icon.svg", "app_icon.ico", "app_icon.png"):
             (icon_path, os.path.join("src", "gui", "assets", "icons"))
         )
 
+# Bundle the default device capability override file (seeded into the
+# user's app data dir on first run -- see src/models/device_capability_file.py)
+capabilities_src = os.path.join(
+    _PROJECT_ROOT, "src", "models", "assets", "device_capabilities.json"
+)
+if os.path.isfile(capabilities_src):
+    datas_list.append(
+        (capabilities_src, os.path.join("src", "models", "assets"))
+    )
+
 # Resolve icon path for the exe embedded icon
 _ICON_PATH = os.path.join(_PROJECT_ROOT, 'src', 'gui', 'assets', 'icons', 'app_icon.ico')
 

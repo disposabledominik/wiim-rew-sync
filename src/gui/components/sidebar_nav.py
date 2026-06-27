@@ -31,19 +31,25 @@ class _NavItem(QPushButton):
     """Single navigation item: icon area + text label."""
 
     def __init__(
-        self, key: str, label: str, icon_char: str = "", parent: QWidget | None = None,
+        self,
+        key: str,
+        label: str,
+        icon_char: str = "",
+        description: str = "",
+        parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.key = key
         self._label_text = label
         self._icon_char = icon_char
+        self._description = description or label
         self._active = False
 
         self.setFixedHeight(LIST_ITEM_HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setCheckable(True)
         self.setText(f"{icon_char}  {label}" if icon_char else label)
-        self.setToolTip(label)
+        self.setToolTip(self._description)
         self.setObjectName("SidebarNavItem")
         self._apply_style()
 
@@ -54,14 +60,18 @@ class _NavItem(QPushButton):
         self._apply_style()
 
     def set_collapsed(self, collapsed: bool) -> None:
-        """Toggle between icon-only and icon+label display."""
+        """Toggle between icon-only and icon+label display.
+
+        The tooltip always shows the descriptive explanation (not just the
+        label) regardless of collapsed state, since the label alone can be
+        ambiguous (e.g. "Resume Setup" doesn't say *what* it resumes).
+        """
         if collapsed:
             self.setText(self._icon_char)
-            self.setToolTip(self._label_text)
         else:
             text = f"{self._icon_char}  {self._label_text}" if self._icon_char else self._label_text
             self.setText(text)
-            self.setToolTip("")
+        self.setToolTip(self._description)
 
     def _apply_style(self) -> None:
         """Apply styling based on active state."""
@@ -83,13 +93,43 @@ class SidebarNav(QWidget):
     collapse_toggled = Signal(bool)
     """Emitted when the collapse state changes. True means collapsed (icon-only)."""
 
-    _NAV_ITEMS: tuple[tuple[str, str, str], ...] = (
-        ("home", "Back", "\u2190"),
-        ("presets_device", "Presets on Device", "\U0001F3B6"),
-        ("my_presets", "My Saved Presets", "\U0001F4BE"),
-        ("rew_api", "Pull from REW", "\U0001F4C8"),
-        ("settings", "Settings", "\u2699"),
-        ("help", "Help", "\u2753"),
+    _NAV_ITEMS: tuple[tuple[str, str, str, str], ...] = (
+        (
+            "home",
+            "Resume Setup",
+            "\U0001F9D9",
+            "Return to your current step in the setup wizard",
+        ),
+        (
+            "presets_device",
+            "Presets on Device",
+            "\U0001F3B6",
+            "Browse, export, or copy PEQ and RoomFit presets saved on the connected device",
+        ),
+        (
+            "my_presets",
+            "My Saved Presets",
+            "\U0001F4BE",
+            "Browse and load presets saved locally on this computer",
+        ),
+        (
+            "rew_api",
+            "Pull from REW",
+            "\U0001F4C8",
+            "Import filters directly from a running Room EQ Wizard (REW) session",
+        ),
+        (
+            "settings",
+            "Settings",
+            "\u2699",
+            "App preferences: discovery, theme, backup paths, and connection options",
+        ),
+        (
+            "help",
+            "Help",
+            "\u2753",
+            "Open the user guide for this app",
+        ),
     )
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -125,8 +165,8 @@ class SidebarNav(QWidget):
         layout.addWidget(self._header_widget)
 
         # Navigation items
-        for key, label, icon in self._NAV_ITEMS:
-            item = _NavItem(key, label, icon, self)
+        for key, label, icon, description in self._NAV_ITEMS:
+            item = _NavItem(key, label, icon, description, parent=self)
             item.clicked.connect(self._on_item_clicked)
             self._nav_buttons[key] = item
             layout.addWidget(item)
