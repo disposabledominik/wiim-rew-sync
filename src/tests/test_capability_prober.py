@@ -155,7 +155,7 @@ class TestWiiMDeviceDetection:
         assert caps.uuid == "FF31F09E-1234-5678-ABCD-000000000001"
         assert caps.mac_address == "AA:BB:CC:DD:EE:FF"
         assert caps.source_names == ["wifi", "bluetooth", "line-in", "optical"]
-        assert caps.supports_channel_peq is True
+        assert caps.supports_lr_filters is True
         assert caps.supports_batch_write is True
         assert caps.supports_profile_enumeration is True
         assert caps.role == "solo"
@@ -217,7 +217,7 @@ class TestGenericLinkPlayDefaults:
         assert caps.supports_peq is False
         assert caps.max_filters == 0
         assert caps.model == "UP2STREAM_PRO_V3"
-        assert caps.supports_channel_peq is False
+        assert caps.supports_lr_filters is False
         assert caps.supports_batch_write is False
         assert caps.supports_profile_enumeration is False
         assert caps.roomfit_level == 0
@@ -238,7 +238,7 @@ class TestConnectionFailure:
 
         assert caps.supports_peq is False
         assert caps.max_filters == 0
-        assert caps.supports_channel_peq is False
+        assert caps.supports_lr_filters is False
         assert caps.supports_batch_write is False
         assert caps.supports_profile_enumeration is False
         assert caps.roomfit_level == 0
@@ -562,13 +562,59 @@ class TestDynamicMaxFilters:
     """Test dynamic max_filters detection from EQGetLV2BandEx band count."""
 
     @pytest.mark.asyncio
-    async def test_12_band_response_sets_max_filters_12(self) -> None:
-        """Device with 12 bands (a-l) in response → max_filters=12."""
+    async def test_12_band_response_capped_to_10_by_default(self) -> None:
+        """Device reporting 12 bands (a-l) with no capability-file override
+        for its model is still capped to the 10-band default (Requirement 7).
+        """
         client = _make_mock_client()
 
         async def mock_command(cmd: str) -> dict | str:
             if cmd == "getStatusEx":
                 return STATUS_EX_WIIM_PRO
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return EQ_GET_LV2_BAND_12_RESPONSE
+            if cmd.startswith("EQSetLV2Band:"):
+                return "OK"
+            if cmd.startswith("EQGetLV2List:"):
+                return EQ_GET_LV2_LIST_RESPONSE
+            if cmd.startswith("EQv2GetNewList:"):
+                return "unknown command"
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_peq is True
+        assert caps.max_filters == 10
+
+    @pytest.mark.asyncio
+    async def test_12_band_response_not_capped_with_file_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A model whose capability-file entry raises max_bands keeps the
+        full probed band count instead of the 10-band default (Requirement 7).
+
+        Uses a synthetic capability-file entry (rather than asserting on the
+        bundled file's actual shipped values, which may be tuned over time)
+        to test the override mechanism itself in isolation.
+        """
+        from src.models.device_capability_file import CapabilityFileEntry
+
+        monkeypatch.setattr(
+            "src.adapters.capability_prober.get_cached_entries",
+            lambda: {"WiiM_Amp_Ultra": CapabilityFileEntry(max_bands=12)},
+        )
+
+        client = _make_mock_client()
+        status_amp_ultra = dict(STATUS_EX_WIIM_PRO, project="WiiM_Amp_Ultra")
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return status_amp_ultra
             if cmd.startswith("EQGetLV2BandEx:"):
                 return EQ_GET_LV2_BAND_12_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):

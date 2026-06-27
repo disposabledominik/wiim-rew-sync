@@ -276,7 +276,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
 - [x] 35. Implement EQ panel and source selector
   - Create `src/gui/panels/eq_panel.py`
   - Source selector: populated from `capabilities.source_names`; no source pre-selected for write; currently active source pre-selected for display
-  - Channel mode selector: disabled when `supports_channel_peq=False`
+  - Channel mode selector: disabled when `supports_lr_filters=False`
   - EQ type selector: PEQ tab always visible; RoomFit tab hidden when `roomfit_level == 0`
   - Filter table: 10-12 rows × 5 columns (dynamic based on `max_filters`); OFF bands shown in grey; UNKNOWN bands greyed with tooltip
   - **PEQ tab:**

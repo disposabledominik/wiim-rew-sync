@@ -44,7 +44,7 @@ class DeviceCapabilities:
     supports_roomfit_read: bool         # True if RoomFit bands are readable (Level 2+)
     supports_roomfit_write: bool        # True if RoomFit bands are writable (Level 4)
     roomfit_level: int                  # 0–4 (see PRD for level definitions); always 0 for WiiM Mini
-    supports_channel_peq: bool          # True if independent L/R channel PEQ is available; True on all WiiM devices
+    supports_lr_filters: bool          # True if independent L/R channel PEQ is available; True on all WiiM devices
     supports_profile_enumeration: bool  # True if device can list saved PEQ presets
     supports_batch_write: bool          # True if all 10 bands can be set in one payload
     max_filters: int                    # Number of PEQ bands; 10 on all WiiM devices
@@ -54,11 +54,44 @@ class DeviceCapabilities:
     mac_address: str                    # Device MAC address
     role: str                           # "solo", "master", or "slave"
     source_names: list[str]             # Available source names, e.g. ["wifi", "bluetooth"]
+    supported_filter_types: list[str]   # WiiM-supported filter types, e.g. ["PEAK","LS","HS","LP","HP"]
+    source_aliases: dict[str, str]      # Optional source name aliases from the device capability file
 ```
+
+All fields above are populated by `CapabilityProber.probe()`. After probing, `probe()` applies any matching
+per-model override from the device capability file (`src/models/device_capability_file.py`) before returning —
+see "Device Capability File" below. This is the single merge point: every caller of `probe()` (CLI commands,
+GUI connect flow, secondary workflows) gets file overrides applied automatically with no per-caller changes.
+
+### Device Capability File
+
+A per-model capability override file lets the developer (or, via the user-editable copy in the app data
+directory, an end user) correct or extend behaviour for specific WiiM models without code changes:
+
+- Bundled default: `src/models/assets/device_capabilities.json`.
+- User-editable copy: `<app data dir>/device_capabilities.json` (seeded from the bundled default on first run;
+  edits require an app restart to take effect, matching `AppSettings`' load-once-at-startup convention).
+- Schema: a `"models"` object keyed by canonical model name (matching the probed `project` field, case/space/
+  underscore-insensitive), each with optional fields mirroring `DeviceCapabilities` (`aliases`,
+  `supports_roomfit`, `supports_roomfit_read`, `supports_roomfit_write`, `roomfit_level`,
+  `supports_lr_filters`, `supports_profile_enumeration`, `supports_batch_write`, `max_bands`,
+  `supported_filter_types`, `sources`, `source_aliases`).
+- Models absent from the file keep the fully runtime-probed generic behaviour unchanged.
+- `max_bands` acts as a **ceiling** on the probed band count (Requirement 7's 10-band default), never raising it
+  past what the device actually reported — e.g. an entry can lower a model's cap below 10. The bundled default
+  does **not** raise any model's cap above 10, even WiiM Amp Ultra (whose API reports 12 bands on firmware
+  20260409+): the WiiM Home App itself only exposes 10 of those 12 bands to the user, so the default cap matches
+  WiiM's own app behaviour rather than under-using the cap-raising mechanism (confirmed by device owner,
+  2026-06-27 — see `docs/wiim_api_notes.md` Capability Nuances).
+- The bundled default only lists `sources` for the four models that are device-owner-confirmed (WiiM Mini, WiiM
+  Amp Ultra, WiiM Sound, WiiM Sound Lite — see `docs/wiim_api_notes.md` "PEQ Source Names"). Models without a
+  confirmed source list are deliberately absent from the file and keep live `InputList` probing as the
+  authoritative source list (see "Never hard-code capabilities by model name alone" in `docs/wiim_api_notes.md`)
+  rather than risk a guessed override masking the real probe result.
 
 ### Capability matrix by device
 
-| Device | `supports_peq` | `supports_channel_peq` | `max_filters` | `supports_roomfit` |
+| Device | `supports_peq` | `supports_lr_filters` | `max_filters` | `supports_roomfit` |
 |---|---|---|---|---|
 | WiiM Ultra | ✅ | ✅ | 10 | ✅ |
 | WiiM Amp Ultra | ✅ | ✅ | 10 | ✅ |

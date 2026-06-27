@@ -258,7 +258,7 @@ class DeviceCapabilities(BaseModel):
     supports_roomfit_read: bool
     supports_roomfit_write: bool
     roomfit_level: int                 # 0–4
-    supports_channel_peq: bool
+    supports_lr_filters: bool
     supports_profile_enumeration: bool
     supports_batch_write: bool
     max_filters: int
@@ -385,7 +385,7 @@ class CapabilityProber:
         Never raises — all errors produce safe defaults.
         Steps:
           1. getStatusEx → model, firmware, uuid, mac_address, source_names, role (via GetMultiroomInfo)
-          2. EQGetLV2BandEx → supports_peq, supports_channel_peq
+          2. EQGetLV2BandEx → supports_peq, supports_lr_filters
           3. EQSetLV2Band (10 bands) → supports_batch_write
           4. EQGetLV2List → supports_profile_enumeration
           5. RoomFit sequential probe (levels 0–4) → roomfit_level, supports_roomfit*
@@ -911,7 +911,7 @@ Qt signals emitted: `device_selected(DeviceInfo)`, `capabilities_ready(DeviceCap
 
 Contains:
 - **Source selector** (`QComboBox`): populated from `capabilities.source_names` on `capabilities_ready`. No item pre-selected for write purposes; currently-active source is pre-selected for display only.
-- **Channel mode selector** (`QComboBox`): Stereo / L (left) / R (right). Disabled when `supports_channel_peq=False`.
+- **Channel mode selector** (`QComboBox`): Stereo / L (left) / R (right). Disabled when `supports_lr_filters=False`.
 - **EQ type selector** (`QTabWidget`): PEQ tab always visible; RoomFit tab hidden when `roomfit_level == 0`.
 - **Filter table** (`QTableWidget`): 10 rows × 5 columns (Band, Type, Frequency, Gain, Q). OFF bands shown in grey. Read-only when displaying live data; editable fields planned for future (Backlog).
 

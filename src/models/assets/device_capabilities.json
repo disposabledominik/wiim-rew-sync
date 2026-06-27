@@ -1,0 +1,24 @@
+{
+  "_comment": "Default per-model WiiM device capability overrides. Edit the copy in the app data directory (next to settings.json) to change behaviour without code changes -- restart the app to pick up edits. Models not listed here keep the fully runtime-probed generic behaviour (per docs/wiim_api_notes.md: 'Capability detection must still probe at runtime... Never hard-code capabilities by model name alone'). Only documented exceptions to the generic probe are listed by default -- see docs/corrections.md and docs/wiim_api_notes.md Capability Nuances table.",
+  "models": {
+    "WiiM_Mini": {
+      "aliases": ["Muzo_Mini"],
+      "supports_roomfit": false,
+      "supports_roomfit_read": false,
+      "supports_roomfit_write": false,
+      "roomfit_level": 0,
+      "supported_filter_types": ["PEAK", "LS", "HS"],
+      "sources": ["wifi", "bluetooth", "line-in"]
+    },
+    "WiiM_Amp_Ultra": {
+      "sources": ["wifi", "HDMI", "bluetooth", "line-in", "optical"]
+    },
+    "WiiM_Sound": {
+      "sources": ["wifi", "bluetooth", "auxIn"]
+    },
+    "WiiM_Sound_Lite": {
+      "aliases": ["WiiM_Sound_Lite_V2"],
+      "sources": ["wifi", "bluetooth", "auxIn"]
+    }
+  }
+}

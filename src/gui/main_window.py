@@ -1216,6 +1216,11 @@ class MainWindow(QMainWindow):
         active_source = getattr(caps, "active_source", "")
         self._source_page.set_sources(source_names, active_source)
 
+        # Gate L/R channel mode by device capability (post capability-file
+        # merge — see device_capability_file.py) so the option is never
+        # presented as available on a device that doesn't support it.
+        self._filters_page.set_lr_enabled(getattr(caps, "supports_lr_filters", False))
+
         # Populate diagnostics panel capabilities display
         self._diagnostics_panel.on_capabilities_ready(caps)  # type: ignore[arg-type]
 
@@ -3546,16 +3551,30 @@ class MainWindow(QMainWindow):
             self._mark_prior_steps_completed(state)
             return True
 
-        # Show dialog
-        available_sources = list(self._source_page._source_checkboxes.keys())
+        # Show dialog — source list and RoomFit support come from the
+        # connected device's (capability-file-merged) capabilities; fall back
+        # to the generic list only when no device/capabilities are available.
+        device_caps = self._device_caps
+        available_sources = list(getattr(device_caps, "source_names", []) or [])
         if not available_sources:
-            available_sources = ["wifi", "bluetooth", "line-in", "optical", "HDMI", "auxIn"]
+            available_sources = list(self._source_page._source_checkboxes.keys())
+        supports_roomfit = bool(getattr(device_caps, "supports_roomfit", True))
+
+        current_eq_type = "roomfit" if flow_type == FlowType.ROOMFIT else "peq"
+        current_sources = (
+            [s.strip() for s in state.selected_source.split(",") if s.strip()]
+            if state.selected_source
+            else None
+        )
 
         result = QuickSetupDialog.get_setup(
             self,
             need_eq_type=need_eq_type,
             need_source=need_source,
             available_sources=available_sources,
+            current_eq_type=current_eq_type,
+            current_sources=current_sources,
+            supports_roomfit=supports_roomfit,
         )
 
         if result is None:

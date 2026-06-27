@@ -8,7 +8,7 @@ default value.
 
 Probing sequence:
   1. getStatusEx        -> model, firmware, uuid, mac_address, source_names
-  2. EQGetLV2BandEx     -> supports_peq, supports_channel_peq
+  2. EQGetLV2BandEx     -> supports_peq, supports_lr_filters
   3. EQSetLV2Band (batch) -> supports_batch_write
   4. EQGetLV2List       -> supports_profile_enumeration
   5. RoomFit levels 0-4 -> roomfit_level, supports_roomfit*
@@ -26,6 +26,7 @@ from urllib.parse import quote
 
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
+from src.models.device_capability_file import find_entry, get_cached_entries, merge_into
 from src.utils.device_identity import is_wiim_device
 
 logger = logging.getLogger("wiim_rew_sync.wiim_api")
@@ -70,7 +71,7 @@ class CapabilityProber:
             caps.supports_peq = False
             # Still probe multiroom role (useful for any LinkPlay device)
             await self._probe_multiroom(caps)
-            return caps
+            return self._apply_capability_file(caps)
 
         # Step 2: EQGetLV2BandEx — PEQ support & channel mode
         await self._probe_peq(caps)
@@ -91,11 +92,25 @@ class CapabilityProber:
         if not caps.supports_peq:
             caps.max_filters = 0
 
-        return caps
+        return self._apply_capability_file(caps)
 
     # ------------------------------------------------------------------
     # Internal probe steps
     # ------------------------------------------------------------------
+
+    def _apply_capability_file(self, caps: DeviceCapabilities) -> DeviceCapabilities:
+        """Apply device-capability-file overrides for the probed model, if any.
+
+        This is the single merge point (Requirement 6): every caller of
+        `probe()` -- CLI commands, GUI connect flow, secondary workflows --
+        automatically gets capability-file overrides and the 10-band default
+        cap (Requirement 7) applied here, with no per-caller changes needed.
+        Models absent from the file are returned unchanged (full generic
+        probed behaviour).
+        """
+        entries = get_cached_entries()
+        entry = find_entry(caps.model, entries)
+        return merge_into(caps, entry)
 
     async def _probe_status(self, caps: DeviceCapabilities) -> dict[str, Any]:
         """Probe getStatusEx for device identity and source names."""
@@ -139,24 +154,32 @@ class CapabilityProber:
         except Exception:
             logger.warning("EQGetLV2BandEx probe failed; PEQ assumed unsupported.", exc_info=True)
             caps.supports_peq = False
-            caps.supports_channel_peq = False
+            caps.supports_lr_filters = False
             return
 
         if not isinstance(resp, dict):
             logger.warning("EQGetLV2BandEx returned non-dict: %r", resp)
             caps.supports_peq = False
-            caps.supports_channel_peq = False
+            caps.supports_lr_filters = False
             return
 
         # Valid response means PEQ is supported
         caps.supports_peq = True
 
-        # Requirement 2.3: determine supports_channel_peq from channelMode field
-        # If channelMode field exists in response, device supports channel PEQ
-        caps.supports_channel_peq = "channelMode" in resp
+        # Requirement 2.3: determine supports_lr_filters from channelMode field
+        # If channelMode field exists in response, device supports L/R channel PEQ
+        caps.supports_lr_filters = "channelMode" in resp
 
         # Dynamically detect max_filters by counting distinct band letter prefixes
         # in the EQBand response (e.g. a_mode, b_mode, ... l_mode → 12 bands).
+        # ASSUMPTION: this count reflects bands available in the device's
+        # *current* channel mode at probe time (i.e. per-channel if probed
+        # while in L/R mode, total if probed while in Stereo mode) rather than
+        # two independent per-channel limits. Unverified against real hardware
+        # in both modes.
+        # TODO: confirm by comparing EQGetLV2BandEx (Stereo) vs
+        # EQGetLV2SourceBandEx (L/R) band-letter counts on the same device.
+        # See docs/corrections.md 2026-06-27.
         eq_band: list[dict[str, object]] = resp.get("EQBand", [])
         band_letters: set[str] = set()
         for entry in eq_band:

@@ -24,7 +24,7 @@ class DeviceCapabilities(BaseModel):
     supports_roomfit_read: bool = False
     supports_roomfit_write: bool = False
     roomfit_level: int = 0
-    supports_channel_peq: bool = False
+    supports_lr_filters: bool = False
     supports_profile_enumeration: bool = False
     supports_batch_write: bool = False
     max_filters: int = 0
@@ -34,3 +34,5 @@ class DeviceCapabilities(BaseModel):
     mac_address: str = ""
     role: Literal["solo", "master", "slave"] = "solo"
     source_names: list[str] = []
+    supported_filter_types: list[str] = []
+    source_aliases: dict[str, str] = {}

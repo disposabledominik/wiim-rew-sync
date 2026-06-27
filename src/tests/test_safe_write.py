@@ -68,7 +68,7 @@ def _solo_capabilities() -> DeviceCapabilities:
     return DeviceCapabilities(
         supports_peq=True,
         supports_batch_write=True,
-        supports_channel_peq=True,
+        supports_lr_filters=True,
         max_filters=10,
         model="WiiM_Ultra",
         firmware="6.0.1.20",

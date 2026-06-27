@@ -90,6 +90,27 @@ class FiltersPage(QWidget):
         self._roomfit_combo.addItem("Select a profile...")
         self._roomfit_combo.addItems(profiles)
 
+    def set_lr_enabled(self, enabled: bool) -> None:
+        """Enable or disable the L/R channel mode option.
+
+        Disabled (not hidden) when the connected device's capabilities
+        report no L/R filter support, so the control's presence stays
+        consistent while remaining unselectable. Forces Stereo mode if L/R
+        was selected at the moment it becomes disabled.
+
+        Args:
+            enabled: Whether L/R mode should be selectable.
+        """
+        self._lr_radio.setEnabled(enabled)
+        if not enabled:
+            self._lr_radio.setToolTip(
+                "This device does not support independent Left/Right channel filters."
+            )
+            if self._lr_radio.isChecked():
+                self._stereo_radio.setChecked(True)
+        else:
+            self._lr_radio.setToolTip("")
+
     def set_channel_mode(self, mode: str) -> None:
         """Set stereo or L/R channel mode.
 

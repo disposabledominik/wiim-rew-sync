@@ -12,7 +12,7 @@ This project delivers a lightweight cross-platform desktop tool to transfer para
 
 ## Functional Requirements
 1. **Device Discovery**: Automatically locate WiiM devices on LAN using zeroconf (mDNS primary, subnet scan fallback). Refresh manually/automatically. Display device name, model, and IP. Failure to discover must not crash the app.
-2. **Capability Detection**: Probe for `supports_peq`, `supports_roomfit`, `supports_channel_peq`, `max_filters`, etc. Adapt UI accordingly. All WiiM devices support PEQ with stereo and L/R channel modes. All except WiiM Mini additionally support RoomFit. WiiM Mini is forced to PEQ-only flow.
+2. **Capability Detection**: Probe for `supports_peq`, `supports_roomfit`, `supports_lr_filters`, `max_filters`, etc. Adapt UI accordingly. All WiiM devices support PEQ with stereo and L/R channel modes. All except WiiM Mini additionally support RoomFit. WiiM Mini is forced to PEQ-only flow.
 3. **PEQ Read (Pull)**: Read active PEQ presets from WiiM device via "Presets on Device" sidebar view.
 4. **PEQ Write (Push)**: Validate all values, backup existing state per source, write PEQ to one or more sources, read back to verify (using floating-point tolerances), and rollback on mismatch/failure. Multi-source push supported.
 5. **REW Import/Export**: Import REW EQ text files (.txt) in Stereo or L/R mode. Export to REW-compatible text format (dual files for L/R).

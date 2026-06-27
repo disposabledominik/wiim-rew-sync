@@ -50,7 +50,10 @@ Source names used in `EQGetLV2SourceBandEx` / `EQSetLV2SourceBand` are model-dep
 |-------|---------|-------|
 | WiiM Mini (`Muzo_Mini`) | `wifi`, `bluetooth`, `line-in` | |
 | WiiM Amp Ultra | `wifi`, `bluetooth`, `HDMI`, `line-in`, `optical` | `wifi` covers Wi-Fi, Ethernet AND USB disk |
-| WiiM Sound / Sound Lite | `wifi`, `bluetooth`, `auxIn` | `auxIn` (not `line-in`) |
+| WiiM Sound | `wifi`, `bluetooth`, `auxIn` | `auxIn` (not `line-in`) |
+| WiiM Sound Lite (incl. `WiiM_Sound_Lite_V2`) | `wifi`, `bluetooth`, `auxIn` | Same source set as WiiM Sound |
+
+These four models (Mini, Amp Ultra, Sound, Sound Lite) are device-owner-confirmed and are the only entries in the bundled `device_capabilities.json` capability file (`src/models/assets/device_capabilities.json`) as of 2026-06-27 — see "Device Capability File" in `docs/data_models.md`. Other models are not yet owned/confirmed and intentionally keep generic runtime-probed behaviour rather than a guessed override.
 
 **Key findings:**
 - Source names are **case-sensitive**: `HDMI` (uppercase) returns Stereo slot; `hdmi` (lowercase) returns L/R slot
@@ -410,10 +413,10 @@ Fallback strategy if mDNS yields no results: subnet scan on ports 80 and 443 wit
 
 ## Capability Nuances
 
-| Device | `supports_peq` | `supports_channel_peq` | `supports_roomfit` | Notes |
+| Device | `supports_peq` | `supports_lr_filters` | `supports_roomfit` | Notes |
 |---|---|---|---|---|
 | WiiM Ultra | ✅ True | ✅ True | ✅ True | Per-input PEQ (stereo or L/R), dedicated RoomFit band set (stereo or L/R, per-source) |
-| WiiM Amp Ultra | ✅ True | ✅ True | ✅ True | Same as Ultra; 12 bands on firmware 20260409+ |
+| WiiM Amp Ultra | ✅ True | ✅ True | ✅ True | Same as Ultra; API reports 12 bands on firmware 20260409+, but WiiM Home App exposes only 10 of them to the user — this app's default 10-band cap (Requirement 7) matches that, not just a safety margin |
 | WiiM Amp Pro | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
 | WiiM Pro | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
 | WiiM Pro Plus | ✅ True | ✅ True | ✅ True | Same capabilities as WiiM Ultra |
@@ -428,6 +431,7 @@ Fallback strategy if mDNS yields no results: subnet scan on ports 80 and 443 wit
 - RoomFit is **per-source** — same `source_name` semantics as PEQ.
 - WiiM Mini supports the full per-input PEQ (including L/R channel mode) but has **no RoomFit capability** (confirmed: empty profile list, bands show `EQStat: Off`).
 - Band count varies by device/firmware: 10 bands (a-j) standard, 12 bands (a-l) on WiiM Amp Ultra firmware 20260409+. Always probe dynamically.
+- **Confirmed (device owner, 2026-06-27):** on hardware that returns 12 bands via the API (WiiM Amp Ultra), the WiiM Home App itself only exposes/uses 10 of them — the 11th/12th bands are reachable over the API but not surfaced in the official app's PEQ UI. The bundled `device_capabilities.json` intentionally does **not** raise `WiiM_Amp_Ultra`'s `max_bands` ceiling above the generic default for this reason: this app's 10-band cap matches WiiM's own app behaviour rather than under-using available hardware. See `docs/corrections.md` for the related open question on whether the 12-band count is per-channel or total in L/R mode.
 - Capability detection must still probe at runtime — firmware updates can change behaviour. Never hard-code capabilities by model name alone.
 
 **Batch Write:** Some firmware supports writing all 10 bands in a single `EQSetLV2Band` payload (standard). Sequential fallback via `WiiMCommandQueue` is still needed if a single-band variant is required by capability detection.

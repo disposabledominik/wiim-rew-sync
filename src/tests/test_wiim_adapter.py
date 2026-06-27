@@ -29,7 +29,7 @@ def capabilities() -> DeviceCapabilities:
     """Minimal device capabilities for adapter tests."""
     return DeviceCapabilities(
         supports_peq=True,
-        supports_channel_peq=True,
+        supports_lr_filters=True,
         max_filters=10,
         model="WiiM_Ultra",
         firmware="6.0.1.20",
@@ -422,7 +422,7 @@ class TestWritePeqBatch:
         return DeviceCapabilities(
             supports_peq=True,
             supports_batch_write=True,
-            supports_channel_peq=True,
+            supports_lr_filters=True,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -511,7 +511,7 @@ class TestWritePeqSequential:
         return DeviceCapabilities(
             supports_peq=True,
             supports_batch_write=False,
-            supports_channel_peq=True,
+            supports_lr_filters=True,
             max_filters=10,
             model="WiiM_Pro",
             firmware="5.0.0.10",
@@ -1060,7 +1060,7 @@ class TestWritePeqLRBatch:
         return DeviceCapabilities(
             supports_peq=True,
             supports_batch_write=True,
-            supports_channel_peq=True,
+            supports_lr_filters=True,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -1138,7 +1138,7 @@ class TestWritePeqLRSequential:
         return DeviceCapabilities(
             supports_peq=True,
             supports_batch_write=False,
-            supports_channel_peq=True,
+            supports_lr_filters=True,
             max_filters=10,
             model="WiiM_Pro",
             firmware="5.0.0.10",
@@ -1202,7 +1202,7 @@ class TestSetChannelMode:
         return DeviceCapabilities(
             supports_peq=True,
             supports_batch_write=True,
-            supports_channel_peq=True,
+            supports_lr_filters=True,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",

@@ -4,6 +4,13 @@ When a user loads a preset/profile from the sidebar before completing
 all wizard steps, this dialog asks only for the missing information
 (EQ type, source selection) so the filters can be applied correctly.
 
+Always renders both the EQ Type and Source sections in a single fixed
+layout. Sections (or individual controls) whose value is already fixed by
+prior wizard context, or unsupported by the connected device, are disabled
+rather than hidden -- so the dialog's size and layout never change between
+PEQ and RoomFit selections (issue: layout reflow between the three previous
+need_eq_type/need_source variants).
+
 Smoke test issue #87: adaptive pop-up for missing state.
 """
 
@@ -27,12 +34,16 @@ from src.gui.constants import (
     SPACING_SM,
 )
 
+_FALLBACK_SOURCES: list[str] = ["wifi", "bluetooth", "line-in", "optical", "HDMI", "auxIn"]
+
 
 class QuickSetupDialog(QDialog):
     """Modal dialog that collects missing wizard state before loading filters.
 
-    Only shows sections for information that is actually missing. If everything
-    is already set, this dialog should not be shown at all.
+    Both the EQ Type and Source sections are always shown; a section (or a
+    single control within it) is disabled instead of hidden when its value
+    is already fixed by prior wizard context or unsupported by the device,
+    so the dialog layout stays stable regardless of context or selection.
     """
 
     def __init__(
@@ -41,14 +52,30 @@ class QuickSetupDialog(QDialog):
         need_eq_type: bool = False,
         need_source: bool = False,
         available_sources: list[str] | None = None,
+        current_eq_type: str = "peq",
+        current_sources: list[str] | None = None,
+        supports_roomfit: bool = True,
     ) -> None:
         """Initialize the dialog.
 
         Args:
             parent: Parent widget.
-            need_eq_type: Whether to show EQ type selection (PEQ/RoomFit).
-            need_source: Whether to show source selection checkboxes.
-            available_sources: List of source names for source selection.
+            need_eq_type: Whether EQ type still needs to be chosen. When
+                False, the EQ Type section is shown pre-set to
+                `current_eq_type` but disabled.
+            need_source: Whether source selection still needs to be made.
+                When False, the Source section is shown pre-set to
+                `current_sources` but disabled.
+            available_sources: Source names to offer, from the connected
+                device's capabilities. Falls back to a generic list when no
+                device/capabilities are available.
+            current_eq_type: The already-fixed EQ type ('peq'/'roomfit'),
+                used to pre-select the section when `need_eq_type` is False.
+            current_sources: The already-fixed source selection, used to
+                pre-select the section when `need_source` is False.
+            supports_roomfit: Whether the connected device supports RoomFit
+                at all. When False, the RoomFit option is disabled with an
+                explanatory tooltip regardless of `need_eq_type`.
         """
         super().__init__(parent)
         self.setWindowTitle("Complete Setup")
@@ -57,12 +84,11 @@ class QuickSetupDialog(QDialog):
 
         self._need_eq_type = need_eq_type
         self._need_source = need_source
-        self._available_sources = available_sources or [
-            "wifi", "bluetooth", "line-in", "optical", "HDMI", "auxIn"
-        ]
+        self._available_sources = available_sources or _FALLBACK_SOURCES
+        self._supports_roomfit = supports_roomfit
 
-        self._eq_type: str = "peq"
-        self._selected_sources: list[str] = []
+        self._eq_type: str = current_eq_type if current_eq_type == "roomfit" else "peq"
+        self._selected_sources: list[str] = list(current_sources or [])
 
         self._setup_ui()
 
@@ -90,6 +116,9 @@ class QuickSetupDialog(QDialog):
         need_eq_type: bool = False,
         need_source: bool = False,
         available_sources: list[str] | None = None,
+        current_eq_type: str = "peq",
+        current_sources: list[str] | None = None,
+        supports_roomfit: bool = True,
     ) -> tuple[str, list[str]] | None:
         """Show dialog and return (eq_type, sources) or None if cancelled.
 
@@ -98,12 +127,23 @@ class QuickSetupDialog(QDialog):
             need_eq_type: Whether EQ type selection is needed.
             need_source: Whether source selection is needed.
             available_sources: Available sources for selection.
+            current_eq_type: Already-fixed EQ type, shown disabled when
+                `need_eq_type` is False.
+            current_sources: Already-fixed sources, shown disabled when
+                `need_source` is False.
+            supports_roomfit: Whether the connected device supports RoomFit.
 
         Returns:
             Tuple of (eq_type, selected_sources) or None if cancelled.
         """
         dialog = QuickSetupDialog(
-            parent, need_eq_type, need_source, available_sources
+            parent,
+            need_eq_type,
+            need_source,
+            available_sources,
+            current_eq_type,
+            current_sources,
+            supports_roomfit,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.eq_type, dialog.selected_sources
@@ -114,74 +154,79 @@ class QuickSetupDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        """Build the dialog layout."""
+        """Build the dialog layout — both sections always present."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
         layout.setSpacing(SPACING_LG)
 
-        # Instruction
-        instruction = QLabel(
-            "Before loading, please confirm the following:"
-        )
+        instruction = QLabel("Before loading, please confirm the following:")
         instruction.setWordWrap(True)
         layout.addWidget(instruction)
 
-        # EQ Type section
-        if self._need_eq_type:
-            eq_section = QWidget()
-            eq_layout = QVBoxLayout(eq_section)
-            eq_layout.setContentsMargins(0, 0, 0, 0)
-            eq_layout.setSpacing(SPACING_SM)
+        # --- EQ Type section (always present) ---
+        self._eq_section = eq_section = QWidget()
+        eq_layout = QVBoxLayout(eq_section)
+        eq_layout.setContentsMargins(0, 0, 0, 0)
+        eq_layout.setSpacing(SPACING_SM)
 
-            eq_label = QLabel("EQ Type:")
-            eq_label.setProperty("class", "fieldLabel")
-            eq_layout.addWidget(eq_label)
+        eq_label = QLabel("EQ Type:")
+        eq_label.setProperty("class", "fieldLabel")
+        eq_layout.addWidget(eq_label)
 
-            eq_buttons = QHBoxLayout()
-            eq_buttons.setSpacing(SPACING_MD)
-            self._eq_group = QButtonGroup(self)
+        eq_buttons = QHBoxLayout()
+        eq_buttons.setSpacing(SPACING_MD)
+        self._eq_group = QButtonGroup(self)
 
-            self._peq_radio = QRadioButton("PEQ")
-            self._peq_radio.setChecked(True)
-            self._roomfit_radio = QRadioButton("RoomFit")
-            self._eq_group.addButton(self._peq_radio)
-            self._eq_group.addButton(self._roomfit_radio)
+        self._peq_radio = QRadioButton("PEQ")
+        self._roomfit_radio = QRadioButton("RoomFit")
+        self._eq_group.addButton(self._peq_radio)
+        self._eq_group.addButton(self._roomfit_radio)
+        (self._roomfit_radio if self._eq_type == "roomfit" else self._peq_radio).setChecked(True)
 
-            eq_buttons.addWidget(self._peq_radio)
-            eq_buttons.addWidget(self._roomfit_radio)
-            eq_buttons.addStretch()
-            eq_layout.addLayout(eq_buttons)
+        eq_buttons.addWidget(self._peq_radio)
+        eq_buttons.addWidget(self._roomfit_radio)
+        eq_buttons.addStretch()
+        eq_layout.addLayout(eq_buttons)
+        layout.addWidget(eq_section)
 
-            layout.addWidget(eq_section)
+        # Locked by prior wizard context — show the fixed value, disabled.
+        eq_section.setEnabled(self._need_eq_type)
 
-        # Source section — shown for PEQ when source not already set.
-        # Also created when need_eq_type is True (shown/hidden based on radio choice).
-        show_source = self._need_source or self._need_eq_type
-        if show_source:
-            self._source_section = QWidget()
-            source_layout = QVBoxLayout(self._source_section)
-            source_layout.setContentsMargins(0, 0, 0, 0)
-            source_layout.setSpacing(SPACING_SM)
+        # Unsupported by the connected device — disabled regardless of context.
+        if not self._supports_roomfit:
+            self._roomfit_radio.setEnabled(False)
+            self._roomfit_radio.setToolTip("This device does not support RoomFit.")
 
-            source_label = QLabel("Target source(s):")
-            source_label.setProperty("class", "fieldLabel")
-            source_layout.addWidget(source_label)
+        self._roomfit_radio.toggled.connect(self._on_eq_type_toggled)
 
-            self._source_checkboxes: dict[str, QCheckBox] = {}
-            for source in self._available_sources:
-                cb = QCheckBox(source)
-                if source == "wifi":
-                    cb.setChecked(True)
-                    cb.setProperty("class", "accent")
-                cb.toggled.connect(self._on_source_toggled)
-                source_layout.addWidget(cb)
-                self._source_checkboxes[source] = cb
+        # --- Source section (always present) ---
+        self._source_section = QWidget()
+        source_layout = QVBoxLayout(self._source_section)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.setSpacing(SPACING_SM)
 
-            layout.addWidget(self._source_section)
+        source_label = QLabel("Target source(s):")
+        source_label.setProperty("class", "fieldLabel")
+        source_layout.addWidget(source_label)
 
-            # If we also have eq_type, hide source when RoomFit is chosen
-            if self._need_eq_type:
-                self._roomfit_radio.toggled.connect(self._on_eq_type_toggled)
+        self._source_checkboxes: dict[str, QCheckBox] = {}
+        preset_sources = set(self._selected_sources)
+        for source in self._available_sources:
+            cb = QCheckBox(source)
+            if (preset_sources and source in preset_sources) or (
+                not preset_sources and source == "wifi"
+            ):
+                cb.setChecked(True)
+                cb.setProperty("class", "accent")
+            cb.toggled.connect(self._on_source_toggled)
+            source_layout.addWidget(cb)
+            self._source_checkboxes[source] = cb
+
+        layout.addWidget(self._source_section)
+
+        # Locked by prior wizard context, or greyed while RoomFit is selected
+        # (RoomFit is device-global -- Rule: RoomFit filters are not per-input).
+        self._update_source_section_enabled()
 
         # Buttons
         self._button_box = QDialogButtonBox(
@@ -193,11 +238,15 @@ class QuickSetupDialog(QDialog):
 
         self._update_ok_enabled()
 
-    def _on_eq_type_toggled(self, checked: bool) -> None:
-        """Hide source section when RoomFit is selected (it's device-global)."""
-        if hasattr(self, "_source_section"):
-            self._source_section.setVisible(not checked)
+    def _on_eq_type_toggled(self, _checked: bool) -> None:
+        """Grey out the source section (not hide) when RoomFit is selected."""
+        self._update_source_section_enabled()
         self._update_ok_enabled()
+
+    def _update_source_section_enabled(self) -> None:
+        """Source section is greyed when RoomFit is selected or context-locked."""
+        is_roomfit = self._roomfit_radio.isChecked()
+        self._source_section.setEnabled(self._need_source and not is_roomfit)
 
     def _on_source_toggled(self, _checked: bool) -> None:
         """Update OK button state when source selection changes."""
@@ -209,35 +258,23 @@ class QuickSetupDialog(QDialog):
         if not ok_btn:
             return
 
-        # If source is needed and EQ type is PEQ, at least one source required
-        if self._need_source:
-            is_roomfit = (
-                hasattr(self, "_roomfit_radio") and self._roomfit_radio.isChecked()
-            )
-            if not is_roomfit:
-                has_source = any(
-                    cb.isChecked() for cb in self._source_checkboxes.values()
-                )
-                ok_btn.setEnabled(has_source)
-                return
+        is_roomfit = self._roomfit_radio.isChecked()
+        if self._need_source and not is_roomfit:
+            has_source = any(cb.isChecked() for cb in self._source_checkboxes.values())
+            ok_btn.setEnabled(has_source)
+            return
 
         ok_btn.setEnabled(True)
 
     def _on_accept(self) -> None:
         """Gather selections and accept."""
-        # EQ type
-        if self._need_eq_type and hasattr(self, "_roomfit_radio"):
-            self._eq_type = "roomfit" if self._roomfit_radio.isChecked() else "peq"
-        else:
-            self._eq_type = "peq"
+        self._eq_type = "roomfit" if self._roomfit_radio.isChecked() else "peq"
 
-        # Sources
-        if self._need_source and hasattr(self, "_source_checkboxes"):
+        if self._need_source and self._eq_type != "roomfit":
             self._selected_sources = [
-                name for name, cb in self._source_checkboxes.items()
-                if cb.isChecked()
+                name for name, cb in self._source_checkboxes.items() if cb.isChecked()
             ]
-        else:
+        elif not self._selected_sources:
             self._selected_sources = ["wifi"]
 
         self.accept()

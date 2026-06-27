@@ -59,7 +59,7 @@ All data must flow through a Canonical Filter Model — direct REW-to-WiiM or Wi
 
 1. WHEN a device is selected, THE Capability_Prober SHALL probe the device and populate a `DeviceCapabilities` object for it before any UI controls are enabled; `DeviceCapabilities` SHALL NOT exist for a device until that device has been explicitly selected.
 2. THE Capability_Prober SHALL determine `supports_peq` by attempting `EQGetLV2BandEx`; if the command returns a valid response, `supports_peq` is True.
-3. THE Capability_Prober SHALL determine `supports_channel_peq` by inspecting the `channelMode` field in the `EQGetLV2BandEx` response.
+3. THE Capability_Prober SHALL determine `supports_lr_filters` by inspecting the `channelMode` field in the `EQGetLV2BandEx` response.
 4. THE Capability_Prober SHALL determine `supports_batch_write` by attempting a write of all 10 bands in a single `EQSetLV2Band` payload and confirming the response indicates success.
 5. THE Capability_Prober SHALL determine `supports_profile_enumeration` by attempting `EQGetLV2List`.
 6. THE Capability_Prober SHALL determine `roomfit_level` using a sequential probe sequence (levels 0–4); the level is set to the highest confirmed level.

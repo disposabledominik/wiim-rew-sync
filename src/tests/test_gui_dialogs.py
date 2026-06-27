@@ -647,3 +647,108 @@ class TestUnsavedChangesDialog:
         with _patch.object(UnsavedChangesDialog, "exec", return_value=QDialog.DialogCode.Rejected):
             result = UnsavedChangesDialog.confirm_discard(None)
         assert result == "cancel"
+
+
+from src.gui.dialogs.quick_setup_dialog import QuickSetupDialog  # noqa: E402
+
+
+class TestQuickSetupDialog:
+    """Tests for the single-layout QuickSetupDialog (both sections always present)."""
+
+    def test_both_sections_always_present(self, qtbot) -> None:
+        """EQ Type and Source sections both exist regardless of need_* flags."""
+        dialog = QuickSetupDialog(None, need_eq_type=False, need_source=False)
+        qtbot.addWidget(dialog)
+
+        assert hasattr(dialog, "_peq_radio")
+        assert hasattr(dialog, "_roomfit_radio")
+        assert hasattr(dialog, "_source_section")
+
+    def test_size_unchanged_between_eq_type_selections(self, qtbot) -> None:
+        """Selecting RoomFit greys the source section out, not hides it (no reflow)."""
+        dialog = QuickSetupDialog(
+            None, need_eq_type=True, need_source=True,
+            available_sources=["wifi", "bluetooth"],
+        )
+        qtbot.addWidget(dialog)
+        dialog.show()
+
+        size_before = dialog.sizeHint()
+        dialog._roomfit_radio.setChecked(True)
+        size_after = dialog.sizeHint()
+
+        assert dialog._source_section.isVisible()
+        assert size_before == size_after
+
+    def test_roomfit_selected_disables_source_section(self, qtbot) -> None:
+        """Source section is disabled (greyed), not hidden, when RoomFit is chosen."""
+        dialog = QuickSetupDialog(None, need_eq_type=True, need_source=True)
+        qtbot.addWidget(dialog)
+        dialog.show()
+
+        dialog._roomfit_radio.setChecked(True)
+
+        assert dialog._source_section.isVisible()
+        assert not dialog._source_section.isEnabled()
+
+    def test_locked_eq_type_section_disabled_but_shown(self, qtbot) -> None:
+        """need_eq_type=False shows the fixed value, disabled."""
+        dialog = QuickSetupDialog(
+            None, need_eq_type=False, need_source=True, current_eq_type="roomfit",
+        )
+        qtbot.addWidget(dialog)
+
+        assert dialog._roomfit_radio.isChecked()
+        assert not dialog._eq_section.isEnabled()
+
+    def test_locked_source_section_disabled_but_shown(self, qtbot) -> None:
+        """need_source=False shows the fixed sources, disabled."""
+        dialog = QuickSetupDialog(
+            None, need_eq_type=True, need_source=False,
+            available_sources=["wifi", "HDMI"], current_sources=["HDMI"],
+        )
+        qtbot.addWidget(dialog)
+        dialog.show()
+
+        assert dialog._source_section.isVisible()
+        assert not dialog._source_section.isEnabled()
+        assert dialog._source_checkboxes["HDMI"].isChecked()
+
+    def test_roomfit_disabled_when_device_does_not_support_it(self, qtbot) -> None:
+        """supports_roomfit=False disables the RoomFit radio with a tooltip."""
+        dialog = QuickSetupDialog(
+            None, need_eq_type=True, need_source=True, supports_roomfit=False,
+        )
+        qtbot.addWidget(dialog)
+
+        assert not dialog._roomfit_radio.isEnabled()
+        assert dialog._roomfit_radio.toolTip() != ""
+
+    def test_accept_returns_selected_sources(self, qtbot) -> None:
+        """Accepting with PEQ and a checked source returns that source list."""
+        dialog = QuickSetupDialog(
+            None, need_eq_type=True, need_source=True,
+            available_sources=["wifi", "optical"],
+        )
+        qtbot.addWidget(dialog)
+
+        dialog._source_checkboxes["optical"].setChecked(True)
+        dialog._on_accept()
+
+        assert dialog.eq_type == "peq"
+        assert "optical" in dialog.selected_sources
+
+    def test_ok_disabled_until_source_checked_when_needed(self, qtbot) -> None:
+        """OK stays disabled while need_source=True and PEQ has no source checked."""
+        dialog = QuickSetupDialog(
+            None, need_eq_type=False, need_source=True,
+            available_sources=["wifi"], current_sources=[],
+        )
+        qtbot.addWidget(dialog)
+
+        for cb in dialog._source_checkboxes.values():
+            cb.setChecked(False)
+        dialog._update_ok_enabled()
+
+        ok_btn = dialog._button_box.button(QDialogButtonBox.StandardButton.Ok)
+        assert not ok_btn.isEnabled()

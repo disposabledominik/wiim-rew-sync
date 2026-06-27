@@ -15,7 +15,7 @@
 
 ## Device Capabilities
 
-8. **Given** a WiiM Mini on the network, **When** capability detection runs, **Then** `supports_peq=True`, `supports_channel_peq=True`, `supports_roomfit=False`, and EQ Type step is skipped (auto-PEQ).
+8. **Given** a WiiM Mini on the network, **When** capability detection runs, **Then** `supports_peq=True`, `supports_lr_filters=True`, `supports_roomfit=False`, and EQ Type step is skipped (auto-PEQ).
 9. **Given** a WiiM device with batch-write firmware, **When** a push is executed, **Then** the Command Queue bypasses sequential writes for a single payload.
 10. **Given** the user enables Dry Run, **When** they click "Preview Only", **Then** translation and validation occur, Push page shows results, but no network writes are dispatched and no Undo button is shown.
 
@@ -59,5 +59,5 @@
 31. **Given** a developer needs to debug, **When** Diagnostics Panel is opened, **Then** raw HTTP commands can be sent and capability JSON dumps are visible.
 32. **Given** no local network connection, **When** the app boots, **Then** the app opens normally, shows "no devices found," and allows access to My Saved Presets.
 33. **Given** a WiiM Mini is selected, **When** the EQ panel loads, **Then** the EQ Type step is skipped and the app proceeds directly with PEQ.
-34. **Given** a WiiM Amp Pro, WiiM Amp Ultra, WiiM Sound, or WiiM Sound Lite is discovered, **When** capability detection runs, **Then** `supports_peq=True`, `supports_channel_peq=True`, and `supports_roomfit=True`.
+34. **Given** a WiiM Amp Pro, WiiM Amp Ultra, WiiM Sound, or WiiM Sound Lite is discovered, **When** capability detection runs, **Then** `supports_peq=True`, `supports_lr_filters=True`, and `supports_roomfit=True`.
 35. **Given** Dry Run is enabled, **When** the user clicks "Preview Only," **Then** translation and validation occur, the Push page shows results, but no network write commands are dispatched and no Undo button is shown.

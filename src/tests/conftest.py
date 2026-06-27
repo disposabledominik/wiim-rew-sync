@@ -59,6 +59,26 @@ def _suppress_unsaved_changes_dialog(monkeypatch):
     monkeypatch.setattr(MainWindow, "_has_unsaved_changes", lambda self: False)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_device_capability_file(monkeypatch):
+    """Keep CapabilityProber.probe() hermetic against real app-data-dir state.
+
+    `device_capability_file.ensure_user_capability_file()` seeds a user copy
+    in the OS app data directory and never overwrites it once it exists. Left
+    unmocked, tests would read whatever copy a *previous* run (on this
+    machine) happened to seed, rather than the bundled file as currently
+    committed in the repo -- silently coupling test results to local machine
+    state. Point "ensure" at the bundled file directly (a no-op read, no
+    real seeding) and reset the process-wide cache before each test.
+    """
+    from src.models import device_capability_file as dcf
+
+    monkeypatch.setattr(
+        dcf, "ensure_user_capability_file", dcf.bundled_capability_file_path
+    )
+    monkeypatch.setattr(dcf, "_cached_entries", None)
+
+
 def st_float_near_boundary(center: float, tolerance: float) -> st.SearchStrategy[float]:
     """Generate floats near a boundary: within tolerance OR just outside."""
     return st.one_of(
