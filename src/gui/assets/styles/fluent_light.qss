@@ -542,6 +542,7 @@ QComboBox QAbstractItemView::item:hover {
 
 QComboBox QAbstractItemView::item:selected {
     background-color: #E6F8FC;
+    color: #1A1A1A;
 }
 
 /* ---------------------------------------------------------------------------
@@ -946,6 +947,7 @@ QMenuBar::item {
 
 QMenuBar::item:selected {
     background-color: #F0F0F0;
+    color: #1A1A1A;
 }
 
 QMenuBar::item:pressed {
@@ -1006,6 +1008,7 @@ QListWidget[class="selectableList"]::item:hover {
 
 QListWidget[class="selectableList"]::item:selected {
     background-color: #E6F8FC;
+    color: #1A1A1A;
     border-left: 3px solid #00B4D8;
     outline: none;
 }
