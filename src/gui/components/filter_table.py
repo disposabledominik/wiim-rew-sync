@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.constants import WARNING_COLOR
+from src.gui.constants import WARNING_COLOR_DARK, WARNING_COLOR_LIGHT
+from src.gui.theme import get_active_theme
 from src.models.canonical import CanonicalFilter
 
 _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
@@ -238,7 +239,7 @@ class FilterTable(QWidget):
             if gain_clamped and clamping_map is not None:
                 gain_reasons = [r for r in clamping_map[row] if "gain" in r.lower()]
                 gain_item.setToolTip("Clamped: " + "; ".join(gain_reasons))
-                gain_item.setForeground(QColor(WARNING_COLOR))
+                gain_item.setForeground(self._warning_color())
             table.setItem(row, 3, gain_item)
 
             # Q factor
@@ -256,7 +257,7 @@ class FilterTable(QWidget):
             if q_clamped and clamping_map is not None:
                 q_reasons = [r for r in clamping_map[row] if "q" in r.lower()]
                 q_item.setToolTip("Clamped: " + "; ".join(q_reasons))
-                q_item.setForeground(QColor(WARNING_COLOR))
+                q_item.setForeground(self._warning_color())
             table.setItem(row, 4, q_item)
 
             # Disabled/OFF bands at reduced opacity
@@ -357,6 +358,14 @@ class FilterTable(QWidget):
             or abs(a.gain_db - b.gain_db) > 0.01
             or abs(a.q - b.q) > 0.001
         )
+
+    @staticmethod
+    def _warning_color() -> QColor:
+        """Return the clamping-warning foreground color for the active theme."""
+        hex_color = (
+            WARNING_COLOR_DARK if get_active_theme() == "dark" else WARNING_COLOR_LIGHT
+        )
+        return QColor(hex_color)
 
     def _apply_disabled_style(self, table: QTableWidget, row: int) -> None:
         """Apply 0.5 opacity visual to a disabled/OFF band row."""

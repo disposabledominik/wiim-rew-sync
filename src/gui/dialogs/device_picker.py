@@ -63,6 +63,7 @@ class DevicePickerDialog(QDialog):
         # Checkable device list
         self._list_widget = QListWidget()
         self._list_widget.setObjectName("device_list")
+        self._list_widget.setProperty("class", "selectableList")
         for device in self._devices:
             item = QListWidgetItem(f"{device.name} ({device.ip})")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)

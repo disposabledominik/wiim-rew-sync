@@ -24,6 +24,7 @@ from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
 )
+from src.gui.style_utils import set_qss_property
 
 # ---------------------------------------------------------------------------
 # Stage definitions
@@ -81,9 +82,7 @@ class _StageRow(QWidget):
     @staticmethod
     def _set_class(widget: QLabel, class_name: str) -> None:
         """Set the QSS ``class`` property and force a style re-evaluation."""
-        widget.setProperty("class", class_name)
-        widget.style().unpolish(widget)
-        widget.style().polish(widget)
+        set_qss_property(widget, "class", class_name)
 
 
 class PushPage(QWidget):
@@ -251,9 +250,7 @@ class PushPage(QWidget):
     def _set_result_class(self, status: str) -> None:
         """Set the result icon/message QSS class (success/error/warning/info)."""
         for widget in (self._result_icon, self._result_message):
-            widget.setProperty("class", status)
-            widget.style().unpolish(widget)
-            widget.style().polish(widget)
+            set_qss_property(widget, "class", status)
 
     def _show_progress_state(self) -> None:
         """Ensure progress stepper is visible and result area hidden."""

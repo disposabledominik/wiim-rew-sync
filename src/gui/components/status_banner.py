@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import AUTO_DISMISS_MS, STATUS_BANNER_HEIGHT
+from src.gui.style_utils import set_qss_property
 
 
 class StatusBanner(QFrame):
@@ -175,10 +176,7 @@ class StatusBanner(QFrame):
         self._auto_dismiss_timer.stop()
 
         # Update dynamic property for QSS styling
-        self.setProperty("status", status)
-        # Force style re-evaluation after property change
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_qss_property(self, "status", status)
 
         self._message_label.setText(message)
         self._message_label.setVisible(True)
@@ -190,9 +188,7 @@ class StatusBanner(QFrame):
 
     def _set_idle(self) -> None:
         """Reset banner to idle (reserved space, no content visible)."""
-        self.setProperty("status", "idle")
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_qss_property(self, "status", "idle")
         self._message_label.setText("")
         self._message_label.setVisible(False)
         self._progress_bar.setVisible(False)

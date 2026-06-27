@@ -18,6 +18,7 @@ from src.gui.constants import (
     SPACING_SM,
     STEP_INDICATOR_HEIGHT,
 )
+from src.gui.style_utils import set_qss_property
 
 
 class _StepState(Enum):
@@ -108,9 +109,7 @@ class _StepWidget(QWidget):
 
     def _set_class(self, widget: QLabel, class_name: str) -> None:
         """Set the QSS ``class`` property and force a style re-evaluation."""
-        widget.setProperty("class", class_name)
-        widget.style().unpolish(widget)
-        widget.style().polish(widget)
+        set_qss_property(widget, "class", class_name)
 
     def _apply_state(self) -> None:
         """Apply visual styling based on current state."""
@@ -122,9 +121,7 @@ class _StepWidget(QWidget):
             font.setBold(False)
             self._label.setFont(font)
             self.setCursor(Qt.CursorShape.PointingHandCursor)
-            self._summary.setProperty("class", "caption")
-            self._summary.style().unpolish(self._summary)
-            self._summary.style().polish(self._summary)
+            set_qss_property(self._summary, "class", "caption")
 
         elif self._state == _StepState.ACTIVE:
             self._set_class(self._circle, "stepCircleActive")
@@ -158,9 +155,9 @@ class _ConnectorLine(QLabel):
 
     def set_active(self, active: bool) -> None:
         """Toggle the connector's accent (completed) styling."""
-        self.setProperty("class", "stepConnectorActive" if active else "stepConnector")
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_qss_property(
+            self, "class", "stepConnectorActive" if active else "stepConnector"
+        )
 
 
 class StepIndicator(QWidget):

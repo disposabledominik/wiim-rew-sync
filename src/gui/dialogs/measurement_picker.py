@@ -63,6 +63,7 @@ class MeasurementPickerDialog(QDialog):
         self._list_widget = QListWidget()
         self._list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._list_widget.setObjectName("measurement_list")
+        self._list_widget.setProperty("class", "selectableList")
 
         for measurement in measurements:
             item = QListWidgetItem(measurement.name)

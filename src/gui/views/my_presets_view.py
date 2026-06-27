@@ -206,6 +206,7 @@ class MyPresetsView(QWidget):
         # Preset list
         self._list_widget = QListWidget(content)
         self._list_widget.setObjectName("MyPresetsList")
+        self._list_widget.setProperty("class", "selectableList")
         self._list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list_widget.customContextMenuRequested.connect(self._show_context_menu)
         self._list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)

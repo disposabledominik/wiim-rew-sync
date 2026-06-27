@@ -33,6 +33,7 @@ from src.gui.constants import (
     SPACING_SM,
     SPACING_XS,
 )
+from src.gui.style_utils import set_qss_property
 
 
 class DeviceCard(QFrame):
@@ -175,9 +176,7 @@ class DeviceCard(QFrame):
             msg = f"Invalid state {state!r}; expected one of {sorted(self._VALID_STATES)}"
             raise ValueError(msg)
 
-        self.setProperty("state", state)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_qss_property(self, "state", state)
 
         # Stop any existing animation
         self._stop_pulse()

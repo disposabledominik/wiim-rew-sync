@@ -420,6 +420,67 @@ QLineEdit[readOnly="true"] {
 }
 
 /* ---------------------------------------------------------------------------
+   QSpinBox
+   --------------------------------------------------------------------------- */
+
+QSpinBox {
+    background-color: #FFFFFF;
+    color: #1A1A1A;
+    border: 1px solid #E0E0E0;
+    border-radius: 4px;
+    padding: 8px;
+    selection-background-color: #00B4D8;
+    selection-color: #FFFFFF;
+}
+
+QSpinBox:hover {
+    border-color: #0096B7;
+}
+
+QSpinBox:focus {
+    border: 2px solid #00B4D8;
+    padding: 7px;
+}
+
+QSpinBox:disabled {
+    background-color: #F5F5F5;
+    color: #9E9E9E;
+    border-color: #EEEEEE;
+}
+
+QSpinBox::up-button,
+QSpinBox::down-button {
+    subcontrol-origin: border;
+    width: 18px;
+    border: none;
+    background-color: transparent;
+}
+
+QSpinBox::up-button {
+    subcontrol-position: top right;
+}
+
+QSpinBox::down-button {
+    subcontrol-position: bottom right;
+}
+
+QSpinBox::up-button:hover,
+QSpinBox::down-button:hover {
+    background-color: #F0F0F0;
+}
+
+QSpinBox::up-button:pressed,
+QSpinBox::down-button:pressed {
+    background-color: #E0E0E0;
+}
+
+QSpinBox::up-arrow,
+QSpinBox::down-arrow {
+    width: 10px;
+    height: 10px;
+}
+
+/* ---------------------------------------------------------------------------
    QComboBox
    --------------------------------------------------------------------------- */
 
@@ -494,7 +555,7 @@ QTableView {
     border: 1px solid #E0E0E0;
     border-radius: 8px;
     gridline-color: #EEEEEE;
-    selection-background-color: #F0F0F0;
+    selection-background-color: #E6F8FC;
     selection-color: #1A1A1A;
     alternate-background-color: #F5F5F5;
 }
@@ -503,13 +564,16 @@ QTableWidget::item,
 QTableView::item {
     padding: 8px;
     min-height: 44px;
-    border: none;
+    border-left: 3px solid transparent;
 }
 
+/* Tint + left-border accent, matching the selectableList list-item
+   selection language used elsewhere in the app. */
 QTableWidget::item:selected,
 QTableView::item:selected {
-    background-color: #F0F0F0;
+    background-color: #E6F8FC;
     color: #1A1A1A;
+    border-left: 3px solid #00B4D8;
 }
 
 QTableWidget::item:hover,
@@ -921,22 +985,28 @@ QDockWidget::float-button:hover {
     border-radius: 4px;
 }
 
-/* Help TOC polish */
+/* Selectable list rows — shared by Help TOC, preset lists, and picker
+   dialogs. Uses the same background-tint + left-border accent language as
+   the sidebar nav's active item and DeviceCard/StatusBanner, so every
+   "this row is selected" treatment in the app looks the same. */
 
-QListWidget#helpTocList {
+QListWidget[class="selectableList"] {
     border: none;
     outline: none;
 }
 
-QListWidget#helpTocList::item {
+QListWidget[class="selectableList"]::item {
     padding: 4px 8px;
-    border-radius: 3px;
+    border-left: 3px solid transparent;
 }
 
-QListWidget#helpTocList::item:selected {
-    background: #00B4D8;
-    color: #FFFFFF;
-    border: none;
+QListWidget[class="selectableList"]::item:hover {
+    background-color: #F0F0F0;
+}
+
+QListWidget[class="selectableList"]::item:selected {
+    background-color: #E6F8FC;
+    border-left: 3px solid #00B4D8;
     outline: none;
 }
 
@@ -1367,6 +1437,10 @@ QFrame[status="warning"] {
 }
 
 #SettingsView QGroupBox QComboBox {
+    background-color: #FFFFFF;
+}
+
+#SettingsView QGroupBox QSpinBox {
     background-color: #FFFFFF;
 }
 

@@ -19,15 +19,26 @@ import platform
 # ---------------------------------------------------------------------------
 
 # Convenience aliases matching the design doc top-level names.
-# Only ACCENT_COLOR and WARNING_COLOR remain — they're used for runtime
+# Only ACCENT_COLOR and WARNING_COLOR_* remain — they're used for runtime
 # QColor() calculations (table cell foreground, search highlight) that
 # QSS classes can't express. Color choices for everything else live in
 # fluent_dark.qss / fluent_light.qss.
 ACCENT_COLOR: str = "#00B4D8"
-"""WiiM brand teal - primary accent throughout the UI."""
+"""WiiM brand teal - primary accent throughout the UI (same in both themes)."""
 
-WARNING_COLOR: str = "#F57C00"
-"""Orange for warnings and clamping indicators."""
+WARNING_COLOR_LIGHT: str = "#F57C00"
+"""Orange for warnings and clamping indicators (light theme).
+
+Matches the ``warning`` value documented in fluent_light.qss's header.
+"""
+
+WARNING_COLOR_DARK: str = "#FFA726"
+"""Orange for warnings and clamping indicators (dark theme).
+
+Matches the ``warning`` value documented in fluent_dark.qss's header.
+Use :func:`src.gui.theme.get_active_theme` to pick between the two at
+runtime rather than hardcoding one.
+"""
 
 # ---------------------------------------------------------------------------
 # Typography

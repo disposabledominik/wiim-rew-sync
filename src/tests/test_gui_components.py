@@ -8,6 +8,8 @@ Requirements referenced: 7.1-7.6, 1.3-1.4, 8.1-8.2, 5.1-5.5, 2.3.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from PySide6.QtCore import Qt
 
@@ -402,6 +404,35 @@ class TestFilterTable:
 
         table.clear()
         assert table._table is None
+
+    def test_clamping_color_follows_active_theme(self, qtbot) -> None:
+        """Clamped-band foreground color must follow the active theme.
+
+        Regression guard for the old hardcoded WARNING_COLOR, which was
+        correct for light mode but theme-blind in dark mode.
+        """
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        filters = self._make_filters()
+        clamping_map = {0: ["gain exceeds +6 dB limit"]}
+
+        with patch(
+            "src.gui.components.filter_table.get_active_theme", return_value="dark"
+        ):
+            table.set_filters(filters, clamping_map=clamping_map)
+            assert table._table is not None
+            dark_color = table._table.item(0, 3).foreground().color()
+
+        with patch(
+            "src.gui.components.filter_table.get_active_theme", return_value="light"
+        ):
+            table.set_filters(filters, clamping_map=clamping_map)
+            assert table._table is not None
+            light_color = table._table.item(0, 3).foreground().color()
+
+        assert dark_color.name() == "#ffa726"
+        assert light_color.name() == "#f57c00"
 
 
 # ---------------------------------------------------------------------------

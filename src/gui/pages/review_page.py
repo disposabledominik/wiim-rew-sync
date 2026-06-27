@@ -27,6 +27,7 @@ from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
 )
+from src.gui.style_utils import set_qss_property
 from src.models.canonical import CanonicalFilter
 
 
@@ -215,9 +216,7 @@ class ReviewPage(QWidget):
     def _update_dry_run_ui(self) -> None:
         """Sync UI elements with current dry run state."""
         self._push_button.setText("Preview Only" if self._dry_run else "Push to Device")
-        self._dry_run_badge.setProperty("active", self._dry_run)
-        self._dry_run_badge.style().unpolish(self._dry_run_badge)
-        self._dry_run_badge.style().polish(self._dry_run_badge)
+        set_qss_property(self._dry_run_badge, "active", self._dry_run)
 
     @Slot(bool)
     def _on_dry_run_toggled(self, checked: bool) -> None:

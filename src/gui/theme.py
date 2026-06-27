@@ -11,10 +11,9 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
-if TYPE_CHECKING:
-    from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +21,12 @@ logger = logging.getLogger(__name__)
 _STYLES_DIR = Path(__file__).resolve().parent / "assets" / "styles"
 
 ThemeMode = Literal["light", "dark", "system"]
+
+# Dynamic property set on the QApplication instance recording the last
+# *resolved* light/dark theme (never "system"). Widgets that need a runtime
+# QColor (rather than a QSS class) read this via get_active_theme() instead
+# of duplicating OS theme-detection logic.
+_RESOLVED_THEME_PROPERTY = "wiimRewSyncResolvedTheme"
 
 
 class ThemeManager:
@@ -66,6 +71,7 @@ class ThemeManager:
 
         stylesheet = self._load_stylesheet(qss_path)
         self._app.setStyleSheet(stylesheet)
+        self._app.setProperty(_RESOLVED_THEME_PROPERTY, resolved)
         logger.info("Applied theme: %s (resolved from mode=%s)", resolved, mode)
 
     def detect_system_theme(self) -> Literal["light", "dark"]:
@@ -154,3 +160,19 @@ class ThemeManager:
             logger.debug("macOS theme detection failed, defaulting to light.")
 
         return "light"
+
+
+def get_active_theme() -> Literal["light", "dark"]:
+    """Return the resolved light/dark theme of the running application.
+
+    Widgets that need a runtime ``QColor`` (e.g. table cell foreground)
+    rather than a QSS class/property selector call this instead of
+    re-implementing OS theme detection. Falls back to ``"light"`` if no
+    theme has been applied yet (e.g. a widget constructed in a test without
+    going through :class:`ThemeManager`).
+    """
+    app = QApplication.instance()
+    if app is None:
+        return "light"
+    resolved = app.property(_RESOLVED_THEME_PROPERTY)
+    return resolved if resolved in ("light", "dark") else "light"

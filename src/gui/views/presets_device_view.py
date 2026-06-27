@@ -238,6 +238,7 @@ class PresetsDeviceView(QWidget):
         # List widget with multi-select
         self._peq_list = QListWidget()
         self._peq_list.setObjectName("peq_preset_list")
+        self._peq_list.setProperty("class", "selectableList")
         self._peq_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
@@ -274,6 +275,7 @@ class PresetsDeviceView(QWidget):
         # List widget with multi-select
         self._roomfit_list = QListWidget()
         self._roomfit_list.setObjectName("roomfit_profile_list")
+        self._roomfit_list.setProperty("class", "selectableList")
         self._roomfit_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )

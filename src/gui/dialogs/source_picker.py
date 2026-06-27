@@ -65,6 +65,7 @@ class SourcePickerDialog(QDialog):
         # Checkable source list
         self._list_widget = QListWidget()
         self._list_widget.setObjectName("source_list")
+        self._list_widget.setProperty("class", "selectableList")
 
         for source in available_sources:
             if source == exclude:

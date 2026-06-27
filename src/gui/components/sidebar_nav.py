@@ -24,6 +24,7 @@ from src.gui.constants import (
     SPACING_MD,
     SPACING_SM,
 )
+from src.gui.style_utils import set_qss_property
 
 
 class _NavItem(QPushButton):
@@ -64,9 +65,7 @@ class _NavItem(QPushButton):
 
     def _apply_style(self) -> None:
         """Apply styling based on active state."""
-        self.setProperty("class", "navItemActive" if self._active else "navItem")
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_qss_property(self, "class", "navItemActive" if self._active else "navItem")
 
 
 class SidebarNav(QWidget):

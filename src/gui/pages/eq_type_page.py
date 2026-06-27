@@ -22,6 +22,7 @@ from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
 )
+from src.gui.style_utils import set_qss_property
 
 
 class _EQCard(QFrame):
@@ -77,9 +78,7 @@ class _EQCard(QFrame):
 
     def _apply_style(self) -> None:
         """Apply border emphasis based on selected state via the QSS ``selected`` property."""
-        self.setProperty("selected", self._selected)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        set_qss_property(self, "selected", self._selected)
 
 
 class EQTypePage(QWidget):

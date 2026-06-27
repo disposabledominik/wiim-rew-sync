@@ -25,13 +25,22 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.constants import WARNING_COLOR_DARK, WARNING_COLOR_LIGHT
+from src.gui.theme import get_active_theme
 from src.models.canonical import CanonicalFilter
 from src.models.errors import ParseError, ValidationError
 from src.translator._warnings import ValidationWarning
 from src.translator.rew_parser import REWParser
 
-# Orange colour for warning-highlighted rows
-_WARNING_ORANGE = QColor(255, 165, 0, 80)
+_WARNING_HIGHLIGHT_ALPHA = 80
+
+
+def _warning_highlight_color() -> QColor:
+    """Return the translucent over-limit row highlight color for the active theme."""
+    hex_color = WARNING_COLOR_DARK if get_active_theme() == "dark" else WARNING_COLOR_LIGHT
+    color = QColor(hex_color)
+    color.setAlpha(_WARNING_HIGHLIGHT_ALPHA)
+    return color
 
 
 class ImportDialog(QDialog):
@@ -145,7 +154,7 @@ class ImportDialog(QDialog):
 
             for col, item in enumerate(items):
                 if is_over_limit:
-                    item.setBackground(_WARNING_ORANGE)
+                    item.setBackground(_warning_highlight_color())
                 self._table.setItem(row, col, item)
 
     def _show_over_limit_warning(self) -> None:

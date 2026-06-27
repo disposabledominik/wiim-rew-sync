@@ -251,6 +251,7 @@ class HelpView(QFrame):
         # TOC list
         self._toc_list = QListWidget()
         self._toc_list.setObjectName("helpTocList")
+        self._toc_list.setProperty("class", "selectableList")
         self._toc_list.currentItemChanged.connect(self._on_toc_item_changed)
         toc_layout.addWidget(self._toc_list)
 
