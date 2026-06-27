@@ -422,14 +422,18 @@ class TestFilterTable:
         ):
             table.set_filters(filters, clamping_map=clamping_map)
             assert table._table is not None
-            dark_color = table._table.item(0, 3).foreground().color()
+            dark_item = table._table.item(0, 3)
+            assert dark_item is not None
+            dark_color = dark_item.foreground().color()
 
         with patch(
             "src.gui.components.filter_table.get_active_theme", return_value="light"
         ):
             table.set_filters(filters, clamping_map=clamping_map)
             assert table._table is not None
-            light_color = table._table.item(0, 3).foreground().color()
+            light_item = table._table.item(0, 3)
+            assert light_item is not None
+            light_color = light_item.foreground().color()
 
         assert dark_color.name() == "#ffa726"
         assert light_color.name() == "#f57c00"

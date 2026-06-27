@@ -21,6 +21,7 @@ from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.tests.conftest import close_coroutine_tree
 from src.translator._warnings import ValidationWarning
 
 # ---------------------------------------------------------------------------
@@ -45,7 +46,7 @@ def window(qtbot):
     mock_bridge.discovery_complete = MagicMock()
     mock_bridge.capabilities_ready = MagicMock()
     mock_bridge.write_complete = MagicMock()
-    mock_bridge.run_async = MagicMock()
+    mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
 
     app_settings = AppSettings(first_run_complete=True)
     with (

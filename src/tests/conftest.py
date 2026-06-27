@@ -9,10 +9,42 @@ Strategies defined here (used across multiple PBT tasks):
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 from hypothesis import strategies as st
 
 from src.models.canonical import CanonicalFilter
+
+
+def close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
+    """Close a coroutine and any nested coroutine locals it captures.
+
+    GUI handler tests mock ``AsyncBridge.run_async`` so the coroutine passed
+    to it never actually runs. An un-awaited, un-closed coroutine triggers a
+    "coroutine was never awaited" RuntimeWarning whenever the garbage
+    collector eventually reclaims it (often during an unrelated later test).
+    Use this as the mock's ``side_effect`` to dispose of the coroutine (and
+    any inner coroutine it captured as a local, e.g. ``_bridge_wrapper``
+    wrapping ``self._do_push()``) the moment the mock is called.
+    """
+    if not inspect.iscoroutine(value):
+        return
+
+    if seen is None:
+        seen = set()
+
+    obj_id = id(value)
+    if obj_id in seen:
+        return
+    seen.add(obj_id)
+
+    frame = value.cr_frame
+    if frame is not None:
+        for local_value in frame.f_locals.values():
+            close_coroutine_tree(local_value, seen)
+
+    value.close()
 
 
 @pytest.fixture(autouse=True)

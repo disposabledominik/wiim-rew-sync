@@ -9,7 +9,6 @@ Each test validates the specific fix behavior to prevent regressions.
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,6 +27,7 @@ from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.tests.conftest import close_coroutine_tree
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -50,7 +50,7 @@ def window(qtbot):
     mock_bridge.discovery_complete = MagicMock()
     mock_bridge.capabilities_ready = MagicMock()
     mock_bridge.write_complete = MagicMock()
-    mock_bridge.run_async = MagicMock()
+    mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
 
     app_settings = AppSettings(first_run_complete=True)
     with (
@@ -93,27 +93,6 @@ def _setup_device(window) -> MagicMock:
     window._wizard_controller.state.selected_device = "192.168.1.100"
     window._wizard_controller.state.selected_source = "wifi"
     return mock_adapter
-
-
-def _close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
-    """Close a coroutine and any nested coroutine locals it captures."""
-    if not inspect.iscoroutine(value):
-        return
-
-    if seen is None:
-        seen = set()
-
-    obj_id = id(value)
-    if obj_id in seen:
-        return
-    seen.add(obj_id)
-
-    frame = value.cr_frame
-    if frame is not None:
-        for local_value in frame.f_locals.values():
-            _close_coroutine_tree(local_value, seen)
-
-    value.close()
 
 
 # ===========================================================================
@@ -180,7 +159,7 @@ class TestPushWriteOperations:
         """#58: apply_to_devices forwards channel_mode into async workflow."""
         swm = window._secondary_workflows
         swm._bridge = MagicMock()
-        swm._bridge.run_async = MagicMock()
+        swm._bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         request = MultiDeviceRequest(
             device_source_map={"192.168.1.201": ["wifi"]},
             device_names={"192.168.1.201": "Living Room"},
@@ -189,13 +168,14 @@ class TestPushWriteOperations:
 
         with (
             patch.object(swm, "_do_apply_to_devices", new_callable=AsyncMock) as mock_do,
-            patch.object(swm._bridge, "run_async") as mock_run_async,
+            patch.object(
+                swm._bridge, "run_async", side_effect=close_coroutine_tree
+            ) as mock_run_async,
         ):
             swm.apply_to_devices(filters, request, ChannelMode.LR)
 
         mock_do.assert_called_once_with(filters, request, ChannelMode.LR)
         mock_run_async.assert_called_once()
-        _close_coroutine_tree(mock_run_async.call_args[0][0])
 
     # --- Issue #61: RoomFit push deferred via _on_name_confirmed ---
 
@@ -228,7 +208,6 @@ class TestPushWriteOperations:
 
         assert state.roomfit_profile_name == "My RoomFit Profile"
         window._bridge.run_async.assert_called_once()
-        _close_coroutine_tree(window._bridge.run_async.call_args[0][0])
 
     # --- Issue #63: write_roomfit accepts channel_mode parameter ---
 
@@ -362,11 +341,12 @@ class TestImportExport:
                 "src.gui.main_window.QFileDialog.getSaveFileName",
                 return_value=("/tmp/myfile", ""),
             ),
-            patch.object(window._bridge, "run_async") as mock_run,
+            patch.object(
+                window._bridge, "run_async", side_effect=close_coroutine_tree
+            ) as mock_run,
         ):
             window._export_filters_as_rew(state.current_filters, "Stereo")
             mock_run.assert_called_once()
-            _close_coroutine_tree(mock_run.call_args[0][0])
 
     # --- Issue #44: build_profile sanitizes name ---
 
@@ -513,14 +493,15 @@ class TestPresets:
                 window, "_do_preset_export", return_value=object()
             ) as mock_export_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
-            patch.object(window._bridge, "run_async") as mock_run,
+            patch.object(
+                window._bridge, "run_async", side_effect=close_coroutine_tree
+            ) as mock_run,
         ):
             window._presets_device_view.export_requested.emit([item])
 
         mock_progress.assert_called_once_with("Exporting 'Movie Night'...")
         mock_export_workflow.assert_called_once_with("Movie Night", "PEQ", "/tmp/movie-night.txt")
         mock_run.assert_called_once()
-        _close_coroutine_tree(mock_run.call_args[0][0])
 
     def test_issue24_presets_device_save_connected(self, window) -> None:
         """#24: Save signal triggers preset-save workflow."""
@@ -529,14 +510,15 @@ class TestPresets:
         with (
             patch.object(window, "_do_preset_save", return_value=object()) as mock_save_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
-            patch.object(window._bridge, "run_async") as mock_run,
+            patch.object(
+                window._bridge, "run_async", side_effect=close_coroutine_tree
+            ) as mock_run,
         ):
             window._presets_device_view.save_to_my_presets.emit([item])
 
         mock_progress.assert_called_once_with("Saving 'Movie Night' to My Presets...")
         mock_save_workflow.assert_called_once_with("Movie Night", "PEQ")
         mock_run.assert_called_once()
-        _close_coroutine_tree(mock_run.call_args[0][0])
 
     def test_issue24_presets_device_load_connected(self, window) -> None:
         """#24: Load signal triggers preset-load workflow."""
@@ -549,14 +531,15 @@ class TestPresets:
                 window, "_do_load_peq_preset", return_value=object()
             ) as mock_load_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
-            patch.object(window._bridge, "run_async") as mock_run,
+            patch.object(
+                window._bridge, "run_async", side_effect=close_coroutine_tree
+            ) as mock_run,
         ):
             window._presets_device_view.load_into_editor.emit(item)
 
         mock_progress.assert_called_once_with("Loading preset 'Movie Night'...")
         mock_load_workflow.assert_called_once_with("Movie Night")
         mock_run.assert_called_once()
-        _close_coroutine_tree(mock_run.call_args[0][0])
 
     # --- Issue #25: Selecting in one preset list clears the other ---
 
@@ -601,7 +584,7 @@ class TestPresets:
         mock_progress.assert_called_once_with("Loading RoomFit profile 'My Profile'...")
         mock_run.assert_called_once()
         assert len(scheduled) == 1
-        _close_coroutine_tree(scheduled[0])
+        close_coroutine_tree(scheduled[0])
 
     # --- Issue #31: Save to My Presets refreshes preset list ---
 
@@ -831,7 +814,7 @@ class TestSettingsUIState:
 
         def _record_async(coro: object) -> None:
             call_order.append("run_async")
-            _close_coroutine_tree(coro)
+            close_coroutine_tree(coro)
 
         with (
             patch.object(window._status_banner, "show_progress", side_effect=_record_progress),
@@ -1155,20 +1138,21 @@ class TestSettingsUIState:
         """#69: copy_preset_to_device forwards channel_mode into async workflow."""
         swm = window._secondary_workflows
         swm._bridge = MagicMock()
-        swm._bridge.run_async = MagicMock()
+        swm._bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         filters = [_make_filter()]
 
         with (
             patch.object(
                 swm, "_do_copy_preset_to_device", new_callable=AsyncMock
             ) as mock_do,
-            patch.object(swm._bridge, "run_async") as mock_run_async,
+            patch.object(
+                swm._bridge, "run_async", side_effect=close_coroutine_tree
+            ) as mock_run_async,
         ):
             swm.copy_preset_to_device(filters, "192.168.1.200", "wifi", ChannelMode.LR)
 
         mock_do.assert_called_once_with(filters, "192.168.1.200", "wifi", ChannelMode.LR)
         mock_run_async.assert_called_once()
-        _close_coroutine_tree(mock_run_async.call_args[0][0])
 
     # --- Issue #70: parse_backup_filters handles stereo and L/R ---
 
