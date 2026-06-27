@@ -593,7 +593,8 @@ class SettingsView(QWidget):
     # Sections:
     # - Appearance: Light/Dark/System theme toggle
     # - Paths: Log dir, Presets dir, Default REW export folder (with browse buttons)
-    # - Behavior: Discovery timeout, Dry Run default, last-used device
+    # - Behavior: Discovery timeout, Dry Run default
+    # (last-used device / auto-reconnect descoped 2026-06-27 — was never wired up)
     # - Logs: Log file list with sizes, "Open Log Folder", "Copy Log Path"
     # - Support: "Generate Support Bundle", "Show onboarding again"
 ```
@@ -889,7 +890,9 @@ class AppSettings:
     presets_directory: str = ""       # empty = default
     default_export_folder: str = ""   # empty = last-used
     discovery_timeout: float = 5.0
-    last_device_uuid: str = ""        # for auto-reconnect
+    # last_device_uuid (auto-reconnect) descoped 2026-06-27: never wired up
+    # to a setter or to launch-time reconnect logic; removed rather than
+    # implemented. See actual field set in src/gui/app_settings.py.
     dry_run_default: bool = False
     first_run_complete: bool = False
     sidebar_collapsed: bool = False

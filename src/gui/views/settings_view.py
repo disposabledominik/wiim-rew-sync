@@ -78,7 +78,6 @@ class SettingsView(QWidget):
             rew_export_folder: str
             discovery_timeout: int (seconds)
             dry_run_default: bool
-            last_device: str
         """
         # Block signals while populating to avoid feedback loops
         self._theme_combo.blockSignals(True)
@@ -99,8 +98,6 @@ class SettingsView(QWidget):
         self._dry_run_check.blockSignals(True)
         self._dry_run_check.setChecked(settings.get("dry_run_default", False))
         self._dry_run_check.blockSignals(False)
-
-        self._last_device_label.setText(settings.get("last_device", "None"))
 
     def set_log_files(self, log_files: list[dict[str, str]]) -> None:
         """Populate the log file list.
@@ -143,7 +140,6 @@ class SettingsView(QWidget):
             "rew_export_folder": self._rew_export_edit.text(),
             "discovery_timeout": self._timeout_spin.value(),
             "dry_run_default": self._dry_run_check.isChecked(),
-            "last_device": self._last_device_label.text(),
         }
 
     # ------------------------------------------------------------------
@@ -341,23 +337,6 @@ class SettingsView(QWidget):
         self._dry_run_check.setObjectName("SettingsDryRunCheck")
         self._dry_run_check.stateChanged.connect(self._on_setting_changed)
         layout.addWidget(self._dry_run_check)
-
-        # Last-used device (Req 24.15)
-        device_row = QWidget(group)
-        device_layout = QHBoxLayout(device_row)
-        device_layout.setContentsMargins(0, 0, 0, 0)
-        device_layout.setSpacing(SPACING_MD)
-
-        device_label = QLabel("Last-used device:", device_row)
-        device_layout.addWidget(device_label)
-
-        self._last_device_label = QLabel("None", device_row)
-        self._last_device_label.setObjectName("SettingsLastDeviceLabel")
-        self._last_device_label.setProperty("class", "secondary")
-        device_layout.addWidget(self._last_device_label)
-
-        device_layout.addStretch()
-        layout.addWidget(device_row)
 
         return group
 

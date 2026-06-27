@@ -109,6 +109,18 @@ PAGE_INDICES: dict[str, int] = {
     "help": 10,
 }
 
+# Maps WizardStep -> PAGE_INDICES key, used to switch the QStackedWidget
+# to the page for a given wizard step.
+_STEP_TO_PAGE_KEY: dict[WizardStep, str] = {
+    WizardStep.CONNECT: "connect",
+    WizardStep.EQ_TYPE: "eq_type",
+    WizardStep.SOURCE: "source",
+    WizardStep.FILTERS: "filters",
+    WizardStep.REVIEW: "review",
+    WizardStep.NAME_PROFILE: "name_profile",
+    WizardStep.PUSH: "push",
+}
+
 
 def _crash_handler(
     exc_type: type[BaseException],
@@ -200,6 +212,11 @@ class MainWindow(QMainWindow):
         self._wiim_adapter: WiiMAdapter | None = None
         self._safe_write: SafeWrite | None = None
         self._device_caps: object | None = None
+        # Bumped on every device selection; lets a stale/superseded capability
+        # probe (e.g. user selects a second device before the first probe
+        # resolves) detect that it's no longer current and avoid corrupting
+        # wizard state (double-advance, wrong "Connected" step).
+        self._probe_generation = 0
 
         # Discovered devices cache (populated by discovery, used by device picker)
         self._discovered_devices: list[DeviceInfo] = []
@@ -620,8 +637,17 @@ class MainWindow(QMainWindow):
         self._wiim_http_client = WiiMHttpClient(device_ip)
         self._capability_prober = CapabilityProber(self._wiim_http_client)
 
+        # Bump generation so a still-in-flight probe from a previous device
+        # selection is discarded instead of advancing the wizard out from
+        # under the user (see _do_probe).
+        self._probe_generation += 1
+        generation = self._probe_generation
+
         self._bridge.run_async(
-            self._bridge_wrapper("capability_probe", self._do_probe())
+            self._bridge_wrapper(
+                "capability_probe",
+                self._do_probe(self._capability_prober, generation),
+            )
         )
         logger.info("Device selected: %s", device_ip)
 
@@ -993,18 +1019,7 @@ class MainWindow(QMainWindow):
         if not isinstance(step, WizardStep):
             return
 
-        # Map WizardStep to PAGE_INDICES key
-        step_to_page_key: dict[WizardStep, str] = {
-            WizardStep.CONNECT: "connect",
-            WizardStep.EQ_TYPE: "eq_type",
-            WizardStep.SOURCE: "source",
-            WizardStep.FILTERS: "filters",
-            WizardStep.REVIEW: "review",
-            WizardStep.NAME_PROFILE: "name_profile",
-            WizardStep.PUSH: "push",
-        }
-
-        page_key = step_to_page_key.get(step)
+        page_key = _STEP_TO_PAGE_KEY.get(step)
         if page_key and page_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
 
@@ -1410,6 +1425,14 @@ class MainWindow(QMainWindow):
             self._diagnostics_panel.on_raw_response(response_text)
             return
 
+        # Terminal informational results (e.g. "no measurements found") must not
+        # render as an indeterminate, non-dismissible spinner — show_progress()
+        # never auto-dismisses and has no close button, so it looks stuck.
+        if message.startswith("__info__"):
+            info_text = message[len("__info__"):]
+            self._status_banner.show_info(info_text)
+            return
+
         self._status_banner.show_progress(message)
 
     @Slot(list)
@@ -1700,14 +1723,33 @@ class MainWindow(QMainWindow):
         ]
         self._bridge.discovery_complete.emit(device_list)
 
-    async def _do_probe(self) -> None:
+    async def _do_probe(self, prober: CapabilityProber, generation: int) -> None:
         """Run capability probing and emit results via bridge signal.
 
         Calls CapabilityProber.probe() and emits the DeviceCapabilities
         object for flow-type determination and wizard advancement.
+
+        The *prober* instance and *generation* are passed in explicitly
+        (rather than read from ``self``) so a probe started for a previously
+        selected device can't pick up a different device's prober if the
+        user reselects before this one resolves. If *generation* no longer
+        matches the most recent selection, the result is discarded —
+        otherwise a stale probe could advance the wizard for a device the
+        user already navigated away from, corrupting the Connect step's
+        completed/checkmark state.
+
+        Args:
+            prober: The CapabilityProber for the device this probe targets.
+            generation: Snapshot of ``self._probe_generation`` at selection time.
         """
-        assert self._capability_prober is not None
-        caps = await self._capability_prober.probe()
+        caps = await prober.probe()
+        if generation != self._probe_generation:
+            logger.debug(
+                "Discarding stale capability probe result (generation %d, current %d)",
+                generation,
+                self._probe_generation,
+            )
+            return
         self._bridge.capabilities_ready.emit(caps)
 
     async def _do_file_import(self, path: str) -> None:
@@ -2174,7 +2216,11 @@ class MainWindow(QMainWindow):
         measurements = await self._rew_client.list_measurements()
 
         if not measurements:
-            self._bridge.progress_update.emit("No measurements found in REW")
+            self._sidebar_load_in_progress = False
+            self._bridge.progress_update.emit(
+                "__info__No measurements found in REW. "
+                "Load or import measurement(s) in REW's Measurements pane, then try again."
+            )
             return
 
         # Emit measurement list for the picker dialog
@@ -2616,8 +2662,16 @@ class MainWindow(QMainWindow):
         """
         logger.debug("Navigation requested: %s", view_key)
         if view_key == "home":
-            # Return to current wizard step
-            self._on_step_changed(self._wizard_controller.current_step)
+            # Return to current wizard step's page. Unlike _on_step_changed
+            # (the real step-transition handler), this must not re-run entry
+            # side effects such as resetting the Push page's dry-run/result
+            # state or repopulating Name Profile — the user is just coming
+            # back from a secondary view (e.g. Settings), not re-entering
+            # the step.
+            step = self._wizard_controller.current_step
+            page_key = _STEP_TO_PAGE_KEY.get(step)
+            if page_key and page_key in PAGE_INDICES:
+                self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
             return
 
         if view_key == "connect":
@@ -2747,7 +2801,6 @@ class MainWindow(QMainWindow):
             "rew_export_folder": rew_export,
             "discovery_timeout": self._settings.discovery_timeout,
             "dry_run_default": self._settings.dry_run_default,
-            "last_device": self._settings.last_device,
         })
 
     def _connect_settings_signals(self) -> None:

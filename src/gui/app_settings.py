@@ -38,7 +38,6 @@ class AppSettings:
     # Behavior
     discovery_timeout: int = 5
     dry_run_default: bool = True  # Req 23.6: enabled for first-time users
-    last_device: str = ""  # Req 9.2: auto-reconnect to last-used device
     first_run_complete: bool = False
     sidebar_collapsed: bool = False
 

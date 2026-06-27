@@ -237,7 +237,7 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
     - Implement SettingsView with sections: Appearance, Paths, Behavior, Logs, Support
     - Appearance: Light/Dark/System theme toggle
     - Paths: Log dir, Presets dir, Default REW export folder (with browse + validation)
-    - Behavior: Discovery timeout, Dry Run default, last-used device
+    - Behavior: Discovery timeout, Dry Run default
     - Logs: Log file list with sizes, "Open Log Folder", "Copy Log Path"
     - Support: "Generate Support Bundle", "Show onboarding again"
     - All settings persist via settings.json
@@ -354,9 +354,12 @@ Replace the current splitter-based panel layout in `src/gui/` with a wizard-driv
   - [x] 12.1 Create AppSettings dataclass and settings file I/O
     - Implement AppSettings dataclass (theme, log_directory, presets_directory, etc.)
     - Load/save from settings.json in app data directory
-    - Auto-reconnect to last-used device on launch
+    - ~~Auto-reconnect to last-used device on launch~~ — **descoped 2026-06-27**:
+      this was never actually implemented (no setter ever wrote `last_device`,
+      no launch-time reconnect logic existed); the field and its read-only
+      Settings UI were removed rather than implemented.
     - Auto-enable Dry Run for first-time users
-    - _Requirements: 9.2, 12.4, 23.6, 24.15_
+    - _Requirements: 12.4, 23.6, 24.15_ (9.2 descoped)
 
   - [x] 12.2 Wire settings to MainWindow and components
     - Apply theme on startup based on saved preference

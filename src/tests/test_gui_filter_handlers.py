@@ -349,6 +349,42 @@ class TestREWPullHappyPath:
         assert "No measurements found" in msg
 
     @pytest.mark.asyncio
+    async def test_rew_list_empty_uses_info_sentinel_not_stuck_spinner(self, window) -> None:
+        """Empty-measurement result must route to show_info, not the
+        non-dismissible show_progress spinner — a stuck spinner with no
+        close button reads as "still loading", not as a finished result
+        with instructions.
+        """
+        window.show()
+        mock_client = AsyncMock()
+        mock_client.list_measurements = AsyncMock(return_value=[])
+        window._rew_client = mock_client
+
+        await window._do_rew_list_measurements()
+
+        msg = window._bridge.progress_update.emit.call_args[0][0]
+        assert msg.startswith("__info__")
+
+        window._on_progress_update(msg)
+        assert not window._status_banner.is_progress()
+        assert window._status_banner._close_button.isVisible()
+
+    @pytest.mark.asyncio
+    async def test_rew_list_empty_resets_sidebar_load_flag(self, window) -> None:
+        """The empty-measurement early return must clear _sidebar_load_in_progress,
+        otherwise the flag stays stuck True and corrupts the step indicator on
+        the next sidebar-triggered load.
+        """
+        mock_client = AsyncMock()
+        mock_client.list_measurements = AsyncMock(return_value=[])
+        window._rew_client = mock_client
+        window._sidebar_load_in_progress = True
+
+        await window._do_rew_list_measurements()
+
+        assert window._sidebar_load_in_progress is False
+
+    @pytest.mark.asyncio
     async def test_rew_not_connected_error(self, window) -> None:
         """Verify operation_error emitted when REW is not running.
 

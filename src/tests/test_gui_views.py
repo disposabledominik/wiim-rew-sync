@@ -482,7 +482,6 @@ class TestSettingsViewPopulation:
             "rew_export_folder": "/home/user/rew",
             "discovery_timeout": 10,
             "dry_run_default": True,
-            "last_device": "Living Room Pro",
         })
 
         assert view._log_dir_edit.text() == "/var/log/wiim"
@@ -490,7 +489,7 @@ class TestSettingsViewPopulation:
         assert view._rew_export_edit.text() == "/home/user/rew"
 
     def test_set_settings_populates_behavior(self, qtbot) -> None:
-        """set_settings() populates timeout, dry run, and last device."""
+        """set_settings() populates timeout and dry run."""
         view = SettingsView()
         qtbot.addWidget(view)
 
@@ -501,12 +500,10 @@ class TestSettingsViewPopulation:
             "rew_export_folder": "",
             "discovery_timeout": 15,
             "dry_run_default": True,
-            "last_device": "Bedroom",
         })
 
         assert view._timeout_spin.value() == 15
         assert view._dry_run_check.isChecked()
-        assert view._last_device_label.text() == "Bedroom"
 
 
 class TestSettingsViewSignals:
@@ -601,7 +598,6 @@ class TestSettingsViewGetCurrentSettings:
             "rew_export_folder": "/tmp/rew",
             "discovery_timeout": 8,
             "dry_run_default": True,
-            "last_device": "Kitchen",
         })
 
         settings = view.get_current_settings()
@@ -611,7 +607,6 @@ class TestSettingsViewGetCurrentSettings:
         assert settings["rew_export_folder"] == "/tmp/rew"
         assert settings["discovery_timeout"] == 8
         assert settings["dry_run_default"] is True
-        assert settings["last_device"] == "Kitchen"
 
     def test_get_current_settings_after_manual_change(self, qtbot) -> None:
         """get_current_settings() reflects user-driven changes."""

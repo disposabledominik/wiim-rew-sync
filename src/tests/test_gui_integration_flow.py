@@ -179,7 +179,7 @@ class TestFullWizardFlow:
         # --- Step f: Mock and call _do_probe() ---
         caps = _make_caps(roomfit_level=0)
         window._capability_prober.probe = AsyncMock(return_value=caps)
-        await window._do_probe()
+        await window._do_probe(window._capability_prober, window._probe_generation)
 
         # Verify capabilities_ready emitted
         window._bridge.capabilities_ready.emit.assert_called_once_with(caps)
@@ -289,7 +289,10 @@ class TestProbeError:
         )
 
         # Call via _bridge_wrapper to exercise the error mapping path
-        await window._bridge_wrapper("capability_probe", window._do_probe())
+        await window._bridge_wrapper(
+            "capability_probe",
+            window._do_probe(window._capability_prober, window._probe_generation),
+        )
 
         # Verify operation_error emitted with correct error type and mapped message
         window._bridge.operation_error.emit.assert_called_once()

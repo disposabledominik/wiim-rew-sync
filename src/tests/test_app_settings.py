@@ -40,11 +40,6 @@ class TestDefaults:
         settings = AppSettings()
         assert settings.dry_run_default is True
 
-    def test_last_device_defaults_to_empty(self) -> None:
-        """Req 9.2: last_device starts empty (no device to reconnect to)."""
-        settings = AppSettings()
-        assert settings.last_device == ""
-
     def test_first_run_complete_defaults_to_false(self) -> None:
         settings = AppSettings()
         assert settings.first_run_complete is False
@@ -86,7 +81,6 @@ class TestLoad:
             "theme": "Dark",
             "log_directory": "/var/log/custom",
             "discovery_timeout": 10,
-            "last_device": "WiiM Pro Plus",
             "first_run_complete": True,
             "dry_run_default": False,
         }
@@ -98,7 +92,6 @@ class TestLoad:
         assert settings.theme == "Dark"
         assert settings.log_directory == "/var/log/custom"
         assert settings.discovery_timeout == 10
-        assert settings.last_device == "WiiM Pro Plus"
         assert settings.first_run_complete is True
         assert settings.dry_run_default is False
 
@@ -166,7 +159,7 @@ class TestSave:
     def test_creates_settings_file(self, tmp_path: Path) -> None:
         """save() creates the settings.json file."""
         with patch("src.gui.app_settings.get_app_data_dir", return_value=tmp_path):
-            settings = AppSettings(theme="Dark", last_device="WiiM Mini")
+            settings = AppSettings(theme="Dark")
             settings.save()
 
         assert (tmp_path / "settings.json").exists()
@@ -204,7 +197,6 @@ class TestSaveLoadRoundtrip:
             rew_export_folder="/tmp/rew",
             discovery_timeout=10,
             dry_run_default=False,
-            last_device="WiiM Pro Plus",
             first_run_complete=True,
             sidebar_collapsed=True,
         )

@@ -1,6 +1,8 @@
-# Backlog — Deferred Features
+# Backlog — Deferred Features & Tech Debt
 
-Items moved here from active specs. They are not planned for the current release but may be reconsidered in future versions. Backend support may already exist (noted per item).
+Items moved here from active specs, or noted during code quality audits. Not planned for the
+current release but may be reconsidered in future versions. Backend support may already exist
+(noted per item).
 
 ---
 
@@ -37,23 +39,42 @@ Items moved here from active specs. They are not planned for the current release
 
 ---
 
-## 3. ~~Channel Mode Enum~~ (DONE)
+## 3. Rethink Source Discovery
 
-**Completed:** 2025-07-01
+**Originally:** Pre-GUI phase backlog (root `BACKLOG.md`)
 
-**What was done:** Introduced `ChannelMode` enum in `src/models/channel_mode.py` with `STEREO`/`LR` values and properties: `wire_value`, `profile_value`, `display_value`, `is_lr`. Used `Annotated[ChannelMode, BeforeValidator(...)]` (`ChannelModeField`) in Pydantic models for seamless string coercion. Replaced 38+ string comparison sites across 15 production files. `is_lr_mode()` retained as a backwards-compatible wrapper accepting both `str` and `ChannelMode`.
+**What:** The WiiM API accepts any source name and returns valid PEQ data regardless of whether the physical input exists. Need a reliable mechanism to show only real inputs.
+
+**Why deferred:** No confirmed API call enumerates real inputs per device/model. `src/cli/main.py` currently falls back to a hardcoded default (`"wifi"`) when no input list is available — see the `# ASSUMPTION` comment there.
+
+**Options to investigate:**
+- A per-model list of inputs (and other model-specific attributes), managed via a config file (no app rebuild required)
+- `GetAudioInputList` or similar undocumented endpoints on newer firmware
+- Maintain a model-to-inputs mapping table (fragile but functional)
+- Accept the limitation and let users configure which sources to show (per-device preference)
+
+**To reactivate:** Hardware-test candidate endpoints across WiiM models/firmware; if none work, build the config-file-based mapping approach.
 
 ---
 
-## ~~6. Remove Redundant `state.current_filters` for L/R Mode~~ (DONE)
+## 4. HP/LP Capability Detection and Write-Time Validation
 
-**Completed:** 2025-07-01
+**Originally:** Pre-GUI phase backlog (root `BACKLOG.md`, flagged for review 2026-06-27 — confirmed still applicable, not implemented)
 
-**What was done:** Added computed `WizardState.filters` property that returns `filters_l + filters_r` when in L/R mode, or `current_filters` for stereo. This eliminates the desync risk — the property always computes the correct combined list from the authoritative per-channel fields. Bundled with item #3 as planned.
+**What:** Add a `supports_hp_lp: bool` flag to `DeviceCapabilities`. During `_probe_peq()`, set it to `True` if mode 3 or 5 is seen in the EQBand response. In `dry-run-import`, warn if the import contains HP/LP filters targeting a device without support.
+
+**Why deferred:** The safe-write verify step already catches the mismatch at write time, so this is a UX improvement (earlier warning) rather than a correctness gap. WiiM Mini currently doesn't support HP/LP; newer firmware may add it.
+
+**Status:** ⏳ Not implemented — `supports_hp_lp` does not yet exist on `DeviceCapabilities` (confirmed 2026-06-27).
+
+**Options to investigate:**
+- A per-model list of capabilities managed via a config file (no app rebuild required)
+
+**To reactivate:** Add the capability flag, wire up probing, and add the pre-write warning in dry-run-import.
 
 ---
 
-## 4. Backward-Compat `ValidationError` Re-export in wiim_parser (Tech Debt)
+## 5. Backward-Compat `ValidationError` Re-export in wiim_parser (Tech Debt)
 
 **Originally:** Code quality audit (2026-06-22)
 
@@ -61,11 +82,13 @@ Items moved here from active specs. They are not planned for the current release
 
 **Why deferred:** Removing it risks breaking any consumer that imports from this location. The cost of keeping it is one import line. Zero functional impact.
 
+**Status:** Still present (confirmed 2026-06-27, `src/translator/wiim_parser.py:18`).
+
 **To reactivate:** Audit all consumers (internal and potential external), remove the import, update any broken references. Low priority.
 
 ---
 
-## 5. `ProfileRepository.list()` Shadows Builtin (Tech Debt)
+## 6. `ProfileRepository.list()` Shadows Builtin (Tech Debt)
 
 **Originally:** Code quality audit (2026-06-22)
 
@@ -73,8 +96,56 @@ Items moved here from active specs. They are not planned for the current release
 
 **Why deferred:** Renaming a public method on `ProfileRepository` would break the GUI layer, tests, and any code that calls `.list()`. Cosmetic improvement with non-trivial migration effort.
 
+**Status:** Still present (confirmed 2026-06-27, `src/repository/profile_repository.py:5,77`).
+
 **To reactivate:** Rename method to `list_all()`, update all call sites (~8 locations in GUI + tests). Bundle with other repository refactoring if it arises.
 
-## 6. Perform manual QA.
+---
 
-## 7. Refactor Dark and Light styles to make them consistent - see if there is any chance to consolidate for easier maintenance. Review in-line styles in code, and remove where it makes sense.
+## 7. Hardware QA Sign-off
+
+**Originally:** `docs/qa_signoff.md` final verdict (2026-06-15)
+
+**What:** Full-flow validation against real WiiM device(s) covering the GUI-era scenarios that can't be automated (multiroom groups, RoomFit push with naming, device reboot mid-write, etc. — see `docs/qa.md` and `docs/qa_signoff.md` §5).
+
+**Why deferred:** Requires physical hardware sessions; software QA (470 tests, 96.52% translator coverage, lint/type-check clean) already passed pre-GUI.
+
+**Status:** ⏳ Pending — not yet executed against the post-GUI build.
+
+**To reactivate:** Run the hardware-required scenarios listed in `docs/qa_signoff.md` §5 against the current build, update the sign-off doc with results.
+
+---
+
+## 8. Profile Comparison & Diffing
+
+**Originally:** Master spec, Future Phase Features; root `BACKLOG.md`
+
+**What:** Visually or textually compare two PEQ profiles to highlight changes.
+
+**Status:** Not started — future-phase feature, not MVP.
+
+---
+
+## 9. Advanced Filter Types
+
+**Originally:** Master spec, Future Phase Features; root `BACKLOG.md`
+
+**What:** All-Pass filters and specialized shelf variants, if added to WiiM firmware.
+
+**Status:** Not started — blocked on WiiM firmware support.
+
+---
+
+## Completed Items (Archive)
+
+### Test coverage for hardware-testing findings
+**Completed:** Task 51. Automated tests added for all API behaviors discovered during manual hardware validation.
+
+### Channel Mode Enum
+**Completed:** 2025-07-01. Introduced `ChannelMode` enum in `src/models/channel_mode.py` with `STEREO`/`LR` values and properties: `wire_value`, `profile_value`, `display_value`, `is_lr`. Used `Annotated[ChannelMode, BeforeValidator(...)]` (`ChannelModeField`) in Pydantic models for seamless string coercion. Replaced 38+ string comparison sites across 15 production files. `is_lr_mode()` retained as a backwards-compatible wrapper accepting both `str` and `ChannelMode`.
+
+### Remove Redundant `state.current_filters` for L/R Mode
+**Completed:** 2025-07-01. Added computed `WizardState.filters` property that returns `filters_l + filters_r` when in L/R mode, or `current_filters` for stereo. This eliminates the desync risk — the property always computes the correct combined list from the authoritative per-channel fields. Bundled with the Channel Mode Enum item.
+
+### Dark/Light Style Consolidation
+**Completed.** Refactored dark and light styles for consistency; reviewed and removed unnecessary in-line styles where it made sense.

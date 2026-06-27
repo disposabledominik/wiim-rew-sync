@@ -1,7 +1,7 @@
 import logging
 import sys
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -281,3 +281,53 @@ def test_navigation_connect_uses_wizard_go_to_step():
         window._wizard_controller = cast(WizardController, FakeWizard())
         window._on_navigation_requested("connect")
         assert called.get("step") == WizardStep.CONNECT
+
+
+# Fix: sidebar "Back" from a secondary view (e.g. Settings) while the wizard
+# is sitting on a completed PUSH/dry-run page must redisplay that page as-is,
+# not reset it. _on_step_changed resets the Push page as an entry side
+# effect, which is correct for a real step transition but wrong for "Back"
+# just redisplaying the current step.
+def test_sidebar_back_from_secondary_view_preserves_push_dry_run_result(qtbot):
+    from src.gui.main_window import PAGE_INDICES, MainWindow
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+        window.show()
+
+        window._wizard_controller.go_to_step(WizardStep.PUSH)
+        window._push_page.set_dry_run_result("3 filters mapped")
+        assert window._push_page._dry_run_badge.isVisible()
+
+        # User navigates to Settings via sidebar, then clicks "Back"
+        window._stacked_widget.setCurrentIndex(PAGE_INDICES["settings"])
+        window._on_navigation_requested("home")
+
+        assert window._stacked_widget.currentIndex() == PAGE_INDICES["push"]
+        assert window._push_page._dry_run_badge.isVisible()
+
+
+# Fix: a capability probe for a superseded device selection must not advance
+# the wizard. Without the generation guard, reselecting a device while the
+# previous probe is still in flight could let the stale probe's
+# capabilities_ready.emit still fire, double-advancing the wizard / marking
+# the wrong step "Connected".
+@pytest.mark.asyncio
+async def test_stale_capability_probe_is_discarded():
+    from unittest.mock import AsyncMock
+
+    from src.gui.main_window import MainWindow
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        window = MainWindow(async_bridge=mock_bridge)
+
+        stale_prober = SimpleNamespace(probe=AsyncMock(return_value=MagicMock()))
+        stale_generation = window._probe_generation  # snapshot before "reselection"
+        window._probe_generation += 1  # simulates a newer _on_device_selected call
+
+        await window._do_probe(cast(Any, stale_prober), stale_generation)
+
+        window._bridge.capabilities_ready.emit.assert_not_called()
