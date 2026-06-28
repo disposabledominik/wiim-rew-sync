@@ -18,7 +18,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
 
-from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtCore import QSize, Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -42,6 +42,7 @@ from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
 from src.gui.app_settings import AppSettings
 from src.gui.async_bridge import AsyncBridge
+from src.gui.components.page_layout import ICON_NO_CONNECTION, ICON_NO_DATA
 from src.gui.components.sidebar_nav import SidebarNav
 from src.gui.components.status_banner import StatusBanner
 from src.gui.components.step_indicator import StepIndicator
@@ -120,6 +121,20 @@ _STEP_TO_PAGE_KEY: dict[WizardStep, str] = {
     WizardStep.NAME_PROFILE: "name_profile",
     WizardStep.PUSH: "push",
 }
+
+# Reverse lookups used by _sync_navigation_chrome (see its docstring for why
+# this single, signal-driven hook replaced a dozen hand-maintained
+# sidebar_nav.set_active_key()/step_indicator.set_dimmed()/set_current()
+# call sites scattered across every navigation handler in this class).
+_PAGE_INDEX_TO_KEY: dict[int, str] = {v: k for k, v in PAGE_INDICES.items()}
+_PAGE_KEY_TO_STEP: dict[str, WizardStep] = {v: k for k, v in _STEP_TO_PAGE_KEY.items()}
+
+# Sidebar destinations that replace the wizard page on screen (as opposed to
+# "home", which returns to wherever the wizard currently is, and "help",
+# which opens a separate window and never touches the stacked widget).
+_SIDEBAR_DESTINATION_KEYS: frozenset[str] = frozenset(
+    {"presets_device", "my_presets", "settings", "rew_api"}
+)
 
 
 def _crash_handler(
@@ -289,13 +304,82 @@ class MainWindow(QMainWindow):
         target_size = self._stacked_widget.size()
         for i in range(self._stacked_widget.count()):
             page = self._stacked_widget.widget(i)
-            if page is None:
-                continue
-            page.resize(target_size)
-            layout = page.layout()
-            if layout is not None:
-                layout.invalidate()
-                layout.activate()
+            if page is not None:
+                self._resize_and_relayout_page(page, target_size)
+
+    @staticmethod
+    def _resize_and_relayout_page(page: QWidget, size: QSize) -> None:
+        """Resize `page` and force a full re-layout of its widget tree.
+
+        Shared by _warm_up_stacked_pages (every page, once at startup) and
+        _resync_current_page_geometry (one page, every time it becomes
+        current) — both exist to work around the same QStackedLayout
+        behavior (it only resizes its *current* widget on a window
+        resize), just at different moments.
+        """
+        page.resize(size)
+        layout = page.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+
+    @Slot(int)
+    def _resync_current_page_geometry(self, index: int) -> None:
+        """Force the newly-current stacked page to a correct, fresh layout.
+
+        _warm_up_stacked_pages only runs once, right after the window is
+        first shown. But QStackedLayout keeps resizing only the *current*
+        widget on every subsequent window resize too — so a page that sits
+        non-current through one or more resizes (e.g. the user visits it
+        once while empty, navigates away, the window settles into its
+        final size, then the user revisits it after it has real content)
+        drifts stale again despite the one-time warm-up. Re-running the
+        same resize + layout re-activate every time a page becomes current
+        keeps every page's geometry honest, not just at startup.
+        """
+        page = self._stacked_widget.widget(index)
+        if page is not None:
+            self._resize_and_relayout_page(page, self._stacked_widget.size())
+
+    @Slot(int)
+    def _sync_navigation_chrome(self, index: int) -> None:
+        """Keep the sidebar highlight and step-indicator pill in lockstep
+        with whichever page is actually on screen.
+
+        Every navigation path in this app — sidebar clicks, the wizard's
+        own advance()/go_to_step(), step-pill clicks, "Back" from a
+        secondary view, and the various "jump straight to Review"
+        shortcuts (#144, #147) — ends with
+        QStackedWidget.setCurrentIndex(). Before this hook existed, every
+        one of those handlers had to remember to separately call
+        sidebar_nav.set_active_key(), step_indicator.set_dimmed(), and
+        step_indicator.set_current() in the right combination, and several
+        of them didn't (hence #138, #142, #144, #147, and the step-pill
+        case reported after those: clicking a finished step pill while
+        viewing a sidebar destination left both highlighted at once).
+        Deriving the correct chrome purely from the page index that just
+        became current, in one place wired to currentChanged, means a new
+        navigation path can't reintroduce this bug class just by
+        forgetting one of those calls — there's nothing left to forget.
+        """
+        page_key = _PAGE_INDEX_TO_KEY.get(index)
+        if page_key is None:
+            return
+
+        if page_key in _SIDEBAR_DESTINATION_KEYS:
+            self._sidebar_nav.set_active_key(page_key)
+            self._step_indicator.set_dimmed(True)
+            return
+
+        step = _PAGE_KEY_TO_STEP.get(page_key)
+        if step is None:
+            return
+
+        self._sidebar_nav.set_active_key("home")
+        self._step_indicator.set_dimmed(False)
+        sequence = self._wizard_controller.get_steps()
+        if step in sequence:
+            self._step_indicator.set_current(sequence.index(step))
 
     # ------------------------------------------------------------------
     # Public API
@@ -456,6 +540,8 @@ class MainWindow(QMainWindow):
         # --- Instantiate and register all pages/views ---
         self._create_pages()
         self._register_pages()
+        self._stacked_widget.currentChanged.connect(self._resync_current_page_geometry)
+        self._stacked_widget.currentChanged.connect(self._sync_navigation_chrome)
 
         # --- Onboarding overlay (parented to central widget) ---
         self._onboarding_overlay = OnboardingOverlay(central)
@@ -1065,7 +1151,10 @@ class MainWindow(QMainWindow):
         if not isinstance(step, WizardStep):
             return
 
-        self._step_indicator.set_dimmed(False)
+        # Switching the stacked widget's page fires currentChanged, which
+        # _sync_navigation_chrome handles centrally (undimming the step
+        # pill, setting its current index, and resetting the sidebar
+        # highlight to "home") — no need to duplicate any of that here.
         page_key = _STEP_TO_PAGE_KEY.get(step)
         if page_key and page_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
@@ -1078,15 +1167,13 @@ class MainWindow(QMainWindow):
         if step == WizardStep.NAME_PROFILE:
             self._populate_name_profile_page()
 
-        # Update StepIndicator: set current and clear steps no longer completed
+        # Clear completion badges for steps no longer in completed_steps
+        # (back-navigation invalidation) — independent of chrome sync above.
         sequence = self._wizard_controller.get_steps()
         completed = self._wizard_controller.completed_steps
 
         if step in sequence:
             step_index = sequence.index(step)
-            self._step_indicator.set_current(step_index)
-
-            # Clear visual completion for steps that were invalidated
             for i, s in enumerate(sequence):
                 if s not in completed and i != step_index:
                     self._step_indicator.clear_completed(i)
@@ -1391,15 +1478,11 @@ class MainWindow(QMainWindow):
                 # Emit step summaries for the step indicator
                 for step, summary in state.completed_steps.items():
                     self._wizard_controller.step_summary_updated.emit(step, summary)
+                # Switching the page fires currentChanged, which
+                # _sync_navigation_chrome handles centrally (step pill
+                # highlight + undim, sidebar reset to "home") — no manual
+                # sync needed here.
                 self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
-                self._sidebar_nav.set_active_key("home")
-                self._step_indicator.set_dimmed(False)
-                # This path bypasses wizard_controller.advance()/go_to_step(), so
-                # step_changed never fires and _on_step_changed's set_current()
-                # call is skipped — sync the indicator's highlight here instead.
-                sequence = self._wizard_controller.get_steps()
-                if WizardStep.REVIEW in sequence:
-                    self._step_indicator.set_current(sequence.index(WizardStep.REVIEW))
             else:
                 self._wizard_controller.advance(summary=f"{validated_count} filters")
 
@@ -1471,7 +1554,7 @@ class MainWindow(QMainWindow):
 
         if self._active_rew_pull_view is not None:
             self._sidebar_load_in_progress = False
-            self._show_rew_pull_message(message)
+            self._show_rew_pull_message(message, icon=ICON_NO_CONNECTION)
 
     @Slot(str)
     def _on_progress_update(self, message: str) -> None:
@@ -1495,7 +1578,7 @@ class MainWindow(QMainWindow):
         if message.startswith("__info__"):
             info_text = message[len("__info__"):]
             self._status_banner.show_info(info_text)
-            self._show_rew_pull_message(info_text)
+            self._show_rew_pull_message(info_text, icon=ICON_NO_DATA)
             return
 
         self._status_banner.show_progress(message)
@@ -1524,7 +1607,7 @@ class MainWindow(QMainWindow):
         self._stacked_widget.setCurrentIndex(self._active_rew_pull_page_index)
         view.set_measurements(measurements)
 
-    def _show_rew_pull_message(self, message: str) -> None:
+    def _show_rew_pull_message(self, message: str, icon: str = "") -> None:
         """Show a terminal message (no-measurements/error) on the active RewPullView.
 
         Clears _active_rew_pull_view since no more measurements are coming
@@ -1533,12 +1616,15 @@ class MainWindow(QMainWindow):
 
         Args:
             message: Message to display in place of the picker.
+            icon: Optional large icon glyph (ICON_NO_CONNECTION for REW
+                being unreachable, ICON_NO_DATA for "REW is fine but has
+                nothing loaded") shown above the message.
         """
         view = self._active_rew_pull_view
         if view is None:
             return
         self._stacked_widget.setCurrentIndex(self._active_rew_pull_page_index)
-        view.set_message(message)
+        view.set_message(message, icon=icon)
         self._active_rew_pull_view = None
 
     def _dispatch_measurement_selection(
@@ -2751,6 +2837,9 @@ class MainWindow(QMainWindow):
             view_key: Navigation target key from SidebarNav.
         """
         logger.debug("Navigation requested: %s", view_key)
+        # Sidebar highlight + step-pill dimming are synced centrally by
+        # _sync_navigation_chrome (wired to currentChanged) — this handler
+        # only needs to decide which page to switch to.
         if view_key == "home":
             # Return to current wizard step's page. Unlike _on_step_changed
             # (the real step-transition handler), this must not re-run entry
@@ -2758,7 +2847,6 @@ class MainWindow(QMainWindow):
             # state or repopulating Name Profile — the user is just coming
             # back from a secondary view (e.g. Settings), not re-entering
             # the step.
-            self._step_indicator.set_dimmed(False)
             step = self._wizard_controller.current_step
             page_key = _STEP_TO_PAGE_KEY.get(step)
             if page_key and page_key in PAGE_INDICES:
@@ -2767,7 +2855,6 @@ class MainWindow(QMainWindow):
 
         if view_key == "connect":
             # Navigate to Connect step via wizard controller (same as step indicator click)
-            self._step_indicator.set_dimmed(False)
             self._wizard_controller.go_to_step(WizardStep.CONNECT)
             return
 
@@ -2783,11 +2870,6 @@ class MainWindow(QMainWindow):
             return
 
         if view_key in PAGE_INDICES:
-            # Every other sidebar destination (Presets on Device, My Saved
-            # Presets, Settings) replaces the wizard page on screen, so mute
-            # the step indicator's "you are here" pill to match — it isn't
-            # actually where the user is right now.
-            self._step_indicator.set_dimmed(True)
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[view_key])
 
         # Trigger data fetch for views that need it
@@ -2811,7 +2893,6 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             return
 
-        self._step_indicator.set_dimmed(True)
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["rew_api"])
         self._rew_pull_view.set_connecting()
         self._active_rew_pull_view = self._rew_pull_view
@@ -2850,8 +2931,6 @@ class MainWindow(QMainWindow):
         page_key = _STEP_TO_PAGE_KEY.get(step)
         if page_key and page_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
-        self._sidebar_nav.set_active_key("home")
-        self._step_indicator.set_dimmed(False)
 
     @Slot()
     def _on_filters_rew_pull_back_requested(self) -> None:
@@ -3575,7 +3654,11 @@ class MainWindow(QMainWindow):
 
         # Navigate to Review step — update both wizard state and stacked widget
         # so that subsequent navigation/step_changed doesn't override (smoke #87)
+        self._mark_prior_steps_completed(state)
         self._wizard_controller.state.current_step = WizardStep.REVIEW
+        # Switching the page fires currentChanged, which
+        # _sync_navigation_chrome handles centrally (step pill highlight +
+        # undim, sidebar reset to "home") — no manual sync needed here.
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
 
         # Emit step summaries for the step indicator (smoke #87)

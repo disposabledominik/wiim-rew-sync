@@ -33,7 +33,11 @@ from PySide6.QtWidgets import (
 )
 
 from src.adapters.rew_http_client import MeasurementSummary
-from src.gui.components.page_layout import build_centered_content, make_page_title
+from src.gui.components.page_layout import (
+    build_centered_content,
+    make_empty_state_icon,
+    make_page_title,
+)
 from src.gui.constants import SPACING_LG, SPACING_MD, SPACING_SM
 
 #: Tall enough to show ~8-10 measurement rows before scrolling kicks in,
@@ -94,7 +98,7 @@ class RewPullView(QWidget):
         """Show the "Connecting to REW..." placeholder."""
         self.set_message("Connecting to REW...")
 
-    def set_message(self, text: str) -> None:
+    def set_message(self, text: str, icon: str = "") -> None:
         """Show a placeholder message instead of the measurement picker.
 
         Used for the connecting state, "no measurements found", and
@@ -102,9 +106,15 @@ class RewPullView(QWidget):
 
         Args:
             text: Message to display.
+            icon: Optional large icon glyph to show above the message
+                (e.g. ICON_NO_CONNECTION, ICON_NO_DATA from page_layout).
+                Omit for transient states like "Connecting..." where an
+                icon would just flash briefly.
         """
         self._showing_picker = False
         self._message_label.setText(text)
+        self._icon_label.setText(icon)
+        self._icon_label.setVisible(bool(icon))
         self._content_widget.setVisible(False)
         self._placeholder_widget.setVisible(True)
 
@@ -165,6 +175,10 @@ class RewPullView(QWidget):
         layout = QVBoxLayout(widget)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(SPACING_MD)
+
+        self._icon_label = make_empty_state_icon("", object_name="RewPullPlaceholderIcon")
+        self._icon_label.setVisible(False)
+        layout.addWidget(self._icon_label)
 
         self._message_label = QLabel("Connecting to REW...")
         self._message_label.setObjectName("rew_pull_message")

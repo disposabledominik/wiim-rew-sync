@@ -345,6 +345,49 @@ def test_warm_up_stacked_pages_resizes_every_page_without_reshowing(qtbot):
         assert refresh_calls == []
 
 
+# Fix: issue #141's one-time _warm_up_stacked_pages() call only protects a
+# page's geometry up to the moment it fires — QStackedLayout keeps resizing
+# only the *current* widget on every later window resize too, so a page
+# that sits non-current through a resize (visit while empty, navigate away,
+# window settles, revisit once populated) can go stale again despite having
+# been warmed up once already. _resync_current_page_geometry, wired to
+# QStackedWidget.currentChanged, re-applies the same resize + full layout
+# re-activation every time *any* page becomes current, not just at startup
+# — a stronger guarantee than relying on QStackedLayout's own switch-time
+# resize, which does not force nested layouts to recompute.
+def test_resync_current_page_geometry_resizes_and_reactivates_layout(qtbot):
+    from src.gui.main_window import PAGE_INDICES, MainWindow
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+        window.resize(1000, 700)
+        window.show()
+
+        presets_page = window._presets_device_view
+        presets_page.resize(1, 1)
+
+        window._resync_current_page_geometry(PAGE_INDICES["presets_device"])
+
+        assert presets_page.size() == window._stacked_widget.size()
+
+
+# Fix: currentChanged fires on every navigation, including the many
+# existing setCurrentIndex() call sites scattered across MainWindow — the
+# hook must be a no-op (not raise) for an out-of-range index rather than
+# assuming the index always maps to a real widget.
+def test_resync_current_page_geometry_ignores_invalid_index(qtbot):
+    from src.gui.main_window import MainWindow
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+
+        window._resync_current_page_geometry(-1)
+
+
 # Fix: jumping directly to Review from a sidebar load (e.g. "Load into
 # Editor" from Presets on Device / My Presets) bypasses
 # wizard_controller.advance()/go_to_step(), so step_changed never fires and
@@ -376,6 +419,76 @@ def test_sidebar_load_into_review_highlights_review_step(qtbot):
         review_index = sequence.index(WizardStep.REVIEW)
         assert window._step_indicator._current_index == review_index
         assert window._step_indicator._steps[review_index]._dimmed is False
+
+
+# Fix: "My Saved Presets" Load goes through a *different* handler
+# (_on_profile_recalled, via SecondaryWorkflowManager.recall_profile) than
+# Presets-on-Device / sidebar-"Pull from REW" Load (_on_peq_ready) — #144
+# only patched the latter, so loading from My Saved Presets still landed on
+# Review with no step-indicator pill highlighted, and (additionally) never
+# reset the sidebar highlight back to "home", leaving "My Saved Presets"
+# highlighted even though Review was now on screen.
+def test_profile_recalled_from_my_presets_highlights_review_and_resets_sidebar(qtbot):
+    from src.gui.main_window import PAGE_INDICES, MainWindow
+    from src.models.canonical import CanonicalFilter
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+
+        state = window._wizard_controller.state
+        state.selected_device = "device-1"
+        state.selected_source = "wifi"
+
+        # Simulate having been on "My Saved Presets" (sidebar highlighted there)
+        window._sidebar_nav.set_active_key("my_presets")
+
+        window._on_profile_recalled(
+            [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)]
+        )
+
+        assert window._stacked_widget.currentIndex() == PAGE_INDICES["review"]
+
+        sequence = window._wizard_controller.get_steps()
+        review_index = sequence.index(WizardStep.REVIEW)
+        assert window._step_indicator._current_index == review_index
+        assert window._step_indicator._steps[review_index]._dimmed is False
+        assert window._sidebar_nav.active_key == "home"
+
+
+# Fix: clicking a step-indicator pill (a finished/completed step) while
+# viewing a sidebar destination (Presets on Device, My Saved Presets,
+# Settings, sidebar Pull from REW) left *both* the sidebar item and the
+# step pill highlighted at once — _on_step_indicator_clicked routes through
+# wizard_controller.go_to_step(), which only ever touched the step
+# indicator, never the sidebar highlight. This was the same root cause as
+# #138/#142/#144/#147 (a navigation path forgetting to sync sidebar +
+# step-indicator chrome) recurring on yet another path, which is why the
+# fix is now a single handler (_sync_navigation_chrome, wired to
+# QStackedWidget.currentChanged) instead of one more hand-added call.
+def test_step_indicator_click_from_sidebar_destination_resets_sidebar_highlight(qtbot):
+    from src.gui.main_window import PAGE_INDICES, MainWindow
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+
+        # Viewing a sidebar destination — sidebar highlighted there, step
+        # pill dimmed.
+        window._on_navigation_requested("presets_device")
+        assert window._sidebar_nav.active_key == "presets_device"
+        assert window._step_indicator._steps[window._step_indicator._current_index]._dimmed
+
+        # Click the first (CONNECT) step pill, as if jumping back to a
+        # finished step from within a sidebar destination.
+        window._on_step_indicator_clicked(0)
+
+        assert window._stacked_widget.currentIndex() == PAGE_INDICES["connect"]
+        assert window._sidebar_nav.active_key == "home"
+        assert window._step_indicator._current_index == 0
+        assert not window._step_indicator._steps[0]._dimmed
 
 
 # Fix: a capability probe for a superseded device selection must not advance

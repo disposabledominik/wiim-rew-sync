@@ -186,7 +186,7 @@ QLabel[class="badge"] {
     letter-spacing: 8px;
 }
 
-#PresetsDeviceEmptyIcon {
+QLabel[class="emptyStateIcon"] {
     font-size: 48px;
 }
 

@@ -28,7 +28,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.components.page_layout import build_centered_content, make_page_title
+from src.gui.components.page_layout import (
+    ICON_NO_CONNECTION,
+    build_centered_content,
+    make_empty_state_icon,
+    make_page_title,
+)
 from src.gui.constants import (
     LIST_ITEM_HEIGHT,
     SPACING_LG,
@@ -145,16 +150,28 @@ class PresetsDeviceView(QWidget):
         """Build the view layout."""
         container_layout, container = build_centered_content(self)
 
-        # Title
+        # Title — pinned to its sizeHint so it doesn't absorb leftover
+        # vertical space (see RewPullView, which documents why that matters:
+        # QLabel's default vertical-center alignment makes the title drift
+        # whenever the visible state has less content than the other state).
         title = make_page_title("Presets on Device", container, object_name="view_title")
+        title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         container_layout.addWidget(title)
 
-        # Empty state widget
+        # Empty state widget — Expanding so it (not the title) absorbs the
+        # leftover vertical space, letting its AlignCenter layout actually
+        # center the icon/message in the available page area.
         self._empty_widget = self._build_empty_state()
+        self._empty_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         container_layout.addWidget(self._empty_widget)
 
         # Content widget (shown when device connected)
         self._content_widget = QWidget()
+        self._content_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         content_layout = QVBoxLayout(self._content_widget)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(SPACING_LG)
@@ -180,9 +197,9 @@ class PresetsDeviceView(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(SPACING_MD)
 
-        icon_label = QLabel("\U0001F50C")  # Plug emoji as placeholder icon
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setObjectName("PresetsDeviceEmptyIcon")
+        icon_label = make_empty_state_icon(
+            ICON_NO_CONNECTION, object_name="PresetsDeviceEmptyIcon"
+        )
         layout.addWidget(icon_label)
 
         message = QLabel("Connect a device to browse its presets and profiles")

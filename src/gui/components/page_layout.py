@@ -15,6 +15,16 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from src.gui.constants import MAX_CONTENT_WIDTH, SPACING_LG
 
+#: Icon for empty/placeholder states where a required connection is missing
+#: (no device connected, REW API unreachable) — kept identical across views
+#: so the user learns one visual language for "go connect something".
+ICON_NO_CONNECTION = "\U0001F50C"  # power plug
+
+#: Icon for empty states where the connection itself is fine but there is
+#: simply nothing to act on yet (e.g. REW is running but no measurements
+#: are loaded).
+ICON_NO_DATA = "\U0001F3DC️"  # desert
+
 
 def build_centered_content(page: QWidget) -> tuple[QVBoxLayout, QWidget]:
     """Set `page`'s layout to the standard centered, width-capped column.
@@ -35,6 +45,23 @@ def build_centered_content(page: QWidget) -> tuple[QVBoxLayout, QWidget]:
     outer_layout.addWidget(content)
 
     return content_layout, content
+
+
+def make_empty_state_icon(icon: str, object_name: str = "") -> QLabel:
+    """Build a large, consistently-sized icon label for empty/placeholder states.
+
+    All empty-state icons across the app (Presets on Device with no
+    device, Pull from REW with no API/no measurements, etc.) share the
+    "emptyStateIcon" QSS class so they render at the same size — previously
+    only the Presets on Device icon was styled this way (via a one-off
+    object-name rule), so other placeholder states had no icon at all.
+    """
+    label = QLabel(icon)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setProperty("class", "emptyStateIcon")
+    if object_name:
+        label.setObjectName(object_name)
+    return label
 
 
 def make_page_title(
