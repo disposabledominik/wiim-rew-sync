@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, Signal
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.translator._warnings import FilterRow
 
 
 class WizardStep(Enum):
@@ -51,6 +52,13 @@ class WizardState:
     device_filters: list[CanonicalFilter] = field(default_factory=list)
     filters_l: list[CanonicalFilter] = field(default_factory=list)
     filters_r: list[CanonicalFilter] = field(default_factory=list)
+    # Display rows for the next peq_ready, set by REW-parsing producers right
+    # before they emit; consumed and reset to [] by _on_peq_ready so a stale
+    # set never leaks into an unrelated later flow (e.g. device/preset pulls,
+    # which never have skipped bands and don't need to set these themselves).
+    pending_rows: list[FilterRow] = field(default_factory=list)
+    pending_rows_l: list[FilterRow] = field(default_factory=list)
+    pending_rows_r: list[FilterRow] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     roomfit_profile_name: str = ""
     dry_run: bool = False

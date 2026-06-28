@@ -18,6 +18,7 @@ from src.models import constants as model_constants
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.tests.conftest import close_coroutine_tree
+from src.translator._warnings import FilterRow, SkippedBand
 
 
 # Issue 101: Band-param helper _flat_array_to_band_params used across adapter write paths
@@ -139,10 +140,48 @@ def test_validate_filters_for_device_truncation_and_clamping():
             )
         )
 
-    truncated, warnings, clamping_map = validate_filters_for_device(filters, max_filters=10)
+    truncated, warnings, clamping_map, rows = validate_filters_for_device(filters, max_filters=10)
     assert len(truncated) == 10
     assert any("Only the first" in w for w in warnings)
     assert clamping_map
+    assert rows
+
+
+# Phase B3: bands cut for exceeding the device's band cap render as disabled
+# placeholders (not silently dropped), preserving their original position.
+def test_validate_filters_for_device_truncated_bands_become_skipped_rows():
+    filters = [
+        CanonicalFilter(type="PEAK", frequency_hz=100.0 + i, gain_db=1.0, q=1.0)
+        for i in range(12)
+    ]
+
+    _truncated, _warnings, _clamping_map, rows = validate_filters_for_device(
+        filters, max_filters=10
+    )
+
+    assert len(rows) == 12
+    kept, cut = rows[:10], rows[10:]
+    assert all(isinstance(r, CanonicalFilter) for r in kept)
+    assert all(isinstance(r, SkippedBand) for r in cut)
+    first_cut = cut[0]
+    assert isinstance(first_cut, SkippedBand)
+    assert first_cut.original_type == "PEAK"
+    assert "10-band limit" in first_cut.reason
+    # Truncated bands keep their original values for display
+    assert first_cut.frequency_hz == filters[10].frequency_hz
+
+
+def test_validate_filters_for_device_preserves_parser_skip_rows():
+    """Skip placeholders from the parser survive truncation untouched."""
+    filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)]
+    skip = SkippedBand(original_type="Notch", reason="No WiiM equivalent")
+    rows_in: list[FilterRow] = [skip, filters[0]]
+
+    _truncated, _warnings, _clamping_map, rows_out = validate_filters_for_device(
+        filters, max_filters=10, rows=rows_in
+    )
+
+    assert rows_out == [skip, filters[0]]
 
 
 # Issue 98: PushPage.reset must clear stale DRY RUN content from previous runs

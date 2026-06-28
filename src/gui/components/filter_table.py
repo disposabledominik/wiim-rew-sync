@@ -26,11 +26,15 @@ from PySide6.QtWidgets import (
 from src.gui.constants import WARNING_COLOR_DARK, WARNING_COLOR_LIGHT
 from src.gui.theme import get_active_theme
 from src.models.canonical import CanonicalFilter
+from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
+from src.translator._warnings import FilterRow, SkippedBand
 
 _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
 
 _DISABLED_OPACITY = 0.5
+_SKIPPED_OPACITY = 0.45
 _HIGHLIGHT_ALPHA = 40  # Accent background alpha for comparison highlights
+_NA_LABEL = "N/A"
 
 
 class FilterTable(QWidget):
@@ -77,6 +81,7 @@ class FilterTable(QWidget):
         self,
         filters: list[CanonicalFilter],
         clamping_map: dict[int, list[str]] | None = None,
+        rows: list[FilterRow] | None = None,
     ) -> None:
         """Populate the table with filter bands.
 
@@ -85,12 +90,16 @@ class FilterTable(QWidget):
             clamping_map: Optional mapping of band index (0-based) to list of
                 clamping reason strings. Clamped bands show an orange dot
                 indicator with a tooltip.
+            rows: Optional display rows in original order, interleaving
+                SkippedBand placeholders for unsupported/truncated bands.
+                When omitted, every entry in `filters` gets a sequential
+                band number, matching the previous (pre-B3) behavior.
         """
         self._clear_widgets()
         table = self._create_table()
         self._container_layout.addWidget(table)
         self._table = table
-        self._populate_table(table, filters, clamping_map)
+        self._populate_table(table, filters, clamping_map, rows)
 
     def set_lr_filters(
         self,
@@ -98,6 +107,8 @@ class FilterTable(QWidget):
         right: list[CanonicalFilter],
         clamping_map_l: dict[int, list[str]] | None = None,
         clamping_map_r: dict[int, list[str]] | None = None,
+        rows_l: list[FilterRow] | None = None,
+        rows_r: list[FilterRow] | None = None,
     ) -> None:
         """Display L/R channels as tabbed sections.
 
@@ -106,17 +117,19 @@ class FilterTable(QWidget):
             right: Filters for the right channel.
             clamping_map_l: Optional clamping map for the left channel.
             clamping_map_r: Optional clamping map for the right channel.
+            rows_l: Optional display rows for the left channel (see set_filters).
+            rows_r: Optional display rows for the right channel (see set_filters).
         """
         self._clear_widgets()
         tab_widget = QTabWidget(self._container)
         tab_widget.setObjectName("FilterTableTabs")
 
         left_table = self._create_table()
-        self._populate_table(left_table, left, clamping_map_l)
+        self._populate_table(left_table, left, clamping_map_l, rows_l)
         tab_widget.addTab(left_table, "Left Channel")
 
         right_table = self._create_table()
-        self._populate_table(right_table, right, clamping_map_r)
+        self._populate_table(right_table, right, clamping_map_r, rows_r)
         tab_widget.addTab(right_table, "Right Channel")
 
         self._container_layout.addWidget(tab_widget)
@@ -187,82 +200,163 @@ class FilterTable(QWidget):
         table: QTableWidget,
         filters: list[CanonicalFilter],
         clamping_map: dict[int, list[str]] | None = None,
+        rows: list[FilterRow] | None = None,
     ) -> None:
-        """Fill table rows from filter list.
+        """Fill table rows from filter list, interleaving skipped placeholders.
 
         Args:
             table: Target QTableWidget.
-            filters: Filter data to display.
-            clamping_map: Optional clamping indicators.
+            filters: Filter data to display (used directly when `rows` is None).
+            clamping_map: Optional clamping indicators, keyed by band number
+                (0-based, counting only the valid/numbered rows).
+            rows: Optional display rows in original order; SkippedBand entries
+                render as unnumbered, crossed-out placeholders.
         """
-        table.setRowCount(len(filters))
+        display_rows: list[FilterRow] = rows if rows is not None else list(filters)
+        table.setRowCount(len(display_rows))
 
-        for row, filt in enumerate(filters):
-            is_disabled = filt.type == "OFF"
-            is_clamped = clamping_map is not None and row in clamping_map
+        band_number = 0
+        for table_row, entry in enumerate(display_rows):
+            if isinstance(entry, SkippedBand):
+                self._populate_skipped_row(table, table_row, entry)
+                continue
 
-            # Band number (1-based)
-            band_item = QTableWidgetItem(str(row + 1))
-            band_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+            self._populate_filter_row(table, table_row, entry, band_number, clamping_map)
+            band_number += 1
+
+    def _populate_filter_row(
+        self,
+        table: QTableWidget,
+        row: int,
+        filt: CanonicalFilter,
+        band_number: int,
+        clamping_map: dict[int, list[str]] | None,
+    ) -> None:
+        """Fill one row for a usable filter, at the given band number."""
+        is_disabled = filt.type == "OFF"
+        is_clamped = clamping_map is not None and band_number in clamping_map
+
+        # Band number (1-based)
+        band_item = QTableWidgetItem(str(band_number + 1))
+        band_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.setItem(row, 0, band_item)
+
+        # Filter type
+        type_text = self._format_type(filt)
+        type_item = QTableWidgetItem(type_text)
+        type_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.setItem(row, 1, type_item)
+
+        # Frequency
+        freq_text = self._format_frequency(filt.frequency_hz)
+        freq_item = QTableWidgetItem(freq_text)
+        freq_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.setItem(row, 2, freq_item)
+
+        # Gain \u2014 cell shows the value that will actually be written (clamped
+        # if needed); tooltip carries the original value and the reason.
+        gain_clamped = False
+        if is_clamped and clamping_map is not None:
+            reasons = clamping_map[band_number]
+            gain_clamped = any("gain" in r.lower() for r in reasons)
+        display_gain = (
+            max(GAIN_MIN, min(GAIN_MAX, filt.gain_db)) if gain_clamped else filt.gain_db
+        )
+        gain_text = self._format_gain(display_gain)
+        if gain_clamped:
+            gain_text = f"\u25cf {gain_text}"  # Orange dot prefix
+        gain_item = QTableWidgetItem(gain_text)
+        gain_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        if gain_clamped and clamping_map is not None:
+            gain_reasons = [r for r in clamping_map[band_number] if "gain" in r.lower()]
+            gain_item.setToolTip(
+                f"Original: {self._format_gain(filt.gain_db)}. "
+                + "Clamped: " + "; ".join(gain_reasons)
             )
-            table.setItem(row, 0, band_item)
+            gain_item.setForeground(self._warning_color())
+        table.setItem(row, 3, gain_item)
 
-            # Filter type
-            type_text = self._format_type(filt)
-            type_item = QTableWidgetItem(type_text)
-            type_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        # Q factor \u2014 same cell/tooltip swap as gain
+        q_clamped = False
+        if is_clamped and clamping_map is not None:
+            reasons = clamping_map[band_number]
+            q_clamped = any("q" in r.lower() for r in reasons)
+        display_q = max(Q_MIN, min(Q_MAX, filt.q)) if q_clamped else filt.q
+        q_text = f"{display_q:.2f}"
+        if q_clamped:
+            q_text = f"\u25cf {q_text}"  # Orange dot prefix
+        q_item = QTableWidgetItem(q_text)
+        q_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        if q_clamped and clamping_map is not None:
+            q_reasons = [r for r in clamping_map[band_number] if "q" in r.lower()]
+            q_item.setToolTip(
+                f"Original: {filt.q:.2f}. Clamped: " + "; ".join(q_reasons)
             )
-            table.setItem(row, 1, type_item)
+            q_item.setForeground(self._warning_color())
+        table.setItem(row, 4, q_item)
 
-            # Frequency
-            freq_text = self._format_frequency(filt.frequency_hz)
-            freq_item = QTableWidgetItem(freq_text)
-            freq_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            table.setItem(row, 2, freq_item)
+        # Disabled/OFF bands at reduced opacity
+        if is_disabled:
+            self._apply_disabled_style(table, row)
 
-            # Gain
-            gain_text = self._format_gain(filt.gain_db)
-            gain_clamped = False
-            if is_clamped and clamping_map is not None:
-                reasons = clamping_map[row]
-                gain_clamped = any("gain" in r.lower() for r in reasons)
-            if gain_clamped:
-                gain_text = f"\u25cf {gain_text}"  # Orange dot prefix
-            gain_item = QTableWidgetItem(gain_text)
-            gain_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            if gain_clamped and clamping_map is not None:
-                gain_reasons = [r for r in clamping_map[row] if "gain" in r.lower()]
-                gain_item.setToolTip("Clamped: " + "; ".join(gain_reasons))
-                gain_item.setForeground(self._warning_color())
-            table.setItem(row, 3, gain_item)
+    def _populate_skipped_row(
+        self, table: QTableWidget, row: int, skipped: SkippedBand
+    ) -> None:
+        """Fill one row for a band with no WiiM translation, or cut for the band cap.
 
-            # Q factor
-            q_text = f"{filt.q:.2f}"
-            q_clamped = False
-            if is_clamped and clamping_map is not None:
-                reasons = clamping_map[row]
-                q_clamped = any("q" in r.lower() for r in reasons)
-            if q_clamped:
-                q_text = f"\u25cf {q_text}"  # Orange dot prefix
-            q_item = QTableWidgetItem(q_text)
-            q_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            if q_clamped and clamping_map is not None:
-                q_reasons = [r for r in clamping_map[row] if "q" in r.lower()]
-                q_item.setToolTip("Clamped: " + "; ".join(q_reasons))
-                q_item.setForeground(self._warning_color())
-            table.setItem(row, 4, q_item)
+        Rendered unnumbered ("N/A"), crossed-out and dimmed, with the reason
+        shown on hover.
+        """
+        band_item = QTableWidgetItem(_NA_LABEL)
+        band_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.setItem(row, 0, band_item)
 
-            # Disabled/OFF bands at reduced opacity
-            if is_disabled:
-                self._apply_disabled_style(table, row)
+        type_item = QTableWidgetItem(skipped.original_type)
+        type_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.setItem(row, 1, type_item)
+
+        freq_text = (
+            self._format_frequency(skipped.frequency_hz)
+            if skipped.frequency_hz is not None
+            else "\u2014"
+        )
+        freq_item = QTableWidgetItem(freq_text)
+        freq_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.setItem(row, 2, freq_item)
+
+        gain_text = (
+            self._format_gain(skipped.gain_db) if skipped.gain_db is not None else "\u2014"
+        )
+        gain_item = QTableWidgetItem(gain_text)
+        gain_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.setItem(row, 3, gain_item)
+
+        q_text = f"{skipped.q:.2f}" if skipped.q is not None else "\u2014"
+        q_item = QTableWidgetItem(q_text)
+        q_item.setTextAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        table.setItem(row, 4, q_item)
+
+        self._apply_skipped_style(table, row, skipped.reason)
 
     def _populate_comparison(
         self,
@@ -375,6 +469,20 @@ class FilterTable(QWidget):
                 color = item.foreground().color()
                 color.setAlphaF(_DISABLED_OPACITY)
                 item.setForeground(color)
+
+    def _apply_skipped_style(self, table: QTableWidget, row: int, reason: str) -> None:
+        """Apply crossed-out, dimmed styling and a reason tooltip to a skipped row."""
+        for col in range(table.columnCount()):
+            item = table.item(row, col)
+            if item is None:
+                continue
+            font = item.font()
+            font.setStrikeOut(True)
+            item.setFont(font)
+            color = item.foreground().color()
+            color.setAlphaF(_SKIPPED_OPACITY)
+            item.setForeground(color)
+            item.setToolTip(reason)
 
     def _apply_highlight_style(self, table: QTableWidget, row: int) -> None:
         """Apply accent background to a changed row in comparison mode."""

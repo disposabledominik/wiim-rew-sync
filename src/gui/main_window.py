@@ -1374,8 +1374,17 @@ class MainWindow(QMainWindow):
         """
         from src.gui.shared_helpers import validate_filters_for_device
 
-        filters = self._wizard_controller.state.current_filters
+        state = self._wizard_controller.state
+        filters = state.current_filters
         count = len(filters)
+
+        if count == 0:
+            # No filters at all — nothing to show, so any pending skip rows
+            # from this attempt are moot. Reset so they don't leak into a
+            # later unrelated flow.
+            state.pending_rows = []
+            state.pending_rows_l = []
+            state.pending_rows_r = []
 
         if count > 0:
             # Determine device max_filters
@@ -1384,7 +1393,6 @@ class MainWindow(QMainWindow):
                 max_filters = getattr(self._device_caps, "max_filters", 10) or 10
 
             # Populate ReviewPage — branch on channel mode (smoke #28)
-            state = self._wizard_controller.state
             channel = state.channel_mode
 
             # Check if peq_data carries explicit L/R bands
@@ -1403,12 +1411,14 @@ class MainWindow(QMainWindow):
                 channel = ChannelMode.LR
 
                 # Validate each channel independently
-                validated_l, warnings_l, clamping_l = validate_filters_for_device(
-                    list(bands_l), max_filters
+                validated_l, warnings_l, clamping_l, rows_l = validate_filters_for_device(
+                    list(bands_l), max_filters, state.pending_rows_l or None
                 )
-                validated_r, warnings_r, clamping_r = validate_filters_for_device(
-                    list(bands_r), max_filters
+                validated_r, warnings_r, clamping_r, rows_r = validate_filters_for_device(
+                    list(bands_r), max_filters, state.pending_rows_r or None
                 )
+                state.pending_rows_l = []
+                state.pending_rows_r = []
 
                 # Merge warnings
                 all_warnings = warnings_l + warnings_r
@@ -1419,7 +1429,7 @@ class MainWindow(QMainWindow):
                 state.filters_r = validated_r
 
                 self._review_page.set_lr_filters(
-                    validated_l, validated_r, clamping_l, clamping_r
+                    validated_l, validated_r, clamping_l, clamping_r, rows_l, rows_r
                 )
             elif channel.is_lr:
                 # Every producer of peq_ready in L/R mode (file_import_lr,
@@ -1436,14 +1446,17 @@ class MainWindow(QMainWindow):
                 self._status_banner.show_error(
                     "Could not determine L/R channel data for this source"
                 )
+                state.pending_rows_l = []
+                state.pending_rows_r = []
                 return
             else:
                 # Stereo: validate the full list
-                validated, all_warnings, clamping_map = validate_filters_for_device(
-                    filters, max_filters
+                validated, all_warnings, clamping_map, rows = validate_filters_for_device(
+                    filters, max_filters, state.pending_rows or None
                 )
+                state.pending_rows = []
                 state.current_filters = validated
-                self._review_page.set_filters(validated, clamping_map)
+                self._review_page.set_filters(validated, clamping_map, rows)
 
             # Set summary info
             device_ip = state.selected_device or "Unknown"
@@ -1926,7 +1939,7 @@ class MainWindow(QMainWindow):
     async def _do_file_import(self, path: str) -> None:
         """Parse a REW EQ text file and populate filters.
 
-        Calls REWParser.parse_file_with_warnings() for full result including
+        Calls REWParser.parse_file_with_rows() for full result including
         skipped bands. Stores filters in wizard state, shows warnings if any.
 
         Args:
@@ -1936,11 +1949,12 @@ class MainWindow(QMainWindow):
 
         file_path = Path(path)
         parser = REWParser()
-        filters, warnings = parser.parse_file_with_warnings(file_path)
+        filters, warnings, rows = parser.parse_file_with_rows(file_path)
 
         # Store in wizard state — explicitly set Stereo channel mode (smoke #72)
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.channel_mode = ChannelMode.STEREO
+        self._wizard_controller.state.pending_rows = rows
 
         # Notify FiltersPage of success via peq_ready signal
         self._bridge.peq_ready.emit(filters)
@@ -1965,13 +1979,15 @@ class MainWindow(QMainWindow):
         from src.translator.rew_parser import REWParser
 
         parser = REWParser()
-        filters_l, warnings_l = parser.parse_file_with_warnings(Path(path_l))
-        filters_r, warnings_r = parser.parse_file_with_warnings(Path(path_r))
+        filters_l, warnings_l, rows_l = parser.parse_file_with_rows(Path(path_l))
+        filters_r, warnings_r, rows_r = parser.parse_file_with_rows(Path(path_r))
 
         # Combine L+R into flat list and set L/R channel mode
         filters = filters_l + filters_r
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.channel_mode = ChannelMode.LR
+        self._wizard_controller.state.pending_rows_l = rows_l
+        self._wizard_controller.state.pending_rows_r = rows_r
 
         # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
         peq_data = PEQSettings(
@@ -2404,11 +2420,12 @@ class MainWindow(QMainWindow):
         Args:
             uuid: The measurement UUID selected by the user.
         """
-        filters = await self._rew_client.get_filters(uuid)
+        filters, rows = await self._rew_client.get_filters_with_rows(uuid)
 
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.channel_mode = ChannelMode.STEREO
+        self._wizard_controller.state.pending_rows = rows
 
         # Emit result signal
         self._bridge.rew_filters_ready.emit(filters)
@@ -2423,13 +2440,15 @@ class MainWindow(QMainWindow):
             uuid_l: UUID of the Left channel measurement.
             uuid_r: UUID of the Right channel measurement.
         """
-        filters_l = await self._rew_client.get_filters(uuid_l)
-        filters_r = await self._rew_client.get_filters(uuid_r)
+        filters_l, rows_l = await self._rew_client.get_filters_with_rows(uuid_l)
+        filters_r, rows_r = await self._rew_client.get_filters_with_rows(uuid_r)
 
         # Combine L+R into flat list and set L/R channel mode
         filters = filters_l + filters_r
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.channel_mode = ChannelMode.LR
+        self._wizard_controller.state.pending_rows_l = rows_l
+        self._wizard_controller.state.pending_rows_r = rows_r
 
         # Emit peq_ready with a PEQSettings carrying L/R bands
         peq_data = PEQSettings(

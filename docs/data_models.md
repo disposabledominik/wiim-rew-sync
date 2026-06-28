@@ -33,6 +33,24 @@ All formats must convert through this model. No direct REW-to-WiiM or WiiM-to-RE
 
 When importing from REW, gain/Q values outside WiiM's hardware limits must be flagged with a validation warning. The Translation Engine will clip values to WiiM limits before writing.
 
+### Unsupported REW filter types
+
+REW filter types with no WiiM translation (`Modal`, `All pass`, `L-T`, `Notch`/`Notch Q`, `LP1`/`HP1`,
+`LS 6dB`/`HS 6dB`) are skipped during import, in both the text-file and live REW-API parsing paths
+(`REWParser.parse_file_with_rows` / `parse_filter_settings_with_rows` in `src/translator/rew_parser.py`).
+`Notch`/`Notch Q` are skipped rather than approximated as `PEAK` because REW notches imply >60 dB of
+attenuation, which exceeds WiiM's -12 dB gain floor and can't be faithfully reproduced (see
+`docs/corrections.md`, 2026-06-28).
+
+Skipped bands are not silently dropped from the Review table — the `*_with_rows` parser methods return
+a `FilterRow` list (`CanonicalFilter | SkippedBand`, defined in `src/translator/_warnings.py`) that
+preserves each skipped band's original position, alongside the plain `list[CanonicalFilter]` used for
+writes. `SkippedBand` carries the original REW type token and the skip reason; the Review table renders
+it as an unnumbered ("N/A"), crossed-out, dimmed row with the reason on hover. Bands cut for exceeding
+the device's band cap (`validate_filters_for_device` in `src/gui/shared_helpers.py`) are represented the
+same way, but keep their original frequency/gain/Q for display since — unlike a type-level skip — the
+band itself was valid, just over the limit.
+
 ---
 
 ## Device Capabilities Model

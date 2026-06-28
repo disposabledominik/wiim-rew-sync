@@ -21,6 +21,7 @@ from src.gui.components.step_indicator import StepIndicator
 from src.gui.constants import SIDEBAR_COLLAPSED, SIDEBAR_EXPANDED
 from src.gui.pages.push_page import PushPage
 from src.models.canonical import CanonicalFilter
+from src.translator._warnings import FilterRow, SkippedBand
 
 # ---------------------------------------------------------------------------
 # TestStatusBanner
@@ -462,7 +463,7 @@ class TestFilterTable:
         assert gain_item is not None
         # Should start with the orange dot character
         assert gain_item.text().startswith("\u25cf")
-        assert gain_item.toolTip() == "Clamped: gain exceeds +6 dB limit"
+        assert gain_item.toolTip() == "Original: +3.5 dB. Clamped: gain exceeds +6 dB limit"
 
     def test_disabled_band_opacity(self, qtbot) -> None:
         """OFF bands have reduced opacity applied to their items."""
@@ -555,6 +556,71 @@ class TestFilterTable:
 
         assert dark_color.name() == "#ffa726"
         assert light_color.name() == "#f57c00"
+
+    def test_skipped_band_renders_as_na_crossed_out(self, qtbot) -> None:
+        """A SkippedBand row shows 'N/A', strikethrough, and a reason tooltip."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)]
+        rows: list[FilterRow] = [
+            SkippedBand(original_type="Notch", reason="No WiiM equivalent for Notch"),
+            filters[0],
+        ]
+        table.set_filters(filters, rows=rows)
+
+        assert table._table is not None
+        skipped_band_item = table._table.item(0, 0)
+        assert skipped_band_item is not None
+        assert skipped_band_item.text() == "N/A"
+        skipped_type_item = table._table.item(0, 1)
+        assert skipped_type_item is not None
+        assert skipped_type_item.text() == "Notch"
+        assert skipped_type_item.font().strikeOut()
+        assert skipped_type_item.toolTip() == "No WiiM equivalent for Notch"
+        assert skipped_type_item.foreground().color().alphaF() < 1.0
+
+        # The valid filter after it still gets sequential band number 1
+        valid_band_item = table._table.item(1, 0)
+        assert valid_band_item is not None
+        assert valid_band_item.text() == "1"
+
+    def test_skipped_band_with_preserved_values_shows_them(self, qtbot) -> None:
+        """A truncated SkippedBand (over the band cap) still shows its freq/gain/Q."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        rows: list[FilterRow] = [
+            SkippedBand(
+                original_type="PEAK",
+                reason="Exceeds device's 10-band limit",
+                frequency_hz=500.0,
+                gain_db=2.0,
+                q=1.0,
+            )
+        ]
+        table.set_filters([], rows=rows)
+
+        assert table._table is not None
+        assert table._table.item(0, 2) is not None
+        assert table._table.item(0, 2).text() == "500 Hz"  # type: ignore[union-attr]
+        assert table._table.item(0, 3).text() == "+2.0 dB"  # type: ignore[union-attr]
+        assert table._table.item(0, 4).text() == "1.00"  # type: ignore[union-attr]
+
+    def test_clamped_cell_shows_final_value_not_original(self, qtbot) -> None:
+        """The gain/Q cell shows the value that will be written, not the raw import."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=15.0, q=1.0)]
+        clamping_map = {0: ["gain +15.0 dB will be clamped to +12.0 dB"]}
+        table.set_filters(filters, clamping_map=clamping_map)
+
+        assert table._table is not None
+        gain_item = table._table.item(0, 3)
+        assert gain_item is not None
+        assert gain_item.text() == "● +12.0 dB"
+        assert "Original: +15.0 dB" in gain_item.toolTip()
 
 
 # ---------------------------------------------------------------------------

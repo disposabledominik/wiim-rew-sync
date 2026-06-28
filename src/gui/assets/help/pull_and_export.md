@@ -32,9 +32,13 @@ while its list has focus to jump straight to it.
 The app imports standard parametric EQ filters from REW:
 - PK (Peak), LS (Low Shelf), HS (High Shelf), LP (Low Pass), HP (High Pass)
 - Shelf and pass-filter variants (12dB, 6dB, Q) are mapped to their base types
-- Notch filters are imported as Peak with appropriate parameters
-- Unsupported types (Modal, All Pass, Linkwitz Transform) are skipped with a
-  note in the log
+- Unsupported types (Notch, Modal, All Pass, Linkwitz Transform) have no WiiM
+  equivalent and are skipped. Notch is skipped rather than approximated as
+  Peak because REW notches imply attenuation deeper than WiiM's -12 dB floor
+  can reproduce.
+- Skipped bands still show up in the Review step as a crossed-out, unnumbered
+  ("N/A") row — hover it to see why it was skipped. Bands cut for exceeding
+  the device's band limit are shown the same way.
 
 If REW is not running or the API is not enabled, you'll see:
 "REW is not connected. Please ensure REW is running and its HTTP API is

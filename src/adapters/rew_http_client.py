@@ -21,6 +21,7 @@ import httpx
 
 from src.models.canonical import CanonicalFilter
 from src.models.errors import REWMeasurementNotFoundError, REWNotConnectedError
+from src.translator._warnings import FilterRow
 from src.translator.rew_parser import REWParser
 
 logger = logging.getLogger("wiim_rew_sync.rew_api")
@@ -159,6 +160,30 @@ class REWHttpApiClient:
             REWNotConnectedError: REW is not running or API is not enabled.
             REWMeasurementNotFoundError: The measurement UUID was not found.
         """
+        data = await self._fetch_filter_settings(uuid)
+        return self._parser.parse_filter_settings(data)
+
+    async def get_filters_with_rows(
+        self, uuid: str
+    ) -> tuple[list[CanonicalFilter], list[FilterRow]]:
+        """Fetch filters for a measurement, also returning display rows.
+
+        Same as get_filters(), but also returns `rows`: the filters in
+        original order with SkippedBand placeholders for any filter type
+        REW reports that has no WiiM translation (e.g. Notch).
+
+        Args:
+            uuid: The measurement UUID.
+
+        Raises:
+            REWNotConnectedError: REW is not running or API is not enabled.
+            REWMeasurementNotFoundError: The measurement UUID was not found.
+        """
+        data = await self._fetch_filter_settings(uuid)
+        return self._parser.parse_filter_settings_with_rows(data)
+
+    async def _fetch_filter_settings(self, uuid: str) -> list[dict[str, object]]:
+        """GET and JSON-decode the raw FilterSetting list for a measurement."""
         url = f"{self._base_url}/measurements/{uuid}/filters"
         logger.debug("REQ  -> GET %s", url)
 
@@ -187,14 +212,13 @@ class REWHttpApiClient:
             )
 
         try:
-            data = response.json()
+            return response.json()  # type: ignore[no-any-return]
         except ValueError as exc:
             raise REWNotConnectedError(
                 f"REW API returned a non-JSON response for {url}. Please "
                 f"ensure REW is running and its HTTP API is enabled "
                 f"(localhost:4735)."
             ) from exc
-        return self._parser.parse_filter_settings(data)
 
     async def close(self) -> None:
         """Close the underlying httpx.AsyncClient."""

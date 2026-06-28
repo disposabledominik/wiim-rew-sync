@@ -89,8 +89,8 @@ class TestFileImportHappyPath:
         filters = [_make_filter(100.0), _make_filter(200.0)]
 
         with patch(
-            "src.translator.rew_parser.REWParser.parse_file_with_warnings",
-            return_value=(filters, []),
+            "src.translator.rew_parser.REWParser.parse_file_with_rows",
+            return_value=(filters, [], list(filters)),
         ):
             await window._do_file_import("/fake/path/eq.txt")
 
@@ -117,8 +117,8 @@ class TestFileImportHappyPath:
         ]
 
         with patch(
-            "src.translator.rew_parser.REWParser.parse_file_with_warnings",
-            return_value=(filters, warnings),
+            "src.translator.rew_parser.REWParser.parse_file_with_rows",
+            return_value=(filters, warnings, list(filters)),
         ):
             await window._do_file_import("/fake/path/eq.txt")
 
@@ -144,7 +144,7 @@ class TestFileImportErrors:
         Requirement: 3.4
         """
         with patch(
-            "src.translator.rew_parser.REWParser.parse_file_with_warnings",
+            "src.translator.rew_parser.REWParser.parse_file_with_rows",
             side_effect=FileNotFoundError("No such file"),
         ):
             # Call the wrapper which catches exceptions
@@ -164,7 +164,7 @@ class TestFileImportErrors:
         Requirement: 3.6
         """
         with patch(
-            "src.translator.rew_parser.REWParser.parse_file_with_warnings",
+            "src.translator.rew_parser.REWParser.parse_file_with_rows",
             side_effect=ParseError(
                 "Expected 'Equaliser:' header", line_number=1
             ),

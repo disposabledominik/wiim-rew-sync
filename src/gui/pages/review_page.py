@@ -27,6 +27,7 @@ from src.gui.constants import (
 )
 from src.gui.style_utils import set_qss_property
 from src.models.canonical import CanonicalFilter
+from src.translator._warnings import FilterRow
 
 
 class ReviewPage(QWidget):
@@ -63,14 +64,17 @@ class ReviewPage(QWidget):
         self,
         filters: list[CanonicalFilter],
         clamping_map: dict[int, list[str]] | None = None,
+        rows: list[FilterRow] | None = None,
     ) -> None:
         """Pass filters through to the FilterTable.
 
         Args:
             filters: List of CanonicalFilter instances.
             clamping_map: Optional mapping of band index to clamping reasons.
+            rows: Optional display rows in original order, interleaving
+                skipped/truncated band placeholders (see FilterTable.set_filters).
         """
-        self._filter_table.set_filters(filters, clamping_map)
+        self._filter_table.set_filters(filters, clamping_map, rows)
 
     def set_lr_filters(
         self,
@@ -78,6 +82,8 @@ class ReviewPage(QWidget):
         right: list[CanonicalFilter],
         clamping_map_l: dict[int, list[str]] | None = None,
         clamping_map_r: dict[int, list[str]] | None = None,
+        rows_l: list[FilterRow] | None = None,
+        rows_r: list[FilterRow] | None = None,
     ) -> None:
         """Pass L/R filters through to the FilterTable.
 
@@ -86,8 +92,12 @@ class ReviewPage(QWidget):
             right: Filters for the right channel.
             clamping_map_l: Optional clamping map for the left channel.
             clamping_map_r: Optional clamping map for the right channel.
+            rows_l: Optional display rows for the left channel.
+            rows_r: Optional display rows for the right channel.
         """
-        self._filter_table.set_lr_filters(left, right, clamping_map_l, clamping_map_r)
+        self._filter_table.set_lr_filters(
+            left, right, clamping_map_l, clamping_map_r, rows_l, rows_r
+        )
 
     def set_summary(
         self,

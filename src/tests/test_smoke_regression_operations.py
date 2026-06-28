@@ -283,9 +283,11 @@ class TestImportExport:
 
         with patch.object(window._review_page, "set_lr_filters") as mock_lr:
             window._on_peq_ready(peq_data)
-            # validate_filters_for_device returns (filters, warnings, clamping_map)
-            # For in-range filters, clamping_map is empty dict {}
-            mock_lr.assert_called_once_with(list(filters_l), list(filters_r), {}, {})
+            # validate_filters_for_device returns (filters, warnings, clamping_map, rows)
+            # For in-range filters, clamping_map is empty dict {} and rows == filters
+            mock_lr.assert_called_once_with(
+                list(filters_l), list(filters_r), {}, {}, list(filters_l), list(filters_r)
+            )
 
     # --- Issue #29: Export branches on channel_mode for L/R ---
 
@@ -1368,7 +1370,7 @@ class TestSharedHelpers:
         assert state.filters_l == filters_l
         assert state.filters_r == filters_r
         assert state.current_filters == filters_l + filters_r
-        mock_lr.assert_called_once_with(filters_l, filters_r, {}, {})
+        mock_lr.assert_called_once_with(filters_l, filters_r, {}, {}, filters_l, filters_r)
 
     def test_build_peq_settings_lr_without_explicit_filters_raises(self) -> None:
         """L/R mode without filters_l/filters_r must raise, never guess a split."""

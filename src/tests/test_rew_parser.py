@@ -618,6 +618,31 @@ class TestUnsupportedFilterTypes:
         assert len(filters) == 1
         assert len(warnings) == 2
 
+    def test_parse_file_with_rows_interleaves_skip_at_original_position(
+        self, parser: REWParser, tmp_path: Path
+    ) -> None:
+        """parse_file_with_rows keeps a skipped band at its original slot."""
+        from src.translator._warnings import SkippedBand
+
+        content = (
+            "Equaliser: Generic\n"
+            "Filter  1: ON  PK       Fc   50.00 Hz  Gain  -5.0 dB  Q  3.000\n"
+            "Filter  2: ON  Modal    Fc  160.00 Hz  Gain  -1.0 dB  Q   0.71\n"
+            "Filter  3: ON  PK       Fc  100.00 Hz  Gain  -1.00 dB  Q  1.000\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters, warnings, rows = parser.parse_file_with_rows(file)
+
+        assert len(filters) == 2
+        assert len(warnings) == 1
+        assert len(rows) == 3
+        assert rows[0] is filters[0]
+        assert isinstance(rows[1], SkippedBand)
+        assert rows[1].original_type == "Modal"
+        assert rows[2] is filters[1]
+
 
 # ---------------------------------------------------------------------------
 # Error: wrong/missing header
@@ -892,6 +917,41 @@ class TestParseFilterSettings:
         # 'None' is in _SKIP_TYPES, so it should be skipped.
         assert len(filters) == 1
         assert filters[0].type == "PEAK"
+
+    def test_notch_skipped_not_converted_to_peak(self, parser: REWParser) -> None:
+        """Notch implies >60 dB attenuation, which WiiM can't reproduce (-12 dB cap).
+
+        Must be skipped here exactly like the text-file import path, not
+        silently auto-converted to PEAK.
+        """
+        settings = [
+            {"enabled": True, "type": "Notch", "frequency": 60.0, "gain": -60.0, "q": 10.0},
+            {"enabled": True, "type": "PK", "frequency": 300.0, "gaindB": -3.0, "q": 1.41},
+        ]
+
+        filters = parser.parse_filter_settings(settings)
+
+        assert len(filters) == 1
+        assert filters[0].type == "PEAK"
+
+    def test_parse_filter_settings_with_rows_marks_unsupported(
+        self, parser: REWParser
+    ) -> None:
+        """parse_filter_settings_with_rows surfaces a SkippedBand for Notch."""
+        from src.translator._warnings import SkippedBand
+
+        settings = [
+            {"enabled": True, "type": "Notch", "frequency": 60.0, "gain": -60.0, "q": 10.0},
+            {"enabled": True, "type": "PK", "frequency": 300.0, "gaindB": -3.0, "q": 1.41},
+        ]
+
+        filters, rows = parser.parse_filter_settings_with_rows(settings)
+
+        assert len(filters) == 1
+        assert len(rows) == 2
+        assert isinstance(rows[0], SkippedBand)
+        assert rows[0].original_type == "Notch"
+        assert rows[1] is filters[0]
 
 
 

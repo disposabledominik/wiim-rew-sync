@@ -14,6 +14,7 @@ from src.models.channel_mode import ChannelMode
 from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.models.peq import PEQSettings
 from src.models.profile import Profile
+from src.translator._warnings import FilterRow, SkippedBand
 
 
 def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], ChannelMode]:
@@ -212,7 +213,8 @@ _Q_MAX = Q_MAX
 def validate_filters_for_device(
     filters: list[CanonicalFilter],
     max_filters: int = 10,
-) -> tuple[list[CanonicalFilter], list[str], dict[int, list[str]]]:
+    rows: list[FilterRow] | None = None,
+) -> tuple[list[CanonicalFilter], list[str], dict[int, list[str]], list[FilterRow]]:
     """Validate and prepare filters for a WiiM device.
 
     Checks for:
@@ -226,6 +228,10 @@ def validate_filters_for_device(
     Args:
         filters: List of CanonicalFilter objects from import.
         max_filters: Device's maximum supported bands (default 10).
+        rows: Optional display rows in original order (from REWParser's
+            *_with_rows methods), used to mark truncated-away bands as
+            disabled placeholders instead of dropping them silently. When
+            omitted, defaults to `filters` itself (no prior skips to preserve).
 
     Returns:
         Tuple of:
@@ -233,17 +239,44 @@ def validate_filters_for_device(
         - warnings: list of human-readable warning strings for the UI
         - clamping_map: dict mapping band index (0-based) to list of
           clamping reasons (for ReviewPage orange indicators)
+        - rows: display rows with any truncated-away bands converted to
+          SkippedBand placeholders, in original order
     """
+    if rows is None:
+        rows = list(filters)
+
     warnings: list[str] = []
     clamping_map: dict[int, list[str]] = {}
 
     # Truncation check
     if len(filters) > max_filters:
+        excess_count = len(filters) - max_filters
         warnings.append(
             f"Imported {len(filters)} filters but device supports {max_filters}. "
             f"Only the first {max_filters} will be used."
         )
         filters = filters[:max_filters]
+
+        # Mark the trailing excess CanonicalFilter rows as truncated
+        # placeholders, preserving their original position among any
+        # earlier skip placeholders already present.
+        remaining = excess_count
+        new_rows: list[FilterRow] = []
+        for row in reversed(rows):
+            if remaining > 0 and isinstance(row, CanonicalFilter):
+                new_rows.append(
+                    SkippedBand(
+                        original_type=row.type,
+                        reason=f"Exceeds device's {max_filters}-band limit",
+                        frequency_hz=row.frequency_hz,
+                        gain_db=row.gain_db,
+                        q=row.q,
+                    )
+                )
+                remaining -= 1
+            else:
+                new_rows.append(row)
+        rows = list(reversed(new_rows))
 
     # Gain/Q clamping check (per band)
     for i, f in enumerate(filters):
@@ -273,4 +306,4 @@ def validate_filters_for_device(
             f"{n_clamped} band(s) have values outside WiiM limits and will be clamped on push."
         )
 
-    return filters, warnings, clamping_map
+    return filters, warnings, clamping_map, rows

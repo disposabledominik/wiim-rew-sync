@@ -13,7 +13,7 @@ from pathlib import Path
 
 from src.models.canonical import CanonicalFilter
 from src.models.errors import ParseError, ValidationError
-from src.translator._warnings import ValidationWarning
+from src.translator._warnings import FilterRow, SkippedBand, ValidationWarning
 
 logger = logging.getLogger("wiim_rew_sync.rew_api")
 
@@ -117,9 +117,6 @@ _TYPE_MAP: dict[str, str] = {
     "HP1": "HP",
     "LP Q": "LP",
     "HP Q": "HP",
-    # Notch -> PEAK equivalent
-    "Notch": "PEAK",
-    "Notch Q": "PEAK",
 }
 
 # Filter types that should be skipped (not translatable to WiiM PEQ)
@@ -128,6 +125,8 @@ _SKIP_TYPES: set[str] = {
     "Modal",      # Modal decay target
     "All pass",   # Phase-only filter
     "L-T",        # Linkwitz Transform
+    "Notch",      # REW notch implies >60 dB attenuation; WiiM caps gain at -12 dB
+    "Notch Q",    # Same as above, explicit-Q variant
 }
 
 
@@ -170,9 +169,11 @@ def _is_unsupported_filter(body: str) -> str | None:
     Uses _SKIP_TYPES for known skip types, plus regex for text-format variants.
     """
     # Check explicit skip types by prefix (exclude "None" — handled by _NONE_RE,
-    # and "All pass" — handled by regex below for hyphenated return value)
+    # "All pass" — handled by regex below for hyphenated return value, and
+    # "Notch"/"Notch Q" — handled by regex below so the more specific
+    # "Notch Q" label isn't shadowed by a "Notch" prefix match)
     for utype in _SKIP_TYPES:
-        if utype in ("None", "All pass"):
+        if utype in ("None", "All pass", "Notch", "Notch Q"):
             continue
         if body.startswith(utype):
             return utype
@@ -185,12 +186,14 @@ def _is_unsupported_filter(body: str) -> str | None:
     if hs_6db:
         return "HS 6dB"
 
-    # Check "Notch Q" variant (multi-word before single "Notch" check)
+    # Check "Notch Q" variant (multi-word before single "Notch" check) — REW
+    # notches imply >60 dB attenuation, which WiiM cannot reproduce (gain
+    # capped at -12 dB), so both variants are always unsupported.
     notch_q = re.match(r"^Notch\s+Q\b", body)
     if notch_q:
         return "Notch Q"
 
-    # Check single "Notch" (now in _TYPE_MAP but unsupported in text file context)
+    # Check single "Notch"
     notch = re.match(r"^Notch\b", body)
     if notch:
         return "Notch"
@@ -444,6 +447,28 @@ class REWParser:
         Returns:
             Tuple of (filters, warnings).
         """
+        filters, warnings, _rows = self._parse_file_full(path)
+        return filters, warnings
+
+    def parse_file_with_rows(
+        self, path: Path
+    ) -> tuple[list[CanonicalFilter], list[ValidationWarning], list[FilterRow]]:
+        """Parse a REW EQ text file, also returning display rows in original order.
+
+        Raises ParseError on malformed lines (with line number in message).
+        Raises ValidationError for out-of-range frequency.
+
+        Returns:
+            Tuple of (filters, warnings, rows). `rows` preserves the original
+            band order, interleaving SkippedBand placeholders for unsupported
+            types at the position they occupied in the source file.
+        """
+        return self._parse_file_full(path)
+
+    def _parse_file_full(
+        self, path: Path
+    ) -> tuple[list[CanonicalFilter], list[ValidationWarning], list[FilterRow]]:
+        """Shared implementation backing parse_file_with_warnings/_rows."""
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines()
 
@@ -470,6 +495,7 @@ class REWParser:
         # Parse filter lines after the equaliser header
         filters: list[CanonicalFilter] = []
         warnings: list[ValidationWarning] = []
+        rows: list[FilterRow] = []
         seen_filter_numbers: set[int] = set()
 
         for line_idx in range(equaliser_line_idx + 1, len(lines)):
@@ -501,6 +527,12 @@ class REWParser:
 
             if warning is not None:
                 warnings.append(warning)
+                rows.append(
+                    SkippedBand(
+                        original_type=str(warning.original_value),
+                        reason=warning.message,
+                    )
+                )
                 continue  # Skip unsupported filter types
 
             if result is None:  # pragma: no cover
@@ -516,8 +548,9 @@ class REWParser:
                 )
 
             filters.append(result)
+            rows.append(result)
 
-        return (filters, warnings)
+        return (filters, warnings, rows)
 
     def parse_filter_settings(
         self, filter_settings: list[dict[str, object]]
@@ -527,10 +560,24 @@ class REWParser:
         Each FilterSetting has: enabled (bool), type (str), frequency (float),
         gaindB (float), q (float). Some filters have no frequency/gain (e.g. None type).
 
-        Unsupported filter types (Modal, All pass, L-T, None) are skipped
+        Unsupported filter types (Modal, All pass, L-T, Notch, None) are skipped
         with a logged warning rather than raising a hard error.
         """
+        filters, _rows = self.parse_filter_settings_with_rows(filter_settings)
+        return filters
+
+    def parse_filter_settings_with_rows(
+        self, filter_settings: list[dict[str, object]]
+    ) -> tuple[list[CanonicalFilter], list[FilterRow]]:
+        """Parse REW HTTP API FilterSetting objects, also returning display rows.
+
+        Returns:
+            Tuple of (filters, rows). `rows` preserves the original band order,
+            interleaving SkippedBand placeholders for unsupported types. "None"
+            (empty) slots are omitted from both, matching parse_filter_settings.
+        """
         filters: list[CanonicalFilter] = []
+        rows: list[FilterRow] = []
 
         for i, setting in enumerate(filter_settings):
             enabled = setting.get("enabled", setting.get("on", True))
@@ -538,6 +585,16 @@ class REWParser:
 
             canonical_type = _classify_filter_type(type_token, i + 1)
             if canonical_type is None:
+                if type_token != "None":  # noqa: S105 -- REW's "None" filter slot, not a secret
+                    rows.append(
+                        SkippedBand(
+                            original_type=type_token,
+                            reason=(
+                                f"Unsupported filter type '{type_token}' - "
+                                "no WiiM equivalent"
+                            ),
+                        )
+                    )
                 continue
 
             # Parse numeric fields (REW uses "gaindB" or "gain", "frequency" or "freq")
@@ -555,13 +612,13 @@ class REWParser:
             if not enabled:
                 canonical_type = "OFF"
 
-            filters.append(
-                CanonicalFilter(
-                    type=canonical_type,  # type: ignore[arg-type]
-                    frequency_hz=freq,
-                    gain_db=gain,
-                    q=q,
-                )
+            result = CanonicalFilter(
+                type=canonical_type,  # type: ignore[arg-type]
+                frequency_hz=freq,
+                gain_db=gain,
+                q=q,
             )
+            filters.append(result)
+            rows.append(result)
 
-        return filters
+        return filters, rows
