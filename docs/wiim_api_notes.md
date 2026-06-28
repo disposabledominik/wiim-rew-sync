@@ -253,11 +253,11 @@ Before issuing any PEQ command, probe for `supports_peq` by attempting `EQGetLV2
 
 ### PEQ Band Model
 
-Each band is identified by a **letter** (`a` through `j` = bands 1–10). Each band has four parameters:
+Each band is identified by a **letter** (`a` through `j` = bands 1–10 standard; `a` through `l` = bands 1–12 on devices/firmware that support 12 bands — see Key distinctions below). Each band has four parameters:
 
 | Parameter | API key | Type | Valid Range |
 |---|---|---|---|
-| Filter mode | `{letter}_mode` | int | `-1`=Off, `0`=Low Shelf, `1`=Peak, `2`=High Shelf |
+| Filter mode | `{letter}_mode` | int | `-1`=Off, `0`=Low Shelf, `1`=Peak, `2`=High Shelf, `3`=Low-Pass, `5`=High-Pass |
 | Frequency | `{letter}_freq` | float | 10 – 22000 Hz |
 | Q factor | `{letter}_q` | float | 0.01 – 24 |
 | Gain | `{letter}_gain` | float | -12 – +12 dB |

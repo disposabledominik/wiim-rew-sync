@@ -28,40 +28,48 @@ def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], C
     return list(peq_settings.bands), ChannelMode.STEREO
 
 
-def split_lr_filters(
-    filters: list[CanonicalFilter],
+def _require_lr_filters(
+    filters_l: list[CanonicalFilter] | None,
+    filters_r: list[CanonicalFilter] | None,
 ) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
-    """Split a combined L+R filter list into (left, right) halves.
+    """Require explicit per-channel filter lists; never guess a split.
 
-    DEPRECATED: Only used as a last-resort fallback when no explicit L/R
-    data is available. Prefer using state.filters_l/filters_r directly.
+    Raises:
+        ValueError: if either filters_l or filters_r is missing. There is
+            no safe way to reconstruct a channel boundary from a combined
+            list — a positional 50/50 split is correct only by coincidence
+            when both channels happen to have equal length, and silently
+            wrong otherwise.
     """
-    mid = len(filters) // 2
-    return filters[:mid], filters[mid:]
+    if filters_l is None or filters_r is None:
+        raise ValueError(
+            "L/R filters missing; refusing to guess channel split"
+        )
+    return filters_l, filters_r
 
 
 def get_lr_filters(
     state: object,
     combined: list[CanonicalFilter],
 ) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
-    """Get L/R filter lists from wizard state, with fallback to naive split.
+    """Get L/R filter lists from wizard state.
 
     Prefers explicit state.filters_l/filters_r (set during validation).
-    Only falls back to 50/50 split when state doesn't have separate lists.
 
     Args:
         state: WizardState object with filters_l/filters_r fields.
-        combined: The combined filter list for fallback splitting.
+        combined: Unused; retained for call-site compatibility.
 
     Returns:
         Tuple of (left_filters, right_filters).
+
+    Raises:
+        ValueError: if state has no filters_l/filters_r set.
     """
-    left = getattr(state, "filters_l", None) or []
-    right = getattr(state, "filters_r", None) or []
-    if left or right:
-        return left, right
-    # Last resort: naive split (only for legacy paths)
-    return split_lr_filters(combined)
+    del combined
+    left = getattr(state, "filters_l", None)
+    right = getattr(state, "filters_r", None)
+    return _require_lr_filters(left, right)
 
 
 def is_lr_mode(channel_mode: str | ChannelMode) -> bool:
@@ -84,9 +92,12 @@ def build_peq_settings(
 ) -> PEQSettings:
     """Construct PEQSettings with correct channel splitting.
 
-    For L/R mode: uses explicit filters_l/filters_r if provided, otherwise
-    splits combined list evenly (fallback for equal-length channels).
+    For L/R mode: requires explicit filters_l/filters_r (raises ValueError
+    if missing — never guesses a channel split).
     For stereo: uses the full list as bands.
+
+    Raises:
+        ValueError: L/R mode without explicit filters_l/filters_r.
     """
     mode = (
         channel_mode
@@ -95,10 +106,7 @@ def build_peq_settings(
     )
 
     if mode.is_lr:
-        if filters_l is not None and filters_r is not None:
-            left, right = filters_l, filters_r
-        else:
-            left, right = split_lr_filters(filters)
+        left, right = _require_lr_filters(filters_l, filters_r)
         return PEQSettings(
             source_name=source_name,
             channel_mode=ChannelMode.LR,
@@ -122,9 +130,12 @@ def build_profile(
     """Sanitize name and construct Profile with correct channel mode.
 
     Removes filesystem-unsafe characters from name.
-    For L/R mode: uses explicit filters_l/filters_r if provided, otherwise
-    splits combined list (fallback for equal-length channels).
+    For L/R mode: requires explicit filters_l/filters_r (raises ValueError
+    if missing — never guesses a channel split).
     For stereo: uses filters directly.
+
+    Raises:
+        ValueError: L/R mode without explicit filters_l/filters_r.
     """
     safe_name = name.translate(str.maketrans("", "", '/\\:*?"<>|'))
     if not safe_name:
@@ -137,10 +148,7 @@ def build_profile(
     )
 
     if mode.is_lr:
-        if filters_l is not None and filters_r is not None:
-            left, right = filters_l, filters_r
-        else:
-            left, right = split_lr_filters(filters)
+        left, right = _require_lr_filters(filters_l, filters_r)
         return Profile(
             name=safe_name,
             channel_mode=ChannelMode.LR,
@@ -154,8 +162,12 @@ def build_profile(
     )
 
 
-def parse_backup_filters(backup_data: dict[str, Any]) -> tuple[list[CanonicalFilter], ChannelMode]:
-    """Parse a backup JSON dict into a filter list and channel_mode.
+def parse_backup_filters(
+    backup_data: dict[str, Any],
+) -> tuple[
+    list[CanonicalFilter], ChannelMode, list[CanonicalFilter] | None, list[CanonicalFilter] | None
+]:
+    """Parse a backup JSON dict into filters, channel_mode, and per-channel lists.
 
     Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
     (MainWindow) to avoid duplicating backup parsing logic.
@@ -164,7 +176,12 @@ def parse_backup_filters(backup_data: dict[str, Any]) -> tuple[list[CanonicalFil
         backup_data: Parsed JSON dict from a backup file.
 
     Returns:
-        Tuple of (filters, channel_mode).
+        Tuple of (combined_filters, channel_mode, filters_l, filters_r).
+        filters_l/filters_r are None for stereo backups. For L/R backups,
+        callers must use filters_l/filters_r directly rather than
+        re-splitting combined_filters (the combined list is positional
+        concatenation and must not be treated as authoritative per-channel
+        data).
     """
     channel_mode_raw = backup_data.get("channel_mode", "stereo")
     mode = ChannelMode.from_profile(str(channel_mode_raw))
@@ -172,13 +189,13 @@ def parse_backup_filters(backup_data: dict[str, Any]) -> tuple[list[CanonicalFil
     if mode.is_lr:
         filters_l_raw = backup_data.get("filters_l", [])
         filters_r_raw = backup_data.get("filters_r", [])
-        filters = [CanonicalFilter(**f) for f in filters_l_raw] + [
-            CanonicalFilter(**f) for f in filters_r_raw
-        ]
-        return filters, ChannelMode.LR
+        filters_l = [CanonicalFilter(**f) for f in filters_l_raw]
+        filters_r = [CanonicalFilter(**f) for f in filters_r_raw]
+        filters = filters_l + filters_r
+        return filters, ChannelMode.LR, filters_l, filters_r
 
     filters_raw = backup_data.get("filters", [])
-    return [CanonicalFilter(**f) for f in filters_raw], ChannelMode.STEREO
+    return [CanonicalFilter(**f) for f in filters_raw], ChannelMode.STEREO, None, None
 
 
 # ---------------------------------------------------------------------------

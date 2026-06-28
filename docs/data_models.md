@@ -110,26 +110,37 @@ directory, an end user) correct or extend behaviour for specific WiiM models wit
 
 ## PEQ Settings Model
 
-Represents the PEQ state for one channel of one source on a device:
+Represents the full PEQ state for one source on a device (`src/models/peq.py`):
 
 ```python
-class PEQSettings:
+class PEQSettings(BaseModel):
     source_name: str        # e.g. "wifi", "bluetooth", "line-in"
-    enabled: bool           # Whether PEQ is active for this source
-    channel_mode: str       # "stereo", "left", or "right"
-    name: str               # Loaded preset name, empty if none
-    bands: list[CanonicalFilter]  # Filters for this channel view
+    enabled: bool = True     # Whether PEQ is active for this source
+    channel_mode: ChannelMode = ChannelMode.STEREO  # STEREO or LR
+    name: str = ""           # Loaded preset name, empty if none
+    bands: list[CanonicalFilter] = []     # Stereo mode: shared filter list
+    bands_l: list[CanonicalFilter] = []   # L/R mode: left-channel filters
+    bands_r: list[CanonicalFilter] = []   # L/R mode: right-channel filters
 ```
+
+A single `PEQSettings` object holds both channels' data when in L/R mode
+(`bands_l`/`bands_r` populated, `bands` left empty) — there are no longer
+two separate per-channel objects.
 
 ### Channel mode mapping (internal ↔ wire)
 
-| Internal `channel_mode` | WiiM API `channelMode` | Bands key(s) used |
-|---|---|---|
-| `"stereo"` | `"Stereo"` | `EQBand` |
-| `"left"` | `"L/R"` | `EQBandL` |
-| `"right"` | `"L/R"` | `EQBandR` |
+`ChannelMode` (`src/models/channel_mode.py`) is the canonical two-value enum
+(`STEREO`/`LR`). It centralizes all string conversions:
 
-The internal model uses a per-channel view: when the device is in `"L/R"` mode, two `PEQSettings` objects are created (one with `channel_mode="left"`, one with `channel_mode="right"`). The WiiM adapter is responsible for mapping between the two-value wire format (`"Stereo"` / `"L/R"`) and the three-value internal representation.
+| `ChannelMode` | WiiM API `channelMode` (`.wire_value`) | Bands key(s) used |
+|---|---|---|
+| `ChannelMode.STEREO` | `"Stereo"` | `EQBand` |
+| `ChannelMode.LR` | `"L/R"` | `EQBandL` + `EQBandR` |
+
+Profile JSON (local storage) uses a separate `.profile_value` mapping:
+`ChannelMode.STEREO` → `"stereo"`, `ChannelMode.LR` → `"left"` (a legacy
+sentinel meaning "L/R data present" — `"right"` is also accepted on read
+for backward compatibility, see `ChannelMode.from_profile`).
 
 ---
 
@@ -139,13 +150,17 @@ Represents a single EQ band at the WiiM API level (not Canonical):
 
 ```python
 class PEQBand:
-    band_number: int   # Band index: 1–10
-    letter: str    # Band identifier: "a"–"j" (bands 1–10)
-    mode: int      # -1=Off, 0=Low Shelf, 1=Peak, 2=High Shelf
+    band_number: int   # Band index: 1–10 (or 1–12, see below)
+    letter: str    # Band identifier: "a"–"j" (10 bands) or "a"–"l" (12 bands)
+    mode: int      # -1=Off, 0=Low Shelf, 1=Peak, 2=High Shelf, 3=Low-Pass, 5=High-Pass
     frequency: float   # 10–22000 Hz
     q: float           # 0.01–24
     gain: float        # -12–+12 dB
 ```
+
+12-band support (`letter` up to `"l"`) appeared on WiiM Amp Ultra firmware
+20260409+; always probe device capabilities at runtime rather than
+hard-coding the band count by model.
 
 ---
 

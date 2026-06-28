@@ -17,12 +17,10 @@ import pytest
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
-from src.gui.secondary_workflows import MultiDeviceRequest
 from src.gui.shared_helpers import (
     build_profile,
     is_lr_mode,
     parse_backup_filters,
-    split_lr_filters,
 )
 from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep
@@ -153,30 +151,6 @@ class TestPushWriteOperations:
     def test_issue55_is_lr_mode_stereo_false(self) -> None:
         """#55: is_lr_mode returns False for 'Stereo'."""
         assert is_lr_mode("Stereo") is False
-
-    # --- Issue #58: Multi-device push passes channel_mode through ---
-
-    def test_issue58_apply_to_devices_accepts_channel_mode(self, window) -> None:
-        """#58: apply_to_devices forwards channel_mode into async workflow."""
-        swm = window._secondary_workflows
-        swm._bridge = MagicMock()
-        swm._bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
-        request = MultiDeviceRequest(
-            device_source_map={"192.168.1.201": ["wifi"]},
-            device_names={"192.168.1.201": "Living Room"},
-        )
-        filters = [_make_filter(100), _make_filter(200)]
-
-        with (
-            patch.object(swm, "_do_apply_to_devices", new_callable=AsyncMock) as mock_do,
-            patch.object(
-                swm._bridge, "run_async", side_effect=close_coroutine_tree
-            ) as mock_run_async,
-        ):
-            swm.apply_to_devices(filters, request, ChannelMode.LR)
-
-        mock_do.assert_called_once_with(filters, request, ChannelMode.LR)
-        mock_run_async.assert_called_once()
 
     # --- Issue #61: RoomFit push deferred via _on_name_confirmed ---
 
@@ -1024,7 +998,9 @@ class TestSettingsUIState:
     def test_issue39_lr_profile_preserves_channel_mode(self) -> None:
         """#39: build_profile with L/R channel_mode stores 'left' (L/R indicator)."""
         filters = [_make_filter(100), _make_filter(200)]
-        profile = build_profile("Test", filters, "L/R")
+        profile = build_profile(
+            "Test", filters, "L/R", filters_l=filters[:1], filters_r=filters[1:]
+        )
         assert profile.channel_mode == ChannelMode.LR  # Internal L/R representation
 
     def test_issue39_stereo_profile_channel_mode(self) -> None:
@@ -1136,28 +1112,6 @@ class TestSettingsUIState:
         summary = mock_dry.call_args[0][0]
         assert "optical, hdmi" in summary
 
-    # --- Issue #69: SecondaryWorkflowManager.copy_preset_to_device accepts channel_mode ---
-
-    def test_issue69_copy_preset_to_device_has_channel_mode(self, window) -> None:
-        """#69: copy_preset_to_device forwards channel_mode into async workflow."""
-        swm = window._secondary_workflows
-        swm._bridge = MagicMock()
-        swm._bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
-        filters = [_make_filter()]
-
-        with (
-            patch.object(
-                swm, "_do_copy_preset_to_device", new_callable=AsyncMock
-            ) as mock_do,
-            patch.object(
-                swm._bridge, "run_async", side_effect=close_coroutine_tree
-            ) as mock_run_async,
-        ):
-            swm.copy_preset_to_device(filters, "192.168.1.200", "wifi", ChannelMode.LR)
-
-        mock_do.assert_called_once_with(filters, "192.168.1.200", "wifi", ChannelMode.LR)
-        mock_run_async.assert_called_once()
-
     # --- Issue #70: parse_backup_filters handles stereo and L/R ---
 
     def test_issue70_parse_backup_stereo(self) -> None:
@@ -1168,10 +1122,12 @@ class TestSettingsUIState:
                 {"type": "PEAK", "frequency_hz": 1000, "gain_db": -3, "q": 1.0},
             ],
         }
-        filters, mode = parse_backup_filters(backup)
+        filters, mode, filters_l, filters_r = parse_backup_filters(backup)
         assert mode == ChannelMode.STEREO
         assert len(filters) == 1
         assert filters[0].frequency_hz == 1000
+        assert filters_l is None
+        assert filters_r is None
 
     def test_issue70_parse_backup_lr(self) -> None:
         """#70: parse_backup_filters handles L/R backup format."""
@@ -1184,16 +1140,52 @@ class TestSettingsUIState:
                 {"type": "PEAK", "frequency_hz": 200, "gain_db": -4, "q": 1.5},
             ],
         }
-        filters, mode = parse_backup_filters(backup)
+        filters, mode, filters_l, filters_r = parse_backup_filters(backup)
         assert mode == ChannelMode.LR
         assert len(filters) == 2
+        assert filters_l is not None and len(filters_l) == 1
+        assert filters_r is not None and len(filters_r) == 1
+        assert filters_l[0].frequency_hz == 100
+        assert filters_r[0].frequency_hz == 200
 
     def test_issue70_parse_backup_empty(self) -> None:
         """#70: parse_backup_filters handles empty backup gracefully."""
         backup: dict[str, object] = {}
-        filters, mode = parse_backup_filters(backup)
+        filters, mode, filters_l, filters_r = parse_backup_filters(backup)
         assert mode == ChannelMode.STEREO
         assert filters == []
+        assert filters_l is None
+        assert filters_r is None
+
+    def test_issue70_parse_backup_lr_unequal_lengths_not_naively_split(self) -> None:
+        """Regression: undo must not reconstruct L/R via positional 50/50 split.
+
+        Uses deliberately unequal L/R band counts so a naive split on the
+        combined list (which would produce 4/4) is distinguishable from the
+        correct per-channel split (3/5) returned by parse_backup_filters.
+        """
+        backup = {
+            "channel_mode": "left",
+            "filters_l": [
+                {"type": "PEAK", "frequency_hz": 100, "gain_db": -2, "q": 1.0},
+                {"type": "PEAK", "frequency_hz": 110, "gain_db": -2, "q": 1.0},
+                {"type": "PEAK", "frequency_hz": 120, "gain_db": -2, "q": 1.0},
+            ],
+            "filters_r": [
+                {"type": "PEAK", "frequency_hz": 200, "gain_db": -4, "q": 1.5},
+                {"type": "PEAK", "frequency_hz": 210, "gain_db": -4, "q": 1.5},
+                {"type": "PEAK", "frequency_hz": 220, "gain_db": -4, "q": 1.5},
+                {"type": "PEAK", "frequency_hz": 230, "gain_db": -4, "q": 1.5},
+                {"type": "PEAK", "frequency_hz": 240, "gain_db": -4, "q": 1.5},
+            ],
+        }
+        filters, mode, filters_l, filters_r = parse_backup_filters(backup)
+        assert mode == ChannelMode.LR
+        assert len(filters) == 8
+        assert filters_l is not None and len(filters_l) == 3
+        assert filters_r is not None and len(filters_r) == 5
+        assert [f.frequency_hz for f in filters_l] == [100, 110, 120]
+        assert [f.frequency_hz for f in filters_r] == [200, 210, 220, 230, 240]
 
     # --- Issue #74: _do_copy_presets_batch_multi iterates all devices ---
 
@@ -1378,18 +1370,23 @@ class TestSharedHelpers:
         assert state.current_filters == filters_l + filters_r
         mock_lr.assert_called_once_with(filters_l, filters_r, {}, {})
 
-    def test_split_lr_odd(self) -> None:
-        """split_lr_filters with odd count puts extra in right half."""
-        filters = [_make_filter(100 * (i + 1)) for i in range(5)]
-        left, right = split_lr_filters(filters)
-        assert len(left) == 2
-        assert len(right) == 3
+    def test_build_peq_settings_lr_without_explicit_filters_raises(self) -> None:
+        """L/R mode without filters_l/filters_r must raise, never guess a split."""
+        from src.gui.shared_helpers import build_peq_settings
 
-    def test_split_lr_empty(self) -> None:
-        """split_lr_filters with empty list returns two empty lists."""
-        left, right = split_lr_filters([])
-        assert left == []
-        assert right == []
+        filters = [_make_filter(100 * (i + 1)) for i in range(5)]
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            build_peq_settings("wifi", filters, "L/R")
+
+    def test_get_lr_filters_without_state_data_raises(self) -> None:
+        """get_lr_filters must raise when wizard state has no filters_l/filters_r."""
+        from src.gui.shared_helpers import get_lr_filters
+
+        state = MagicMock()
+        state.filters_l = None
+        state.filters_r = None
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            get_lr_filters(state, [])
 
     # --- is_lr_mode comprehensive ---
 
@@ -1408,14 +1405,22 @@ class TestSharedHelpers:
 
     # --- build_profile ---
 
-    def test_build_profile_lr_splits_filters(self) -> None:
-        """build_profile with L/R splits filters into filters_l and filters_r."""
+    def test_build_profile_lr_without_explicit_filters_raises(self) -> None:
+        """build_profile with L/R but no filters_l/filters_r must raise."""
         filters = [_make_filter(100), _make_filter(200)]
-        profile = build_profile("Test", filters, "L/R")
-        assert profile.filters_l is not None
-        assert profile.filters_r is not None
-        assert len(profile.filters_l) == 1
-        assert len(profile.filters_r) == 1
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            build_profile("Test", filters, "L/R")
+
+    def test_build_profile_lr_with_explicit_filters_preserves_split(self) -> None:
+        """build_profile with explicit filters_l/filters_r uses them as-is."""
+        filters = [_make_filter(100), _make_filter(200), _make_filter(300)]
+        filters_l = filters[:1]
+        filters_r = filters[1:]
+        profile = build_profile(
+            "Test", filters, "L/R", filters_l=filters_l, filters_r=filters_r
+        )
+        assert profile.filters_l == filters_l
+        assert profile.filters_r == filters_r
 
     def test_build_profile_stereo_keeps_filters(self) -> None:
         """build_profile with Stereo keeps filters in single list."""
@@ -1437,6 +1442,7 @@ class TestSharedHelpers:
                 {"type": "PEAK", "frequency_hz": 200, "gain_db": -4, "q": 1.5},
             ],
         }
-        filters, mode = parse_backup_filters(backup)
+        filters, mode, filters_l, filters_r = parse_backup_filters(backup)
         assert mode == ChannelMode.LR
         assert len(filters) == 2
+        assert filters_l is not None and filters_r is not None

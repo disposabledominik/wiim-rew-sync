@@ -81,6 +81,32 @@ async def test_list_measurements_connection_refused_raises_rew_not_connected(
         await client.list_measurements()
 
 
+@respx.mock
+async def test_list_measurements_500_raises_without_calling_json(
+    client: REWHttpApiClient,
+) -> None:
+    """HTTP 500 on list_measurements must raise before attempting response.json()."""
+    respx.get(f"{BASE_URL}/measurements").mock(
+        return_value=httpx.Response(500, text="Internal Server Error")
+    )
+
+    with pytest.raises(REWNotConnectedError, match="unexpected status 500"):
+        await client.list_measurements()
+
+
+@respx.mock
+async def test_list_measurements_non_json_200_raises_rew_not_connected(
+    client: REWHttpApiClient,
+) -> None:
+    """A 200 response with a non-JSON body raises REWNotConnectedError, not a raw decode error."""
+    respx.get(f"{BASE_URL}/measurements").mock(
+        return_value=httpx.Response(200, text="<html>not json</html>")
+    )
+
+    with pytest.raises(REWNotConnectedError, match="non-JSON response"):
+        await client.list_measurements()
+
+
 # --------------------------------------------------------------------------
 # get_filters
 # --------------------------------------------------------------------------
@@ -142,6 +168,34 @@ async def test_get_filters_connection_refused_raises_rew_not_connected(
     )
 
     with pytest.raises(REWNotConnectedError, match="REW is not connected"):
+        await client.get_filters(uuid)
+
+
+@respx.mock
+async def test_get_filters_500_raises_without_calling_json(
+    client: REWHttpApiClient,
+) -> None:
+    """HTTP 500 on get_filters must raise before attempting response.json()."""
+    uuid = "ba2da346-0f31-4d9d-bbeb-2bfcd07e1cb9"
+    respx.get(f"{BASE_URL}/measurements/{uuid}/filters").mock(
+        return_value=httpx.Response(500, text="Internal Server Error")
+    )
+
+    with pytest.raises(REWNotConnectedError, match="unexpected status 500"):
+        await client.get_filters(uuid)
+
+
+@respx.mock
+async def test_get_filters_non_json_200_raises_rew_not_connected(
+    client: REWHttpApiClient,
+) -> None:
+    """A 200 response with a non-JSON body raises REWNotConnectedError, not a raw decode error."""
+    uuid = "ba2da346-0f31-4d9d-bbeb-2bfcd07e1cb9"
+    respx.get(f"{BASE_URL}/measurements/{uuid}/filters").mock(
+        return_value=httpx.Response(200, text="<html>not json</html>")
+    )
+
+    with pytest.raises(REWNotConnectedError, match="non-JSON response"):
         await client.get_filters(uuid)
 
 

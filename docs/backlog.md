@@ -74,21 +74,7 @@ current release but may be reconsidered in future versions. Backend support may 
 
 ---
 
-## 5. Backward-Compat `ValidationError` Re-export in wiim_parser (Tech Debt)
-
-**Originally:** Code quality audit (2026-06-22)
-
-**What:** `src/translator/wiim_parser.py` imports and re-exports `ValidationError` with `# noqa: F401 — kept for backward compat` even though the module never raises it. This exists solely so external code that does `from src.translator.wiim_parser import ValidationError` still works.
-
-**Why deferred:** Removing it risks breaking any consumer that imports from this location. The cost of keeping it is one import line. Zero functional impact.
-
-**Status:** Still present (confirmed 2026-06-27, `src/translator/wiim_parser.py:18`).
-
-**To reactivate:** Audit all consumers (internal and potential external), remove the import, update any broken references. Low priority.
-
----
-
-## 6. `ProfileRepository.list()` Shadows Builtin (Tech Debt)
+## 5. `ProfileRepository.list()` Shadows Builtin (Tech Debt)
 
 **Originally:** Code quality audit (2026-06-22)
 
@@ -96,13 +82,13 @@ current release but may be reconsidered in future versions. Backend support may 
 
 **Why deferred:** Renaming a public method on `ProfileRepository` would break the GUI layer, tests, and any code that calls `.list()`. Cosmetic improvement with non-trivial migration effort.
 
-**Status:** Still present (confirmed 2026-06-27, `src/repository/profile_repository.py:5,77`).
+**Status:** Still present (confirmed 2026-06-28, `src/repository/profile_repository.py:5,166`). Production call sites: 1 internal (`filter_by_tag`), 1 in `main_window.py:1798` inside `_do_list_presets`.
 
-**To reactivate:** Rename method to `list_all()`, update all call sites (~8 locations in GUI + tests). Bundle with other repository refactoring if it arises.
+**To reactivate:** Rename method to `list_all()`, update all call sites (~2 production + 4 test locations). Bundle with the MainWindow extraction (backlog item below) — `_do_list_presets` is already a Phase-1 extraction candidate there, so the one production GUI call site gets touched anyway.
 
 ---
 
-## 7. Hardware QA Sign-off
+## 6. Hardware QA Sign-off
 
 **Originally:** `docs/qa_signoff.md` final verdict (2026-06-15)
 
@@ -116,7 +102,7 @@ current release but may be reconsidered in future versions. Backend support may 
 
 ---
 
-## 8. Profile Comparison & Diffing
+## 7. Profile Comparison & Diffing
 
 **Originally:** Master spec, Future Phase Features; root `BACKLOG.md`
 
@@ -126,7 +112,7 @@ current release but may be reconsidered in future versions. Backend support may 
 
 ---
 
-## 9. Advanced Filter Types
+## 8. Advanced Filter Types
 
 **Originally:** Master spec, Future Phase Features; root `BACKLOG.md`
 
@@ -136,7 +122,73 @@ current release but may be reconsidered in future versions. Backend support may 
 
 ---
 
+## 9. MainWindow God-Object — Extract Business Logic from GUI Layer (Tech Debt)
+
+**Originally:** Code quality audit (2026-06-28)
+
+**What:** `src/gui/main_window.py` is ~159KB / 137 methods / ~3,800 lines.
+~18 of its `async def _do_*` methods call adapters/repository directly
+(network I/O + data manipulation in a GUI class), violating
+`.kiro/steering/rules.md` rule #14 ("Separate UI from business logic
+strictly. No network calls or data manipulation in GUI components").
+`SecondaryWorkflowManager` (`src/gui/secondary_workflows.py`) already
+demonstrates the target pattern (QObject-based manager, injected adapter
+factories via `.configure()`, signals for completion, no direct Qt
+widget access) — extraction should follow that template, either as a
+new `PrimaryWorkflowOrchestrator` or by growing `SecondaryWorkflowManager`.
+
+**Candidate methods to extract** (read-only / state-reporting, low risk):
+`_do_discovery`, `_do_probe`, `_do_file_import`, `_do_file_import_lr`,
+`_do_device_pull`, `_do_roomfit_pull`, `_do_load_peq_preset`,
+`_do_list_presets`, `_do_list_roomfit_profiles`,
+`_do_populate_name_profiles`, `_do_rew_list_measurements`,
+`_do_rew_get_filters`, `_do_rew_get_filters_lr`, `_do_export`,
+`_do_export_lr`, `_do_preset_export`, `_do_preset_save`, `_do_raw_command`.
+
+**Must stay in MainWindow** (too risky/entangled to move yet): `_do_push`
+(the safety-critical core push path), `_do_undo_roomfit`,
+`_do_undo_multi_source`, `_do_copy_preset_to_device`/
+`_do_copy_presets_batch`/`_do_copy_presets_batch_multi` (the live
+"Copy to Another Device" feature — do not confuse with the deleted
+`SecondaryWorkflowManager` methods of similar names, removed in the
+2026-06-28 code quality audit as unreachable dead code).
+
+**Mechanism to preserve:** all `_do_*` methods are invoked via
+`self._bridge.run_async(self._bridge_wrapper(name, self._do_x(...)))`
+from `_on_*` Qt slot handlers — this signal/bridge wiring pattern must be
+preserved; only the method body + adapter calls move to the new class,
+which then emits its own completion signal back to MainWindow's `_on_*`
+handlers (same shape as `SecondaryWorkflowManager.undo_complete` etc.).
+
+**Why deferred:** Not a correctness bug — current code works. Effort is
+~Medium, best done incrementally (4-6 methods per pass) rather than
+big-bang, to keep each step independently testable.
+
+**Status:** Not started. Priority: High — recommend tackling Phase 1
+(discovery, probing, file imports — 4 methods, lowest risk) before or
+alongside the *next* feature that would otherwise add more orchestration
+to MainWindow, to stop the file from growing further. Does not need to
+block all feature work, but adopt the rule now: new orchestration logic
+goes into a controller/manager class, never directly into MainWindow.
+
+**To reactivate:** Start with the 4 Phase-1 methods, write
+`test_primary_workflows.py` mirroring `test_secondary_workflows.py`'s
+structure, wire signals in a `_setup_secondary_workflows()`-style method,
+verify smoke tests still pass, then proceed to the next phase. **Bundle
+opportunity:** while moving `_do_list_presets`, also resolve item #5
+above (`ProfileRepository.list()` shadows builtin) — rename to
+`list_all()` at the same time, since that line is already being touched.
+
+---
+
 ## Completed Items (Archive)
+
+### Backward-Compat `ValidationError` Re-export in wiim_parser
+**Completed:** 2026-06-28 (code quality audit follow-up). Confirmed zero real
+importers of `ValidationError` from `src/translator/wiim_parser.py` anywhere
+in the codebase (only this backlog's own description text matched a grep for
+the import). Removed the dead `from src.models.errors import ValidationError`
+re-export and its `# noqa: F401` comment from `wiim_parser.py`.
 
 ### Test coverage for hardware-testing findings
 **Completed:** Task 51. Automated tests added for all API behaviors discovered during manual hardware validation.

@@ -10,6 +10,8 @@ Mode mapping (Canonical → WiiM LV2):
     "PEAK" → 1
     "LS"   → 0
     "HS"   → 2
+    "LP"   → 3
+    "HP"   → 5
 
 Clamping rules (logs WARNING per clip):
     gain: clamped to [-12.0, +12.0]

@@ -332,7 +332,7 @@ class WiiMAdapter:
         """
         try:
             response = await self._client.command("GetMultiroomInfo")
-        except (WiiMConnectionError, Exception) as exc:
+        except WiiMConnectionError as exc:
             logger.warning("GetMultiroomInfo failed: %s", exc)
             return None
 

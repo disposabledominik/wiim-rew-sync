@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -265,3 +265,51 @@ async def test_drain_when_not_running(mock_client: AsyncMock) -> None:
     """drain_and_stop on a non-started queue is a no-op."""
     q = WiiMCommandQueue(client=mock_client, delay=0.01, max_retries=3)
     await q.drain_and_stop()  # Should not raise
+
+
+# ------------------------------------------------------------------
+# max_retries guard and inter-retry backoff
+# ------------------------------------------------------------------
+
+
+def test_max_retries_zero_raises_at_construction(mock_client: AsyncMock) -> None:
+    """max_retries=0 must raise ValueError, not silently raise None later."""
+    with pytest.raises(ValueError, match="max_retries must be positive"):
+        WiiMCommandQueue(client=mock_client, delay=0.01, max_retries=0)
+
+
+def test_max_retries_negative_raises_at_construction(mock_client: AsyncMock) -> None:
+    """Negative max_retries must also raise ValueError at construction."""
+    with pytest.raises(ValueError, match="max_retries must be positive"):
+        WiiMCommandQueue(client=mock_client, delay=0.01, max_retries=-1)
+
+
+async def test_retry_backoff_increases_between_attempts(mock_client: AsyncMock) -> None:
+    """Backoff sleep is called with increasing delays between retry attempts."""
+    mock_client.command = AsyncMock(
+        side_effect=[
+            WiiMConnectionError("fail1"),
+            WiiMConnectionError("fail2"),
+            "OK",
+        ]
+    )
+    q = WiiMCommandQueue(client=mock_client, delay=0.01, max_retries=3)
+
+    sleep_calls: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        await real_sleep(0)  # yield control without actually waiting
+
+    with patch("src.adapters.command_queue.asyncio.sleep", side_effect=fake_sleep):
+        await q.start()
+        result = await q.enqueue("BackoffCmd")
+        await q.drain_and_stop()
+
+    assert result == "OK"
+    # Two retry-backoff sleeps (before attempt 2 and attempt 3), increasing.
+    # The inter-command delay (q._delay) only fires after a command fully
+    # resolves, so it is not part of this command's own retry loop.
+    retry_sleeps = [d for d in sleep_calls if d != q._delay]
+    assert retry_sleeps == [0.1, 0.2]

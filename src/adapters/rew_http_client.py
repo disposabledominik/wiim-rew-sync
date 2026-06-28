@@ -94,7 +94,21 @@ class REWHttpApiClient:
             "RESP <- %d %s (len=%d)", response.status_code, url, len(response.text)
         )
 
-        data = response.json()
+        if response.status_code != 200:
+            raise REWNotConnectedError(
+                f"REW API returned unexpected status {response.status_code} "
+                f"for {url}. Please ensure REW is running and its HTTP API "
+                f"is enabled (localhost:4735)."
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise REWNotConnectedError(
+                f"REW API returned a non-JSON response for {url}. Please "
+                f"ensure REW is running and its HTTP API is enabled "
+                f"(localhost:4735)."
+            ) from exc
         logger.debug("REW measurements response: %s", repr(data)[:500])
 
         # Handle both bare array and dict-keyed responses
@@ -165,8 +179,21 @@ class REWHttpApiClient:
             raise REWMeasurementNotFoundError(
                 f"Measurement '{uuid}' not found in REW"
             )
+        if response.status_code != 200:
+            raise REWNotConnectedError(
+                f"REW API returned unexpected status {response.status_code} "
+                f"for {url}. Please ensure REW is running and its HTTP API "
+                f"is enabled (localhost:4735)."
+            )
 
-        data = response.json()
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise REWNotConnectedError(
+                f"REW API returned a non-JSON response for {url}. Please "
+                f"ensure REW is running and its HTTP API is enabled "
+                f"(localhost:4735)."
+            ) from exc
         return self._parser.parse_filter_settings(data)
 
     async def close(self) -> None:

@@ -69,7 +69,6 @@ from src.gui.shared_helpers import (
     extract_filters,
     get_lr_filters,
     is_lr_mode,
-    split_lr_filters,
 )
 from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
@@ -1080,7 +1079,7 @@ class MainWindow(QMainWindow):
             import json
 
             backup_data = json.loads(path.read_text(encoding="utf-8"))
-            bands, _channel_mode = parse_backup_filters(backup_data)
+            bands, _channel_mode, _filters_l, _filters_r = parse_backup_filters(backup_data)
 
             if not bands:
                 self._status_banner.show_error("Backup contains no filters")
@@ -1423,25 +1422,21 @@ class MainWindow(QMainWindow):
                     validated_l, validated_r, clamping_l, clamping_r
                 )
             elif channel.is_lr:
-                # Fallback: split combined list evenly (only hit when source
-                # doesn't provide explicit L/R bands — e.g. legacy device reads)
-                logger.warning(
-                    "L/R mode without explicit bands_l/bands_r — using naive 50/50 split"
+                # Every producer of peq_ready in L/R mode (file_import_lr,
+                # device_pull, roomfit_pull, rew_get_filters_lr) always
+                # supplies explicit bands_l/bands_r — read_peq/read_roomfit
+                # raise rather than return L/R mode without both. Reaching
+                # this branch means that invariant broke; refuse to guess
+                # a channel split instead of silently writing wrong-channel
+                # data (same class of bug as smoke #92/#93).
+                logger.error(
+                    "L/R mode without explicit bands_l/bands_r — refusing "
+                    "to guess channel split"
                 )
-                left, right = split_lr_filters(filters)
-                validated_l, warnings_l, clamping_l = validate_filters_for_device(
-                    left, max_filters
+                self._status_banner.show_error(
+                    "Could not determine L/R channel data for this source"
                 )
-                validated_r, warnings_r, clamping_r = validate_filters_for_device(
-                    right, max_filters
-                )
-                all_warnings = warnings_l + warnings_r
-                state.current_filters = validated_l + validated_r
-                state.filters_l = validated_l
-                state.filters_r = validated_r
-                self._review_page.set_lr_filters(
-                    validated_l, validated_r, clamping_l, clamping_r
-                )
+                return
             else:
                 # Stereo: validate the full list
                 validated, all_warnings, clamping_map = validate_filters_for_device(
@@ -1784,8 +1779,8 @@ class MainWindow(QMainWindow):
         state = self._wizard_controller.state
         profile = build_profile(
             name, filters, channel_mode,
-            filters_l=state.filters_l or None,
-            filters_r=state.filters_r or None,
+            filters_l=state.filters_l,
+            filters_r=state.filters_r,
         )
 
         self._profile_repository.save(profile)
@@ -2127,14 +2122,14 @@ class MainWindow(QMainWindow):
             if preset_type == "RoomFit":
                 # RoomFit: write as RoomFit profile on target (smoke #34, #79)
                 if is_lr_mode(channel_mode):
-                    # Use stored L/R lists from wizard state
-                    state = self._wizard_controller.state
-                    left, right = get_lr_filters(state, filters)
+                    # Use the L/R bands just read from the source preset —
+                    # not wizard state, which may be stale or unrelated to
+                    # this preset (e.g. never populated in this session).
                     await target_adapter.write_roomfit(
                         target_source, preset_name, filters,
                         channel_mode="lr",
-                        filters_l=left,
-                        filters_r=right,
+                        filters_l=peq_settings.bands_l,
+                        filters_r=peq_settings.bands_r,
                     )
                 else:
                     await target_adapter.write_roomfit(
@@ -2142,11 +2137,10 @@ class MainWindow(QMainWindow):
                     )
             else:
                 # PEQ: write filters then save as named PEQ preset
-                state = self._wizard_controller.state
                 settings = build_peq_settings(
                     target_source, filters, channel_mode,
-                    filters_l=state.filters_l or None,
-                    filters_r=state.filters_r or None,
+                    filters_l=peq_settings.bands_l,
+                    filters_r=peq_settings.bands_r,
                 )
                 safe_write = SafeWrite(target_adapter, self._backup_manager)
                 await safe_write.execute(target_source, settings)
@@ -2292,7 +2286,7 @@ class MainWindow(QMainWindow):
         if file_path.suffix.lower() != ".txt":
             file_path = file_path.with_suffix(".txt")
 
-        if peq_settings.channel_mode == "lr":
+        if is_lr_mode(peq_settings.channel_mode):
             # L/R mode: generate two files
             filters_l = peq_settings.bands_l or []
             filters_r = peq_settings.bands_r or []
@@ -2370,11 +2364,10 @@ class MainWindow(QMainWindow):
 
         # Save directly (Profile construction + file write is thread-safe)
         # For L/R, pass explicit channel lists from peq_settings
-        is_lr = peq_settings.channel_mode == "lr"
-        f_l = list(peq_settings.bands_l) if is_lr and peq_settings.bands_l else None
-        f_r = list(peq_settings.bands_r) if is_lr and peq_settings.bands_r else None
         profile = build_profile(
-            preset_name, filters, channel_mode, filters_l=f_l, filters_r=f_r
+            preset_name, filters, channel_mode,
+            filters_l=peq_settings.bands_l,
+            filters_r=peq_settings.bands_r,
         )
 
         self._profile_repository.save(profile)
@@ -2562,8 +2555,8 @@ class MainWindow(QMainWindow):
 
                 settings = build_peq_settings(
                     source_name, filters, channel_mode,
-                    filters_l=state.filters_l or None,
-                    filters_r=state.filters_r or None,
+                    filters_l=state.filters_l,
+                    filters_r=state.filters_r,
                 )
                 result = await self._safe_write.execute(source_name, settings)
                 last_result = result
@@ -3282,15 +3275,19 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _setup_secondary_workflows(self) -> None:
-        """Create the SecondaryWorkflowManager and wire all secondary workflow signals.
+        """Create the SecondaryWorkflowManager and wire its signals.
 
         Connects:
-        - ReviewPage "Copy to another source" → copy_to_sources flow
-        - ReviewPage "Apply to multiple devices" → apply_to_devices flow
-        - PresetsDeviceView "Copy to Another Device" → copy_preset_to_device flow
+        - PresetsDeviceView "Copy to Another Device" → handled directly by
+          MainWindow's own _do_copy_presets_batch_multi /
+          _do_copy_preset_to_device (not via SecondaryWorkflowManager).
         - MyPresetsView "Load" → profile recall → populate ReviewPage
         - PushPage "Undo" → undo_last_push flow
         - SecondaryWorkflowManager completion signals → UI updates
+
+        Note: "Copy to another source" / "Apply to multiple devices" had no
+        UI wiring and the corresponding SecondaryWorkflowManager methods
+        were removed as dead code (code quality audit, 2026-06-28).
         """
         self._secondary_workflows = SecondaryWorkflowManager(parent=self)
 
@@ -3333,9 +3330,6 @@ class MainWindow(QMainWindow):
         )
 
         # --- Outbound: workflow manager signals → UI updates ---
-        self._secondary_workflows.copy_to_device_complete.connect(
-            self._on_copy_to_device_complete
-        )
         self._secondary_workflows.profile_recalled.connect(
             self._on_profile_recalled
         )
@@ -3350,7 +3344,7 @@ class MainWindow(QMainWindow):
         """Handle PresetsDeviceView "Copy to Another Device" action.
 
         Opens a device picker for the target device selection, then
-        executes copy_preset_to_device for each selected item.
+        executes _do_copy_presets_batch_multi for each selected item.
 
         Requirement 15.1: User selects target device from discovered list.
         Requirement 15.2: Copy preset filters to the selected target device.
@@ -3602,19 +3596,6 @@ class MainWindow(QMainWindow):
         logger.info("Preset load into editor: %s (type=%s)", name, preset_type)
 
     # --- Outbound handlers (workflow manager → UI updates) ---
-
-    @Slot(bool, str)
-    def _on_copy_to_device_complete(self, success: bool, message: str) -> None:
-        """Handle copy-to-device completion.
-
-        Args:
-            success: Whether the copy succeeded.
-            message: Human-readable result message.
-        """
-        if success:
-            self._status_banner.show_success(message)
-        else:
-            self._status_banner.show_error(message)
 
     @Slot(list)
     def _on_profile_recalled(self, filters: list[CanonicalFilter]) -> None:

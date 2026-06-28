@@ -291,15 +291,20 @@ class TestPushChannelMode:
 
     @pytest.mark.asyncio
     async def test_push_lr_mode(self, window) -> None:
-        """Verify PEQSettings splits bands into L/R for lr channel mode.
+        """Verify PEQSettings uses explicit per-channel state for lr channel mode.
+
+        _do_push always passes state.filters_l/filters_r explicitly (never
+        re-derives a split positionally) — see code review fix 2026-06-28.
 
         Requirement: 6.1, 6.2
         """
         mock_safe_write = _setup_push_state(window)
         window._wizard_controller.state.channel_mode = ChannelMode.LR
-        # 4 filters: first 2 → bands_l, last 2 → bands_r
-        filters = [_make_filter(f) for f in [100.0, 200.0, 500.0, 1000.0]]
-        window._wizard_controller.state.current_filters = filters
+        filters_l = [_make_filter(f) for f in [100.0, 200.0]]
+        filters_r = [_make_filter(f) for f in [500.0, 1000.0]]
+        window._wizard_controller.state.filters_l = filters_l
+        window._wizard_controller.state.filters_r = filters_r
+        window._wizard_controller.state.current_filters = filters_l + filters_r
         result = WriteResult(success=True, rollback_success=None)
         mock_safe_write.execute = AsyncMock(return_value=result)
 
@@ -308,8 +313,8 @@ class TestPushChannelMode:
         call_args = mock_safe_write.execute.call_args
         settings = call_args[0][1]
         assert settings.channel_mode == ChannelMode.LR
-        assert settings.bands_l == filters[:2]
-        assert settings.bands_r == filters[2:]
+        assert settings.bands_l == filters_l
+        assert settings.bands_r == filters_r
 
 
 # ---------------------------------------------------------------------------

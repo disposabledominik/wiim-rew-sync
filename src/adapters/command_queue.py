@@ -38,6 +38,8 @@ class WiiMCommandQueue:
         delay: float = 0.1,
         max_retries: int = 3,
     ) -> None:
+        if max_retries <= 0:
+            raise ValueError(f"max_retries must be positive, got {max_retries}")
         self._client = client
         self._delay = delay
         self._max_retries = max_retries
@@ -187,5 +189,8 @@ class WiiMCommandQueue:
                     self._max_retries,
                     exc,
                 )
+                if attempt + 1 < self._max_retries:
+                    await asyncio.sleep(0.1 * (attempt + 1))
         # All retries exhausted
-        raise last_exc  # type: ignore[misc]
+        assert last_exc is not None  # loop always executes >=1 time (max_retries > 0)
+        raise last_exc

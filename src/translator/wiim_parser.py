@@ -8,6 +8,8 @@ Mode mapping (LV2 EqNp plugin):
      0 → "LS"  (Low Shelf)
      1 → "PEAK"
      2 → "HS"  (High Shelf)
+     3 → "LP"  (Low-Pass)
+     5 → "HP"  (High-Pass)
 """
 
 from __future__ import annotations
@@ -15,7 +17,6 @@ from __future__ import annotations
 import logging
 
 from src.models.canonical import CanonicalFilter, FilterType
-from src.models.errors import ValidationError  # noqa: F401 — kept for backward compat
 
 logger = logging.getLogger("wiim_rew_sync.app")
 

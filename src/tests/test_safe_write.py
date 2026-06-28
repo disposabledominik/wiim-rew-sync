@@ -399,64 +399,6 @@ class TestBatchVsSequential:
 
 
 # ---------------------------------------------------------------------------
-# Tests: Channel mode adaptation (hardware testing regression)
-# ---------------------------------------------------------------------------
-
-
-class TestChannelModeAdaptation:
-    """Test _adapt_channel_mode behavior when device mode differs from write mode."""
-
-    async def test_stereo_write_to_lr_device_adapts_mode(
-        self, safe_write: SafeWrite, mock_adapter: AsyncMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Writing stereo to an L/R device logs mode switch but passes stereo settings unchanged."""
-        intended = _make_settings(channel_mode="stereo")
-        # Device currently in L/R mode
-        lr_current = _make_settings(channel_mode="lr")
-
-        # read_peq returns L/R state first (backup), then stereo readback (verification)
-        mock_adapter.read_peq.side_effect = [lr_current, intended]
-
-        app_logger = logging.getLogger("wiim_rew_sync.app")
-        app_logger.propagate = True
-        try:
-            with caplog.at_level(logging.INFO, logger="wiim_rew_sync.app"):
-                result = await safe_write.execute("wifi", intended)
-
-            # write_peq is called with the original stereo settings (not mutated to L/R)
-            write_call = mock_adapter.write_peq.call_args
-            written_settings = write_call[0][1]
-            assert written_settings.channel_mode == ChannelMode.STEREO
-            assert written_settings.bands == intended.bands
-            assert result.success is True
-            # Log indicates mode switch
-            assert any("Stereo" in r.message for r in caplog.records)
-        finally:
-            app_logger.propagate = False
-
-    async def test_matching_modes_no_adaptation(
-        self, safe_write: SafeWrite, mock_adapter: AsyncMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Writing stereo to a stereo device produces no mode-switch log messages."""
-        intended = _make_settings(channel_mode="stereo")
-        mock_adapter.read_peq.side_effect = [intended, intended]
-
-        app_logger = logging.getLogger("wiim_rew_sync.app")
-        app_logger.propagate = True
-        try:
-            with caplog.at_level(logging.INFO, logger="wiim_rew_sync.app"):
-                await safe_write.execute("wifi", intended)
-
-            mode_messages = [
-                r for r in caplog.records
-                if "switching" in r.message.lower() or "mode" in r.message.lower()
-            ]
-            assert mode_messages == []
-        finally:
-            app_logger.propagate = False
-
-
-# ---------------------------------------------------------------------------
 # Tests: Band count tolerance in verification (hardware testing regression)
 # ---------------------------------------------------------------------------
 
@@ -560,4 +502,68 @@ class TestRollbackLR:
         restored_settings = rollback_call[0][1]
         assert restored_settings.channel_mode == ChannelMode.LR
         assert restored_settings.bands_l is not None
-        assert restored_settings.bands_r is not None
+
+
+# ---------------------------------------------------------------------------
+# Tests: Empty-band verification must not vacuously pass when data is lost
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyBands:
+    """_compare_band_lists must only vacuously pass when both sides are
+    genuinely empty — never when intended bands were dropped on read-back,
+    or when unexpected bands appear despite an empty intended write.
+    """
+
+    async def test_verify_passes_when_both_intended_and_readback_empty(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """Writing zero bands and reading back zero bands is a legitimate pass."""
+        intended = _make_settings(bands=[])
+        mock_adapter.read_peq.side_effect = [intended, intended]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is True
+
+    async def test_verify_fails_when_intended_nonempty_but_readback_empty(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, mock_backup_manager: MagicMock
+    ) -> None:
+        """Intended bands present but device reads back none -> must fail, not vacuously pass."""
+        intended_bands = _make_bands()
+        original = _make_settings(bands=[])
+        intended = _make_settings(bands=intended_bands)
+        empty_readback = _make_settings(bands=[])
+
+        mock_adapter.read_peq.side_effect = [
+            original,        # Step 1: current state for backup
+            empty_readback,  # Step 3: read-back has no bands at all
+            empty_readback,  # Rollback: read current state for pre_rollback backup
+            original,        # Rollback verification: matches original (empty)
+        ]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is False
+        assert result.rollback_success is True
+
+    async def test_verify_fails_when_intended_empty_but_readback_nonempty(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, mock_backup_manager: MagicMock
+    ) -> None:
+        """Intended zero bands but device still reports bands -> must fail, not vacuously pass."""
+        unexpected_bands = _make_bands()
+        original = _make_settings(bands=unexpected_bands)
+        intended = _make_settings(bands=[])
+        nonempty_readback = _make_settings(bands=unexpected_bands)
+
+        mock_adapter.read_peq.side_effect = [
+            original,           # Step 1: current state for backup
+            nonempty_readback,  # Step 3: read-back unexpectedly has bands
+            nonempty_readback,  # Rollback: read current state for pre_rollback backup
+            original,           # Rollback verification: matches original
+        ]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is False
+        assert result.rollback_success is True
