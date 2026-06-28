@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import builtins
 import json
+import unicodedata
 from pathlib import Path
 
 from src.models.channel_mode import ChannelMode
-from src.models.errors import ProfileNotFoundError
+from src.models.errors import ProfileNameCollisionError, ProfileNotFoundError
 from src.models.profile import Profile
 from src.translator.schema_migrator import migrate_profile
 
@@ -32,8 +33,14 @@ class ProfileRepository:
         return self._profiles_dir.parent
 
     def _profile_path(self, name: str) -> Path:
-        """Return the file path for a profile by name."""
-        return self._profiles_dir / f"{name}.json"
+        """Return the file path for a profile by name.
+
+        Names are normalized to Unicode NFC before deriving the filename so
+        that visually-identical names (e.g. composed vs. decomposed forms)
+        always map to the same path, instead of colliding unpredictably on
+        normalization-insensitive filesystems like NTFS.
+        """
+        return self._profiles_dir / f"{unicodedata.normalize('NFC', name)}.json"
 
     def save(self, profile: Profile) -> Path:
         """Save a profile to disk as JSON.
@@ -42,8 +49,22 @@ class ProfileRepository:
         L/R profiles use ``filters_l`` and ``filters_r`` only.
         The Pydantic model_validator already enforces this, so we serialize
         and exclude None fields to keep the JSON clean.
+
+        Raises:
+            ProfileNameCollisionError: If ``profile.name`` normalizes to the
+                same filename as an existing profile with a different name
+                (would otherwise silently overwrite unrelated data).
         """
         path = self._profile_path(profile.name)
+        if path.exists():
+            existing_raw = json.loads(path.read_text(encoding="utf-8"))
+            existing_name = existing_raw.get("name")
+            if existing_name is not None and existing_name != profile.name:
+                raise ProfileNameCollisionError(
+                    f"Profile name '{profile.name}' collides with existing "
+                    f"profile '{existing_name}' (same filename after Unicode "
+                    "normalization)"
+                )
         data = profile.model_dump(mode="python")
         # Remove None filter keys to enforce channel-mode consistency in JSON
         if profile.channel_mode == ChannelMode.STEREO:

@@ -48,6 +48,17 @@ class ProfileNotFoundError(WiiMREWSyncError):
     """Attempted to load a profile that does not exist."""
 
 
+class ProfileNameCollisionError(WiiMREWSyncError):
+    """Two distinct profile names map to the same on-disk filename.
+
+    Raised when a profile name, after Unicode NFC normalization, collides
+    with an existing profile that has a different (pre-normalization) name —
+    e.g. two visually-identical names using different composed/decomposed
+    Unicode forms. Without this guard the second save would silently
+    overwrite the first.
+    """
+
+
 class BackupError(WiiMREWSyncError):
     """Backup creation or retention policy failure."""
 

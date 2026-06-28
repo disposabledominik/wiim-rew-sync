@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from typing import Literal
 
 import pytest
@@ -11,7 +12,7 @@ from hypothesis import strategies as st
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
-from src.models.errors import ProfileNotFoundError
+from src.models.errors import ProfileNameCollisionError, ProfileNotFoundError
 from src.models.profile import Profile
 from src.repository.profile_repository import ProfileRepository
 from src.tests.conftest import st_canonical_filter_list
@@ -364,6 +365,13 @@ def test_list_sort_order_invariant(names: list[str], tmp_path: object) -> None:
     For any set of profiles saved in any order, list() returns them sorted by
     name.lower().
 
+    Names that are distinct Python strings but normalize to the same Unicode
+    NFC form (e.g. composed vs. decomposed accented characters) map to the
+    same filename and are an intentional collision — saving the second one
+    raises ``ProfileNameCollisionError`` instead of silently overwriting the
+    first, so only the first-saved name of each normalized group ends up in
+    the listing.
+
     **Validates: Requirements 9.6**
     """
     import tempfile
@@ -372,15 +380,24 @@ def test_list_sort_order_invariant(names: list[str], tmp_path: object) -> None:
     work_dir = Path(tempfile.mkdtemp(dir=str(tmp_path)))
     repo = ProfileRepository(work_dir)
 
+    saved_names: list[str] = []
+    seen_normalized: set[str] = set()
     for name in names:
         profile = Profile(
             name=name,
             channel_mode="stereo",
             filters=[CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=0.0, q=1.0)],
         )
+        normalized = unicodedata.normalize("NFC", name)
+        if normalized in seen_normalized:
+            with pytest.raises(ProfileNameCollisionError):
+                repo.save(profile)
+            continue
+        seen_normalized.add(normalized)
         repo.save(profile)
+        saved_names.append(name)
 
     listed = repo.list()
     listed_names = [p.name for p in listed]
-    expected = sorted(names, key=lambda n: (n.lower(), n))
+    expected = sorted(saved_names, key=lambda n: (n.lower(), n))
     assert listed_names == expected
