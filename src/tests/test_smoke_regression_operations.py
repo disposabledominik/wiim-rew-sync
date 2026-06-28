@@ -296,6 +296,34 @@ class TestImportExport:
                 {},
             )
 
+    def test_lr_truncation_warnings_are_labeled_by_channel(self, window) -> None:
+        """L/R warnings merged for the Review status banner must say which
+        channel each one belongs to, not present an unlabeled combined list.
+        """
+        _setup_device(window)
+        window._device_caps = MagicMock(max_filters=2)
+        state = window._wizard_controller.state
+        filters_l = [_make_filter(100), _make_filter(200), _make_filter(300)]
+        filters_r = [_make_filter(400), _make_filter(500), _make_filter(600)]
+        state.current_filters = filters_l + filters_r
+        state.channel_mode = ChannelMode.LR
+
+        peq_data = MagicMock()
+        peq_data.channel_mode = "lr"
+        peq_data.bands_l = filters_l
+        peq_data.bands_r = filters_r
+
+        with (
+            patch("src.gui.main_window.QTimer.singleShot", side_effect=lambda _ms, fn: fn()),
+            patch.object(window._status_banner, "show_info") as mock_info,
+        ):
+            window._on_peq_ready(peq_data)
+
+        mock_info.assert_called_once()
+        warning_text = mock_info.call_args[0][0]
+        assert warning_text.count("Left: Imported 3 filters") == 1
+        assert warning_text.count("Right: Imported 3 filters") == 1
+
     # --- Issue #29: Export branches on channel_mode for L/R ---
 
     def test_issue29_export_lr_mode_uses_export_dialog(self, window) -> None:

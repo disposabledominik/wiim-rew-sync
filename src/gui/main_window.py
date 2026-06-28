@@ -1427,8 +1427,12 @@ class MainWindow(QMainWindow):
                 state.pending_conversion_notes_l = {}
                 state.pending_conversion_notes_r = {}
 
-                # Merge warnings
-                all_warnings = warnings_l + warnings_r
+                # Merge warnings — prefix with channel so the combined status
+                # text (joined with " | ") doesn't leave the user guessing
+                # which side a truncation/clamping warning applies to.
+                all_warnings = [f"Left: {w}" for w in warnings_l] + [
+                    f"Right: {w}" for w in warnings_r
+                ]
 
                 # Update state with truncated filters and separate L/R lists
                 state.current_filters = validated_l + validated_r
