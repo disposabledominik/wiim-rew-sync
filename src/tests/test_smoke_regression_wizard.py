@@ -425,7 +425,7 @@ class TestIssue73StereoImportChannelMode:
         ]
         with patch(
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
-            return_value=(mock_filters, [], list(mock_filters)),
+            return_value=(mock_filters, [], list(mock_filters), {}),
         ):
             await window._do_file_import("/tmp/stereo_eq.txt")
 

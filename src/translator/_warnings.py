@@ -26,7 +26,7 @@ class SkippedBand:
     being silently omitted, so the user can see what didn't make it across and why.
     Frequency/gain/Q are populated when the original values are known (e.g. a band
     truncated for exceeding the device's band limit); left None when the source
-    filter type itself has no WiiM translation (e.g. Notch, Modal, All-pass).
+    filter type itself has no WiiM translation (e.g. Notch, Modal, All pass).
     """
 
     original_type: str

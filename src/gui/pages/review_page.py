@@ -65,6 +65,7 @@ class ReviewPage(QWidget):
         filters: list[CanonicalFilter],
         clamping_map: dict[int, list[str]] | None = None,
         rows: list[FilterRow] | None = None,
+        notes_map: dict[int, list[str]] | None = None,
     ) -> None:
         """Pass filters through to the FilterTable.
 
@@ -73,8 +74,10 @@ class ReviewPage(QWidget):
             clamping_map: Optional mapping of band index to clamping reasons.
             rows: Optional display rows in original order, interleaving
                 skipped/truncated band placeholders (see FilterTable.set_filters).
+            notes_map: Optional mapping of band index to conversion notes
+                (values REW didn't specify and had to be substituted).
         """
-        self._filter_table.set_filters(filters, clamping_map, rows)
+        self._filter_table.set_filters(filters, clamping_map, rows, notes_map)
 
     def set_lr_filters(
         self,
@@ -84,6 +87,8 @@ class ReviewPage(QWidget):
         clamping_map_r: dict[int, list[str]] | None = None,
         rows_l: list[FilterRow] | None = None,
         rows_r: list[FilterRow] | None = None,
+        notes_map_l: dict[int, list[str]] | None = None,
+        notes_map_r: dict[int, list[str]] | None = None,
     ) -> None:
         """Pass L/R filters through to the FilterTable.
 
@@ -94,9 +99,18 @@ class ReviewPage(QWidget):
             clamping_map_r: Optional clamping map for the right channel.
             rows_l: Optional display rows for the left channel.
             rows_r: Optional display rows for the right channel.
+            notes_map_l: Optional conversion-notes map for the left channel.
+            notes_map_r: Optional conversion-notes map for the right channel.
         """
         self._filter_table.set_lr_filters(
-            left, right, clamping_map_l, clamping_map_r, rows_l, rows_r
+            left,
+            right,
+            clamping_map_l,
+            clamping_map_r,
+            rows_l,
+            rows_r,
+            notes_map_l,
+            notes_map_r,
         )
 
     def set_summary(

@@ -182,21 +182,28 @@ class TestParseFileRealFormat:
         assert filters[8].q == 0.71
 
     def test_generic_with_all_types(self, parser: REWParser) -> None:
-        """Parse docs/rew_export_examples/generic_with_all_types.txt."""
+        """Parse docs/rew_export_examples/generic_with_all_types.txt.
+
+        Filters 4, 5, 8, 9 (LS 12dB, HS 12dB, bare LS, bare HS) all use REW's
+        shelf-slope S parameter rather than Q, which has no validated WiiM
+        equivalent — so they're skipped, alongside filter 10 (All pass).
+        """
         file = Path("docs/rew_export_examples/generic_with_all_types.txt")
         filters, warnings = parser.parse_file_with_warnings(file)
 
-        # Filter 10 is All-pass (unsupported) -> skipped with warning
-        # So we get 19 filters (20 minus the skipped All-pass)
-        assert len(filters) == 19
-        assert len(warnings) == 1
-        assert "All-pass" in warnings[0].message
+        assert len(filters) == 15
+        assert len(warnings) == 5
+        assert "LS 12dB" in warnings[0].message
+        assert "HS 12dB" in warnings[1].message
+        assert "LS" in warnings[2].message
+        assert "HS" in warnings[3].message
+        assert "All pass" in warnings[4].message
 
         # Filter 1: HP Butterworth at 40 Hz
         assert filters[0].type == "HP"
         assert filters[0].frequency_hz == 40.0
         assert filters[0].gain_db == 0.0
-        assert filters[0].q == 0.707
+        assert filters[0].q == 0.7071
 
         # Filter 2: PK at 44 Hz
         assert filters[1].type == "PEAK"
@@ -208,39 +215,19 @@ class TestParseFileRealFormat:
         assert filters[2].type == "LP"
         assert filters[2].frequency_hz == 126.0
         assert filters[2].gain_db == 0.0
-        assert filters[2].q == 0.707
+        assert filters[2].q == 0.7071
 
-        # Filter 4: LS 12dB at 126 Hz
-        assert filters[3].type == "LS"
-        assert filters[3].frequency_hz == 126.0
-        assert filters[3].gain_db == -2.0
-        assert filters[3].q == 0.707
-
-        # Filter 5: HS 12dB at 137 Hz
-        assert filters[4].type == "HS"
-        assert filters[4].frequency_hz == 137.0
-        assert filters[4].gain_db == 2.0
-        assert filters[4].q == 0.707
-
-        # Filter 6: PK at 186 Hz
-        assert filters[5].type == "PEAK"
-        assert filters[5].frequency_hz == 186.0
+        # Filter 6: PK at 186 Hz (filters 4/5 were skipped LS 12dB/HS 12dB)
+        assert filters[3].type == "PEAK"
+        assert filters[3].frequency_hz == 186.0
 
         # Filter 7: PK at 277 Hz
-        assert filters[6].type == "PEAK"
-        assert filters[6].frequency_hz == 277.0
+        assert filters[4].type == "PEAK"
+        assert filters[4].frequency_hz == 277.0
 
-        # Filter 8: LS (fixed slope) at 100 Hz
-        assert filters[7].type == "LS"
-        assert filters[7].frequency_hz == 100.0
-        assert filters[7].gain_db == -5.0
-        assert filters[7].q == 0.707
-
-        # Filter 9: HS (fixed slope) at 10000 Hz
-        assert filters[8].type == "HS"
-        assert filters[8].frequency_hz == 10000.0
-        assert filters[8].gain_db == 3.0
-        assert filters[8].q == 0.707
+        # Filters 11-20: None -> OFF (filters 8/9/10 were skipped LS/HS/All pass)
+        for i in range(5, 15):
+            assert filters[i].type == "OFF"
 
     def test_real_14band_measurement(self, parser: REWParser) -> None:
         """Parse docs/rew_export_examples/real_14band_measurement.txt."""
@@ -358,7 +345,7 @@ class TestFilterTypeVariants:
     """Tests for various filter line formats."""
 
     def test_hp_butterworth(self, parser: REWParser, tmp_path: Path) -> None:
-        """HP Fc <freq> Hz (Butterworth, no Q) -> HP with Q=0.707."""
+        """HP Fc <freq> Hz (Butterworth, no Q) -> HP with REW's documented Q=0.7071."""
         content = (
             "Equaliser: Generic\n"
             "Filter  1: ON  HP       Fc   40.00 Hz \n"
@@ -370,10 +357,10 @@ class TestFilterTypeVariants:
         assert filters[0].type == "HP"
         assert filters[0].frequency_hz == 40.0
         assert filters[0].gain_db == 0.0
-        assert filters[0].q == 0.707
+        assert filters[0].q == 0.7071
 
     def test_lp_butterworth(self, parser: REWParser, tmp_path: Path) -> None:
-        """LP Fc <freq> Hz (Butterworth, no Q) -> LP with Q=0.707."""
+        """LP Fc <freq> Hz (Butterworth, no Q) -> LP with REW's documented Q=0.7071."""
         content = (
             "Equaliser: Generic\n"
             "Filter  1: ON  LP       Fc  126.00 Hz \n"
@@ -385,7 +372,41 @@ class TestFilterTypeVariants:
         assert filters[0].type == "LP"
         assert filters[0].frequency_hz == 126.0
         assert filters[0].gain_db == 0.0
-        assert filters[0].q == 0.707
+        assert filters[0].q == 0.7071
+
+    def test_bare_hp_butterworth_surfaces_conversion_note(
+        self, parser: REWParser, tmp_path: Path
+    ) -> None:
+        """Bare HP (no Q in source) gets a conversion note about the default Q.
+
+        Unlike HP Q (a direct, lossless match), the fixed Butterworth Q is a
+        substituted value -- this must be visible to the user, not silent.
+        """
+        content = (
+            "Equaliser: Generic\n"
+            "Filter  1: ON  HP       Fc   40.00 Hz \n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        _filters, _warnings, _rows, notes = parser.parse_file_with_rows(file)
+        assert 0 in notes
+        assert "0.7071" in notes[0][0]
+        assert "HP" in notes[0][0]
+
+    def test_hp_q_does_not_surface_a_conversion_note(
+        self, parser: REWParser, tmp_path: Path
+    ) -> None:
+        """HP Q (explicit Q in source) is a direct match -- no conversion note."""
+        content = (
+            "Equaliser: Generic\n"
+            "Filter  1: ON  HP Q     Fc   40.00 Hz  Q   0.71\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        _filters, _warnings, _rows, notes = parser.parse_file_with_rows(file)
+        assert notes == {}
 
     def test_hp_q(self, parser: REWParser, tmp_path: Path) -> None:
         """HP Q Fc <freq> Hz Q <q> -> HP with specified Q, gain=0."""
@@ -447,8 +468,8 @@ class TestFilterTypeVariants:
         assert filters[0].gain_db == -2.0
         assert filters[0].q == 0.71
 
-    def test_ls_12db(self, parser: REWParser, tmp_path: Path) -> None:
-        """LS 12dB Fc <freq> Hz Gain <gain> dB -> LS with Q=0.707."""
+    def test_ls_12db_unsupported(self, parser: REWParser, tmp_path: Path) -> None:
+        """LS 12dB uses REW's shelf-slope S parameter, not Q -> skipped, not approximated."""
         content = (
             "Equaliser: Generic\n"
             "Filter  1: ON  LS 12dB  Fc  126.00 Hz  Gain   -2.0 dB\n"
@@ -456,14 +477,13 @@ class TestFilterTypeVariants:
         file = tmp_path / "eq.txt"
         file.write_text(content, encoding="utf-8")
 
-        filters = parser.parse_file(file)
-        assert filters[0].type == "LS"
-        assert filters[0].frequency_hz == 126.0
-        assert filters[0].gain_db == -2.0
-        assert filters[0].q == 0.707
+        filters, warnings = parser.parse_file_with_warnings(file)
+        assert len(filters) == 0
+        assert len(warnings) == 1
+        assert "LS 12dB" in warnings[0].message
 
-    def test_hs_12db(self, parser: REWParser, tmp_path: Path) -> None:
-        """HS 12dB Fc <freq> Hz Gain <gain> dB -> HS with Q=0.707."""
+    def test_hs_12db_unsupported(self, parser: REWParser, tmp_path: Path) -> None:
+        """HS 12dB uses REW's shelf-slope S parameter, not Q -> skipped, not approximated."""
         content = (
             "Equaliser: Generic\n"
             "Filter  1: ON  HS 12dB  Fc  137.00 Hz  Gain    2.0 dB\n"
@@ -471,14 +491,13 @@ class TestFilterTypeVariants:
         file = tmp_path / "eq.txt"
         file.write_text(content, encoding="utf-8")
 
-        filters = parser.parse_file(file)
-        assert filters[0].type == "HS"
-        assert filters[0].frequency_hz == 137.0
-        assert filters[0].gain_db == 2.0
-        assert filters[0].q == 0.707
+        filters, warnings = parser.parse_file_with_warnings(file)
+        assert len(filters) == 0
+        assert len(warnings) == 1
+        assert "HS 12dB" in warnings[0].message
 
-    def test_ls_fixed_slope(self, parser: REWParser, tmp_path: Path) -> None:
-        """LS Fc <freq> Hz Gain <gain> dB (fixed slope) -> LS with Q=0.707."""
+    def test_ls_fixed_slope_unsupported(self, parser: REWParser, tmp_path: Path) -> None:
+        """Bare LS (fixed slope) uses REW's shelf-slope S parameter, not Q -> skipped."""
         content = (
             "Equaliser: Generic\n"
             "Filter  1: ON  LS       Fc  100.00 Hz  Gain   -5.0 dB\n"
@@ -486,14 +505,13 @@ class TestFilterTypeVariants:
         file = tmp_path / "eq.txt"
         file.write_text(content, encoding="utf-8")
 
-        filters = parser.parse_file(file)
-        assert filters[0].type == "LS"
-        assert filters[0].frequency_hz == 100.0
-        assert filters[0].gain_db == -5.0
-        assert filters[0].q == 0.707
+        filters, warnings = parser.parse_file_with_warnings(file)
+        assert len(filters) == 0
+        assert len(warnings) == 1
+        assert "LS" in warnings[0].message
 
-    def test_hs_fixed_slope(self, parser: REWParser, tmp_path: Path) -> None:
-        """HS Fc <freq> Hz Gain <gain> dB (fixed slope) -> HS with Q=0.707."""
+    def test_hs_fixed_slope_unsupported(self, parser: REWParser, tmp_path: Path) -> None:
+        """Bare HS (fixed slope) uses REW's shelf-slope S parameter, not Q -> skipped."""
         content = (
             "Equaliser: Generic\n"
             "Filter  1: ON  HS       Fc 10000.00 Hz  Gain    3.0 dB\n"
@@ -501,11 +519,10 @@ class TestFilterTypeVariants:
         file = tmp_path / "eq.txt"
         file.write_text(content, encoding="utf-8")
 
-        filters = parser.parse_file(file)
-        assert filters[0].type == "HS"
-        assert filters[0].frequency_hz == 10000.0
-        assert filters[0].gain_db == 3.0
-        assert filters[0].q == 0.707
+        filters, warnings = parser.parse_file_with_warnings(file)
+        assert len(filters) == 0
+        assert len(warnings) == 1
+        assert "HS" in warnings[0].message
 
     def test_none_filter(self, parser: REWParser, tmp_path: Path) -> None:
         """None filter -> OFF type."""
@@ -529,7 +546,7 @@ class TestUnsupportedFilterTypes:
     """Tests for unsupported filter types emitting warnings and being skipped."""
 
     def test_all_pass_emits_warning(self, parser: REWParser, tmp_path: Path) -> None:
-        """All-pass filter emits a warning and is skipped."""
+        """All pass filter emits a warning and is skipped."""
         content = (
             "Equaliser: Generic\n"
             "Filter  1: ON  PK       Fc   100.00 Hz  Gain  -3.00 dB  Q  2.000\n"
@@ -540,11 +557,31 @@ class TestUnsupportedFilterTypes:
         file.write_text(content, encoding="utf-8")
 
         filters, warnings = parser.parse_file_with_warnings(file)
-        assert len(filters) == 2  # All-pass skipped
+        assert len(filters) == 2  # All pass skipped
         assert len(warnings) == 1
-        assert "All-pass" in warnings[0].message
+        assert "All pass" in warnings[0].message
         assert filters[0].frequency_hz == 100.0
         assert filters[1].frequency_hz == 200.0
+
+    def test_all_pass_hyphenated_input_normalizes_to_space(
+        self, parser: REWParser, tmp_path: Path
+    ) -> None:
+        """A hyphenated 'All-pass' token is tolerated but normalized to 'All pass'
+        on output, matching the label the live-API path reports (REW's API
+        always uses the space form).
+        """
+        content = (
+            "Equaliser: Generic\n"
+            "Filter  1: ON  All-pass  Fc  160.00 Hz  Q   0.71\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters, warnings = parser.parse_file_with_warnings(file)
+        assert len(filters) == 0
+        assert len(warnings) == 1
+        assert "All pass" in warnings[0].message
+        assert "All-pass" not in warnings[0].message
 
     def test_modal_emits_warning(self, parser: REWParser, tmp_path: Path) -> None:
         """Modal filter emits a warning and is skipped."""
@@ -633,7 +670,7 @@ class TestUnsupportedFilterTypes:
         file = tmp_path / "eq.txt"
         file.write_text(content, encoding="utf-8")
 
-        filters, warnings, rows = parser.parse_file_with_rows(file)
+        filters, warnings, rows, notes = parser.parse_file_with_rows(file)
 
         assert len(filters) == 2
         assert len(warnings) == 1
@@ -642,6 +679,7 @@ class TestUnsupportedFilterTypes:
         assert isinstance(rows[1], SkippedBand)
         assert rows[1].original_type == "Modal"
         assert rows[2] is filters[1]
+        assert notes == {}
 
 
 # ---------------------------------------------------------------------------
@@ -775,7 +813,7 @@ class TestOffStateHandling:
         filters = parser.parse_file(file)
         assert filters[0].type == "OFF"
         assert filters[0].frequency_hz == 40.0
-        assert filters[0].q == 0.707
+        assert filters[0].q == 0.7071
 
 
 # ---------------------------------------------------------------------------
@@ -827,7 +865,7 @@ class TestBackwardCompatibility:
 
 
 # ---------------------------------------------------------------------------
-# parse_filter_settings (REW HTTP API) — unchanged
+# parse_filter_settings (REW HTTP API)
 # ---------------------------------------------------------------------------
 
 
@@ -837,8 +875,8 @@ class TestParseFilterSettings:
     def test_valid_filter_settings(self, parser: REWParser) -> None:
         settings = [
             {"enabled": True, "type": "PK", "frequency": 1000.0, "gain": -3.5, "q": 1.41},
-            {"enabled": True, "type": "LS", "frequency": 80.0, "gain": 3.0, "q": 0.707},
-            {"enabled": True, "type": "HS", "frequency": 10000.0, "gain": -1.5, "q": 0.5},
+            {"enabled": True, "type": "LS Q", "frequency": 80.0, "gain": 3.0, "q": 0.707},
+            {"enabled": True, "type": "HS Q", "frequency": 10000.0, "gain": -1.5, "q": 0.5},
         ]
 
         filters = parser.parse_filter_settings(settings)
@@ -868,7 +906,7 @@ class TestParseFilterSettings:
         """The REW API also uses 'on' instead of 'enabled' and 'freq' instead of 'frequency'."""
         settings = [
             {"on": True, "type": "PK", "freq": 500.0, "gain": -2.0, "q": 1.5},
-            {"on": False, "type": "HS", "freq": 8000.0, "gain": 0.0, "q": 0.707},
+            {"on": False, "type": "HS Q", "freq": 8000.0, "gain": 0.0, "q": 0.707},
         ]
 
         filters = parser.parse_filter_settings(settings)
@@ -876,6 +914,49 @@ class TestParseFilterSettings:
         assert filters[0].type == "PEAK"
         assert filters[0].frequency_hz == 500.0
         assert filters[1].type == "OFF"
+
+    def test_bare_shelf_and_first_order_skipped(self, parser: REWParser) -> None:
+        """LS/HS/LS 6dB/HS 6dB/LS 12dB/HS 12dB (shelf-slope S, not Q) and LP1/HP1
+        (1st-order, no Q) are skipped via the live API path exactly like the
+        text-file path -- this was previously a real divergence: REW's API
+        reports no 'q' key for these types (confirmed against real REW output),
+        so they used to silently translate through with an arbitrary Q=1.0.
+        """
+        settings = [
+            {"enabled": True, "type": "LS", "frequency": 125.0, "gaindB": -14.0},
+            {"enabled": True, "type": "HS", "frequency": 160.0, "gaindB": 0.0},
+            {"enabled": True, "type": "LS 6dB", "frequency": 200.0, "gaindB": 0.0},
+            {"enabled": True, "type": "HS 6dB", "frequency": 250.0, "gaindB": 0.0},
+            {"enabled": True, "type": "LS 12dB", "frequency": 315.0, "gaindB": 0.0},
+            {"enabled": True, "type": "HS 12dB", "frequency": 400.0, "gaindB": 0.0},
+            {"enabled": True, "type": "LP1", "frequency": 50.0},
+            {"enabled": True, "type": "HP1", "frequency": 63.0},
+            {"enabled": True, "type": "PK", "frequency": 300.0, "gaindB": -3.0, "q": 1.41},
+        ]
+
+        filters = parser.parse_filter_settings(settings)
+
+        assert len(filters) == 1
+        assert filters[0].type == "PEAK"
+
+    def test_lp_hp_missing_q_defaults_to_butterworth(self, parser: REWParser) -> None:
+        """REW's live API omits 'q' for LP/HP when no explicit Q was set --
+        confirmed against real REW API output. Missing 'q' must default to
+        REW's documented fixed Q (0.7071), not an arbitrary 1.0.
+        """
+        settings = [
+            {"enabled": True, "type": "LP", "frequency": 31.5},
+            {"enabled": True, "type": "HP", "frequency": 40.0},
+        ]
+
+        filters = parser.parse_filter_settings(settings)
+
+        assert filters[0] == CanonicalFilter(
+            type="LP", frequency_hz=31.5, gain_db=0.0, q=0.7071
+        )
+        assert filters[1] == CanonicalFilter(
+            type="HP", frequency_hz=40.0, gain_db=0.0, q=0.7071
+        )
 
     def test_unknown_type_skipped(self, parser: REWParser) -> None:
         """Unknown filter types are skipped (not raised as errors)."""
@@ -903,10 +984,12 @@ class TestParseFilterSettings:
         assert result[1].frequency_hz == 22000.0  # Clamped to maximum
 
     def test_filter_type_none_handling(self, parser: REWParser) -> None:
-        """Smoke #97: Filter type 'None' is handled (mapped to OFF or skipped)."""
+        """Smoke #97: Filter type 'None' becomes an explicit OFF band.
+
+        Matches the text-file import path's _NONE_RE handling exactly -- a
+        "None" slot is never omitted and never treated as "unsupported".
+        """
         # The REW API returns "type": "None" for empty slots.
-        # _classify_filter_type currently adds "None" to _SKIP_TYPES.
-        # This test documents the current behavior (skipping).
         settings = [
             {"enabled": True, "type": "None", "frequency": 100.0, "gain": 0.0, "q": 1.0},
             {"enabled": True, "type": "PK", "frequency": 300.0, "gaindB": -3.0, "q": 1.41},
@@ -914,9 +997,43 @@ class TestParseFilterSettings:
 
         filters = parser.parse_filter_settings(settings)
 
-        # 'None' is in _SKIP_TYPES, so it should be skipped.
-        assert len(filters) == 1
-        assert filters[0].type == "PEAK"
+        assert len(filters) == 2
+        assert filters[0] == CanonicalFilter(
+            type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0
+        )
+        assert filters[1].type == "PEAK"
+
+    def test_filter_type_none_in_rows_not_a_skipped_band(self, parser: REWParser) -> None:
+        """A 'None' slot's row is the OFF CanonicalFilter itself, not a SkippedBand."""
+        settings = [
+            {"enabled": True, "type": "None", "frequency": 100.0, "gain": 0.0, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 300.0, "gaindB": -3.0, "q": 1.41},
+        ]
+
+        filters, rows, notes = parser.parse_filter_settings_with_rows(settings)
+
+        assert len(filters) == 2
+        assert len(rows) == 2
+        assert rows[0] is filters[0]
+        assert rows[0].type == "OFF"
+        assert rows[1] is filters[1]
+        assert notes == {}
+
+    def test_filter_type_none_disabled_still_becomes_off(self, parser: REWParser) -> None:
+        """A 'None' slot with enabled=False still becomes OFF, same as enabled=True.
+
+        Real REW API output includes disabled None slots (e.g. {"type": "None",
+        "enabled": false}) -- the empty-slot check must not depend on `enabled`.
+        """
+        settings = [
+            {"enabled": False, "type": "None"},
+        ]
+
+        filters = parser.parse_filter_settings(settings)
+
+        assert filters == [
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0)
+        ]
 
     def test_notch_skipped_not_converted_to_peak(self, parser: REWParser) -> None:
         """Notch implies >60 dB attenuation, which WiiM can't reproduce (-12 dB cap).
@@ -945,13 +1062,37 @@ class TestParseFilterSettings:
             {"enabled": True, "type": "PK", "frequency": 300.0, "gaindB": -3.0, "q": 1.41},
         ]
 
-        filters, rows = parser.parse_filter_settings_with_rows(settings)
+        filters, rows, notes = parser.parse_filter_settings_with_rows(settings)
 
         assert len(filters) == 1
         assert len(rows) == 2
         assert isinstance(rows[0], SkippedBand)
         assert rows[0].original_type == "Notch"
         assert rows[1] is filters[0]
+        assert notes == {}
+
+    def test_api_bare_lp_surfaces_conversion_note(self, parser: REWParser) -> None:
+        """API path: LP with no 'q' key gets the same default-Q conversion note."""
+        settings = [
+            {"enabled": True, "type": "LP", "frequency": 31.5},
+        ]
+
+        filters, _rows, notes = parser.parse_filter_settings_with_rows(settings)
+
+        assert filters[0].q == 0.7071
+        assert 0 in notes
+        assert "0.7071" in notes[0][0]
+        assert "LP" in notes[0][0]
+
+    def test_api_lp_q_does_not_surface_a_conversion_note(self, parser: REWParser) -> None:
+        """API path: LP Q (explicit 'q' key) is a direct match -- no conversion note."""
+        settings = [
+            {"enabled": True, "type": "LP Q", "frequency": 80.0, "q": 0.71},
+        ]
+
+        _filters, _rows, notes = parser.parse_filter_settings_with_rows(settings)
+
+        assert notes == {}
 
 
 

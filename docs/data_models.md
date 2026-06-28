@@ -18,9 +18,24 @@ All formats must convert through this model. No direct REW-to-WiiM or WiiM-to-RE
 | Canonical `type` | REW text | WiiM `{letter}_mode` | Meaning |
 |---|---|---|---|
 | `"PEAK"` | `PK` | `1` | Parametric peak/notch filter |
-| `"LS"` | `LS` | `0` | Low shelf filter |
-| `"HS"` | `HS` | `2` | High shelf filter |
+| `"LS"` | `LS Q` | `0` | Low shelf filter |
+| `"HS"` | `HS Q` | `2` | High shelf filter |
+| `"LP"` | `LP Q` | `3` | Low-pass filter |
+| `"HP"` | `HP Q` | `5` | High-pass filter |
 | `"OFF"` | `OFF <type>` | `-1` | Disabled band |
+
+### WiiM has only a Q parameter — what each REW token actually means
+
+WiiM's LV2 `EqNp` plugin exposes exactly one tunable parameter per band, `{letter}_q` ("Q factor",
+range 0.01–24 — see [docs/wiim_api_notes.md](wiim_api_notes.md)). There is no separate slope/`S`
+parameter. REW's filter-type tokens map onto that single Q knob as follows:
+
+| REW token | REW's own parameter | WiiM translation |
+|---|---|---|
+| `LP Q` / `HP Q` / `LS Q` / `HS Q` | Explicit Q | Passed through unchanged — this is WiiM's native filter, exactly. |
+| `LP` / `HP` (bare) | Fixed Q = 0.7071 (REW's documented 12 dB/octave Butterworth alignment) | Translated using that same fixed Q (`_BUTTERWORTH_Q` in `src/translator/rew_parser.py`). |
+| `LS` / `HS` (bare, S=0.9), `LS 6dB`/`HS 6dB` (S=0.5), `LS 12dB`/`HS 12dB` (S=1.0) | Shelf-slope parameter `S` — a different quantity from Q | **Unsupported, skipped.** There is no validated S→Q conversion (or confirmation WiiM's shelf math accepts S directly) — see "Unsupported REW filter types" below and `docs/corrections.md`. |
+| `LP1` / `HP1` | 1st-order (6 dB/octave) — no Q at all | **Unsupported, skipped.** |
 
 ### Field constraints
 
@@ -36,11 +51,22 @@ When importing from REW, gain/Q values outside WiiM's hardware limits must be fl
 ### Unsupported REW filter types
 
 REW filter types with no WiiM translation (`Modal`, `All pass`, `L-T`, `Notch`/`Notch Q`, `LP1`/`HP1`,
-`LS 6dB`/`HS 6dB`) are skipped during import, in both the text-file and live REW-API parsing paths
-(`REWParser.parse_file_with_rows` / `parse_filter_settings_with_rows` in `src/translator/rew_parser.py`).
+`LS`/`HS`, `LS 6dB`/`HS 6dB`, `LS 12dB`/`HS 12dB`) are skipped during import, in both the text-file and
+live REW-API parsing paths (`REWParser.parse_file_with_rows` / `parse_filter_settings_with_rows` in
+`src/translator/rew_parser.py`).
+
 `Notch`/`Notch Q` are skipped rather than approximated as `PEAK` because REW notches imply >60 dB of
 attenuation, which exceeds WiiM's -12 dB gain floor and can't be faithfully reproduced (see
 `docs/corrections.md`, 2026-06-28).
+
+`LS`/`HS`/`LS 6dB`/`HS 6dB`/`LS 12dB`/`HS 12dB` are skipped because REW parameterizes them with a shelf
+*slope* value `S` (0.9 / 0.5 / 1.0 respectively), not a Q, and WiiM has no slope parameter to receive it
+— see the table above and `docs/corrections.md`, 2026-06-28. `LP1`/`HP1` are 1st-order filters with no Q
+at all. Note this is an asymmetry with the otherwise-supported bare `LS`/`HS` *token* used by this app's
+own REW-text round-trip format (`src/translator/rew_generator.py`) — that format always writes an
+explicit Q after the bare token, which is what makes it distinguishable and supported (see `_TYPE_MAP`'s
+comment in `src/translator/rew_parser.py`); a genuine REW export's bare `LS`/`HS` line never carries a Q
+and is always skipped.
 
 Skipped bands are not silently dropped from the Review table — the `*_with_rows` parser methods return
 a `FilterRow` list (`CanonicalFilter | SkippedBand`, defined in `src/translator/_warnings.py`) that
@@ -50,6 +76,14 @@ it as an unnumbered ("N/A"), crossed-out, dimmed row with the reason on hover. B
 the device's band cap (`validate_filters_for_device` in `src/gui/shared_helpers.py`) are represented the
 same way, but keep their original frequency/gain/Q for display since — unlike a type-level skip — the
 band itself was valid, just over the limit.
+
+A bare `LP`/`HP` (no explicit Q in the source) is a third, distinct case: fully usable, but with a
+*substituted* value — REW's documented fixed Q (0.7071, 12 dB/octave Butterworth) fills the gap that the
+source never specified, unlike `LP Q`/`HP Q`/`LS Q`/`HS Q` which carry an explicit Q and need no comment.
+The `*_with_rows` methods return this as `conversion_notes: dict[int, list[str]]` (keyed by the band's
+0-based index in `filters`), surfaced as a distinct info-colored dot + tooltip on the Q cell — separate
+from both the `SkippedBand` treatment above and the orange clamping-warning dot, since the value isn't
+out of range, just not the one REW's source specified.
 
 ---
 

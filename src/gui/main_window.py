@@ -1385,6 +1385,9 @@ class MainWindow(QMainWindow):
             state.pending_rows = []
             state.pending_rows_l = []
             state.pending_rows_r = []
+            state.pending_conversion_notes = {}
+            state.pending_conversion_notes_l = {}
+            state.pending_conversion_notes_r = {}
 
         if count > 0:
             # Determine device max_filters
@@ -1417,8 +1420,12 @@ class MainWindow(QMainWindow):
                 validated_r, warnings_r, clamping_r, rows_r = validate_filters_for_device(
                     list(bands_r), max_filters, state.pending_rows_r or None
                 )
+                notes_l = state.pending_conversion_notes_l
+                notes_r = state.pending_conversion_notes_r
                 state.pending_rows_l = []
                 state.pending_rows_r = []
+                state.pending_conversion_notes_l = {}
+                state.pending_conversion_notes_r = {}
 
                 # Merge warnings
                 all_warnings = warnings_l + warnings_r
@@ -1429,7 +1436,14 @@ class MainWindow(QMainWindow):
                 state.filters_r = validated_r
 
                 self._review_page.set_lr_filters(
-                    validated_l, validated_r, clamping_l, clamping_r, rows_l, rows_r
+                    validated_l,
+                    validated_r,
+                    clamping_l,
+                    clamping_r,
+                    rows_l,
+                    rows_r,
+                    notes_l,
+                    notes_r,
                 )
             elif channel.is_lr:
                 # Every producer of peq_ready in L/R mode (file_import_lr,
@@ -1448,15 +1462,19 @@ class MainWindow(QMainWindow):
                 )
                 state.pending_rows_l = []
                 state.pending_rows_r = []
+                state.pending_conversion_notes_l = {}
+                state.pending_conversion_notes_r = {}
                 return
             else:
                 # Stereo: validate the full list
                 validated, all_warnings, clamping_map, rows = validate_filters_for_device(
                     filters, max_filters, state.pending_rows or None
                 )
+                notes = state.pending_conversion_notes
                 state.pending_rows = []
+                state.pending_conversion_notes = {}
                 state.current_filters = validated
-                self._review_page.set_filters(validated, clamping_map, rows)
+                self._review_page.set_filters(validated, clamping_map, rows, notes)
 
             # Set summary info
             device_ip = state.selected_device or "Unknown"
@@ -1949,12 +1967,13 @@ class MainWindow(QMainWindow):
 
         file_path = Path(path)
         parser = REWParser()
-        filters, warnings, rows = parser.parse_file_with_rows(file_path)
+        filters, warnings, rows, notes = parser.parse_file_with_rows(file_path)
 
         # Store in wizard state — explicitly set Stereo channel mode (smoke #72)
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.channel_mode = ChannelMode.STEREO
         self._wizard_controller.state.pending_rows = rows
+        self._wizard_controller.state.pending_conversion_notes = notes
 
         # Notify FiltersPage of success via peq_ready signal
         self._bridge.peq_ready.emit(filters)
@@ -1979,8 +1998,8 @@ class MainWindow(QMainWindow):
         from src.translator.rew_parser import REWParser
 
         parser = REWParser()
-        filters_l, warnings_l, rows_l = parser.parse_file_with_rows(Path(path_l))
-        filters_r, warnings_r, rows_r = parser.parse_file_with_rows(Path(path_r))
+        filters_l, warnings_l, rows_l, notes_l = parser.parse_file_with_rows(Path(path_l))
+        filters_r, warnings_r, rows_r, notes_r = parser.parse_file_with_rows(Path(path_r))
 
         # Combine L+R into flat list and set L/R channel mode
         filters = filters_l + filters_r
@@ -1988,6 +2007,8 @@ class MainWindow(QMainWindow):
         self._wizard_controller.state.channel_mode = ChannelMode.LR
         self._wizard_controller.state.pending_rows_l = rows_l
         self._wizard_controller.state.pending_rows_r = rows_r
+        self._wizard_controller.state.pending_conversion_notes_l = notes_l
+        self._wizard_controller.state.pending_conversion_notes_r = notes_r
 
         # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
         peq_data = PEQSettings(
@@ -2420,12 +2441,13 @@ class MainWindow(QMainWindow):
         Args:
             uuid: The measurement UUID selected by the user.
         """
-        filters, rows = await self._rew_client.get_filters_with_rows(uuid)
+        filters, rows, notes = await self._rew_client.get_filters_with_rows(uuid)
 
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.channel_mode = ChannelMode.STEREO
         self._wizard_controller.state.pending_rows = rows
+        self._wizard_controller.state.pending_conversion_notes = notes
 
         # Emit result signal
         self._bridge.rew_filters_ready.emit(filters)
@@ -2440,8 +2462,8 @@ class MainWindow(QMainWindow):
             uuid_l: UUID of the Left channel measurement.
             uuid_r: UUID of the Right channel measurement.
         """
-        filters_l, rows_l = await self._rew_client.get_filters_with_rows(uuid_l)
-        filters_r, rows_r = await self._rew_client.get_filters_with_rows(uuid_r)
+        filters_l, rows_l, notes_l = await self._rew_client.get_filters_with_rows(uuid_l)
+        filters_r, rows_r, notes_r = await self._rew_client.get_filters_with_rows(uuid_r)
 
         # Combine L+R into flat list and set L/R channel mode
         filters = filters_l + filters_r
@@ -2449,6 +2471,8 @@ class MainWindow(QMainWindow):
         self._wizard_controller.state.channel_mode = ChannelMode.LR
         self._wizard_controller.state.pending_rows_l = rows_l
         self._wizard_controller.state.pending_rows_r = rows_r
+        self._wizard_controller.state.pending_conversion_notes_l = notes_l
+        self._wizard_controller.state.pending_conversion_notes_r = notes_r
 
         # Emit peq_ready with a PEQSettings carrying L/R bands
         peq_data = PEQSettings(

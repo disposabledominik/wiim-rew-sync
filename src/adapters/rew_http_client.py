@@ -165,12 +165,14 @@ class REWHttpApiClient:
 
     async def get_filters_with_rows(
         self, uuid: str
-    ) -> tuple[list[CanonicalFilter], list[FilterRow]]:
+    ) -> tuple[list[CanonicalFilter], list[FilterRow], dict[int, list[str]]]:
         """Fetch filters for a measurement, also returning display rows.
 
         Same as get_filters(), but also returns `rows`: the filters in
         original order with SkippedBand placeholders for any filter type
-        REW reports that has no WiiM translation (e.g. Notch).
+        REW reports that has no WiiM translation (e.g. Notch); and
+        `conversion_notes`: notes about values REW's API omitted and had to
+        be substituted (currently: the fixed Q applied to a bare LP/HP).
 
         Args:
             uuid: The measurement UUID.

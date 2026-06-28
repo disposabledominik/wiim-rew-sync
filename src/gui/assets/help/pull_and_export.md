@@ -39,6 +39,11 @@ The app imports standard parametric EQ filters from REW:
 - Skipped bands still show up in the Review step as a crossed-out, unnumbered
   ("N/A") row — hover it to see why it was skipped. Bands cut for exceeding
   the device's band limit are shown the same way.
+- A bare LP/HP (no Q specified in REW) is imported using REW's own documented
+  default Q (0.7071) rather than being skipped. Since this fills in a value
+  REW didn't specify, the Review step flags it with a small indicator on the
+  Q column — hover it to see the note. LP Q/HP Q/LS Q/HS Q (which carry an
+  explicit Q already) are a direct match and never show this note.
 
 If REW is not running or the API is not enabled, you'll see:
 "REW is not connected. Please ensure REW is running and its HTTP API is

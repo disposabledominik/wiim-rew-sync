@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.constants import WARNING_COLOR_DARK, WARNING_COLOR_LIGHT
+from src.gui.constants import ACCENT_COLOR, WARNING_COLOR_DARK, WARNING_COLOR_LIGHT
 from src.gui.theme import get_active_theme
 from src.models.canonical import CanonicalFilter
 from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
@@ -82,6 +82,7 @@ class FilterTable(QWidget):
         filters: list[CanonicalFilter],
         clamping_map: dict[int, list[str]] | None = None,
         rows: list[FilterRow] | None = None,
+        notes_map: dict[int, list[str]] | None = None,
     ) -> None:
         """Populate the table with filter bands.
 
@@ -94,12 +95,16 @@ class FilterTable(QWidget):
                 SkippedBand placeholders for unsupported/truncated bands.
                 When omitted, every entry in `filters` gets a sequential
                 band number, matching the previous (pre-B3) behavior.
+            notes_map: Optional mapping of band index (0-based) to list of
+                conversion-note strings — values REW didn't specify and had to
+                be substituted (e.g. the fixed Q applied to a bare LP/HP).
+                Shown as a distinct (non-warning) indicator with a tooltip.
         """
         self._clear_widgets()
         table = self._create_table()
         self._container_layout.addWidget(table)
         self._table = table
-        self._populate_table(table, filters, clamping_map, rows)
+        self._populate_table(table, filters, clamping_map, rows, notes_map)
 
     def set_lr_filters(
         self,
@@ -109,6 +114,8 @@ class FilterTable(QWidget):
         clamping_map_r: dict[int, list[str]] | None = None,
         rows_l: list[FilterRow] | None = None,
         rows_r: list[FilterRow] | None = None,
+        notes_map_l: dict[int, list[str]] | None = None,
+        notes_map_r: dict[int, list[str]] | None = None,
     ) -> None:
         """Display L/R channels as tabbed sections.
 
@@ -119,17 +126,19 @@ class FilterTable(QWidget):
             clamping_map_r: Optional clamping map for the right channel.
             rows_l: Optional display rows for the left channel (see set_filters).
             rows_r: Optional display rows for the right channel (see set_filters).
+            notes_map_l: Optional conversion-notes map for the left channel.
+            notes_map_r: Optional conversion-notes map for the right channel.
         """
         self._clear_widgets()
         tab_widget = QTabWidget(self._container)
         tab_widget.setObjectName("FilterTableTabs")
 
         left_table = self._create_table()
-        self._populate_table(left_table, left, clamping_map_l, rows_l)
+        self._populate_table(left_table, left, clamping_map_l, rows_l, notes_map_l)
         tab_widget.addTab(left_table, "Left Channel")
 
         right_table = self._create_table()
-        self._populate_table(right_table, right, clamping_map_r, rows_r)
+        self._populate_table(right_table, right, clamping_map_r, rows_r, notes_map_r)
         tab_widget.addTab(right_table, "Right Channel")
 
         self._container_layout.addWidget(tab_widget)
@@ -201,6 +210,7 @@ class FilterTable(QWidget):
         filters: list[CanonicalFilter],
         clamping_map: dict[int, list[str]] | None = None,
         rows: list[FilterRow] | None = None,
+        notes_map: dict[int, list[str]] | None = None,
     ) -> None:
         """Fill table rows from filter list, interleaving skipped placeholders.
 
@@ -211,6 +221,8 @@ class FilterTable(QWidget):
                 (0-based, counting only the valid/numbered rows).
             rows: Optional display rows in original order; SkippedBand entries
                 render as unnumbered, crossed-out placeholders.
+            notes_map: Optional conversion-note indicators, keyed the same way
+                as clamping_map.
         """
         display_rows: list[FilterRow] = rows if rows is not None else list(filters)
         table.setRowCount(len(display_rows))
@@ -221,7 +233,9 @@ class FilterTable(QWidget):
                 self._populate_skipped_row(table, table_row, entry)
                 continue
 
-            self._populate_filter_row(table, table_row, entry, band_number, clamping_map)
+            self._populate_filter_row(
+                table, table_row, entry, band_number, clamping_map, notes_map
+            )
             band_number += 1
 
     def _populate_filter_row(
@@ -231,6 +245,7 @@ class FilterTable(QWidget):
         filt: CanonicalFilter,
         band_number: int,
         clamping_map: dict[int, list[str]] | None,
+        notes_map: dict[int, list[str]] | None = None,
     ) -> None:
         """Fill one row for a usable filter, at the given band number."""
         is_disabled = filt.type == "OFF"
@@ -289,10 +304,11 @@ class FilterTable(QWidget):
         if is_clamped and clamping_map is not None:
             reasons = clamping_map[band_number]
             q_clamped = any("q" in r.lower() for r in reasons)
+        band_notes = notes_map.get(band_number, []) if notes_map else []
         display_q = max(Q_MIN, min(Q_MAX, filt.q)) if q_clamped else filt.q
         q_text = f"{display_q:.2f}"
-        if q_clamped:
-            q_text = f"\u25cf {q_text}"  # Orange dot prefix
+        if q_clamped or band_notes:
+            q_text = f"\u25cf {q_text}"  # Dot prefix (orange=clamped, accent=note)
         q_item = QTableWidgetItem(q_text)
         q_item.setTextAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -303,6 +319,9 @@ class FilterTable(QWidget):
                 f"Original: {filt.q:.2f}. Clamped: " + "; ".join(q_reasons)
             )
             q_item.setForeground(self._warning_color())
+        elif band_notes:
+            q_item.setToolTip("Note: " + "; ".join(band_notes))
+            q_item.setForeground(self._note_color())
         table.setItem(row, 4, q_item)
 
         # Disabled/OFF bands at reduced opacity
@@ -460,6 +479,11 @@ class FilterTable(QWidget):
             WARNING_COLOR_DARK if get_active_theme() == "dark" else WARNING_COLOR_LIGHT
         )
         return QColor(hex_color)
+
+    @staticmethod
+    def _note_color() -> QColor:
+        """Return the conversion-note foreground color (accent, not a warning)."""
+        return QColor(ACCENT_COLOR)
 
     def _apply_disabled_style(self, table: QTableWidget, row: int) -> None:
         """Apply 0.5 opacity visual to a disabled/OFF band row."""

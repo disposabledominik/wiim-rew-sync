@@ -63,24 +63,16 @@ _LP_BW_RE = re.compile(
     r"^LP\s+Fc\s+([\d.]+)\s+Hz\s*$"
 )
 
-# LS Fc <freq> Hz Gain <gain> dB (fixed slope, no Q)
+# LS Fc <freq> Hz Gain <gain> dB (bare shelf — REW's slope parameter S, no Q;
+# used only to detect+skip this unsupported variant, see _SKIP_TYPES below)
 _LS_FIXED_RE = re.compile(
     r"^LS\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-\d.]+)\s+dB\s*$"
 )
 
-# HS Fc <freq> Hz Gain <gain> dB (fixed slope, no Q)
+# HS Fc <freq> Hz Gain <gain> dB (bare shelf — REW's slope parameter S, no Q;
+# used only to detect+skip this unsupported variant, see _SKIP_TYPES below)
 _HS_FIXED_RE = re.compile(
     r"^HS\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-\d.]+)\s+dB\s*$"
-)
-
-# LS 12dB Fc <freq> Hz Gain <gain> dB
-_LS_12DB_RE = re.compile(
-    r"^LS\s+12dB\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-\d.]+)\s+dB\s*$"
-)
-
-# HS 12dB Fc <freq> Hz Gain <gain> dB
-_HS_12DB_RE = re.compile(
-    r"^HS\s+12dB\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-\d.]+)\s+dB\s*$"
 )
 
 # None (empty/disabled band)
@@ -91,35 +83,48 @@ _LEGACY_FULL_RE = re.compile(
     r"^(\w+)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
 )
 
-# Default Butterworth Q value
-_BUTTERWORTH_Q = 0.707
+# REW's documented fixed Q for bare LP/HP (12 dB/octave Butterworth alignment)
+_BUTTERWORTH_Q = 0.7071
+
+# Surfaced to the user (Review table) whenever a bare LP/HP gets this default
+# applied, since unlike LP Q/HP Q (a direct, lossless match) this substitutes
+# a value the source file never specified.
+_BUTTERWORTH_Q_NOTE = (
+    "REW's bare {0} has no explicit Q; using REW's documented fixed "
+    f"Q={_BUTTERWORTH_Q:.4f} (12 dB/octave Butterworth alignment)."
+)
 
 # ---------------------------------------------------------------------------
 # Unified type map and skip types (shared by text file parser and API parser)
 # ---------------------------------------------------------------------------
 
-# All known filter type tokens -> Canonical filter type
+# All known filter type tokens -> Canonical filter type.
+#
+# "LS"/"HS" stay mapped here (rather than moving to _SKIP_TYPES) purely so the
+# *legacy round-trip* format this app's own REWGenerator writes — bare "LS"/
+# "HS" token with an explicit trailing "Q <value>", matched by
+# _LEGACY_FULL_RE — keeps working. Real REW exports never put a Q on a bare
+# LS/HS line (see _SKIP_TYPES below), so there is no ambiguity in practice.
 _TYPE_MAP: dict[str, str] = {
     "PK": "PEAK",
     "LS": "LS",
     "HS": "HS",
     "LP": "LP",
     "HP": "HP",
-    # Shelf variants
-    "LS 6dB": "LS",
-    "HS 6dB": "HS",
-    "LS 12dB": "LS",
-    "HS 12dB": "HS",
     "LS Q": "LS",
     "HS Q": "HS",
-    # LP/HP variants
-    "LP1": "LP",
-    "HP1": "HP",
     "LP Q": "LP",
     "HP Q": "HP",
 }
 
-# Filter types that should be skipped (not translatable to WiiM PEQ)
+# Filter types that should be skipped (not translatable to WiiM PEQ).
+#
+# "LS"/"HS" (bare), "LS 6dB"/"HS 6dB", and "LS 12dB"/"HS 12dB" use REW's shelf
+# *slope* parameter S (0.9 / 0.5 / 1.0 respectively per REW's documentation),
+# not a Q. WiiM's LV2 EqNp plugin exposes only a single "Q factor" parameter
+# for shelf bands (docs/wiim_api_notes.md) with no separate slope input, and
+# there is no hardware-validated S->Q conversion — see docs/corrections.md.
+# "LP1"/"HP1" are 1st-order (6dB/octave) filters, which have no Q at all.
 _SKIP_TYPES: set[str] = {
     "None",       # Empty/disabled slot
     "Modal",      # Modal decay target
@@ -127,6 +132,14 @@ _SKIP_TYPES: set[str] = {
     "L-T",        # Linkwitz Transform
     "Notch",      # REW notch implies >60 dB attenuation; WiiM caps gain at -12 dB
     "Notch Q",    # Same as above, explicit-Q variant
+    "LS",         # Shelf-slope (S=0.9) shelf, no Q equivalent confirmed
+    "HS",         # Shelf-slope (S=0.9) shelf, no Q equivalent confirmed
+    "LS 6dB",     # Shelf-slope (S=0.5) shelf, no Q equivalent confirmed
+    "HS 6dB",     # Shelf-slope (S=0.5) shelf, no Q equivalent confirmed
+    "LS 12dB",    # Shelf-slope (S=1.0) shelf, no Q equivalent confirmed
+    "HS 12dB",    # Shelf-slope (S=1.0) shelf, no Q equivalent confirmed
+    "LP1",        # 1st-order low-pass, no Q
+    "HP1",        # 1st-order high-pass, no Q
 }
 
 
@@ -168,23 +181,19 @@ def _is_unsupported_filter(body: str) -> str | None:
     Returns the unsupported type name if found, None otherwise.
     Uses _SKIP_TYPES for known skip types, plus regex for text-format variants.
     """
-    # Check explicit skip types by prefix (exclude "None" — handled by _NONE_RE,
-    # "All pass" — handled by regex below for hyphenated return value, and
+    # Check explicit skip types by prefix (exclude "None" — handled by _NONE_RE;
+    # "All pass" — handled by regex below so a hyphenated "All-pass" input is
+    # also recognized and normalized to the space form;
     # "Notch"/"Notch Q" — handled by regex below so the more specific
-    # "Notch Q" label isn't shadowed by a "Notch" prefix match)
+    # "Notch Q" label isn't shadowed by a "Notch" prefix match; "LS"/"HS" —
+    # handled by regex below, anchored to "Fc" right after the type token, so
+    # a bare-prefix match here doesn't shadow the supported "LS Q"/"HS Q"
+    # variants or this app's own legacy round-trip format, "LS ... Q <value>")
     for utype in _SKIP_TYPES:
-        if utype in ("None", "All pass", "Notch", "Notch Q"):
+        if utype in ("None", "All pass", "Notch", "Notch Q", "LS", "HS"):
             continue
         if body.startswith(utype):
             return utype
-
-    # Check patterns like "LS 6dB", "HS 6dB" (unsupported slope variants in text files)
-    ls_6db = re.match(r"^LS\s+6dB\b", body)
-    if ls_6db:
-        return "LS 6dB"
-    hs_6db = re.match(r"^HS\s+6dB\b", body)
-    if hs_6db:
-        return "HS 6dB"
 
     # Check "Notch Q" variant (multi-word before single "Notch" check) — REW
     # notches imply >60 dB attenuation, which WiiM cannot reproduce (gain
@@ -198,29 +207,35 @@ def _is_unsupported_filter(body: str) -> str | None:
     if notch:
         return "Notch"
 
-    # Check "LP1" / "HP1" variants
-    lp1 = re.match(r"^LP1\b", body)
-    if lp1:
-        return "LP1"
-    hp1 = re.match(r"^HP1\b", body)
-    if hp1:
-        return "HP1"
-
-    # Check "All pass" or "All-pass"
+    # Check "All pass" or "All-pass" (REW's own text export always uses the
+    # space form; the hyphen is tolerated on input but normalized to "All
+    # pass" on output, matching the live-API path's raw type token exactly)
     allpass = re.match(r"^All[\s-]?pass\b", body)
     if allpass:
-        return "All-pass"
+        return "All pass"
+
+    # Check bare "LS"/"HS" (REW's shelf-slope "S"-parameterized shelf, with no
+    # Q field at all — see _SKIP_TYPES). Anchored to require "Fc" immediately
+    # after the type token, so "LS Q ..." (explicit Q) and this app's own
+    # legacy round-trip format (bare token + trailing "Q <value>") don't match.
+    if _LS_FIXED_RE.match(body):
+        return "LS"
+    if _HS_FIXED_RE.match(body):
+        return "HS"
 
     return None
 
 
 def _parse_filter_body(
     body: str, *, line_number: int
-) -> tuple[CanonicalFilter | None, ValidationWarning | None]:
+) -> tuple[CanonicalFilter | None, ValidationWarning | None, str | None]:
     """Parse the body of a filter line (everything after ON/OFF prefix).
 
-    Returns (CanonicalFilter, None) on success, or (None, ValidationWarning) for
-    unsupported types that should be skipped.
+    Returns (CanonicalFilter, None, note) on success, or (None, ValidationWarning,
+    None) for unsupported types that should be skipped. `note` is non-None only
+    when a value had to be substituted for one REW didn't specify (currently:
+    the fixed Butterworth Q applied to a bare LP/HP) — surfaced to the user as
+    a conversion note, distinct from an outright skip.
 
     Raises ParseError for malformed lines.
     """
@@ -228,6 +243,7 @@ def _parse_filter_body(
     if _NONE_RE.match(body):
         return (
             CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+            None,
             None,
         )
 
@@ -240,7 +256,7 @@ def _parse_filter_body(
             original_value=unsupported,
             clamped_value=None,
         )
-        return (None, warning)
+        return (None, warning, None)
 
     # --- PK (Peaking/Parametric) ---
     m = _PK_RE.match(body)
@@ -251,6 +267,7 @@ def _parse_filter_body(
         _validate_frequency(freq, line_number=line_number)
         return (
             CanonicalFilter(type="PEAK", frequency_hz=freq, gain_db=gain, q=q),
+            None,
             None,
         )
 
@@ -263,6 +280,7 @@ def _parse_filter_body(
         return (
             CanonicalFilter(type="HP", frequency_hz=freq, gain_db=0.0, q=q),
             None,
+            None,
         )
 
     # --- LP Q (Low-pass with explicit Q) ---
@@ -273,6 +291,7 @@ def _parse_filter_body(
         _validate_frequency(freq, line_number=line_number)
         return (
             CanonicalFilter(type="LP", frequency_hz=freq, gain_db=0.0, q=q),
+            None,
             None,
         )
 
@@ -286,6 +305,7 @@ def _parse_filter_body(
         return (
             CanonicalFilter(type="LS", frequency_hz=freq, gain_db=gain, q=q),
             None,
+            None,
         )
 
     # --- HS Q (High-shelf with explicit Q) ---
@@ -298,31 +318,6 @@ def _parse_filter_body(
         return (
             CanonicalFilter(type="HS", frequency_hz=freq, gain_db=gain, q=q),
             None,
-        )
-
-    # --- LS 12dB (12dB/octave low-shelf) ---
-    m = _LS_12DB_RE.match(body)
-    if m:
-        freq = float(m.group(1))
-        gain = float(m.group(2))
-        _validate_frequency(freq, line_number=line_number)
-        return (
-            CanonicalFilter(
-                type="LS", frequency_hz=freq, gain_db=gain, q=_BUTTERWORTH_Q
-            ),
-            None,
-        )
-
-    # --- HS 12dB (12dB/octave high-shelf) ---
-    m = _HS_12DB_RE.match(body)
-    if m:
-        freq = float(m.group(1))
-        gain = float(m.group(2))
-        _validate_frequency(freq, line_number=line_number)
-        return (
-            CanonicalFilter(
-                type="HS", frequency_hz=freq, gain_db=gain, q=_BUTTERWORTH_Q
-            ),
             None,
         )
 
@@ -336,6 +331,7 @@ def _parse_filter_body(
                 type="HP", frequency_hz=freq, gain_db=0.0, q=_BUTTERWORTH_Q
             ),
             None,
+            _BUTTERWORTH_Q_NOTE.format("HP"),
         )
 
     # --- LP Butterworth (no Q specified) ---
@@ -348,32 +344,7 @@ def _parse_filter_body(
                 type="LP", frequency_hz=freq, gain_db=0.0, q=_BUTTERWORTH_Q
             ),
             None,
-        )
-
-    # --- LS fixed slope (no Q specified) ---
-    m = _LS_FIXED_RE.match(body)
-    if m:
-        freq = float(m.group(1))
-        gain = float(m.group(2))
-        _validate_frequency(freq, line_number=line_number)
-        return (
-            CanonicalFilter(
-                type="LS", frequency_hz=freq, gain_db=gain, q=_BUTTERWORTH_Q
-            ),
-            None,
-        )
-
-    # --- HS fixed slope (no Q specified) ---
-    m = _HS_FIXED_RE.match(body)
-    if m:
-        freq = float(m.group(1))
-        gain = float(m.group(2))
-        _validate_frequency(freq, line_number=line_number)
-        return (
-            CanonicalFilter(
-                type="HS", frequency_hz=freq, gain_db=gain, q=_BUTTERWORTH_Q
-            ),
-            None,
+            _BUTTERWORTH_Q_NOTE.format("LP"),
         )
 
     # --- Legacy full format: <type> Fc <freq> Hz Gain <gain> dB Q <q> ---
@@ -395,7 +366,7 @@ def _parse_filter_body(
                 original_value=type_token,
                 clamped_value=None,
             )
-            return (None, warning)
+            return (None, warning, None)
 
         _validate_frequency(freq, line_number=line_number)
         canonical_type = _TYPE_MAP[type_token]
@@ -406,6 +377,7 @@ def _parse_filter_body(
                 gain_db=gain,
                 q=q,
             ),
+            None,
             None,
         )
 
@@ -447,27 +419,35 @@ class REWParser:
         Returns:
             Tuple of (filters, warnings).
         """
-        filters, warnings, _rows = self._parse_file_full(path)
+        filters, warnings, _rows, _notes = self._parse_file_full(path)
         return filters, warnings
 
     def parse_file_with_rows(
         self, path: Path
-    ) -> tuple[list[CanonicalFilter], list[ValidationWarning], list[FilterRow]]:
+    ) -> tuple[
+        list[CanonicalFilter], list[ValidationWarning], list[FilterRow], dict[int, list[str]]
+    ]:
         """Parse a REW EQ text file, also returning display rows in original order.
 
         Raises ParseError on malformed lines (with line number in message).
         Raises ValidationError for out-of-range frequency.
 
         Returns:
-            Tuple of (filters, warnings, rows). `rows` preserves the original
-            band order, interleaving SkippedBand placeholders for unsupported
-            types at the position they occupied in the source file.
+            Tuple of (filters, warnings, rows, conversion_notes). `rows` preserves
+            the original band order, interleaving SkippedBand placeholders for
+            unsupported types at the position they occupied in the source file.
+            `conversion_notes` maps a band's 0-based index in `filters` to a list
+            of notes about values REW didn't specify and had to be substituted
+            (currently: the fixed Q applied to a bare, Q-less LP/HP) — distinct
+            from an outright skip, since the band is still fully usable.
         """
         return self._parse_file_full(path)
 
     def _parse_file_full(
         self, path: Path
-    ) -> tuple[list[CanonicalFilter], list[ValidationWarning], list[FilterRow]]:
+    ) -> tuple[
+        list[CanonicalFilter], list[ValidationWarning], list[FilterRow], dict[int, list[str]]
+    ]:
         """Shared implementation backing parse_file_with_warnings/_rows."""
         text = path.read_text(encoding="utf-8")
         lines = text.splitlines()
@@ -496,6 +476,7 @@ class REWParser:
         filters: list[CanonicalFilter] = []
         warnings: list[ValidationWarning] = []
         rows: list[FilterRow] = []
+        conversion_notes: dict[int, list[str]] = {}
         seen_filter_numbers: set[int] = set()
 
         for line_idx in range(equaliser_line_idx + 1, len(lines)):
@@ -523,7 +504,7 @@ class REWParser:
             seen_filter_numbers.add(filter_num)
 
             # Parse the filter body
-            result, warning = _parse_filter_body(body, line_number=line_number)
+            result, warning, note = _parse_filter_body(body, line_number=line_number)
 
             if warning is not None:
                 warnings.append(warning)
@@ -547,10 +528,13 @@ class REWParser:
                     q=result.q,
                 )
 
+            if note is not None:
+                conversion_notes.setdefault(len(filters), []).append(note)
+
             filters.append(result)
             rows.append(result)
 
-        return (filters, warnings, rows)
+        return (filters, warnings, rows, conversion_notes)
 
     def parse_filter_settings(
         self, filter_settings: list[dict[str, object]]
@@ -560,41 +544,59 @@ class REWParser:
         Each FilterSetting has: enabled (bool), type (str), frequency (float),
         gaindB (float), q (float). Some filters have no frequency/gain (e.g. None type).
 
-        Unsupported filter types (Modal, All pass, L-T, Notch, None) are skipped
-        with a logged warning rather than raising a hard error.
+        "None" (empty slot) always becomes an explicit OFF band. Other
+        unsupported filter types (Modal, All pass, L-T, Notch/Notch Q,
+        LP1/HP1, and the shelf-slope LS/HS/LS 6dB/HS 6dB/LS 12dB/HS 12dB
+        variants — see _SKIP_TYPES) are skipped with a logged warning rather
+        than raising a hard error.
         """
-        filters, _rows = self.parse_filter_settings_with_rows(filter_settings)
+        filters, _rows, _notes = self.parse_filter_settings_with_rows(filter_settings)
         return filters
 
     def parse_filter_settings_with_rows(
         self, filter_settings: list[dict[str, object]]
-    ) -> tuple[list[CanonicalFilter], list[FilterRow]]:
+    ) -> tuple[list[CanonicalFilter], list[FilterRow], dict[int, list[str]]]:
         """Parse REW HTTP API FilterSetting objects, also returning display rows.
 
         Returns:
-            Tuple of (filters, rows). `rows` preserves the original band order,
-            interleaving SkippedBand placeholders for unsupported types. "None"
-            (empty) slots are omitted from both, matching parse_filter_settings.
+            Tuple of (filters, rows, conversion_notes). `rows` preserves the
+            original band order, interleaving SkippedBand placeholders for
+            unsupported types. "None" (empty) slots become an explicit OFF band
+            in both, matching the text-file import path's _NONE_RE handling
+            exactly. `conversion_notes` maps a band's 0-based index in `filters`
+            to a list of notes about values REW's API omitted and had to be
+            substituted (currently: the fixed Q applied to a bare, Q-less LP/HP).
         """
         filters: list[CanonicalFilter] = []
         rows: list[FilterRow] = []
+        conversion_notes: dict[int, list[str]] = {}
 
         for i, setting in enumerate(filter_settings):
             enabled = setting.get("enabled", setting.get("on", True))
             type_token = str(setting.get("type", ""))
 
+            # "None" (empty slot) always becomes an explicit OFF band -- never
+            # omitted, never treated as "unsupported" -- regardless of
+            # `enabled`, matching _NONE_RE's handling in the text-file path.
+            if type_token == "None":  # noqa: S105 -- REW's empty-slot type, not a secret
+                off_result = CanonicalFilter(
+                    type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0
+                )
+                filters.append(off_result)
+                rows.append(off_result)
+                continue
+
             canonical_type = _classify_filter_type(type_token, i + 1)
             if canonical_type is None:
-                if type_token != "None":  # noqa: S105 -- REW's "None" filter slot, not a secret
-                    rows.append(
-                        SkippedBand(
-                            original_type=type_token,
-                            reason=(
-                                f"Unsupported filter type '{type_token}' - "
-                                "no WiiM equivalent"
-                            ),
-                        )
+                rows.append(
+                    SkippedBand(
+                        original_type=type_token,
+                        reason=(
+                            f"Unsupported filter type '{type_token}' - "
+                            "no WiiM equivalent"
+                        ),
                     )
+                )
                 continue
 
             # Parse numeric fields (REW uses "gaindB" or "gain", "frequency" or "freq")
@@ -606,7 +608,19 @@ class REWParser:
             gain = float(
                 setting.get("gaindB", setting.get("gain", 0.0))  # type: ignore[arg-type]
             )
-            q = float(setting.get("q", 1.0))  # type: ignore[arg-type]
+            # REW's live API omits "q" entirely for LP/HP when no explicit Q was
+            # set (confirmed against real REW API output) — use REW's own
+            # documented fixed Q for those two types rather than an arbitrary
+            # 1.0, matching the text-file import path's behavior exactly.
+            q_raw = setting.get("q")
+            if q_raw is None:
+                q = _BUTTERWORTH_Q if canonical_type in ("LP", "HP") else 1.0
+                if canonical_type in ("LP", "HP"):
+                    conversion_notes.setdefault(len(filters), []).append(
+                        _BUTTERWORTH_Q_NOTE.format(canonical_type)
+                    )
+            else:
+                q = float(q_raw)  # type: ignore[arg-type]
 
             # Determine canonical type
             if not enabled:
@@ -621,4 +635,4 @@ class REWParser:
             filters.append(result)
             rows.append(result)
 
-        return filters, rows
+        return filters, rows, conversion_notes

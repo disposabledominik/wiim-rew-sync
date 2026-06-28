@@ -59,6 +59,13 @@ class WizardState:
     pending_rows: list[FilterRow] = field(default_factory=list)
     pending_rows_l: list[FilterRow] = field(default_factory=list)
     pending_rows_r: list[FilterRow] = field(default_factory=list)
+    # Same consume-and-reset contract as pending_rows above, but for notes
+    # about values REW didn't specify and had to be substituted (e.g. the
+    # fixed Q applied to a bare LP/HP) -- keyed by 0-based index into the
+    # filter list that will be passed to set_filters()/set_lr_filters().
+    pending_conversion_notes: dict[int, list[str]] = field(default_factory=dict)
+    pending_conversion_notes_l: dict[int, list[str]] = field(default_factory=dict)
+    pending_conversion_notes_r: dict[int, list[str]] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     roomfit_profile_name: str = ""
     dry_run: bool = False

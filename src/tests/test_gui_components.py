@@ -465,6 +465,25 @@ class TestFilterTable:
         assert gain_item.text().startswith("\u25cf")
         assert gain_item.toolTip() == "Original: +3.5 dB. Clamped: gain exceeds +6 dB limit"
 
+    def test_conversion_note_shown_on_q_cell(self, qtbot) -> None:
+        """A conversion note (e.g. default Q for bare LP/HP) shows a dot + tooltip on Q.
+
+        Distinct from clamping: no orange warning color, just an accent-colored
+        info indicator, since the value itself isn't out of range.
+        """
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        filters = self._make_filters()
+        notes_map = {0: ["Q defaulted to 0.7071 (REW Butterworth default)"]}
+        table.set_filters(filters, notes_map=notes_map)
+
+        assert table._table is not None
+        q_item = table._table.item(0, 4)
+        assert q_item is not None
+        assert q_item.text().startswith("\u25cf")
+        assert q_item.toolTip() == "Note: Q defaulted to 0.7071 (REW Butterworth default)"
+
     def test_disabled_band_opacity(self, qtbot) -> None:
         """OFF bands have reduced opacity applied to their items."""
         table = FilterTable()

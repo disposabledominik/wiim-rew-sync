@@ -90,7 +90,7 @@ class TestFileImportHappyPath:
 
         with patch(
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
-            return_value=(filters, [], list(filters)),
+            return_value=(filters, [], list(filters), {}),
         ):
             await window._do_file_import("/fake/path/eq.txt")
 
@@ -118,7 +118,7 @@ class TestFileImportHappyPath:
 
         with patch(
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
-            return_value=(filters, warnings, list(filters)),
+            return_value=(filters, warnings, list(filters), {}),
         ):
             await window._do_file_import("/fake/path/eq.txt")
 
