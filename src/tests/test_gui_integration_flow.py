@@ -229,7 +229,7 @@ class TestFullWizardFlow:
         emitted_result = window._bridge.write_complete.emit.call_args[0][0]
         assert emitted_result.success is True
         assert "wifi=" in emitted_result.backup_path
-        assert "/backups/wifi_backup.json" in emitted_result.backup_path
+        assert "/backups/wifi_backup.json" in emitted_result.backup_path.replace("\\", "/")
         mock_safe_write.execute.assert_called_once()
 
         # Verify correct source and settings passed to SafeWrite

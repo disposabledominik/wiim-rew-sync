@@ -17,6 +17,7 @@ from src.logging.setup import configure_logging, install_crash_handler
 from src.models import constants as model_constants
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.tests.conftest import close_coroutine_tree
 
 
 # Issue 101: Band-param helper _flat_array_to_band_params used across adapter write paths
@@ -200,6 +201,7 @@ def test_settings_apply_populates_default_paths(qtbot, tmp_path):
         with patch("src.gui.main_window.get_app_data_dir", return_value=tmp_path):
             with patch("src.gui.main_window.get_log_dir", return_value=tmp_path / "logs"):
                 mock_bridge = MagicMock()
+                mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
                 window = MainWindow(async_bridge=mock_bridge)
                 qtbot.addWidget(window)
 
@@ -245,12 +247,14 @@ def test_help_dialog_is_dialog_and_visible(qtbot):
     from src.gui.main_window import MainWindow
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
 
         window._on_user_guide_triggered()
         assert isinstance(window._help_dialog, QDialog)
         assert window._help_dialog.isVisible()
+        window._help_dialog.close()
 
 
 # Issue 114: StatusBanner close/dismiss button should be visible and appropriately sized
@@ -270,6 +274,7 @@ def test_navigation_connect_uses_wizard_go_to_step():
     from src.gui.main_window import MainWindow
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
 
         called: dict[str, WizardStep] = {}
@@ -293,6 +298,7 @@ def test_sidebar_back_from_secondary_view_preserves_push_dry_run_result(qtbot):
 
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
         window.show()
@@ -320,6 +326,7 @@ def test_warm_up_stacked_pages_resizes_every_page_without_reshowing(qtbot):
 
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
         window.resize(1000, 700)
@@ -360,6 +367,7 @@ def test_resync_current_page_geometry_resizes_and_reactivates_layout(qtbot):
 
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
         window.resize(1000, 700)
@@ -382,6 +390,7 @@ def test_resync_current_page_geometry_ignores_invalid_index(qtbot):
 
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
 
@@ -400,6 +409,7 @@ def test_sidebar_load_into_review_highlights_review_step(qtbot):
 
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
 
@@ -434,6 +444,7 @@ def test_profile_recalled_from_my_presets_highlights_review_and_resets_sidebar(q
 
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
 
@@ -472,6 +483,7 @@ def test_step_indicator_click_from_sidebar_destination_resets_sidebar_highlight(
 
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
 
@@ -504,6 +516,7 @@ async def test_stale_capability_probe_is_discarded():
 
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
 
         stale_prober = SimpleNamespace(probe=AsyncMock(return_value=MagicMock()))

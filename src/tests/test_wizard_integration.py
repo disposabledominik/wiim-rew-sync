@@ -20,6 +20,7 @@ import pytest
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import PAGE_INDICES, MainWindow
 from src.gui.wizard_controller import FlowType, WizardStep
+from src.tests.conftest import close_coroutine_tree
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -32,6 +33,7 @@ def mock_bridge() -> MagicMock:
     bridge = MagicMock()
     bridge.start = MagicMock()
     bridge.shutdown = MagicMock()
+    bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
     return bridge
 
 
@@ -511,6 +513,7 @@ class TestSidebarNavigation:
         # Navigate to help — opens dialog, stacked widget stays on current page
         window._on_navigation_requested("help")
         assert window._help_dialog.isVisible()
+        window._help_dialog.close()
 
         # Wizard state unchanged
         assert window.wizard_controller.current_step == WizardStep.CONNECT

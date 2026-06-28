@@ -15,6 +15,7 @@ import pytest
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import PAGE_INDICES, MainWindow
 from src.models.canonical import CanonicalFilter
+from src.tests.conftest import close_coroutine_tree
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,6 +57,7 @@ def mock_bridge() -> MagicMock:
     bridge = MagicMock()
     bridge.start = MagicMock()
     bridge.shutdown = MagicMock()
+    bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
     return bridge
 
 

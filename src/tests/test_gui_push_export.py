@@ -126,7 +126,7 @@ class TestPushHappyPath:
         emitted_result = window._bridge.write_complete.emit.call_args[0][0]
         assert emitted_result.success is True
         assert "wifi=" in str(emitted_result.backup_path)
-        assert "/backups/wifi_backup.json" in str(emitted_result.backup_path)
+        assert "/backups/wifi_backup.json" in str(emitted_result.backup_path).replace("\\", "/")
 
     @pytest.mark.asyncio
     async def test_push_rollback_success(self, window) -> None:

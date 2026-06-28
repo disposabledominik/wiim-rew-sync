@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,9 +24,11 @@ class TestWindowsPath:
     @patch("src.utils.app_dirs.platform.system", return_value="Windows")
     def test_falls_back_to_home_when_appdata_unset(self, _mock_system: object) -> None:
         """Falls back to ~/.wiim-rew-sync when APPDATA is not set."""
+        fake_home = Path("/home/testuser")
         with patch.dict("os.environ", {}, clear=True):
-            result = get_app_data_dir()
-        assert result == Path.home() / f".{APP_NAME}"
+            with patch("src.utils.app_dirs.Path.home", return_value=fake_home):
+                result = get_app_data_dir()
+        assert result == fake_home / f".{APP_NAME}"
 
     @patch("src.utils.app_dirs.platform.system", return_value="Windows")
     def test_path_ends_with_app_name(self, _mock_system: object) -> None:
@@ -59,9 +62,11 @@ class TestLinuxPath:
     @patch("src.utils.app_dirs.sys.platform", "linux")
     def test_returns_default_xdg_data_path(self, _mock_system: object) -> None:
         """Linux defaults to ~/.local/share/wiim-rew-sync."""
+        fake_home = Path("/home/testuser")
         with patch.dict("os.environ", {}, clear=True):
-            result = get_app_data_dir()
-        expected = Path.home() / ".local" / "share" / APP_NAME
+            with patch("src.utils.app_dirs.Path.home", return_value=fake_home):
+                result = get_app_data_dir()
+        expected = fake_home / ".local" / "share" / APP_NAME
         assert result == expected
 
     @patch("src.utils.app_dirs.platform.system", return_value="Linux")
@@ -77,7 +82,8 @@ class TestLinuxPath:
     def test_path_ends_with_app_name_default(self, _mock_system: object) -> None:
         """Linux default path always ends with the app name."""
         with patch.dict("os.environ", {}, clear=True):
-            result = get_app_data_dir()
+            with patch("src.utils.app_dirs.Path.home", return_value=Path("/home/testuser")):
+                result = get_app_data_dir()
         assert result.name == APP_NAME
 
     @patch("src.utils.app_dirs.platform.system", return_value="Linux")
@@ -128,7 +134,7 @@ class TestEnsureAppDirectories:
         """OSError during directory creation is re-raised as RuntimeError."""
         with patch("src.utils.app_dirs.get_app_data_dir", return_value=tmp_path):
             with patch.object(Path, "mkdir", side_effect=OSError("Permission denied")):
-                with pytest.raises(RuntimeError, match=str(tmp_path)):
+                with pytest.raises(RuntimeError, match=re.escape(str(tmp_path))):
                     ensure_app_directories()
 
 

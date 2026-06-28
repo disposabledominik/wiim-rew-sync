@@ -58,7 +58,7 @@ pip3 install -e ".[dev]"
 
 ### Test Run Strategy (IMPORTANT)
 
-The full test suite takes **~5 minutes** on WSL and will timeout agent commands. **Never pipe test output** (`| tail`, `| head`, `2>&1 | grep`) — this makes timeouts worse and loses output.
+The full test suite takes **10 to 20 minutes** on WSL and will timeout agent commands. **Never pipe test output** (`| tail`, `| head`, `2>&1 | grep`) — this makes timeouts worse and loses output.
 
 **Use this tiered approach:**
 
@@ -66,7 +66,7 @@ The full test suite takes **~5 minutes** on WSL and will timeout agent commands.
 |------|---------|------|
 | During development | `python3 -m pytest src/tests/test_<module>.py -v --no-cov` | ~5s |
 | After touching shared code | `python3 -m pytest src/tests/test_a.py src/tests/test_b.py --no-cov -q` | ~10-30s |
-| Final gate (rare) | `python3 -m pytest --no-header -q` | ~5min ⚠️ |
+| Final gate (rare) | `python3 -m pytest --no-header -q` | >10min ⚠️ |
 
 **Rules:**
 - Run only the test file(s) relevant to your changes — never the full suite mid-task

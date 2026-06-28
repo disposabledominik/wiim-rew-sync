@@ -18,6 +18,7 @@ import pytest
 
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import PAGE_INDICES, MainWindow
+from src.tests.conftest import close_coroutine_tree
 
 
 @pytest.fixture()
@@ -26,6 +27,7 @@ def mock_bridge() -> MagicMock:
     bridge = MagicMock()
     bridge.start = MagicMock()
     bridge.shutdown = MagicMock()
+    bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
     return bridge
 
 
@@ -194,3 +196,4 @@ class TestUserGuideAction:
         window = make_window()
         window._on_user_guide_triggered()
         assert window._help_dialog.isVisible()
+        window._help_dialog.close()
