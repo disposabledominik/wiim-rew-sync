@@ -2022,8 +2022,8 @@ class MainWindow(QMainWindow):
         total_warnings = len(warnings_l) + len(warnings_r)
         if total_warnings:
             self._bridge.progress_update.emit(
-                f"L/R import: {len(filters_l)}+{len(filters_r)} bands "
-                f"({total_warnings} skipped)"
+                f"L/R import: Left {len(filters_l)} bands ({len(warnings_l)} skipped), "
+                f"Right {len(filters_r)} bands ({len(warnings_r)} skipped)"
             )
 
     async def _do_device_pull(self) -> None:
@@ -2462,6 +2462,8 @@ class MainWindow(QMainWindow):
             uuid_l: UUID of the Left channel measurement.
             uuid_r: UUID of the Right channel measurement.
         """
+        from src.translator._warnings import SkippedBand
+
         filters_l, rows_l, notes_l = await self._rew_client.get_filters_with_rows(uuid_l)
         filters_r, rows_r, notes_r = await self._rew_client.get_filters_with_rows(uuid_r)
 
@@ -2482,6 +2484,14 @@ class MainWindow(QMainWindow):
             bands_r=filters_r,
         )
         self._bridge.peq_ready.emit(peq_data)
+
+        skipped_l = sum(1 for r in rows_l if isinstance(r, SkippedBand))
+        skipped_r = sum(1 for r in rows_r if isinstance(r, SkippedBand))
+        if skipped_l or skipped_r:
+            self._bridge.progress_update.emit(
+                f"L/R import: Left {len(filters_l)} bands ({skipped_l} skipped), "
+                f"Right {len(filters_r)} bands ({skipped_r} skipped)"
+            )
 
     async def _do_push(self) -> None:
         """Execute push to device — PEQ via SafeWrite, or RoomFit via write_roomfit.

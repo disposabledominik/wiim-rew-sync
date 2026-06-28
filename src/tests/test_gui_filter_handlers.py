@@ -130,6 +130,58 @@ class TestFileImportHappyPath:
 
 
 # ---------------------------------------------------------------------------
+# File Import — L/R
+# ---------------------------------------------------------------------------
+
+
+class TestFileImportLR:
+    """Test _do_file_import_lr status text attributes counts to Left/Right."""
+
+    @pytest.mark.asyncio
+    async def test_lr_import_with_warnings_labels_each_channel(self, window) -> None:
+        """The status message must say which channel each count belongs to,
+        not just a combined total that leaves the user guessing.
+        """
+        filters_l = [_make_filter(100.0)]
+        filters_r = [_make_filter(100.0), _make_filter(200.0)]
+        warnings_l = [
+            ValidationWarning(
+                field="filter_type", message="Unsupported type", original_value="Notch"
+            )
+        ]
+        warnings_r: list[ValidationWarning] = []
+
+        def _fake_parse(path):
+            if "left" in str(path):
+                return (filters_l, warnings_l, list(filters_l), {})
+            return (filters_r, warnings_r, list(filters_r), {})
+
+        with patch(
+            "src.translator.rew_parser.REWParser.parse_file_with_rows",
+            side_effect=_fake_parse,
+        ):
+            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+
+        window._bridge.progress_update.emit.assert_called_once()
+        msg = window._bridge.progress_update.emit.call_args[0][0]
+        assert "Left 1 bands (1 skipped)" in msg
+        assert "Right 2 bands (0 skipped)" in msg
+
+    @pytest.mark.asyncio
+    async def test_lr_import_without_warnings_emits_no_status(self, window) -> None:
+        """No progress_update when nothing was skipped on either channel."""
+        filters = [_make_filter(100.0)]
+
+        with patch(
+            "src.translator.rew_parser.REWParser.parse_file_with_rows",
+            return_value=(filters, [], list(filters), {}),
+        ):
+            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+
+        window._bridge.progress_update.emit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # File Import — Error Paths
 # ---------------------------------------------------------------------------
 
@@ -404,6 +456,58 @@ class TestREWPullHappyPath:
         error_type, message = window._bridge.operation_error.emit.call_args[0]
         assert error_type == "REWNotConnectedError"
         assert "not connected" in message.lower()
+
+
+# ---------------------------------------------------------------------------
+# REW Pull — L/R
+# ---------------------------------------------------------------------------
+
+
+class TestREWPullLR:
+    """Test _do_rew_get_filters_lr status text attributes counts to Left/Right."""
+
+    @pytest.mark.asyncio
+    async def test_lr_pull_with_skipped_band_labels_each_channel(self, window) -> None:
+        """A skipped band on one channel must be attributed to that channel
+        in the status text, not folded into an ambiguous combined count.
+        """
+        from src.translator._warnings import SkippedBand
+
+        filters_l = [_make_filter(100.0)]
+        rows_l = [
+            SkippedBand(original_type="Notch", reason="No WiiM equivalent"),
+            filters_l[0],
+        ]
+        filters_r = [_make_filter(100.0), _make_filter(200.0)]
+        rows_r = list(filters_r)
+
+        mock_client = AsyncMock()
+        mock_client.get_filters_with_rows = AsyncMock(
+            side_effect=[(filters_l, rows_l, {}), (filters_r, rows_r, {})]
+        )
+        window._rew_client = mock_client
+
+        await window._do_rew_get_filters_lr("uuid-left", "uuid-right")
+
+        window._bridge.progress_update.emit.assert_called_once()
+        msg = window._bridge.progress_update.emit.call_args[0][0]
+        assert "Left 1 bands (1 skipped)" in msg
+        assert "Right 2 bands (0 skipped)" in msg
+
+    @pytest.mark.asyncio
+    async def test_lr_pull_without_skips_emits_no_status(self, window) -> None:
+        """No progress_update when nothing was skipped on either channel."""
+        filters = [_make_filter(100.0)]
+
+        mock_client = AsyncMock()
+        mock_client.get_filters_with_rows = AsyncMock(
+            return_value=(filters, list(filters), {})
+        )
+        window._rew_client = mock_client
+
+        await window._do_rew_get_filters_lr("uuid-left", "uuid-right")
+
+        window._bridge.progress_update.emit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
