@@ -1,11 +1,16 @@
 """FiltersPage — filter loading wizard step.
 
-Presents a Stereo/L/R toggle and file browse buttons for loading REW EQ files.
-Supports inline validation warnings and error display with retry.
+Presents an Import source toggle (File Import vs Pull from REW API). File
+Import shows a Stereo/L/R toggle and file browse buttons for loading REW EQ
+files; Pull from REW API embeds RewPullView (the same picker used by the
+sidebar "Pull from REW" entry, see src/gui/views/rew_pull_view.py) so REW
+measurement selection behaves identically in both places. Supports inline
+validation warnings and error display with retry.
 
-The page does NOT perform network I/O — it only emits signals.
+The page does NOT perform network I/O — it only emits signals. RewPullView
+is driven from the outside (MainWindow) exactly like the sidebar's instance.
 
-Requirements referenced: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 9.3.
+Requirements referenced: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 9.3, 5.2, 5.7.
 """
 
 from __future__ import annotations
@@ -24,26 +29,32 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
 )
+from src.gui.views.rew_pull_view import RewPullView
 
 
 class FiltersPage(QWidget):
-    """Filter loading step with Stereo/L/R toggle and file browse buttons.
+    """Filter loading step with an Import source toggle.
 
     The page always shows:
-    - A Stereo vs L/R radio toggle
-    - File browse button(s) depending on mode
+    - A File Import / Pull from REW API source toggle
+    - File Import: a Stereo vs L/R radio toggle + file browse button(s)
+    - Pull from REW API: the embedded RewPullView picker
     - Inline warnings/errors after import
 
     Signals:
         file_import_requested: Path to a single REW .txt file (stereo mode).
         file_import_lr_requested: Paths to left and right channel files.
         device_pull_requested: (unused — kept for interface compatibility).
-        rew_api_pull_requested: (unused — kept for interface compatibility).
+        rew_api_pull_requested: User switched the source toggle to "Pull from
+            REW API" — caller should connect to REW and list measurements,
+            then drive rew_pull_view via its set_connecting/set_measurements/
+            set_message methods.
         roomfit_profile_selected: User selected a RoomFit profile name.
         filters_accepted: User clicked "Continue with adjustments" after warnings.
     """
@@ -63,6 +74,7 @@ class FiltersPage(QWidget):
         self._stereo_path: str = ""
         self._left_path: str = ""
         self._right_path: str = ""
+        self.rew_pull_view = RewPullView(show_title=False)
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -70,7 +82,16 @@ class FiltersPage(QWidget):
     # ------------------------------------------------------------------
 
     def set_rew_api_available(self, available: bool) -> None:
-        """No-op (kept for interface compatibility)."""
+        """Enable/disable the "Pull from REW API" source option.
+
+        Falls back to File Import if it was selected when disabled.
+
+        Args:
+            available: Whether REW API pull should be offered on this page.
+        """
+        self._rew_api_source_radio.setEnabled(available)
+        if not available and self._rew_api_source_radio.isChecked():
+            self._file_source_radio.setChecked(True)
 
     def set_roomfit_mode(self, enabled: bool) -> None:
         """Toggle RoomFit mode flag.
@@ -141,9 +162,10 @@ class FiltersPage(QWidget):
         self._error_section.setVisible(True)
 
     def clear_results(self) -> None:
-        """Reset to initial state — hide warnings and errors."""
+        """Reset to initial state — hide warnings/errors, revert to File Import."""
         self._warnings_section.setVisible(False)
         self._error_section.setVisible(False)
+        self._file_source_radio.setChecked(True)
         self._stereo_path = ""
         self._left_path = ""
         self._right_path = ""
@@ -159,23 +181,52 @@ class FiltersPage(QWidget):
 
     def _setup_ui(self) -> None:
         """Build the page layout — toggle + browse buttons, no cards/dialogs."""
-        page_layout = QVBoxLayout(self)
-        page_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-        page_layout.setSpacing(SPACING_LG)
+        page_layout, content_wrapper = build_centered_content(self)
 
         # Page title
-        title = QLabel("Import REW Filters")
-        title.setObjectName("FiltersPageTitle")
-        title.setProperty("class", "heading")
+        title = make_page_title(
+            "Import REW Filters", content_wrapper, object_name="FiltersPageTitle"
+        )
         page_layout.addWidget(title)
 
-        # Subtitle
-        subtitle = QLabel(
+        # Subtitle (updated by _update_source_ui to match the active source)
+        self._subtitle = QLabel(
             "Select channel mode and browse for your REW EQ text file(s)."
         )
-        subtitle.setWordWrap(True)
-        subtitle.setProperty("class", "secondary")
-        page_layout.addWidget(subtitle)
+        self._subtitle.setWordWrap(True)
+        self._subtitle.setProperty("class", "secondary")
+        page_layout.addWidget(self._subtitle)
+
+        # --- Import source toggle ---
+        source_section = QWidget()
+        source_layout = QHBoxLayout(source_section)
+        source_layout.setContentsMargins(0, 0, 0, 0)
+        source_layout.setSpacing(SPACING_MD)
+
+        source_label = QLabel("Import source:")
+        source_label.setProperty("class", "subheading")
+        source_layout.addWidget(source_label)
+
+        self._source_group = QButtonGroup(self)
+        self._file_source_radio = QRadioButton("File Import")
+        self._file_source_radio.setChecked(True)
+        self._rew_api_source_radio = QRadioButton("Pull from REW API")
+        self._source_group.addButton(self._file_source_radio)
+        self._source_group.addButton(self._rew_api_source_radio)
+        self._rew_api_source_radio.toggled.connect(self._on_source_toggled)
+
+        source_layout.addWidget(self._file_source_radio)
+        source_layout.addWidget(self._rew_api_source_radio)
+        source_layout.addStretch()
+
+        page_layout.addWidget(source_section)
+
+        # --- File Import section (channel toggle + browse buttons) ---
+        self._file_import_section = QWidget()
+        file_layout = QVBoxLayout(self._file_import_section)
+        file_layout.setContentsMargins(0, 0, 0, 0)
+        file_layout.setSpacing(SPACING_LG)
+        page_layout.addWidget(self._file_import_section)
 
         # --- Channel mode toggle ---
         mode_section = QWidget()
@@ -199,13 +250,18 @@ class FiltersPage(QWidget):
         mode_layout.addWidget(self._lr_radio)
         mode_layout.addStretch()
 
-        page_layout.addWidget(mode_section)
+        file_layout.addWidget(mode_section)
 
         # --- Stereo file section ---
         self._stereo_section = QWidget()
         stereo_layout = QHBoxLayout(self._stereo_section)
         stereo_layout.setContentsMargins(0, 0, 0, 0)
         stereo_layout.setSpacing(SPACING_MD)
+
+        stereo_btn = QPushButton("Browse...")
+        stereo_btn.setMinimumWidth(100)
+        stereo_btn.clicked.connect(self._on_stereo_browse)
+        stereo_layout.addWidget(stereo_btn)
 
         self._stereo_file_label = QLabel("No file selected")
         self._stereo_file_label.setProperty("class", "secondary")
@@ -214,12 +270,7 @@ class FiltersPage(QWidget):
         )
         stereo_layout.addWidget(self._stereo_file_label)
 
-        stereo_btn = QPushButton("Browse...")
-        stereo_btn.setMinimumWidth(100)
-        stereo_btn.clicked.connect(self._on_stereo_browse)
-        stereo_layout.addWidget(stereo_btn)
-
-        page_layout.addWidget(self._stereo_section)
+        file_layout.addWidget(self._stereo_section)
 
         # "Next" button for stereo mode (enabled once a file is selected)
         self._next_btn = QPushButton("Next")
@@ -227,7 +278,7 @@ class FiltersPage(QWidget):
         self._next_btn.setEnabled(False)
         self._next_btn.setProperty("class", "primary")
         self._next_btn.clicked.connect(self._on_stereo_next)
-        page_layout.addWidget(self._next_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        file_layout.addWidget(self._next_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         # --- L/R file section ---
         self._lr_section = QWidget()
@@ -243,17 +294,17 @@ class FiltersPage(QWidget):
         left_label.setMinimumWidth(100)
         left_row.addWidget(left_label)
 
+        left_btn = QPushButton("Browse...")
+        left_btn.setMinimumWidth(100)
+        left_btn.clicked.connect(self._on_left_browse)
+        left_row.addWidget(left_btn)
+
         self._left_file_label = QLabel("No file selected")
         self._left_file_label.setProperty("class", "secondary")
         self._left_file_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         left_row.addWidget(self._left_file_label)
-
-        left_btn = QPushButton("Browse...")
-        left_btn.setMinimumWidth(100)
-        left_btn.clicked.connect(self._on_left_browse)
-        left_row.addWidget(left_btn)
         lr_layout.addLayout(left_row)
 
         # Right channel row
@@ -264,17 +315,17 @@ class FiltersPage(QWidget):
         right_label.setMinimumWidth(100)
         right_row.addWidget(right_label)
 
+        right_btn = QPushButton("Browse...")
+        right_btn.setMinimumWidth(100)
+        right_btn.clicked.connect(self._on_right_browse)
+        right_row.addWidget(right_btn)
+
         self._right_file_label = QLabel("No file selected")
         self._right_file_label.setProperty("class", "secondary")
         self._right_file_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         right_row.addWidget(self._right_file_label)
-
-        right_btn = QPushButton("Browse...")
-        right_btn.setMinimumWidth(100)
-        right_btn.clicked.connect(self._on_right_browse)
-        right_row.addWidget(right_btn)
         lr_layout.addLayout(right_row)
 
         # Next button for L/R mode (enabled when both files are selected)
@@ -288,7 +339,15 @@ class FiltersPage(QWidget):
         )
 
         self._lr_section.setVisible(False)
-        page_layout.addWidget(self._lr_section)
+        file_layout.addWidget(self._lr_section)
+
+        # --- Pull from REW API section (embedded picker) ---
+        # measurement_selected is consumed directly by MainWindow (same
+        # signal the sidebar's RewPullView instance uses); back_requested
+        # is also handled locally to flip the source toggle back.
+        self.rew_pull_view.setVisible(False)
+        self.rew_pull_view.back_requested.connect(self._on_rew_pull_back_requested)
+        page_layout.addWidget(self.rew_pull_view)
 
         # --- RoomFit profile dropdown (hidden — used only from sidebar) ---
         self._roomfit_section = QWidget()
@@ -381,6 +440,30 @@ class FiltersPage(QWidget):
         self._stereo_section.setVisible(not is_lr)
         self._next_btn.setVisible(not is_lr)
         self._lr_section.setVisible(is_lr)
+
+    @Slot(bool)
+    def _on_source_toggled(self, rew_api_checked: bool) -> None:
+        """Handle File Import / Pull from REW API source toggle.
+
+        Args:
+            rew_api_checked: Whether the "Pull from REW API" radio is now
+                checked (passed by the toggled(bool) signal of that radio).
+        """
+        self._file_import_section.setVisible(not rew_api_checked)
+        self.rew_pull_view.setVisible(rew_api_checked)
+        if rew_api_checked:
+            self._subtitle.setText("Select a REW measurement to import filters from.")
+            self.rew_pull_view.set_connecting()
+            self.rew_api_pull_requested.emit()
+        else:
+            self._subtitle.setText(
+                "Select channel mode and browse for your REW EQ text file(s)."
+            )
+
+    @Slot()
+    def _on_rew_pull_back_requested(self) -> None:
+        """Handle Back from the embedded RewPullView — revert to File Import."""
+        self._file_source_radio.setChecked(True)
 
     @Slot()
     def _on_stereo_browse(self) -> None:

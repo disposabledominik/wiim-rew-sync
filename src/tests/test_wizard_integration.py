@@ -292,6 +292,13 @@ class TestBackNavigation:
         assert WizardStep.FILTERS not in completed  # After target: cleared
         assert WizardStep.REVIEW not in completed  # After target: cleared
 
+        # Regression: SOURCE was COMPLETED before this back-nav (the user
+        # had already passed through it once); the step indicator must show
+        # it as ACTIVE now, not a stale COMPLETED checkmark.
+        from src.gui.components.step_indicator import _StepState
+
+        assert window._step_indicator._steps[1].state == _StepState.ACTIVE
+
     def test_back_navigation_to_connect_clears_all(self, make_window) -> None:
         """Going back to CONNECT invalidates all subsequent steps."""
         window = make_window()

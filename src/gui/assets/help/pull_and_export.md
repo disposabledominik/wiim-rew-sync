@@ -17,14 +17,15 @@ Wizard without exporting a text file.
 ### Workflow
 
 1. Click "Pull from REW" in the sidebar
-2. Choose channel mode: **Stereo** (one measurement) or **L/R** (separate
-   measurements for each channel)
-3. A measurement picker dialog shows all available measurements in REW
+2. A measurement picker dialog shows all available measurements in REW,
+   with a **Stereo / L-R** toggle at the top
+3. Leave **Stereo** selected to pick one measurement, or switch to **L/R**
+   to pick separate Left and Right measurements side by side
 4. Select your measurement(s) and click OK
 5. Filters are loaded into the Review step
 
-For L/R mode, the picker appears twice — first for the Left channel, then
-for the Right channel. You can select different measurements for each.
+If REW has many measurements loaded, start typing a measurement's name
+while its list has focus to jump straight to it.
 
 ### Supported Filter Types
 

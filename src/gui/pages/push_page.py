@@ -19,8 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
 )
@@ -264,17 +264,13 @@ class PushPage(QWidget):
 
     def _setup_ui(self) -> None:
         """Build the page layout."""
-        page_layout = QVBoxLayout(self)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.setSpacing(0)
-        page_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        content_layout, content_wrapper = build_centered_content(self)
 
-        # Content wrapper with max width
-        content_wrapper = QWidget(self)
-        content_wrapper.setMaximumWidth(MAX_CONTENT_WIDTH)
-        content_layout = QVBoxLayout(content_wrapper)
-        content_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-        content_layout.setSpacing(SPACING_LG)
+        # Page title
+        title = make_page_title(
+            "Push to Device", content_wrapper, object_name="PushPageTitle"
+        )
+        content_layout.addWidget(title)
 
         # Dry Run badge (hidden by default)
         self._dry_run_badge = QLabel("DRY RUN", content_wrapper)
@@ -406,11 +402,3 @@ class PushPage(QWidget):
         content_layout.addWidget(self._result_container)
 
         content_layout.addStretch()
-
-        # Center the content wrapper
-        wrapper_layout = QHBoxLayout()
-        wrapper_layout.setContentsMargins(0, 0, 0, 0)
-        wrapper_layout.addStretch()
-        wrapper_layout.addWidget(content_wrapper)
-        wrapper_layout.addStretch()
-        page_layout.addLayout(wrapper_layout)

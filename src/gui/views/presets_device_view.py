@@ -28,9 +28,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     LIST_ITEM_HEIGHT,
-    MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
@@ -143,22 +143,10 @@ class PresetsDeviceView(QWidget):
 
     def _setup_ui(self) -> None:
         """Build the view layout."""
-        root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-        root_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-
-        # Container with max width constraint
-        container = QWidget()
-        container.setMaximumWidth(MAX_CONTENT_WIDTH)
-        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.setSpacing(SPACING_LG)
+        container_layout, container = build_centered_content(self)
 
         # Title
-        title = QLabel("Presets on Device")
-        title.setObjectName("view_title")
-        title.setProperty("class", "sectionTitle")
+        title = make_page_title("Presets on Device", container, object_name="view_title")
         container_layout.addWidget(title)
 
         # Empty state widget
@@ -184,7 +172,6 @@ class PresetsDeviceView(QWidget):
         content_layout.addWidget(self._actions_bar)
 
         container_layout.addWidget(self._content_widget)
-        root_layout.addWidget(container)
 
     def _build_empty_state(self) -> QWidget:
         """Build the 'no device connected' empty state."""

@@ -309,6 +309,75 @@ def test_sidebar_back_from_secondary_view_preserves_push_dry_run_result(qtbot):
         assert window._push_page._dry_run_badge.isVisible()
 
 
+# Fix: secondary pages (e.g. Presets on Device) could render squished on
+# their first visit after a fresh launch since QStackedLayout only resizes
+# its *current* widget — every other page kept its construction-time
+# geometry until first navigated to. _warm_up_stacked_pages resizes every
+# page up front so this can't happen, without touching visibility (so it
+# must not double-fire ConnectPage's showEvent-driven discovery).
+def test_warm_up_stacked_pages_resizes_every_page_without_reshowing(qtbot):
+    from src.gui.main_window import MainWindow
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+        window.resize(1000, 700)
+        window.show()
+
+        refresh_calls = []
+        window._connect_page.refresh_requested.connect(
+            lambda: refresh_calls.append(1)
+        )
+
+        for i in range(window._stacked_widget.count()):
+            page = window._stacked_widget.widget(i)
+            if page is not None:
+                page.resize(1, 1)
+
+        window._warm_up_stacked_pages()
+
+        target_size = window._stacked_widget.size()
+        for i in range(window._stacked_widget.count()):
+            page = window._stacked_widget.widget(i)
+            if page is not None:
+                assert page.size() == target_size
+        assert refresh_calls == []
+
+
+# Fix: jumping directly to Review from a sidebar load (e.g. "Load into
+# Editor" from Presets on Device / My Presets) bypasses
+# wizard_controller.advance()/go_to_step(), so step_changed never fires and
+# _on_step_changed's set_current() call — the only place that normally syncs
+# the StepIndicator's highlighted pill — is skipped. Without an explicit
+# set_current() call in this branch, Review renders with no step highlighted.
+def test_sidebar_load_into_review_highlights_review_step(qtbot):
+    from src.gui.main_window import PAGE_INDICES, MainWindow
+    from src.models.canonical import CanonicalFilter
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+
+        state = window._wizard_controller.state
+        state.selected_device = "device-1"
+        state.selected_source = "wifi"
+        state.current_filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)
+        ]
+
+        window._sidebar_load_in_progress = True
+        window._on_peq_ready(SimpleNamespace())
+
+        assert window._stacked_widget.currentIndex() == PAGE_INDICES["review"]
+
+        sequence = window._wizard_controller.get_steps()
+        review_index = sequence.index(WizardStep.REVIEW)
+        assert window._step_indicator._current_index == review_index
+        assert window._step_indicator._steps[review_index]._dimmed is False
+
+
 # Fix: a capability probe for a superseded device selection must not advance
 # the wizard. Without the generation guard, reselecting a device while the
 # previous probe is still in flight could let the stale probe's
@@ -330,4 +399,4 @@ async def test_stale_capability_probe_is_discarded():
 
         await window._do_probe(cast(Any, stale_prober), stale_generation)
 
-        window._bridge.capabilities_ready.emit.assert_not_called()
+        mock_bridge.capabilities_ready.emit.assert_not_called()

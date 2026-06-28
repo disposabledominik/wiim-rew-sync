@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QListWidget
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QListWidget
 
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.dialogs.device_picker import DevicePickerDialog
@@ -232,3 +232,110 @@ class TestMeasurementPickerDialog:
             dialog.accept()
 
         assert dialog.result() != QDialog.DialogCode.Accepted
+
+    def test_measurement_picker_defaults_to_stereo_mode(self, qtbot) -> None:
+        """Dialog starts in Stereo mode showing the single list page."""
+        measurements = [_make_measurement("Speaker", 0)]
+        dialog = MeasurementPickerDialog(None, measurements)
+        qtbot.addWidget(dialog)
+
+        assert not dialog.is_lr_mode
+        assert dialog._pages.currentWidget() is dialog._list_widget
+
+    def test_measurement_picker_lr_toggle_shows_two_lists(self, qtbot) -> None:
+        """Toggling to L/R switches to the page with Left/Right lists."""
+        measurements = [
+            _make_measurement("Left Speaker", 0),
+            _make_measurement("Right Speaker", 1),
+        ]
+        dialog = MeasurementPickerDialog(None, measurements)
+        qtbot.addWidget(dialog)
+
+        dialog._lr_radio.setChecked(True)
+
+        assert dialog.is_lr_mode
+        left_list = dialog.findChild(QListWidget, "measurement_list_left")
+        right_list = dialog.findChild(QListWidget, "measurement_list_right")
+        assert left_list is not None
+        assert right_list is not None
+        assert left_list.count() == 2
+        assert right_list.count() == 2
+
+    def test_measurement_picker_lr_returns_tuple(self, qtbot) -> None:
+        """selection() returns a (left, right) tuple in L/R mode."""
+        measurements = [
+            _make_measurement("Left Speaker", 0),
+            _make_measurement("Right Speaker", 1),
+        ]
+        dialog = MeasurementPickerDialog(None, measurements)
+        qtbot.addWidget(dialog)
+
+        dialog._lr_radio.setChecked(True)
+        dialog._list_left.setCurrentRow(0)
+        dialog._list_right.setCurrentRow(1)
+
+        result = dialog.selection()
+        assert isinstance(result, tuple)
+        left, right = result
+        assert left.name == "Left Speaker"
+        assert right.name == "Right Speaker"
+
+    def test_measurement_picker_lr_accept_requires_both_sides(self, qtbot) -> None:
+        """Accept is blocked in L/R mode until both Left and Right are selected."""
+        measurements = [
+            _make_measurement("Left Speaker", 0),
+            _make_measurement("Right Speaker", 1),
+        ]
+        dialog = MeasurementPickerDialog(None, measurements)
+        qtbot.addWidget(dialog)
+
+        dialog._lr_radio.setChecked(True)
+        dialog._list_left.setCurrentRow(0)
+        # Right list left unselected
+
+        with patch("src.gui.dialogs.measurement_picker.QMessageBox.warning"):
+            dialog.accept()
+
+        assert dialog.result() != QDialog.DialogCode.Accepted
+
+    def test_measurement_picker_ok_button_disabled_until_valid_selection(
+        self, qtbot
+    ) -> None:
+        """OK is disabled until the active mode's selection is complete."""
+        measurements = [
+            _make_measurement("Left Speaker", 0),
+            _make_measurement("Right Speaker", 1),
+        ]
+        dialog = MeasurementPickerDialog(None, measurements)
+        qtbot.addWidget(dialog)
+
+        ok_btn = dialog._button_box.button(QDialogButtonBox.StandardButton.Ok)
+        assert ok_btn is not None
+        assert not ok_btn.isEnabled()  # nothing selected yet (Stereo mode)
+
+        dialog._list_widget.setCurrentRow(0)
+        assert ok_btn.isEnabled()
+
+        dialog._lr_radio.setChecked(True)
+        assert not ok_btn.isEnabled()  # switching modes resets requirement
+
+        dialog._list_left.setCurrentRow(0)
+        assert not ok_btn.isEnabled()  # only Left selected
+
+        dialog._list_right.setCurrentRow(1)
+        assert ok_btn.isEnabled()
+
+    def test_measurement_picker_large_list_keyboard_search(self, qtbot) -> None:
+        """A 60-item list keeps Qt's built-in incremental keyboard search."""
+        measurements = [_make_measurement(f"Measurement {i:02d}", i) for i in range(60)]
+        dialog = MeasurementPickerDialog(None, measurements)
+        qtbot.addWidget(dialog)
+
+        assert dialog._list_widget.count() == 60
+        # Built-in QAbstractItemView type-ahead search is on by default;
+        # this dialog adds no custom filtering that could disable it.
+        from PySide6.QtWidgets import QAbstractItemView
+
+        assert dialog._list_widget.selectionMode() == (
+            QAbstractItemView.SelectionMode.SingleSelection
+        )

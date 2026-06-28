@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 
+from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetItem, PresetsDeviceView
+from src.gui.views.rew_pull_view import RewPullView
 from src.gui.views.settings_view import SettingsView
 from src.models.canonical import CanonicalFilter
 from src.models.profile import Profile
@@ -621,3 +623,158 @@ class TestSettingsViewGetCurrentSettings:
         assert settings["theme"] == "Light"
         assert settings["discovery_timeout"] == 20
         assert settings["dry_run_default"] is True
+
+
+# ---------------------------------------------------------------------------
+# TestRewPullView
+# ---------------------------------------------------------------------------
+
+
+def _make_rew_measurement(name: str, index: int) -> MeasurementSummary:
+    """Create a MeasurementSummary for testing."""
+    return MeasurementSummary(uuid=f"uuid-{index}", name=name, index=index)
+
+
+class TestRewPullView:
+    """Tests for the embedded RewPullView screen (sidebar 'Pull from REW')."""
+
+    def test_starts_in_connecting_state(self, qtbot) -> None:
+        """View starts showing the placeholder with a connecting message."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.show()
+
+        assert view._placeholder_widget.isVisible()
+        assert not view._content_widget.isVisible()
+        assert view._message_label.text() == "Connecting to REW..."
+
+    def test_show_title_false_hides_title(self, qtbot) -> None:
+        """show_title=False hides the "Pull from REW" title for embedded use."""
+        view = RewPullView(show_title=False)
+        qtbot.addWidget(view)
+        view.show()
+
+        assert not view._title.isVisible()
+
+    def test_show_title_default_shows_title(self, qtbot) -> None:
+        """Default construction shows the title (standalone sidebar page)."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.show()
+
+        assert view._title.isVisible()
+
+    def test_set_message_shows_placeholder(self, qtbot) -> None:
+        """set_message() switches back to the placeholder state with the given text."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_measurements([_make_rew_measurement("Speaker", 0)])
+        assert view._content_widget.isVisible()
+
+        view.set_message("No measurements found in REW.")
+        assert view._placeholder_widget.isVisible()
+        assert not view._content_widget.isVisible()
+        assert view._message_label.text() == "No measurements found in REW."
+
+    def test_set_measurements_shows_content_and_populates_lists(self, qtbot) -> None:
+        """set_measurements() populates Stereo and L/R lists and shows content."""
+        measurements = [
+            _make_rew_measurement("Left Speaker", 0),
+            _make_rew_measurement("Right Speaker", 1),
+        ]
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_measurements(measurements)
+
+        assert view._content_widget.isVisible()
+        assert not view._placeholder_widget.isVisible()
+        assert view._list_widget.count() == 2
+        assert view._list_left.count() == 2
+        assert view._list_right.count() == 2
+        assert not view.is_lr_mode
+
+    def test_continue_emits_measurement_selected_in_stereo_mode(self, qtbot) -> None:
+        """Continue emits the selected MeasurementSummary in Stereo mode."""
+        measurements = [_make_rew_measurement("Speaker", 0)]
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.set_measurements(measurements)
+
+        view._list_widget.setCurrentRow(0)
+
+        with qtbot.waitSignal(view.measurement_selected, timeout=1000) as blocker:
+            view._on_continue_clicked()
+
+        assert blocker.args[0].name == "Speaker"
+
+    def test_continue_emits_tuple_in_lr_mode(self, qtbot) -> None:
+        """Continue emits a (left, right) tuple in L/R mode."""
+        measurements = [
+            _make_rew_measurement("Left Speaker", 0),
+            _make_rew_measurement("Right Speaker", 1),
+        ]
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.set_measurements(measurements)
+
+        view._lr_radio.setChecked(True)
+        view._list_left.setCurrentRow(0)
+        view._list_right.setCurrentRow(1)
+
+        with qtbot.waitSignal(view.measurement_selected, timeout=1000) as blocker:
+            view._on_continue_clicked()
+
+        left, right = blocker.args[0]
+        assert left.name == "Left Speaker"
+        assert right.name == "Right Speaker"
+
+    def test_continue_disabled_until_valid_selection(self, qtbot) -> None:
+        """Continue button is disabled until the active mode's selection is complete."""
+        measurements = [
+            _make_rew_measurement("Left Speaker", 0),
+            _make_rew_measurement("Right Speaker", 1),
+        ]
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.set_measurements(measurements)
+
+        assert not view._continue_btn.isEnabled()
+
+        view._list_widget.setCurrentRow(0)
+        assert view._continue_btn.isEnabled()
+
+        view._lr_radio.setChecked(True)
+        assert not view._continue_btn.isEnabled()  # switching modes resets requirement
+
+        view._list_left.setCurrentRow(0)
+        assert not view._continue_btn.isEnabled()  # only Left selected
+
+        view._list_right.setCurrentRow(1)
+        assert view._continue_btn.isEnabled()
+
+    def test_back_button_emits_back_requested(self, qtbot) -> None:
+        """Back button in the content state emits back_requested."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.set_measurements([_make_rew_measurement("Speaker", 0)])
+
+        back_btn = view.findChild(type(view._continue_btn), "btn_rew_pull_back")
+        assert back_btn is not None
+        with qtbot.waitSignal(view.back_requested, timeout=1000):
+            back_btn.click()
+
+    def test_placeholder_back_button_emits_back_requested(self, qtbot) -> None:
+        """Back button in the placeholder state emits back_requested."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+
+        placeholder_back_btn = view.findChild(
+            type(view._continue_btn), "btn_rew_pull_placeholder_back"
+        )
+        assert placeholder_back_btn is not None
+        with qtbot.waitSignal(view.back_requested, timeout=1000):
+            placeholder_back_btn.click()

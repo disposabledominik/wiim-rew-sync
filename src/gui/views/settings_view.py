@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.page_layout import make_page_title
 from src.gui.constants import (
     MAX_CONTENT_WIDTH,
     SPACING_LG,
@@ -172,9 +173,7 @@ class SettingsView(QWidget):
         content_layout.setSpacing(SPACING_LG)
 
         # Page title
-        title = QLabel("Settings", content)
-        title.setObjectName("SettingsViewTitle")
-        title.setProperty("class", "heading")
+        title = make_page_title("Settings", content, object_name="SettingsViewTitle")
         content_layout.addWidget(title)
 
         # Build sections

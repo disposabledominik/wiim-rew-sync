@@ -24,14 +24,12 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
-    QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     LIST_ITEM_HEIGHT,
-    MAX_CONTENT_WIDTH,
-    SPACING_LG,
     SPACING_MD,
     SPACING_SM,
     SPACING_XS,
@@ -146,21 +144,11 @@ class MyPresetsView(QWidget):
 
     def _setup_ui(self) -> None:
         """Build the widget layout."""
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-        outer_layout.setSpacing(SPACING_MD)
-
-        # Content container (constrained width)
-        content = QWidget(self)
-        content.setMaximumWidth(MAX_CONTENT_WIDTH)
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout, content = build_centered_content(self)
         content_layout.setSpacing(SPACING_MD)
 
         # Title
-        title = QLabel("My Saved Presets", content)
-        title.setObjectName("MyPresetsTitle")
-        title.setProperty("class", "sectionTitle")
+        title = make_page_title("My Saved Presets", content, object_name="MyPresetsTitle")
         content_layout.addWidget(title)
 
         # Search/filter field (hidden until > 10 items)
@@ -228,8 +216,6 @@ class MyPresetsView(QWidget):
         self._rename_editor.setObjectName("MyPresetsRenameEditor")
         self._rename_editor.setVisible(False)
         self._rename_editor.editingFinished.connect(self._on_rename_finished)
-
-        outer_layout.addWidget(content)
 
     # ------------------------------------------------------------------
     # List population

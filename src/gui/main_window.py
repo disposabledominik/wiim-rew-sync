@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.adapters.capability_prober import CapabilityProber
-from src.adapters.rew_http_client import REWHttpApiClient
+from src.adapters.rew_http_client import MeasurementSummary, REWHttpApiClient
 from src.adapters.safe_write import SafeWrite, WriteResult
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
@@ -48,7 +48,6 @@ from src.gui.components.step_indicator import StepIndicator
 from src.gui.constants import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH
 from src.gui.dialogs.crash_dialog import CrashDialog
 from src.gui.dialogs.device_picker import DevicePickerDialog
-from src.gui.dialogs.measurement_picker import MeasurementPickerDialog
 from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
 from src.gui.dialogs.unsaved_changes_dialog import UnsavedChangesDialog
 from src.gui.operation_feedback import OperationFeedbackManager
@@ -75,6 +74,7 @@ from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
 from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetsDeviceView
+from src.gui.views.rew_pull_view import RewPullView
 from src.gui.views.settings_view import SettingsView
 from src.gui.wizard_controller import FlowType, WizardController, WizardStep
 from src.models.canonical import CanonicalFilter
@@ -106,7 +106,7 @@ PAGE_INDICES: dict[str, int] = {
     "presets_device": 7,
     "my_presets": 8,
     "settings": 9,
-    "help": 10,
+    "rew_api": 10,
 }
 
 # Maps WizardStep -> PAGE_INDICES key, used to switch the QStackedWidget
@@ -266,6 +266,36 @@ class MainWindow(QMainWindow):
         labels = [step.value.replace("_", " ").title() for step in sequence]
         self._step_indicator.set_steps(labels)
         self._step_indicator.set_current(0)
+
+        # --- Warm up secondary pages' layouts (see _warm_up_stacked_pages) ---
+        QTimer.singleShot(0, self._warm_up_stacked_pages)
+
+    def _warm_up_stacked_pages(self) -> None:
+        """Force every QStackedWidget page to its real size and re-layout.
+
+        QStackedLayout only resizes its *current* widget — every other
+        page keeps whatever stale geometry/layout cache it had at
+        construction time (before the window had a real on-screen
+        size/DPI) until the user first navigates to it. That first visit
+        can land with lists and button rows visibly squished, self-curing
+        only once a later window resize forces a real relayout (a plain
+        maximize/restore "fixes" it). Resizing every page to the stack's
+        actual content size and re-activating its layout right after the
+        window is shown gives each page a correct layout pass up front,
+        without touching visibility (so this can't double-fire
+        ConnectPage's showEvent-driven discovery or any other show/hide
+        side effect).
+        """
+        target_size = self._stacked_widget.size()
+        for i in range(self._stacked_widget.count()):
+            page = self._stacked_widget.widget(i)
+            if page is None:
+                continue
+            page.resize(target_size)
+            layout = page.layout()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
 
     # ------------------------------------------------------------------
     # Public API
@@ -447,6 +477,13 @@ class MainWindow(QMainWindow):
         self._my_presets_view = MyPresetsView()
         self._settings_view = SettingsView()
         self._help_view = HelpView()
+        self._rew_pull_view = RewPullView()
+
+        # Tracks which RewPullView instance (sidebar vs. embedded in
+        # FiltersPage) is currently driving an in-flight REW pull, so
+        # listing results/errors get routed back to the right one.
+        self._active_rew_pull_view: RewPullView | None = None
+        self._active_rew_pull_page_index: int = PAGE_INDICES["rew_api"]
 
     def _register_pages(self) -> None:
         """Add all pages/views to the QStackedWidget in PAGE_INDICES order."""
@@ -462,7 +499,7 @@ class MainWindow(QMainWindow):
             self._presets_device_view,  # 7: presets_device
             self._my_presets_view,     # 8: my_presets
             self._settings_view,      # 9: settings
-            QWidget(),                # 10: placeholder (Help is now a separate window)
+            self._rew_pull_view,      # 10: rew_api
         ]
         for page in pages:
             self._stacked_widget.addWidget(page)
@@ -770,10 +807,19 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_rew_api_pull_requested(self) -> None:
-        """Handle pull-from-REW-API request from FiltersPage."""
+        """Handle FiltersPage's source toggle switching to "Pull from REW API".
+
+        Populates FiltersPage's embedded RewPullView (already showing its
+        "Connecting..." state — see FiltersPage._on_source_toggled) rather
+        than the sidebar's standalone instance. Unlike the sidebar shortcut,
+        a successful selection advances the wizard normally instead of
+        jumping straight to Review (_sidebar_load_in_progress stays False).
+        """
         if self._is_busy():
             return
 
+        self._active_rew_pull_view = self._filters_page.rew_pull_view
+        self._active_rew_pull_page_index = PAGE_INDICES["filters"]
         self._status_banner.show_progress("Connecting to REW...")
         self._bridge.run_async(
             self._bridge_wrapper("rew_list", self._do_rew_list_measurements())
@@ -1019,6 +1065,7 @@ class MainWindow(QMainWindow):
         if not isinstance(step, WizardStep):
             return
 
+        self._step_indicator.set_dimmed(False)
         page_key = _STEP_TO_PAGE_KEY.get(step)
         if page_key and page_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
@@ -1345,6 +1392,14 @@ class MainWindow(QMainWindow):
                 for step, summary in state.completed_steps.items():
                     self._wizard_controller.step_summary_updated.emit(step, summary)
                 self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
+                self._sidebar_nav.set_active_key("home")
+                self._step_indicator.set_dimmed(False)
+                # This path bypasses wizard_controller.advance()/go_to_step(), so
+                # step_changed never fires and _on_step_changed's set_current()
+                # call is skipped — sync the indicator's highlight here instead.
+                sequence = self._wizard_controller.get_steps()
+                if WizardStep.REVIEW in sequence:
+                    self._step_indicator.set_current(sequence.index(WizardStep.REVIEW))
             else:
                 self._wizard_controller.advance(summary=f"{validated_count} filters")
 
@@ -1414,6 +1469,10 @@ class MainWindow(QMainWindow):
         self._status_banner.show_error(message)
         logger.error("Operation error [%s]: %s", error_type, message)
 
+        if self._active_rew_pull_view is not None:
+            self._sidebar_load_in_progress = False
+            self._show_rew_pull_message(message)
+
     @Slot(str)
     def _on_progress_update(self, message: str) -> None:
         """Handle progress update — show in StatusBanner.
@@ -1436,44 +1495,77 @@ class MainWindow(QMainWindow):
         if message.startswith("__info__"):
             info_text = message[len("__info__"):]
             self._status_banner.show_info(info_text)
+            self._show_rew_pull_message(info_text)
             return
 
         self._status_banner.show_progress(message)
 
     @Slot(list)
     def _on_measurements_listed(self, measurements: list[Any]) -> None:
-        """Handle REW measurements listed — open picker dialog for user selection.
+        """Handle REW measurements listed — populate whichever RewPullView is active.
 
-        For Stereo mode: user picks 1 measurement.
-        For L/R mode: user picks 2 measurements (Left channel, then Right channel).
+        The sidebar's "Pull from REW" entry and FiltersPage's "Pull from
+        REW API" source toggle each set _active_rew_pull_view /
+        _active_rew_pull_page_index before kicking off the listing request
+        (see _on_rew_pull_requested / _on_rew_api_pull_requested), so this
+        handler doesn't need to know which one triggered it. Navigates back
+        to the relevant page if the user wandered off while REW was being
+        queried. Stereo returns one MeasurementSummary, L/R returns a
+        (left, right) tuple — see _dispatch_measurement_selection.
 
         Requirements: 5.2, 5.7.
 
         Args:
             measurements: List of MeasurementSummary objects from REW API.
         """
-        lr_mode = getattr(self, "_rew_pull_lr_mode", False)
+        view = self._active_rew_pull_view
+        if view is None:
+            return
+        self._stacked_widget.setCurrentIndex(self._active_rew_pull_page_index)
+        view.set_measurements(measurements)
 
-        if lr_mode:
-            # L/R mode: pick Left measurement
-            measurement_l = MeasurementPickerDialog.get_measurement(
-                self, measurements, title="Select LEFT Channel Measurement"
-            )
-            if measurement_l is None:
-                self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
-                self._sidebar_load_in_progress = False
-                return
+    def _show_rew_pull_message(self, message: str) -> None:
+        """Show a terminal message (no-measurements/error) on the active RewPullView.
 
-            # Pick Right measurement
-            measurement_r = MeasurementPickerDialog.get_measurement(
-                self, measurements, title="Select RIGHT Channel Measurement"
-            )
-            if measurement_r is None:
-                self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
-                self._sidebar_load_in_progress = False
-                return
+        Clears _active_rew_pull_view since no more measurements are coming
+        for this attempt — matches _dispatch_measurement_selection's cancel
+        handling.
 
-            # Fetch filters for both measurements
+        Args:
+            message: Message to display in place of the picker.
+        """
+        view = self._active_rew_pull_view
+        if view is None:
+            return
+        self._stacked_widget.setCurrentIndex(self._active_rew_pull_page_index)
+        view.set_message(message)
+        self._active_rew_pull_view = None
+
+    def _dispatch_measurement_selection(
+        self,
+        result: MeasurementSummary | tuple[MeasurementSummary, MeasurementSummary],
+    ) -> None:
+        """Fetch filters for a confirmed measurement selection.
+
+        Args:
+            result: A single MeasurementSummary (Stereo) or a (left, right)
+                tuple (L/R) — RewPullView only emits measurement_selected
+                once a valid selection is made; cancellation goes through
+                back_requested instead (see _on_rew_pull_back_requested /
+                _on_filters_rew_pull_back_requested).
+        """
+        # Only now check wizard-state completeness (device/EQ type/source) —
+        # showing QuickSetupDialog here, after a concrete selection, rather
+        # than before browsing REW's measurement list.
+        if not self._ensure_wizard_state_for_load():
+            return
+
+        # The picker's job is done — any later error fetching filters shows
+        # in the status banner only, same as a failed file import.
+        self._active_rew_pull_view = None
+
+        if isinstance(result, tuple):
+            measurement_l, measurement_r = result
             self._bridge.run_async(
                 self._bridge_wrapper(
                     "rew_filters_lr",
@@ -1486,14 +1578,7 @@ class MainWindow(QMainWindow):
                 measurement_r.name,
             )
         else:
-            # Stereo mode: pick one measurement
-            measurement = MeasurementPickerDialog.get_measurement(self, measurements)
-            if measurement is None:
-                self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
-                self._sidebar_load_in_progress = False
-                return
-
-            # Fetch filters for the selected measurement
+            measurement = result
             self._bridge.run_async(
                 self._bridge_wrapper(
                     "rew_filters", self._do_rew_get_filters(measurement.uuid)
@@ -2673,6 +2758,7 @@ class MainWindow(QMainWindow):
             # state or repopulating Name Profile — the user is just coming
             # back from a secondary view (e.g. Settings), not re-entering
             # the step.
+            self._step_indicator.set_dimmed(False)
             step = self._wizard_controller.current_step
             page_key = _STEP_TO_PAGE_KEY.get(step)
             if page_key and page_key in PAGE_INDICES:
@@ -2681,6 +2767,7 @@ class MainWindow(QMainWindow):
 
         if view_key == "connect":
             # Navigate to Connect step via wizard controller (same as step indicator click)
+            self._step_indicator.set_dimmed(False)
             self._wizard_controller.go_to_step(WizardStep.CONNECT)
             return
 
@@ -2690,11 +2777,17 @@ class MainWindow(QMainWindow):
             return
 
         if view_key == "help":
-            # Open Help as a separate window (smoke #112)
+            # Open Help as a separate window (smoke #112). Doesn't replace
+            # the current page, so the step indicator isn't dimmed.
             self._on_user_guide_triggered()
             return
 
         if view_key in PAGE_INDICES:
+            # Every other sidebar destination (Presets on Device, My Saved
+            # Presets, Settings) replaces the wizard page on screen, so mute
+            # the step indicator's "you are here" pill to match — it isn't
+            # actually where the user is right now.
+            self._step_indicator.set_dimmed(True)
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[view_key])
 
         # Trigger data fetch for views that need it
@@ -2705,53 +2798,24 @@ class MainWindow(QMainWindow):
             self._refresh_presets_view()
 
     def _on_rew_pull_requested(self) -> None:
-        """Handle sidebar 'Pull from REW' click — check availability and start workflow.
+        """Handle sidebar 'Pull from REW' click — start the listing workflow.
 
-        Shows a Stereo/L/R choice dialog, then connects to REW to list measurements.
-        For Stereo: user picks 1 measurement.
-        For L/R: user picks 2 measurements (Left then Right).
+        Navigates to the embedded RewPullView, then connects to REW and
+        lists measurements; the Stereo/L-R choice is made on that page once
+        the list arrives (see _on_measurements_listed). Wizard-state
+        completeness (device/EQ type/source) is only checked once the user
+        has actually picked a measurement — see _dispatch_measurement_selection
+        — so browsing REW's measurement list never triggers QuickSetupDialog
+        up front, matching Presets on Device / My Saved Presets.
         """
         if self._is_busy():
             return
 
-        # Ensure wizard state is complete enough to load filters
-        if not self._ensure_wizard_state_for_load():
-            return
-
-        # Ask user for Stereo vs L/R mode
-        from PySide6.QtWidgets import (
-            QDialog,
-            QDialogButtonBox,
-            QLabel,
-            QRadioButton,
-            QVBoxLayout,
-        )
-
-        mode_dialog = QDialog(self)
-        mode_dialog.setWindowTitle("Channel Mode")
-        mode_dialog.setMinimumWidth(300)
-        mode_layout = QVBoxLayout(mode_dialog)
-        mode_layout.addWidget(QLabel("Select channel mode for REW import:"))
-
-        radio_stereo = QRadioButton("Stereo (one measurement)")
-        radio_stereo.setChecked(True)
-        mode_layout.addWidget(radio_stereo)
-
-        radio_lr = QRadioButton("L/R (separate Left and Right measurements)")
-        mode_layout.addWidget(radio_lr)
-
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        btn_box.accepted.connect(mode_dialog.accept)
-        btn_box.rejected.connect(mode_dialog.reject)
-        mode_layout.addWidget(btn_box)
-
-        if mode_dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        # Store the chosen mode for later use in the measurement handler
-        self._rew_pull_lr_mode = radio_lr.isChecked()
+        self._step_indicator.set_dimmed(True)
+        self._stacked_widget.setCurrentIndex(PAGE_INDICES["rew_api"])
+        self._rew_pull_view.set_connecting()
+        self._active_rew_pull_view = self._rew_pull_view
+        self._active_rew_pull_page_index = PAGE_INDICES["rew_api"]
 
         # Set flag so _on_peq_ready navigates directly to Review
         self._sidebar_load_in_progress = True
@@ -2759,6 +2823,46 @@ class MainWindow(QMainWindow):
         self._bridge.run_async(
             self._bridge_wrapper("rew_list", self._do_rew_list_measurements())
         )
+
+    @Slot(object)
+    def _on_rew_pull_measurement_selected(
+        self, result: MeasurementSummary | tuple[MeasurementSummary, MeasurementSummary]
+    ) -> None:
+        """Handle measurement selection from the embedded RewPullView.
+
+        Args:
+            result: A single MeasurementSummary (Stereo) or a (left, right)
+                tuple (L/R) from RewPullView.measurement_selected.
+        """
+        self._dispatch_measurement_selection(result)
+
+    @Slot()
+    def _on_rew_pull_back_requested(self) -> None:
+        """Handle Back/Cancel from the sidebar's embedded RewPullView."""
+        self._sidebar_load_in_progress = False
+        self._active_rew_pull_view = None
+        # Only announce a cancellation if the user backed out of an actual
+        # selection — the placeholder state already shows its own message
+        # (connecting, no measurements found, connection error).
+        if self._rew_pull_view.showing_picker:
+            self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
+        step = self._wizard_controller.current_step
+        page_key = _STEP_TO_PAGE_KEY.get(step)
+        if page_key and page_key in PAGE_INDICES:
+            self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
+        self._sidebar_nav.set_active_key("home")
+        self._step_indicator.set_dimmed(False)
+
+    @Slot()
+    def _on_filters_rew_pull_back_requested(self) -> None:
+        """Handle Back/Cancel from FiltersPage's embedded RewPullView.
+
+        FiltersPage already flips its own source toggle back to File Import
+        (see FiltersPage._on_rew_pull_back_requested) — this only clears the
+        shared in-flight tracking so a late REW response doesn't resurrect
+        the picker after the user has moved on.
+        """
+        self._active_rew_pull_view = None
 
     # ------------------------------------------------------------------
     # Settings Wiring
@@ -3085,12 +3189,10 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_shortcut_escape(self) -> None:
-        """Handle Escape — dismiss help panel if visible, cancel active operation."""
-        current_index = self._stacked_widget.currentIndex()
-        if current_index == PAGE_INDICES["help"]:
-            # Return to current wizard step (dismiss help view)
-            self._on_step_changed(self._wizard_controller.current_step)
-            logger.debug("Keyboard shortcut: Escape — Help panel dismissed")
+        """Handle Escape — dismiss help dialog if visible, cancel active operation."""
+        if self._help_dialog.isVisible():
+            self._help_dialog.hide()
+            logger.debug("Keyboard shortcut: Escape — Help dialog dismissed")
         elif self._feedback_manager.is_active:
             # Cancel active operation
             self._feedback_manager.cancel_requested.emit()
@@ -3137,6 +3239,18 @@ class MainWindow(QMainWindow):
         )
         self._my_presets_view.delete_requested.connect(
             self._on_profile_delete_requested
+        )
+        self._rew_pull_view.measurement_selected.connect(
+            self._on_rew_pull_measurement_selected
+        )
+        self._rew_pull_view.back_requested.connect(
+            self._on_rew_pull_back_requested
+        )
+        self._filters_page.rew_pull_view.measurement_selected.connect(
+            self._on_rew_pull_measurement_selected
+        )
+        self._filters_page.rew_pull_view.back_requested.connect(
+            self._on_filters_rew_pull_back_requested
         )
 
         # --- Outbound: workflow manager signals → UI updates ---

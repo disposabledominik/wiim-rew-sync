@@ -12,14 +12,11 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPushButton,
-    QSizePolicy,
-    QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    MAX_CONTENT_WIDTH,
-    SPACING_LG,
     SPACING_MD,
     SPACING_SM,
 )
@@ -43,33 +40,18 @@ class NameProfilePage(QWidget):
 
         self._active_profile: str = ""
 
-        # Outer layout to constrain width
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Content container with max width
-        container = QWidget()
-        container.setMaximumWidth(MAX_CONTENT_WIDTH)
-        container.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        outer_layout.addWidget(container)
-
-        # Container layout
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
+        layout, container = build_centered_content(self)
         layout.setSpacing(SPACING_MD)
 
         # Title
-        title = QLabel("Name Your Profile")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setProperty("class", "title")
+        title = make_page_title(
+            "Name Your Profile", container, object_name="NameProfilePageTitle"
+        )
         layout.addWidget(title)
 
         # Helper text
         helper = QLabel("Choose a name for this RoomFit profile")
-        helper.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        helper.setProperty("class", "caption")
+        helper.setProperty("class", "secondary")
         layout.addWidget(helper)
 
         # Text input

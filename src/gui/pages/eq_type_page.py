@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
 )
@@ -95,27 +95,10 @@ class EQTypePage(QWidget):
 
         self._selected_type: str | None = None
 
-        # Outer layout to constrain width
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Content container with max width
-        container = QWidget()
-        container.setMaximumWidth(MAX_CONTENT_WIDTH)
-        container.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        outer_layout.addWidget(container)
-
-        # Container layout
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-        container_layout.setSpacing(SPACING_LG)
+        container_layout, container = build_centered_content(self)
 
         # Title
-        title = QLabel("Select EQ Type")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setProperty("class", "pageTitle")
+        title = make_page_title("Select EQ Type", container, object_name="EQTypePageTitle")
         container_layout.addWidget(title)
 
         # Cards layout (side by side)

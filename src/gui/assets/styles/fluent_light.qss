@@ -1207,6 +1207,21 @@ QFrame[class="card"][selected="true"] {
    StepIndicator (custom properties)
    --------------------------------------------------------------------------- */
 
+QWidget[class="stepWidgetActive"] {
+    background-color: rgba(0, 180, 216, 30);
+    border-radius: 10px;
+}
+
+/* "You are here, but currently viewing a side panel" -- same shape/weight
+   as the active pill so it's still clearly the current step, just in the
+   muted upcoming-step palette instead of the accent color, so it can't be
+   mistaken for "this is where you are right now" while a sidebar
+   destination is on screen. */
+QWidget[class="stepWidgetActiveDimmed"] {
+    background-color: rgba(158, 158, 158, 26);
+    border-radius: 10px;
+}
+
 QLabel[class="stepCircleCompleted"] {
     background-color: #00B4D8;
     border-radius: 10px;
@@ -1231,12 +1246,26 @@ QLabel[class="stepCircleUpcoming"] {
     color: #9E9E9E;
 }
 
+QLabel[class="stepCircleActiveDimmed"] {
+    background-color: transparent;
+    border: 2px solid #9E9E9E;
+    border-radius: 10px;
+    color: #9E9E9E;
+    font-weight: bold;
+    font-size: 12px;
+}
+
 QLabel[class="stepLabelCompleted"] {
     color: #00B4D8;
 }
 
 QLabel[class="stepLabelActive"] {
     color: #00B4D8;
+    font-weight: bold;
+}
+
+QLabel[class="stepLabelActiveDimmed"] {
+    color: #757575;
     font-weight: bold;
 }
 

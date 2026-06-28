@@ -17,14 +17,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
-    QVBoxLayout,
     QWidget,
 )
 
 from src.gui.components.filter_table import FilterTable
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    MAX_CONTENT_WIDTH,
-    SPACING_LG,
     SPACING_MD,
 )
 from src.gui.style_utils import set_qss_property
@@ -131,16 +129,13 @@ class ReviewPage(QWidget):
 
     def _setup_ui(self) -> None:
         """Build the page layout."""
-        page_layout = QVBoxLayout(self)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.setSpacing(0)
+        content_layout, content_wrapper = build_centered_content(self)
 
-        # Content wrapper with max width
-        content_wrapper = QWidget(self)
-        content_wrapper.setMaximumWidth(MAX_CONTENT_WIDTH)
-        content_layout = QVBoxLayout(content_wrapper)
-        content_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-        content_layout.setSpacing(SPACING_LG)
+        # Page title
+        title = make_page_title(
+            "Review Filters", content_wrapper, object_name="ReviewPageTitle"
+        )
+        content_layout.addWidget(title)
 
         # Summary header
         self._summary_label = QLabel("", content_wrapper)
@@ -202,9 +197,6 @@ class ReviewPage(QWidget):
         content_layout.addLayout(action_layout)
 
         content_layout.addStretch()
-
-        # Add content wrapper directly (fills available space)
-        page_layout.addWidget(content_wrapper)
 
     def _setup_shortcuts(self) -> None:
         """Configure keyboard shortcuts."""

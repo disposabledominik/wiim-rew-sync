@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.device_card import DeviceCard
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
 )
@@ -147,21 +147,12 @@ class ConnectPage(QWidget):
 
     def _setup_ui(self) -> None:
         """Build the page layout with scanning, devices, and empty states."""
-        page_layout = QVBoxLayout(self)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.setSpacing(0)
-
-        # Content wrapper with max width
-        content_wrapper = QWidget(self)
-        content_wrapper.setMaximumWidth(MAX_CONTENT_WIDTH)
-        content_layout = QVBoxLayout(content_wrapper)
-        content_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-        content_layout.setSpacing(SPACING_LG)
+        content_layout, content_wrapper = build_centered_content(self)
 
         # Page title
-        title = QLabel("Connect to Device", content_wrapper)
-        title.setObjectName("ConnectPageTitle")
-        title.setProperty("class", "heading")
+        title = make_page_title(
+            "Connect to Device", content_wrapper, object_name="ConnectPageTitle"
+        )
         content_layout.addWidget(title)
 
         # --- Scanning state ---
@@ -193,9 +184,6 @@ class ConnectPage(QWidget):
         content_layout.addWidget(self._empty_widget)
 
         content_layout.addStretch()
-
-        # Add content wrapper directly (no centering — fills available space)
-        page_layout.addWidget(content_wrapper)
 
     def _build_scanning_widget(self, parent: QWidget) -> QWidget:
         """Build the scanning animation state widget."""

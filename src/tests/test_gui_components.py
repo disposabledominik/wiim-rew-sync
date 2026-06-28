@@ -148,6 +148,36 @@ class TestStepIndicator:
         # Step 0 should revert to UPCOMING since it wasn't completed
         assert indicator._steps[0].state == _StepState.UPCOMING
 
+    def test_set_dimmed_mutes_active_pill(self, qtbot) -> None:
+        """set_dimmed swaps the active step's classes to the muted variant."""
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source"])
+        indicator.set_current(1)
+
+        indicator.set_dimmed(True)
+        active = indicator._steps[1]
+        assert active.property("class") == "stepWidgetActiveDimmed"
+        assert active._circle.property("class") == "stepCircleActiveDimmed"
+        assert active._label.property("class") == "stepLabelActiveDimmed"
+
+        indicator.set_dimmed(False)
+        assert active.property("class") == "stepWidgetActive"
+        assert active._circle.property("class") == "stepCircleActive"
+        assert active._label.property("class") == "stepLabelActive"
+
+    def test_set_current_preserves_dimmed_state(self, qtbot) -> None:
+        """Navigating to a new active step keeps the indicator's dimmed flag."""
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source"])
+        indicator.set_dimmed(True)
+        indicator.set_current(2)
+
+        assert indicator._steps[2].property("class") == "stepWidgetActiveDimmed"
+
     def test_set_completed_shows_checkmark(self, qtbot) -> None:
         """set_completed marks a step as completed with checkmark text."""
         from src.gui.components.step_indicator import _StepState
@@ -188,6 +218,59 @@ class TestStepIndicator:
         qtbot.mouseClick(indicator._steps[2], Qt.MouseButton.LeftButton)
 
         assert signals_received == []
+
+    def test_set_current_overrides_completed_state(self, qtbot) -> None:
+        """set_current on a COMPLETED step forces it back to ACTIVE.
+
+        Regression test for the breadcrumb bug: clicking back to a
+        previously-completed step left a stale checkmark instead of
+        showing the "you are here" active marker.
+        """
+        from src.gui.components.step_indicator import _StepState
+
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source"])
+        indicator.set_completed(0, "WiiM Pro")
+        indicator.set_current(2)
+
+        # Navigate back to the now-completed step 0.
+        indicator.set_current(0)
+
+        assert indicator._steps[0].state == _StepState.ACTIVE
+        assert indicator._steps[0]._circle.text() == ""
+
+    def test_set_current_overrides_completed_clears_summary_and_connector(
+        self, qtbot
+    ) -> None:
+        """Forcing a COMPLETED step back to ACTIVE also clears its summary
+        text and trailing connector accent, matching clear_completed's
+        existing behaviour for back-navigation invalidation."""
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source"])
+        indicator.set_completed(0, "WiiM Pro")
+
+        indicator.set_current(0)
+
+        assert indicator._steps[0]._summary.text() == ""
+        assert indicator._connectors[0].property("class") == "stepConnector"
+
+    def test_active_step_has_pill_class(self, qtbot) -> None:
+        """The active step widget gets the stepWidgetActive QSS class; the
+        previously active widget loses it."""
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source"])
+        assert indicator._steps[0].property("class") == "stepWidgetActive"
+
+        indicator.set_current(1)
+
+        assert indicator._steps[0].property("class") == ""
+        assert indicator._steps[1].property("class") == "stepWidgetActive"
 
     def test_invalidate_from_resets_steps(self, qtbot) -> None:
         """invalidate_from resets steps from the given index onward to UPCOMING."""
@@ -270,6 +353,41 @@ class TestSidebarNav:
 
         assert nav._nav_buttons["settings"]._active
         assert not nav._nav_buttons["home"]._active
+
+    def test_help_click_does_not_change_active_item(self, qtbot) -> None:
+        """Clicking "Help" leaves the previous highlight untouched.
+
+        Help opens a separate window rather than replacing the current
+        page, so highlighting it would misleadingly suggest it's the active
+        view even after the Help window is closed.
+        """
+        nav = SidebarNav()
+        qtbot.addWidget(nav)
+
+        qtbot.mouseClick(nav._nav_buttons["settings"], Qt.MouseButton.LeftButton)
+        assert nav._nav_buttons["settings"]._active
+
+        with qtbot.waitSignal(nav.navigation_requested, timeout=1000) as blocker:
+            qtbot.mouseClick(nav._nav_buttons["help"], Qt.MouseButton.LeftButton)
+
+        assert blocker.args == ["help"]
+        assert nav._nav_buttons["settings"]._active
+        assert not nav._nav_buttons["help"]._active
+        assert nav.active_key == "settings"
+
+    def test_set_active_key_syncs_highlight(self, qtbot) -> None:
+        """set_active_key lets MainWindow reconcile the highlight externally."""
+        nav = SidebarNav()
+        qtbot.addWidget(nav)
+
+        qtbot.mouseClick(nav._nav_buttons["rew_api"], Qt.MouseButton.LeftButton)
+        assert nav._nav_buttons["rew_api"]._active
+
+        nav.set_active_key("home")
+
+        assert nav._nav_buttons["home"]._active
+        assert not nav._nav_buttons["rew_api"]._active
+        assert nav.active_key == "home"
 
     def test_device_info_updates_header(self, qtbot) -> None:
         """set_device_info updates the header label text."""

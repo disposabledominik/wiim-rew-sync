@@ -22,10 +22,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     LIST_ITEM_HEIGHT,
-    MAX_CONTENT_WIDTH,
-    SPACING_LG,
     SPACING_MD,
 )
 
@@ -119,20 +118,13 @@ class SourcePage(QWidget):
 
     def _setup_ui(self) -> None:
         """Build the page layout."""
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-
-        # Content container with max width
-        content = QWidget()
-        content.setMaximumWidth(MAX_CONTENT_WIDTH)
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
+        content_layout, content = build_centered_content(self)
         content_layout.setSpacing(SPACING_MD)
 
         # Title
-        title = QLabel("Select Audio Source(s)")
-        title.setObjectName("source_page_title")
-        title.setProperty("class", "sectionTitle")
+        title = make_page_title(
+            "Select Audio Source(s)", content, object_name="source_page_title"
+        )
         content_layout.addWidget(title)
 
         # Explanatory note (Req 3.4)
@@ -210,8 +202,6 @@ class SourcePage(QWidget):
         self._continue_btn.setProperty("class", "primary")
         self._continue_btn.clicked.connect(self._on_continue_clicked)
         content_layout.addWidget(self._continue_btn)
-
-        outer_layout.addWidget(content)
 
     # ------------------------------------------------------------------
     # Private slots

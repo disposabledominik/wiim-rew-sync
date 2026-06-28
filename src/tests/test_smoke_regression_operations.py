@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.gui.secondary_workflows import MultiDeviceRequest
@@ -758,18 +759,21 @@ class TestSettingsUIState:
     # --- Issue #10: Measurement picker cancel shows info banner ---
 
     def test_issue10_picker_cancel_shows_info(self, window) -> None:
-        """#10: Cancelling measurement picker shows 'Selection cancelled' info."""
-        measurements = [MagicMock(name="M1", uuid="uuid-1")]
+        """#10: Cancelling the REW picker shows 'Selection cancelled' info.
+
+        The picker is now the embedded RewPullView rather than a modal
+        dialog — cancellation happens via its back_requested signal once a
+        selection screen (not just the connecting placeholder) was shown.
+        """
+        measurements = [MeasurementSummary(uuid="uuid-1", name="M1", index=0)]
+        window._active_rew_pull_view = window._rew_pull_view
+        window._rew_pull_view.set_measurements(measurements)
 
         with (
-            patch(
-                "src.gui.main_window.MeasurementPickerDialog.get_measurement",
-                return_value=None,
-            ),
             patch.object(window._status_banner, "show_info") as mock_info,
             patch.object(window._bridge, "run_async") as mock_run_async,
         ):
-            window._on_measurements_listed(measurements)
+            window._rew_pull_view.back_requested.emit()
 
         mock_info.assert_called_once_with("Selection cancelled", auto_dismiss=3000)
         mock_run_async.assert_not_called()

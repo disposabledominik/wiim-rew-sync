@@ -39,9 +39,15 @@ class _StepWidget(QWidget):
         self._index = index
         self._state = _StepState.UPCOMING
         self._label_text = label
+        self._dimmed = False
+
+        # Required for the "stepWidgetActive" background pill (QSS
+        # background-color/border-radius) to actually paint on a plain
+        # QWidget -- see onboarding_overlay.py for the same convention.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(SPACING_SM, 0, SPACING_SM, 0)
+        layout.setContentsMargins(SPACING_SM, SPACING_SM, SPACING_SM, SPACING_SM)
         layout.setSpacing(2)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -82,6 +88,17 @@ class _StepWidget(QWidget):
         self._state = state
         self._apply_state()
 
+    def set_dimmed(self, dimmed: bool) -> None:
+        """Mute the ACTIVE pill's accent color (no-op for other states).
+
+        Used while the user is on a sidebar destination (Presets on
+        Device, Settings, etc.) so the step indicator's "you are here"
+        pill doesn't visually disagree with the sidebar's own highlight —
+        see MainWindow's sidebar/step-indicator sync helpers.
+        """
+        self._dimmed = dimmed
+        self._apply_state()
+
     def set_summary(self, text: str) -> None:
         """Set the summary text shown below the label for completed steps."""
         if text:
@@ -113,6 +130,17 @@ class _StepWidget(QWidget):
 
     def _apply_state(self) -> None:
         """Apply visual styling based on current state."""
+        # Background "pill" behind the whole widget marks the active step as
+        # a distinct "you are here" zone, separate from the completed
+        # checkmark and the plain upcoming style.
+        is_active = self._state == _StepState.ACTIVE
+        if is_active:
+            set_qss_property(
+                self, "class", "stepWidgetActiveDimmed" if self._dimmed else "stepWidgetActive"
+            )
+        else:
+            set_qss_property(self, "class", "")
+
         if self._state == _StepState.COMPLETED:
             self._set_class(self._circle, "stepCircleCompleted")
             self._circle.setText("\u2713")
@@ -124,9 +152,13 @@ class _StepWidget(QWidget):
             set_qss_property(self._summary, "class", "caption")
 
         elif self._state == _StepState.ACTIVE:
-            self._set_class(self._circle, "stepCircleActive")
+            self._set_class(
+                self._circle, "stepCircleActiveDimmed" if self._dimmed else "stepCircleActive"
+            )
             self._circle.setText("")
-            self._set_class(self._label, "stepLabelActive")
+            self._set_class(
+                self._label, "stepLabelActiveDimmed" if self._dimmed else "stepLabelActive"
+            )
             font = self._label.font()
             font.setBold(True)
             self._label.setFont(font)
@@ -181,6 +213,7 @@ class StepIndicator(QWidget):
         self._steps: list[_StepWidget] = []
         self._connectors: list[_ConnectorLine] = []
         self._current_index: int = 0
+        self._dimmed: bool = False
 
     def set_steps(self, labels: list[str]) -> None:
         """Set the step labels, rebuilding the indicator layout.
@@ -205,6 +238,7 @@ class StepIndicator(QWidget):
 
         self._current_index = 0
         if self._steps:
+            self._steps[0].set_dimmed(self._dimmed)
             self._steps[0].set_state(_StepState.ACTIVE)
 
     def set_current(self, index: int) -> None:
@@ -223,9 +257,28 @@ class StepIndicator(QWidget):
                 old.set_state(_StepState.UPCOMING)
 
         self._current_index = index
-        step = self._steps[index]
-        if step.state != _StepState.COMPLETED:
-            step.set_state(_StepState.ACTIVE)
+        # If the target was previously COMPLETED (e.g. navigating back to it
+        # via go_to_step), clear its summary and trailing connector through
+        # the same path back-navigation invalidation already uses, then
+        # force it ACTIVE -- the step you're currently on should never show
+        # a stale checkmark or a "completed" connector past it.
+        self.clear_completed(index)
+        self._steps[index].set_dimmed(self._dimmed)
+        self._steps[index].set_state(_StepState.ACTIVE)
+
+    def set_dimmed(self, dimmed: bool) -> None:
+        """Mute the active step's pill while a sidebar destination is shown.
+
+        Args:
+            dimmed: True while the user is on a non-wizard page (Presets on
+                Device, My Saved Presets, Settings, sidebar Pull from REW)
+                so the "you are here" pill doesn't visually disagree with
+                the sidebar's own highlight. False once they're back in
+                the wizard flow.
+        """
+        self._dimmed = dimmed
+        if 0 <= self._current_index < len(self._steps):
+            self._steps[self._current_index].set_dimmed(dimmed)
 
     def set_completed(self, index: int, summary: str = "") -> None:
         """Mark a step as completed with optional summary text.

@@ -37,6 +37,7 @@ class _NavItem(QPushButton):
         icon_char: str = "",
         description: str = "",
         parent: QWidget | None = None,
+        checkable: bool = True,
     ) -> None:
         super().__init__(parent)
         self.key = key
@@ -47,7 +48,7 @@ class _NavItem(QPushButton):
 
         self.setFixedHeight(LIST_ITEM_HEIGHT)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setCheckable(True)
+        self.setCheckable(checkable)
         self.setText(f"{icon_char}  {label}" if icon_char else label)
         self.setToolTip(self._description)
         self.setObjectName("SidebarNavItem")
@@ -164,9 +165,14 @@ class SidebarNav(QWidget):
 
         layout.addWidget(self._header_widget)
 
-        # Navigation items
+        # Navigation items. "help" opens a separate, non-modal window rather
+        # than replacing the current page, so it is not checkable/highlighted
+        # — leaving it checked would misleadingly suggest it's the active view
+        # even after the Help window is closed.
         for key, label, icon, description in self._NAV_ITEMS:
-            item = _NavItem(key, label, icon, description, parent=self)
+            item = _NavItem(
+                key, label, icon, description, parent=self, checkable=key != "help"
+            )
             item.clicked.connect(self._on_item_clicked)
             self._nav_buttons[key] = item
             layout.addWidget(item)
@@ -238,14 +244,35 @@ class SidebarNav(QWidget):
 
         key = sender.key
 
-        # Update active state
-        if key != self._active_key:
+        # "help" doesn't replace the current page (it opens a separate
+        # window), so it never becomes the active highlight — whichever
+        # item was already active keeps reflecting the visible page.
+        if key != "help" and key != self._active_key:
             if self._active_key in self._nav_buttons:
                 self._nav_buttons[self._active_key].set_active(False)
             self._active_key = key
             sender.set_active(True)
 
         self.navigation_requested.emit(key)
+
+    @property
+    def active_key(self) -> str:
+        """The navigation key currently highlighted as active."""
+        return self._active_key
+
+    def set_active_key(self, key: str) -> None:
+        """Sync the active highlight to match the page actually on screen.
+
+        Use this when MainWindow navigates away from a sidebar destination
+        through a path other than a sidebar click — e.g. a view's own Back
+        button — so the highlighted item never disagrees with what's shown.
+        """
+        if key == self._active_key or key not in self._nav_buttons:
+            return
+        if self._active_key in self._nav_buttons:
+            self._nav_buttons[self._active_key].set_active(False)
+        self._active_key = key
+        self._nav_buttons[key].set_active(True)
 
     def _on_toggle_clicked(self) -> None:
         """Handle collapse/expand toggle click."""

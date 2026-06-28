@@ -253,6 +253,62 @@ class TestFiltersPage:
         assert page._error_section.isVisible()
         assert "Failed to parse" in page._error_label.text()
 
+    def test_file_import_is_default_source(self, qtbot) -> None:
+        """File Import section is visible and RewPullView hidden by default."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        assert page._file_import_section.isVisible()
+        assert not page.rew_pull_view.isVisible()
+        assert not page.rew_pull_view._title.isVisible()
+
+    def test_toggle_to_rew_api_shows_picker_and_emits_signal(self, qtbot) -> None:
+        """Switching source to "Pull from REW API" swaps sections and emits."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        with qtbot.waitSignal(page.rew_api_pull_requested, timeout=1000):
+            page._rew_api_source_radio.setChecked(True)
+
+        assert not page._file_import_section.isVisible()
+        assert page.rew_pull_view.isVisible()
+
+    def test_rew_pull_back_reverts_to_file_import(self, qtbot) -> None:
+        """RewPullView's back_requested flips the source toggle back."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+        page._rew_api_source_radio.setChecked(True)
+
+        page.rew_pull_view.back_requested.emit()
+
+        assert page._file_source_radio.isChecked()
+        assert page._file_import_section.isVisible()
+        assert not page.rew_pull_view.isVisible()
+
+    def test_set_rew_api_available_false_disables_and_falls_back(self, qtbot) -> None:
+        """set_rew_api_available(False) disables the radio and reverts selection."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page._rew_api_source_radio.setChecked(True)
+
+        page.set_rew_api_available(False)
+
+        assert not page._rew_api_source_radio.isEnabled()
+        assert page._file_source_radio.isChecked()
+
+    def test_clear_results_reverts_to_file_import(self, qtbot) -> None:
+        """clear_results() resets the source toggle back to File Import."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page._rew_api_source_radio.setChecked(True)
+
+        page.clear_results()
+
+        assert page._file_source_radio.isChecked()
+
 
 # ---------------------------------------------------------------------------
 # TestReviewPage
