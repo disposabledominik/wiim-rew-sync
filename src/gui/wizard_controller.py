@@ -49,6 +49,11 @@ class WizardState:
     selected_source: str = ""
     channel_mode: ChannelMode = ChannelMode.STEREO
     current_filters: list[CanonicalFilter] = field(default_factory=list)
+    # Snapshot of current_filters as of the last successful push -- lets
+    # _has_unsaved_changes() distinguish "filters loaded" from "filters
+    # loaded but not yet pushed". Cleared on device switch and on undo,
+    # since neither leaves the device holding this snapshot's state.
+    last_pushed_filters: list[CanonicalFilter] = field(default_factory=list)
     device_filters: list[CanonicalFilter] = field(default_factory=list)
     filters_l: list[CanonicalFilter] = field(default_factory=list)
     filters_r: list[CanonicalFilter] = field(default_factory=list)

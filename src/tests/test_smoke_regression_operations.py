@@ -3,7 +3,7 @@
 Covers smoke test issues: #7, #8, #10, #11, #12, #13, #20, #22, #23, #24, #25,
 #27, #28, #29, #30, #31, #32, #33, #34, #37, #38, #39, #42, #44, #48, #49, #50,
 #53, #54, #55, #58, #60, #61, #62, #63, #65, #69, #70, #74, #77, #78, #79, #80,
-#85, #2/#9.
+#85, #2/#9, #156, #158.
 Each test validates the specific fix behavior to prevent regressions.
 """
 
@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from PySide6.QtWidgets import QMessageBox
 
 from src.adapters.rew_http_client import MeasurementSummary
 from src.adapters.safe_write import RoomFitSafeWrite, WriteResult
@@ -447,7 +448,8 @@ class TestImportExport:
 
 
 class TestPresets:
-    """Tests for preset issues: #20, #22, #23, #24, #25, #27, #31, #37, #53, #54, #60, #62."""
+    """Tests for preset issues: #20, #22, #23, #24, #25, #27, #31, #37, #53, #54, #60, #62,
+    #156, #158."""
 
 
     # --- Issue #20: Navigation to presets_device triggers _load_device_presets ---
@@ -585,6 +587,92 @@ class TestPresets:
         assert len(view._roomfit_list.selectedItems()) == 1
         assert view._peq_list.selectedItems() == []
 
+    # --- Issue #156: Delete from Presets on Device ---
+
+    def test_delete_confirmed_dispatches_by_preset_type(self, window) -> None:
+        """Confirming delete calls delete_peq_profile/delete_roomfit_profile by type."""
+        mock_adapter = _setup_device(window)
+        mock_adapter.delete_peq_profile = AsyncMock()
+        mock_adapter.delete_roomfit_profile = AsyncMock()
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.list_roomfit_profiles = AsyncMock(return_value=[])
+        items = [
+            PresetItem(name="Movie", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit"),
+        ]
+
+        with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch.object(
+                window._bridge, "run_async", side_effect=close_coroutine_tree
+            ) as mock_run,
+        ):
+            window._presets_device_view.delete_requested.emit(items)
+
+        mock_run.assert_called_once()
+
+    def test_delete_declined_does_not_call_adapter(self, window) -> None:
+        """Declining the confirmation dialog leaves the adapter untouched."""
+        mock_adapter = _setup_device(window)
+        mock_adapter.delete_peq_profile = AsyncMock()
+        item = PresetItem(name="Movie", channel_mode="Stereo", preset_type="PEQ")
+
+        with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ),
+            patch.object(window._bridge, "run_async") as mock_run,
+        ):
+            window._presets_device_view.delete_requested.emit([item])
+
+        mock_run.assert_not_called()
+        mock_adapter.delete_peq_profile.assert_not_called()
+
+    def test_do_delete_presets_dispatches_and_refreshes(self, window) -> None:
+        """_do_delete_presets calls the right adapter method per item and refreshes."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.delete_peq_profile = AsyncMock()
+        mock_adapter.delete_roomfit_profile = AsyncMock()
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.list_roomfit_profiles = AsyncMock(return_value=[])
+        items = [
+            PresetItem(name="Movie", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit"),
+        ]
+
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            asyncio.run(window._do_delete_presets(items))
+
+        mock_adapter.delete_peq_profile.assert_called_once_with("Movie")
+        mock_adapter.delete_roomfit_profile.assert_called_once_with("Living Room")
+        mock_adapter.list_peq_profiles.assert_called_once()
+        mock_success.assert_called_once_with("2 preset(s) deleted")
+
+    def test_do_delete_presets_partial_failure_reports_error(self, window) -> None:
+        """One failing delete doesn't abort the batch; banner reports partial failure."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.delete_peq_profile = AsyncMock(side_effect=Exception("boom"))
+        mock_adapter.delete_roomfit_profile = AsyncMock()
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.list_roomfit_profiles = AsyncMock(return_value=[])
+        items = [
+            PresetItem(name="Movie", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit"),
+        ]
+
+        with patch.object(window._status_banner, "show_error") as mock_error:
+            asyncio.run(window._do_delete_presets(items))
+
+        mock_adapter.delete_roomfit_profile.assert_called_once_with("Living Room")
+        mock_error.assert_called_once_with("Deleted 1, 1 failed")
 
     # --- Issue #27: RoomFit profile selection triggers read and advances ---
 
@@ -678,6 +766,70 @@ class TestPresets:
             window._on_write_complete(result)
 
         assert WizardStep.PUSH in window._wizard_controller.state.completed_steps
+
+    # --- Issue #158: unsaved-changes dialog false positive after push ---
+
+    def test_unsaved_changes_true_before_push(self, window, monkeypatch) -> None:
+        """Filters loaded but never pushed are reported as unsaved."""
+        # conftest's autouse _suppress_unsaved_changes_dialog stubs this
+        # method out to avoid blocking-dialog hangs on window teardown --
+        # undo it here since this test exercises the real logic. Set the
+        # window's own escape hatch too, so the real method being restored
+        # for the rest of this test can't pop a real modal dialog when the
+        # fixture's teardown calls window.close().
+        monkeypatch.undo()
+        window._skip_unsaved_prompt = True
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+
+        assert window._has_unsaved_changes() is True
+
+    def test_push_success_clears_unsaved_flag(self, window, monkeypatch) -> None:
+        """A successful push snapshots current_filters, clearing the dirty flag."""
+        monkeypatch.undo()
+        window._skip_unsaved_prompt = True
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        result = MagicMock(success=True, backup_path="/tmp/backup.json")
+
+        with patch.object(window._push_page, "set_success"):
+            window._on_write_complete(result)
+
+        assert window._has_unsaved_changes() is False
+
+    def test_device_switch_resets_pushed_snapshot(self, window, monkeypatch) -> None:
+        """Selecting a new device clears both current and last-pushed filters."""
+        monkeypatch.undo()
+        window._skip_unsaved_prompt = True
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        result = MagicMock(success=True, backup_path="/tmp/backup.json")
+        with patch.object(window._push_page, "set_success"):
+            window._on_write_complete(result)
+        assert state.last_pushed_filters
+
+        window._on_device_selected("192.168.1.200")
+
+        assert window._wizard_controller.state.current_filters == []
+        assert window._wizard_controller.state.last_pushed_filters == []
+
+    def test_undo_marks_dirty_again(self, window, monkeypatch) -> None:
+        """After undoing a successful push, the wizard is dirty again."""
+        monkeypatch.undo()
+        window._skip_unsaved_prompt = True
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        result = MagicMock(success=True, backup_path="/tmp/backup.json")
+        with patch.object(window._push_page, "set_success"):
+            window._on_write_complete(result)
+        assert window._has_unsaved_changes() is False
+
+        window._on_undo_complete(True, "Previous filters restored")
+
+        assert window._has_unsaved_changes() is True
 
     # --- Issue #60: NAME_PROFILE step populates existing profile list ---
 

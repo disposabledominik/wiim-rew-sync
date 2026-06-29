@@ -56,11 +56,16 @@ REW_Ad --> Local[REW App / EQ Text Files]
 
 ### Discovery Module
 - Uses `zeroconf` for mDNS discovery.
-- Primary service type: `_wiim._tcp.local.`
-- Fallback: `_linkplay._tcp.local.`
+- Probes `_wiim._tcp.local.` and `_linkplay._tcp.local.` concurrently in one timeout window (not
+  sequentially — see `docs/corrections.md`'s 2026-06-29 row for why sequential-with-full-timeout-each
+  was a real bug).
 - Secondary fallback: subnet scan with `getStatusEx` probe.
 - A device is confirmed as WiiM if the `getStatusEx` response contains a recognisable `project` field.
 - Discovery failures must not crash the app — show a "No devices found" state gracefully.
+- **Known platform constraint:** on Windows, mDNS requires the active network to be classified
+  "Private" — Windows Firewall blocks inbound multicast replies on "Public" networks, which makes
+  discovery silently fall through to the (correctly-working) subnet scan every time. Not fixable
+  from app code; documented in the in-app Troubleshooting guide and README.
 
 ---
 

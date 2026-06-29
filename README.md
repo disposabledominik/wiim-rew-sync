@@ -59,6 +59,15 @@ wiim-rew-sync peq-toggle --device <ip> --source wifi --state on
 Run `wiim-rew-sync <command> --help` for the full option list, or `wiim-rew-sync --help` for all
 commands (sources, RoomFit profiles, presets, etc.).
 
+## Troubleshooting
+
+**Device discovery slow or not finding your WiiM device on Windows?** Windows Firewall blocks
+this app's inbound traffic on networks classified "Public", which silently breaks mDNS discovery
+(the app falls back to a slower subnet scan with no error shown). Set your network to "Private"
+under **Settings → Network & Internet → Wi-Fi → (your network name) → Network profile type**, then
+restart the app. See the in-app Help → Troubleshooting guide
+([source](src/gui/assets/help/troubleshooting.md)) for this and other common issues.
+
 ## Development
 
 ```bash

@@ -31,10 +31,11 @@ from src.translator._warnings import FilterRow, SkippedBand
 
 _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
 
-_DISABLED_OPACITY = 0.5
+_DISABLED_OPACITY = 0.7
 _SKIPPED_OPACITY = 0.45
 _HIGHLIGHT_ALPHA = 40  # Accent background alpha for comparison highlights
 _NA_LABEL = "N/A"
+_OFF_TOOLTIP = "Deactivated \u2014 still pushed to the device"
 
 
 class FilterTable(QWidget):
@@ -486,13 +487,19 @@ class FilterTable(QWidget):
         return QColor(ACCENT_COLOR)
 
     def _apply_disabled_style(self, table: QTableWidget, row: int) -> None:
-        """Apply 0.5 opacity visual to a disabled/OFF band row."""
+        """Apply reduced opacity and an explanatory tooltip to a disabled/OFF band row.
+
+        OFF bands are still pushed to the device (deactivated, but occupying a
+        band slot) — kept clearly more opaque than skipped rows so the two
+        states read as distinct at a glance.
+        """
         for col in range(table.columnCount()):
             item = table.item(row, col)
             if item is not None:
                 color = item.foreground().color()
                 color.setAlphaF(_DISABLED_OPACITY)
                 item.setForeground(color)
+                item.setToolTip(_OFF_TOOLTIP)
 
     def _apply_skipped_style(self, table: QTableWidget, row: int, reason: str) -> None:
         """Apply crossed-out, dimmed styling and a reason tooltip to a skipped row."""

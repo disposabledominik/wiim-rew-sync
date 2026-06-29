@@ -2,7 +2,7 @@
 Discovery orchestrator — combines mDNS and subnet scan strategies.
 
 Implements a parallel discovery strategy for fast, responsive device detection:
-  1. Start mDNS probe (`_wiim._tcp.local.` then `_linkplay._tcp.local.`)
+  1. Start mDNS probe (`_wiim._tcp.local.` and `_linkplay._tcp.local.` concurrently)
   2. After a short grace period, start subnet scan in parallel
   3. Emit results progressively as devices are found (via on_found callback)
   4. Deduplicate by IP across both strategies
@@ -73,7 +73,7 @@ class DiscoveryModule:
     """Orchestrates WiiM device discovery using mDNS and subnet scanning.
 
     Discovery strategy (parallel with short-circuit):
-      1. Start mDNS probe (tries _wiim._tcp.local. then _linkplay._tcp.local.)
+      1. Start mDNS probe (browses _wiim._tcp.local. and _linkplay._tcp.local. concurrently)
       2. After 1.5s grace period: if mDNS already found devices, skip subnet scan
       3. Otherwise, start subnet scan in parallel with remaining mDNS time
       4. Deduplicate results by IP address
@@ -221,6 +221,19 @@ class DiscoveryModule:
             if on_found:
                 on_found(list(all_devices))
             logger.info("Subnet scan found %d device(s)", len(scan_devices))
+            # Reaching this point means mDNS contributed zero devices over the
+            # full timeout (the all_devices-cancels-scan_task short-circuit
+            # above only fires when mDNS found something). On Windows this is
+            # most commonly the active network being classified "Public"
+            # rather than "Private", which blocks inbound mDNS replies to the
+            # app regardless of how fast the probe itself is.
+            logger.warning(
+                "mDNS found no devices even though the subnet scan succeeded "
+                "-- on Windows, check whether the active network is "
+                "classified 'Private' (Settings > Network & Internet > "
+                "Wi-Fi > Network profile); 'Public' blocks inbound mDNS "
+                "replies. See the in-app Troubleshooting guide for details."
+            )
         else:
             logger.info("No WiiM devices found on network")
 

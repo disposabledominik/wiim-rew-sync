@@ -8,6 +8,7 @@ Uses unittest.mock.AsyncMock to patch network calls.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -96,6 +97,41 @@ async def test_discover_falls_back_to_subnet_scan_when_mdns_empty() -> None:
     assert result == [subnet_device]
     mock_mdns.assert_awaited_once()
     mock_scan.assert_awaited_once()
+
+
+async def test_discover_warns_when_mdns_empty_but_subnet_scan_succeeds(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A WARNING is logged hinting at the Windows network-profile/firewall
+    cause when mDNS contributes zero devices but the subnet scan finds some
+    -- this is the common symptom of Windows blocking inbound mDNS replies
+    on networks classified "Public" rather than "Private".
+    """
+    subnet_device = _make_device(ip="192.168.1.101", name="Bedroom")
+
+    module = DiscoveryModule(timeout=1.0)
+
+    logger = logging.getLogger("wiim_rew_sync.discovery")
+    logger.propagate = True
+    try:
+        with (
+            patch.object(
+                module._zeroconf, "discover", new_callable=AsyncMock
+            ) as mock_mdns,
+            patch.object(
+                module._scanner, "scan", new_callable=AsyncMock
+            ) as mock_scan,
+            caplog.at_level(logging.WARNING, logger="wiim_rew_sync.discovery"),
+        ):
+            mock_mdns.return_value = []
+            mock_scan.return_value = [subnet_device]
+
+            result = await module.discover()
+    finally:
+        logger.propagate = False
+
+    assert result == [subnet_device]
+    assert "Network profile" in caplog.text
 
 
 # --------------------------------------------------------------------------
@@ -333,6 +369,72 @@ async def test_zeroconf_returns_empty_when_service_has_no_addresses() -> None:
 
     # Device with no addresses is skipped
     assert result == []
+
+
+async def test_zeroconf_probes_both_service_types_concurrently() -> None:
+    """A device that only answers `_linkplay._tcp.local.` (never
+    `_wiim._tcp.local.`) must still be found within a single timeout window,
+    not after waiting out a full timeout on the WiiM-specific type first.
+
+    Regression test: ZeroconfDiscover used to probe service types
+    sequentially, each waiting the full timeout before moving on. A device
+    that never answers the first type (e.g. older LinkPlay-only hardware)
+    would starve the working probe of its share of the time budget.
+    """
+    import time
+
+    timeout = 0.2
+    zc = ZeroconfDiscover(timeout=timeout)
+
+    with patch("src.discovery.zeroconf_discover.AsyncZeroconf") as mock_azc_cls:
+        mock_azc = MagicMock()
+        mock_azc.zeroconf = MagicMock()
+        mock_azc.async_close = AsyncMock()
+        mock_azc_cls.return_value = mock_azc
+
+        with patch(
+            "src.discovery.zeroconf_discover.AsyncServiceBrowser"
+        ) as mock_browser_cls:
+            mock_browser = MagicMock()
+            mock_browser.async_cancel = AsyncMock()
+
+            def capture_handler(zeroconf, service_types, handlers):
+                # Confirm both service types are browsed in a single call.
+                assert service_types == [
+                    "_wiim._tcp.local.",
+                    "_linkplay._tcp.local.",
+                ]
+                from zeroconf import ServiceStateChange
+
+                handlers[0](
+                    mock_azc.zeroconf,
+                    "_linkplay._tcp.local.",
+                    "TestDevice._linkplay._tcp.local.",
+                    ServiceStateChange.Added,
+                )
+                return mock_browser
+
+            mock_browser_cls.side_effect = capture_handler
+
+            with patch(
+                "src.discovery.zeroconf_discover.AsyncServiceInfo"
+            ) as mock_info_cls:
+                mock_info = MagicMock()
+                mock_info.parsed_scoped_addresses.return_value = ["192.168.1.77"]
+                mock_info.properties = {}
+                mock_info.server = "TestDevice.local."
+                mock_info.async_request = AsyncMock()
+                mock_info_cls.return_value = mock_info
+
+                start = time.monotonic()
+                result = await zc.discover()
+                elapsed = time.monotonic() - start
+
+    assert len(result) == 1
+    assert result[0].ip == "192.168.1.77"
+    # Found via the second service type, but must not have cost a second
+    # full timeout — total time should stay well under 2x timeout.
+    assert elapsed < timeout * 2
 
 
 # --------------------------------------------------------------------------

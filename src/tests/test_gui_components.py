@@ -485,19 +485,49 @@ class TestFilterTable:
         assert q_item.toolTip() == "Note: Q defaulted to 0.7071 (REW Butterworth default)"
 
     def test_disabled_band_opacity(self, qtbot) -> None:
-        """OFF bands have reduced opacity applied to their items."""
+        """OFF bands have reduced opacity and an explanatory tooltip applied."""
         table = FilterTable()
         qtbot.addWidget(table)
 
         filters = self._make_filters()
         table.set_filters(filters)
 
-        # Row 2 is OFF - check that alpha is reduced
+        # Row 2 is OFF - check that alpha is reduced but still clearly readable
         assert table._table is not None
         item = table._table.item(2, 1)
         assert item is not None
         color = item.foreground().color()
-        assert color.alphaF() < 1.0
+        assert color.alphaF() == pytest.approx(0.7, abs=1e-3)
+        assert item.toolTip() == "Deactivated \u2014 still pushed to the device"
+        assert not item.font().strikeOut()
+
+    def test_off_and_skipped_have_distinct_styling(self, qtbot) -> None:
+        """OFF bands and skipped bands must not look visually identical.
+
+        OFF filters are still pushed to the device (just deactivated);
+        skipped filters are excluded entirely (e.g. exceed the band limit).
+        """
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        off_filter = CanonicalFilter(type="OFF", frequency_hz=100.0, gain_db=0.0, q=1.0)
+        rows: list[FilterRow] = [
+            off_filter,
+            SkippedBand(original_type="PEAK", reason="Exceeds device's 10-band limit"),
+        ]
+        table.set_filters([off_filter], rows=rows)
+
+        assert table._table is not None
+        off_item = table._table.item(0, 1)
+        skipped_item = table._table.item(1, 1)
+        assert off_item is not None
+        assert skipped_item is not None
+
+        off_alpha = off_item.foreground().color().alphaF()
+        skipped_alpha = skipped_item.foreground().color().alphaF()
+        assert off_alpha != skipped_alpha
+        assert not off_item.font().strikeOut()
+        assert skipped_item.font().strikeOut()
 
     def test_lr_filters_creates_tabs(self, qtbot) -> None:
         """set_lr_filters creates a QTabWidget with L and R tabs."""

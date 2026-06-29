@@ -229,7 +229,9 @@ class ConnectPage(QWidget):
             "Common causes:\n"
             "\u2022 Your WiiM device is powered off or not connected to WiFi\n"
             "\u2022 Your computer and WiiM device are on different subnets\n"
-            "\u2022 A firewall is blocking mDNS discovery (port 5353)",
+            "\u2022 A firewall is blocking mDNS discovery (port 5353) -- on "
+            "Windows, check that your network is set to \"Private\", not "
+            "\"Public\"",
             widget,
         )
         causes_label.setObjectName("ConnectPageEmptyCauses")

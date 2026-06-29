@@ -17,21 +17,35 @@ If the app cannot discover your WiiM device, try the following:
 
 ### Firewall and mDNS
 
-The app uses mDNS (multicast DNS) to discover devices. Some firewalls
-block mDNS traffic:
+The app uses mDNS (multicast DNS, UDP port 5353) to discover devices. mDNS
+needs to both send and *receive* multicast traffic — if replies are
+blocked, discovery silently falls through to the slower subnet scan every
+time, with no error shown. If discovery consistently takes 10+ seconds
+instead of 1-3 seconds, this is almost always the cause.
 
-- **Windows Firewall** — Allow the app through Windows Defender Firewall
-  for "Private" networks. mDNS uses UDP port 5353.
+- **Windows network profile (most common cause)** — Windows Firewall
+  allows this app's inbound traffic on networks classified **Private**,
+  and blocks it on networks classified **Public**. Windows sometimes
+  classifies even a trusted home Wi-Fi network as Public by default. To
+  check and fix:
+  1. Open **Settings → Network & Internet → Wi-Fi → (your network name)**.
+  2. Set **Network profile type** to **Private**.
+  3. Restart the app and retry discovery.
+- **Windows Defender Firewall app rule** — If you didn't see an "Allow
+  access" prompt the first time you ran the app, it may have been silently
+  blocked. Check **Settings → Privacy & security → Windows Security →
+  Firewall & network protection → Allow an app through firewall** and make
+  sure this app is listed and allowed for Private networks.
 - **Third-party firewalls** — Temporarily disable to test, then add an
-  exception for the app.
+  exception for the app (allow inbound UDP 5353).
 - **Router settings** — Some routers block multicast between Wi-Fi and
   Ethernet. Check your router's "multicast" or "IGMP snooping" settings.
 
 ### Manual Fallback
 
 If mDNS discovery fails, the app automatically tries a subnet scan as a
-fallback. This takes a few seconds longer but can find devices that mDNS
-misses.
+fallback. This can take 10-15 seconds longer (it probes every address on
+your subnet) but can find devices that mDNS misses.
 
 If the device still does not appear, verify it is reachable by navigating
 to `http://<device-ip>:443/httpapi.asp?command=getStatusEx` in a browser.

@@ -79,6 +79,8 @@ class PresetsDeviceView(QWidget):
         load_into_editor(object): Load a single item into the wizard editor.
         copy_to_device_requested(list): Copy selected items to another device.
         apply_to_sources_requested(str, list): Apply a PEQ preset to sources.
+        delete_requested(list): User wants to permanently delete selected
+            items from the connected device.
     """
 
     export_requested = Signal(list)
@@ -86,6 +88,7 @@ class PresetsDeviceView(QWidget):
     load_into_editor = Signal(object)
     copy_to_device_requested = Signal(list)
     apply_to_sources_requested = Signal(str, list)
+    delete_requested = Signal(list)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -331,6 +334,14 @@ class PresetsDeviceView(QWidget):
         self._copy_btn.clicked.connect(self._on_copy_clicked)
         layout.addWidget(self._copy_btn)
 
+        # Delete — irreversible, hardware-side, so styled distinctly (Req 15.x)
+        self._delete_btn = QPushButton("Delete")
+        self._delete_btn.setObjectName("btn_delete_preset")
+        self._delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._delete_btn.setProperty("class", "danger")
+        self._delete_btn.clicked.connect(self._on_delete_clicked)
+        layout.addWidget(self._delete_btn)
+
         layout.addStretch()
 
         return bar
@@ -433,6 +444,7 @@ class PresetsDeviceView(QWidget):
         self._save_btn.setEnabled(has_selection)
         self._load_btn.setEnabled(single_selected)
         self._copy_btn.setEnabled(has_selection)
+        self._delete_btn.setEnabled(has_selection)
 
     # ------------------------------------------------------------------
     # Search/filter handlers
@@ -493,3 +505,10 @@ class PresetsDeviceView(QWidget):
         selected = self._get_all_selected_items()
         if selected:
             self.copy_to_device_requested.emit(selected)
+
+    @Slot()
+    def _on_delete_clicked(self) -> None:
+        """Emit delete_requested with selected items."""
+        selected = self._get_all_selected_items()
+        if selected:
+            self.delete_requested.emit(selected)

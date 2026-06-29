@@ -749,6 +749,7 @@ class MainWindow(QMainWindow):
         state.selected_device = device_ip
         state.selected_source = ""
         state.current_filters = []
+        state.last_pushed_filters = []
         # Clear completed steps beyond CONNECT
         state.completed_steps.pop(WizardStep.EQ_TYPE, None)
         state.completed_steps.pop(WizardStep.SOURCE, None)
@@ -1108,6 +1109,7 @@ class MainWindow(QMainWindow):
                     result.error_message or "RoomFit undo verification failed"
                 )
                 return
+            self._clear_pushed_snapshot()
             self._status_banner.show_success(
                 f"Profile '{profile_name}' restored from backup"
             )
@@ -1140,6 +1142,9 @@ class MainWindow(QMainWindow):
                 logger.exception("Undo source '%s' failed", source_name)
                 failed += 1
 
+        if succeeded > 0:
+            self._clear_pushed_snapshot()
+
         if failed == 0:
             self._status_banner.show_success(
                 f"All {succeeded} source(s) restored from backup"
@@ -1148,6 +1153,15 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error(
                 f"Undo: {succeeded} restored, {failed} failed"
             )
+
+    def _clear_pushed_snapshot(self) -> None:
+        """Forget the last-successful-push snapshot after an undo.
+
+        Once a push is undone, the device no longer reflects what
+        last_pushed_filters recorded, so the unsaved-changes check must
+        consider the wizard dirty again.
+        """
+        self._wizard_controller.state.last_pushed_filters = []
 
     @Slot()
     def _on_done_acknowledged(self) -> None:
@@ -1599,6 +1613,9 @@ class MainWindow(QMainWindow):
                 backup_path, filters=filters, filters_l=filters_l, filters_r=filters_r
             )
             self._wizard_controller.state.last_backup_path = backup_path
+            self._wizard_controller.state.last_pushed_filters = list(
+                self._wizard_controller.state.current_filters
+            )
             # Mark PUSH step as completed in the step indicator
             self._wizard_controller.state.completed_steps[WizardStep.PUSH] = "Done"
             self._wizard_controller.step_summary_updated.emit(WizardStep.PUSH, "Done")
@@ -2361,6 +2378,42 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error(
                 f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
             )
+
+    async def _do_delete_presets(self, items: list[Any]) -> None:
+        """Delete selected PEQ presets / RoomFit profiles from the device.
+
+        Dispatches per item on preset_type to delete_peq_profile or
+        delete_roomfit_profile. One item's failure doesn't abort the rest;
+        the view is refreshed afterward regardless of partial failure.
+
+        Args:
+            items: List of PresetItem objects to delete.
+        """
+        assert self._wiim_adapter is not None
+        succeeded = 0
+        failed = 0
+
+        for item in items:
+            name = getattr(item, "name", "")
+            preset_type = getattr(item, "preset_type", "PEQ")
+            if not name:
+                continue
+            try:
+                if preset_type == "RoomFit":
+                    await self._wiim_adapter.delete_roomfit_profile(name)
+                else:
+                    await self._wiim_adapter.delete_peq_profile(name)
+                succeeded += 1
+            except Exception:
+                logger.exception("Delete preset '%s' (%s) failed", name, preset_type)
+                failed += 1
+
+        await self._do_list_presets()
+
+        if failed == 0:
+            self._status_banner.show_success(f"{succeeded} preset(s) deleted")
+        else:
+            self._status_banner.show_error(f"Deleted {succeeded}, {failed} failed")
 
     async def _do_preset_export(
         self, preset_name: str, preset_type: str, path: str
@@ -3408,6 +3461,9 @@ class MainWindow(QMainWindow):
         self._presets_device_view.load_into_editor.connect(
             self._on_preset_load_into_editor
         )
+        self._presets_device_view.delete_requested.connect(
+            self._on_preset_delete_requested
+        )
         self._my_presets_view.load_requested.connect(
             self._on_profile_load_requested
         )
@@ -3699,6 +3755,41 @@ class MainWindow(QMainWindow):
             )
         logger.info("Preset load into editor: %s (type=%s)", name, preset_type)
 
+    @Slot(list)
+    def _on_preset_delete_requested(self, items: list[Any]) -> None:
+        """Handle PresetsDeviceView "Delete" for selected items.
+
+        Confirms with the user before deleting -- this is an irreversible,
+        hardware-side removal, unlike the local-library delete on MyPresetsView.
+
+        Args:
+            items: List of PresetItem objects selected for deletion.
+        """
+        if not items:
+            return
+
+        from PySide6.QtWidgets import QMessageBox
+
+        names = "\n".join(
+            f"• {getattr(i, 'name', '')} ({getattr(i, 'preset_type', 'PEQ')})"
+            for i in items
+        )
+        reply = QMessageBox.question(
+            self,
+            "Delete Preset(s)",
+            f"Permanently delete the following from the device?\n\n{names}\n\n"
+            "This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._bridge.run_async(
+            self._bridge_wrapper("delete_presets", self._do_delete_presets(items))
+        )
+        logger.info("Preset delete requested: %s", [getattr(i, "name", "") for i in items])
+
     # --- Outbound handlers (workflow manager → UI updates) ---
 
     @Slot(list)
@@ -3765,6 +3856,7 @@ class MainWindow(QMainWindow):
             message: Human-readable result message.
         """
         if success:
+            self._clear_pushed_snapshot()
             self._status_banner.show_success(message)
         else:
             self._status_banner.show_error(f"Undo failed: {message}")
@@ -3958,7 +4050,12 @@ class MainWindow(QMainWindow):
             True if the wizard controller has filters that haven't been
             pushed/saved, False otherwise.
         """
-        # The wizard state has filters loaded but not yet pushed/saved
+        # Dirty means filters are loaded AND they don't match the snapshot
+        # taken at the last successful push (e.g. never pushed, edited again
+        # since, or undone since -- see last_pushed_filters docstring).
         state = self._wizard_controller.state
-        return len(state.current_filters) > 0
+        return (
+            len(state.current_filters) > 0
+            and state.current_filters != state.last_pushed_filters
+        )
 

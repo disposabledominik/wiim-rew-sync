@@ -1,8 +1,10 @@
 """
 mDNS discovery for WiiM devices using zeroconf.
 
-Probes for `_wiim._tcp.local.` first, then falls back to `_linkplay._tcp.local.`.
-Returns a list of DeviceInfo for each device found.
+Probes `_wiim._tcp.local.` and `_linkplay._tcp.local.` concurrently in a single
+browse window, since not all devices advertise both service types (older
+LinkPlay-based devices only advertise the latter). Returns a list of
+DeviceInfo for each device found.
 
 Requirements: 1.1, 1.2
 """
@@ -27,8 +29,10 @@ LINKPLAY_SERVICE_TYPE = "_linkplay._tcp.local."
 class ZeroconfDiscover:
     """Discover WiiM devices via mDNS service browsing.
 
-    Probes `_wiim._tcp.local.` first. If no results, probes
-    `_linkplay._tcp.local.` as a fallback.
+    Browses `_wiim._tcp.local.` and `_linkplay._tcp.local.` concurrently in a
+    single timeout window, so a device that only advertises one of the two
+    types doesn't have its discovery starved by waiting out a full timeout on
+    the other type first.
 
     Args:
         timeout: Maximum time in seconds to wait for mDNS responses.
@@ -38,31 +42,25 @@ class ZeroconfDiscover:
         self._timeout = timeout
 
     async def discover(self) -> list[DeviceInfo]:
-        """Run mDNS discovery, trying WiiM service type first, then LinkPlay.
+        """Run mDNS discovery across all known WiiM/LinkPlay service types.
 
         Returns:
             List of discovered DeviceInfo objects. Empty list if nothing found.
         """
-        # Try _wiim._tcp.local. first
-        devices = await self._probe_service(WIIM_SERVICE_TYPE)
-        if devices:
-            return devices
+        return await self._probe_services([WIIM_SERVICE_TYPE, LINKPLAY_SERVICE_TYPE])
 
-        # Fallback to _linkplay._tcp.local.
-        devices = await self._probe_service(LINKPLAY_SERVICE_TYPE)
-        return devices
-
-    async def _probe_service(self, service_type: str) -> list[DeviceInfo]:
-        """Probe a single mDNS service type and return discovered devices.
+    async def _probe_services(self, service_types: list[str]) -> list[DeviceInfo]:
+        """Probe multiple mDNS service types concurrently and return discovered devices.
 
         Args:
-            service_type: The mDNS service type string (e.g. "_wiim._tcp.local.").
+            service_types: The mDNS service type strings to browse (e.g.
+                "_wiim._tcp.local.").
 
         Returns:
-            List of DeviceInfo for devices found under this service type.
+            List of DeviceInfo for devices found under any of the given service types.
         """
         discovered: list[DeviceInfo] = []
-        found_names: list[str] = []
+        found: list[tuple[str, str]] = []
         event = asyncio.Event()
 
         def on_service_state_change(
@@ -72,14 +70,14 @@ class ZeroconfDiscover:
             state_change: ServiceStateChange,
         ) -> None:
             if state_change == ServiceStateChange.Added:
-                found_names.append(name)
+                found.append((service_type, name))
                 event.set()
 
         azc = AsyncZeroconf()
         try:
             browser = AsyncServiceBrowser(
                 azc.zeroconf,
-                service_type,
+                service_types,
                 handlers=[on_service_state_change],
             )
 
@@ -90,11 +88,11 @@ class ZeroconfDiscover:
                 pass
 
             # Give a brief additional window for more services after first discovery
-            if found_names:
+            if found:
                 await asyncio.sleep(min(0.5, self._timeout / 4))
 
             # Resolve each found service
-            for name in found_names:
+            for service_type, name in found:
                 info = AsyncServiceInfo(service_type, name)
                 await info.async_request(azc.zeroconf, timeout=int(self._timeout * 1000))
 

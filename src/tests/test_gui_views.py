@@ -187,9 +187,10 @@ class TestPresetsDeviceViewSelection:
         assert not view._save_btn.isEnabled()
         assert not view._load_btn.isEnabled()
         assert not view._copy_btn.isEnabled()
+        assert not view._delete_btn.isEnabled()
 
     def test_multi_select_enables_batch_buttons(self, qtbot) -> None:
-        """Selecting multiple items enables Export, Save, Copy buttons."""
+        """Selecting multiple items enables Export, Save, Copy, Delete buttons."""
         view = PresetsDeviceView()
         qtbot.addWidget(view)
         view.show()
@@ -200,6 +201,7 @@ class TestPresetsDeviceViewSelection:
         assert view._export_btn.isEnabled()
         assert view._save_btn.isEnabled()
         assert view._copy_btn.isEnabled()
+        assert view._delete_btn.isEnabled()
         # Load into Editor requires single selection
         assert not view._load_btn.isEnabled()
 
@@ -272,6 +274,20 @@ class TestPresetsDeviceViewSignals:
 
         with qtbot.waitSignal(view.copy_to_device_requested, timeout=1000) as blocker:
             view._copy_btn.click()
+
+        assert len(blocker.args[0]) == 2
+
+    def test_delete_requested_signal(self, qtbot) -> None:
+        """Clicking Delete emits delete_requested with selected items."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(2))
+        view._peq_list.selectAll()
+
+        with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
+            view._delete_btn.click()
 
         assert len(blocker.args[0]) == 2
 
