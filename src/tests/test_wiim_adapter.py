@@ -751,6 +751,39 @@ class TestDeletePeqProfile:
             await adapter.delete_peq_profile("Test")
 
 
+class TestDeleteRoomfitProfile:
+    """Test delete_roomfit_profile — deleting a saved RoomFit profile.
+
+    Per docs/wiim_api_notes.md, RoomFit profile deletion requires EQLevel: 2
+    in the payload — without it the device targets the PEQ-profile
+    namespace instead (corrections.md row 16).
+    """
+
+    async def test_delete_roomfit_profile_success(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """delete_roomfit_profile issues EQv2Delete with EQLevel: 2."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.delete_roomfit_profile("Old RoomFit Profile")
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQv2Delete:")
+        assert "Old" in call_args
+        assert "EqNp" in call_args
+        assert "EQLevel" in call_args
+
+    async def test_delete_roomfit_profile_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Connection errors propagate from delete_roomfit_profile."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.delete_roomfit_profile("Test")
+
+
 # ---------------------------------------------------------------------------
 # Tests: read_roomfit — Level gating and real API commands
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.rew_http_client import MeasurementSummary
+from src.adapters.safe_write import RoomFitSafeWrite
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.gui.shared_helpers import (
@@ -89,6 +90,7 @@ def _setup_device(window) -> MagicMock:
     mock_adapter = MagicMock()
     mock_adapter.capabilities = _make_caps()
     window._wiim_adapter = mock_adapter
+    window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, window._backup_manager)
     window._wizard_controller.state.selected_device = "192.168.1.100"
     window._wizard_controller.state.selected_source = "wifi"
     return mock_adapter
@@ -199,6 +201,9 @@ class TestPushWriteOperations:
         mock_adapter = window._wiim_adapter
         mock_adapter.list_roomfit_profiles = AsyncMock(return_value=[])
         mock_adapter.write_roomfit = AsyncMock()
+        mock_adapter.read_roomfit = AsyncMock(
+            return_value=MagicMock(channel_mode=ChannelMode.LR, bands=[], bands_l=[], bands_r=[])
+        )
 
         # _do_push is a coroutine; we verify write_roomfit gets channel_mode
         import asyncio
@@ -722,6 +727,7 @@ class TestPresets:
         mock_backup = MagicMock()
         mock_backup.create_backup = MagicMock(return_value="/tmp/backup.json")
         window._backup_manager = mock_backup
+        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
 
         import asyncio
 

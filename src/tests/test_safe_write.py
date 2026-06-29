@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.adapters.safe_write import SafeWrite
+from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
@@ -567,3 +567,178 @@ class TestEmptyBands:
 
         assert result.success is False
         assert result.rollback_success is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: RoomFitSafeWrite — named-profile verify and two rollback shapes
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_roomfit_adapter() -> AsyncMock:
+    """Mocked WiiMAdapter for RoomFit operations."""
+    adapter = AsyncMock(spec=WiiMAdapter)
+    adapter.capabilities = _solo_capabilities()
+    adapter.list_roomfit_profiles = AsyncMock()
+    adapter.read_roomfit = AsyncMock()
+    adapter.write_roomfit = AsyncMock()
+    adapter.delete_roomfit_profile = AsyncMock()
+    return adapter
+
+
+@pytest.fixture
+def roomfit_safe_write(
+    mock_roomfit_adapter: AsyncMock, mock_backup_manager: MagicMock
+) -> RoomFitSafeWrite:
+    """RoomFitSafeWrite instance with mocked dependencies."""
+    return RoomFitSafeWrite(
+        adapter=mock_roomfit_adapter, backup_manager=mock_backup_manager
+    )
+
+
+class TestRoomFitNewProfile:
+    """Profile didn't exist before this write -> rollback shape is DELETE_NEW."""
+
+    async def test_new_profile_success(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """New profile, verification passes -> success, no backup, no delete."""
+        bands = _make_bands()
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        assert result.backup_path is None
+        mock_roomfit_adapter.delete_roomfit_profile.assert_not_called()
+
+    async def test_new_profile_mismatch_deletes_profile(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """New profile, verification fails -> profile is deleted, not restored."""
+        intended_bands = _make_bands(freq=100.0)
+        bad_readback = _make_settings(bands=_make_bands(freq=999.0))
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = bad_readback
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", intended_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is False
+        assert result.rollback_success is True
+        assert result.backup_path is None
+        mock_roomfit_adapter.delete_roomfit_profile.assert_called_once_with(
+            "New Profile"
+        )
+        assert "removed" in (result.error_message or "").lower()
+
+    async def test_new_profile_lr_mode_verified_per_channel(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """L/R write builds intended settings from filters_l/filters_r, not filters."""
+        left = _make_bands(freq=100.0)
+        right = _make_bands(freq=200.0)
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = PEQSettings(
+            source_name="wifi", channel_mode=ChannelMode.LR, bands_l=left, bands_r=right
+        )
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "LR Profile", [], ChannelMode.LR, filters_l=left, filters_r=right
+        )
+
+        assert result.success is True
+        write_call = mock_roomfit_adapter.write_roomfit.call_args
+        assert write_call.kwargs["filters_l"] == left
+        assert write_call.kwargs["filters_r"] == right
+
+
+class TestRoomFitOverwriteProfile:
+    """Profile already existed -> rollback shape is RESTORE."""
+
+    async def test_overwrite_success_backs_up_existing(
+        self,
+        roomfit_safe_write: RoomFitSafeWrite,
+        mock_roomfit_adapter: AsyncMock,
+        mock_backup_manager: MagicMock,
+    ) -> None:
+        """Overwriting an existing profile backs it up, then verifies the new write."""
+        new_bands = _make_bands(freq=100.0)
+        existing = _make_settings(bands=_make_bands(freq=200.0))
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = [{"Name": "Existing"}]
+        mock_roomfit_adapter.read_roomfit.side_effect = [
+            existing,  # backup read
+            _make_settings(bands=new_bands),  # post-write verify read
+        ]
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "Existing", new_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        assert result.backup_path is not None
+        mock_backup_manager.create_backup.assert_called_once()
+        assert mock_backup_manager.create_backup.call_args[0][2] == "pre_write"
+
+    async def test_overwrite_mismatch_restores_original(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """Verification fails on an existing profile -> original bands restored."""
+        new_bands = _make_bands(freq=100.0)
+        existing = _make_settings(bands=_make_bands(freq=200.0))
+        bad_readback = _make_settings(bands=_make_bands(freq=999.0))
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = [{"Name": "Existing"}]
+        mock_roomfit_adapter.read_roomfit.side_effect = [
+            existing,       # backup read
+            bad_readback,   # post-write verify read: mismatch
+            existing,       # rollback verify read: matches original
+        ]
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "Existing", new_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is False
+        assert result.rollback_success is True
+        assert "restored" in (result.error_message or "").lower()
+        mock_roomfit_adapter.delete_roomfit_profile.assert_not_called()
+        # write_roomfit called twice: once for the new bands, once to restore
+        assert mock_roomfit_adapter.write_roomfit.call_count == 2
+
+    async def test_overwrite_mismatch_restore_failure_logs_critical(
+        self,
+        roomfit_safe_write: RoomFitSafeWrite,
+        mock_roomfit_adapter: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Restore itself fails verification -> rollback_success False, CRITICAL logged."""
+        new_bands = _make_bands(freq=100.0)
+        existing = _make_settings(bands=_make_bands(freq=200.0))
+        bad_readback = _make_settings(bands=_make_bands(freq=999.0))
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = [{"Name": "Existing"}]
+        mock_roomfit_adapter.read_roomfit.side_effect = [
+            existing,       # backup read
+            bad_readback,   # post-write verify read: mismatch
+            bad_readback,   # rollback verify read: STILL doesn't match
+        ]
+
+        app_logger = logging.getLogger("wiim_rew_sync.app")
+        app_logger.propagate = True
+        try:
+            with caplog.at_level(logging.CRITICAL, logger="wiim_rew_sync.app"):
+                result = await roomfit_safe_write.execute(
+                    "wifi", "Existing", new_bands, ChannelMode.STEREO
+                )
+
+            assert result.success is False
+            assert result.rollback_success is False
+            critical_records = [
+                r for r in caplog.records if r.levelno == logging.CRITICAL
+            ]
+            assert len(critical_records) >= 1
+        finally:
+            app_logger.propagate = False

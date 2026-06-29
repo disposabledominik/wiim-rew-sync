@@ -116,7 +116,13 @@ async def test_list_measurements_non_json_200_raises_rew_not_connected(
 async def test_get_filters_returns_canonical_filters(
     client: REWHttpApiClient,
 ) -> None:
-    """get_filters parses FilterSetting objects into CanonicalFilter list."""
+    """get_filters parses FilterSetting objects into CanonicalFilter list.
+
+    The bare "LS" shelf type carries a shelf-slope parameter S, not a
+    Butterworth Q -- it's in _SKIP_TYPES and dropped from the filters list
+    (see docs/corrections.md, 2026-06-28), so it's absent here entirely
+    rather than passed through.
+    """
     uuid = "ba2da346-0f31-4d9d-bbeb-2bfcd07e1cb9"
     payload = [
         {"filterNo": 1, "on": True, "type": "PK", "freq": 80.0, "gain": 5.3, "q": 3.885},
@@ -129,18 +135,16 @@ async def test_get_filters_returns_canonical_filters(
 
     result = await client.get_filters(uuid)
 
-    assert len(result) == 3
+    assert len(result) == 2
     # First filter: PK enabled -> PEAK
     assert result[0].type == "PEAK"
     assert result[0].frequency_hz == 80.0
     assert result[0].gain_db == 5.3
     assert result[0].q == 3.885
-    # Second filter: LS enabled -> LS
-    assert result[1].type == "LS"
-    assert result[1].frequency_hz == 40.0
+    # Second filter (filterNo 2, "LS") is skipped -- not WiiM-translatable.
     # Third filter: PK disabled -> OFF
-    assert result[2].type == "OFF"
-    assert result[2].frequency_hz == 200.0
+    assert result[1].type == "OFF"
+    assert result[1].frequency_hz == 200.0
 
 
 @respx.mock

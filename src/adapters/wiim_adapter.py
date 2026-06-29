@@ -647,6 +647,26 @@ class WiiMAdapter:
         command = f"EQv2Delete:{quote(payload)}"
         await self._client.command(command)
 
+    async def delete_roomfit_profile(self, profile_name: str) -> None:
+        """Delete a saved RoomFit profile from the device.
+
+        Wraps EQv2Delete with EQLevel: 2, per docs/wiim_api_notes.md — RoomFit
+        profile deletion requires this parameter; without it the device
+        targets the PEQ-profile namespace instead.
+
+        Args:
+            profile_name: Name of the RoomFit profile to delete.
+
+        Raises:
+            WiiMResponseError: Device returned an error response.
+            WiiMConnectionError: Device unreachable.
+        """
+        payload = json.dumps({
+            "pluginURI": _PLUGIN_URI, "Name": profile_name, "EQLevel": 2,
+        })
+        command = f"EQv2Delete:{quote(payload)}"
+        await self._client.command(command)
+
     # ------------------------------------------------------------------
     # RoomFit
     # ------------------------------------------------------------------

@@ -41,6 +41,53 @@ class WriteResult:
     error_message: str | None = None
 
 
+def compare_band_lists(
+    intended_bands: list[CanonicalFilter],
+    read_back_bands: list[CanonicalFilter],
+) -> bool:
+    """Compare two band lists element by element using band_matches.
+
+    If the device returns more bands than were written (e.g. 12-band device
+    with 10-band write), only the first N written bands are verified. Extra
+    bands on the device are ignored (they retain their previous values and
+    are not part of this write's intent).
+    """
+    # Verify up to the number of intended bands
+    compare_count = min(len(intended_bands), len(read_back_bands))
+    if compare_count == 0:
+        # Vacuous pass is only legitimate when both sides are genuinely
+        # empty (e.g. a write that clears all bands). Any other empty
+        # overlap — intended bands the device didn't echo back, or
+        # read-back bands when none were intended — is a verification
+        # failure, not nothing-to-compare.
+        return len(intended_bands) == 0 and len(read_back_bands) == 0
+    return all(
+        band_matches(intended, actual)
+        for intended, actual in zip(
+            intended_bands[:compare_count],
+            read_back_bands[:compare_count],
+            strict=True,
+        )
+    )
+
+
+def verify_bands(intended: PEQSettings, read_back: PEQSettings) -> bool:
+    """Compare intended vs read-back bands using tolerance predicates.
+
+    For stereo mode, compares the .bands lists.
+    For L/R mode, compares both .bands_l and .bands_r lists.
+
+    Returns True if all bands match within tolerance.
+    """
+    if intended.channel_mode == ChannelMode.STEREO:
+        return compare_band_lists(intended.bands, read_back.bands)
+    else:
+        # L/R mode: verify both channels
+        left_ok = compare_band_lists(intended.bands_l or [], read_back.bands_l or [])
+        right_ok = compare_band_lists(intended.bands_r or [], read_back.bands_r or [])
+        return left_ok and right_ok
+
+
 class SafeWrite:
     """Five-step safe write protocol for PEQ device writes.
 
@@ -97,62 +144,12 @@ class SafeWrite:
         read_back = await self._adapter.read_peq(source_name)
 
         # Step 4: Verify each band matches
-        if self._verify_bands(settings, read_back):
+        if verify_bands(settings, read_back):
             # Step 5a: Commit - verification passed
             return WriteResult(success=True, backup_path=backup_path)
 
         # Step 5b: Rollback - verification failed
         return await self._rollback(source_name, current_settings, backup_path)
-
-    def _verify_bands(self, intended: PEQSettings, read_back: PEQSettings) -> bool:
-        """Compare intended vs read-back bands using tolerance predicates.
-
-        For stereo mode, compares the .bands lists.
-        For L/R mode, compares both .bands_l and .bands_r lists.
-
-        Returns True if all bands match within tolerance.
-        """
-        if intended.channel_mode == ChannelMode.STEREO:
-            return self._compare_band_lists(intended.bands, read_back.bands)
-        else:
-            # L/R mode: verify both channels
-            left_ok = self._compare_band_lists(
-                intended.bands_l or [], read_back.bands_l or []
-            )
-            right_ok = self._compare_band_lists(
-                intended.bands_r or [], read_back.bands_r or []
-            )
-            return left_ok and right_ok
-
-    def _compare_band_lists(
-        self,
-        intended_bands: list[CanonicalFilter],
-        read_back_bands: list[CanonicalFilter],
-    ) -> bool:
-        """Compare two band lists element by element using band_matches.
-
-        If the device returns more bands than were written (e.g. 12-band device
-        with 10-band write), only the first N written bands are verified. Extra
-        bands on the device are ignored (they retain their previous values and
-        are not part of this write's intent).
-        """
-        # Verify up to the number of intended bands
-        compare_count = min(len(intended_bands), len(read_back_bands))
-        if compare_count == 0:
-            # Vacuous pass is only legitimate when both sides are genuinely
-            # empty (e.g. a write that clears all bands). Any other empty
-            # overlap — intended bands the device didn't echo back, or
-            # read-back bands when none were intended — is a verification
-            # failure, not nothing-to-compare.
-            return len(intended_bands) == 0 and len(read_back_bands) == 0
-        return all(
-            band_matches(intended, actual)
-            for intended, actual in zip(
-                intended_bands[:compare_count],
-                read_back_bands[:compare_count],
-                strict=True,
-            )
-        )
 
     async def _rollback(
         self,
@@ -184,7 +181,7 @@ class SafeWrite:
 
         # Verify rollback succeeded
         rollback_read_back = await self._adapter.read_peq(source_name)
-        if self._verify_bands(original_settings, rollback_read_back):
+        if verify_bands(original_settings, rollback_read_back):
             return WriteResult(
                 success=False,
                 rollback_success=True,
@@ -204,5 +201,139 @@ class SafeWrite:
             error_message=(
                 f"Write verification AND rollback failed. "
                 f"Manual recovery required. Backup: {backup_path}"
+            ),
+        )
+
+
+class RoomFitSafeWrite:
+    """Verify-and-rollback wrapper for RoomFit named-profile writes.
+
+    Unlike PEQ's SafeWrite, a RoomFit write targets a *named* profile that
+    may or may not have existed before this write — so rollback has two
+    shapes instead of one:
+      - Profile already existed: restore its previous bands (RESTORE).
+      - Profile is brand-new: delete the profile we just created (DELETE_NEW),
+        since there's no prior state to go back to.
+
+    Args:
+        adapter: WiiMAdapter for device read/write operations.
+        backup_manager: BackupManager for creating state snapshots of an
+            overwritten profile's previous bands.
+    """
+
+    def __init__(self, adapter: WiiMAdapter, backup_manager: BackupManager) -> None:
+        self._adapter = adapter
+        self._backup_manager = backup_manager
+
+    async def execute(
+        self,
+        source_name: str,
+        profile_name: str,
+        filters: list[CanonicalFilter],
+        channel_mode: ChannelMode,
+        filters_l: list[CanonicalFilter] | None = None,
+        filters_r: list[CanonicalFilter] | None = None,
+    ) -> WriteResult:
+        """Write a RoomFit profile, then verify and roll back on mismatch.
+
+        Args:
+            source_name: Audio input source (e.g. "wifi").
+            profile_name: Name of the RoomFit profile to write.
+            filters: Stereo-mode filters (ignored when channel_mode is LR).
+            channel_mode: ChannelMode for the write.
+            filters_l: Left channel filters (required when channel_mode is LR).
+            filters_r: Right channel filters (required when channel_mode is LR).
+
+        Returns:
+            WriteResult indicating success/failure and rollback status.
+        """
+        existing_profiles = await self._adapter.list_roomfit_profiles(source_name)
+        existing_names = {p.get("Name", "") for p in existing_profiles}
+        is_new = profile_name not in existing_names
+
+        backup_path: Path | str | None = None
+        existing_settings: PEQSettings | None = None
+        if not is_new:
+            existing_settings = await self._adapter.read_roomfit(
+                source_name, profile_name
+            )
+            backup_path = self._backup_manager.create_backup(
+                existing_settings, self._adapter.capabilities, "pre_write"
+            )
+
+        await self._adapter.write_roomfit(
+            source_name,
+            profile_name,
+            filters,
+            channel_mode=channel_mode,
+            filters_l=filters_l,
+            filters_r=filters_r,
+        )
+
+        if channel_mode.is_lr:
+            intended = PEQSettings(
+                source_name=source_name,
+                channel_mode=ChannelMode.LR,
+                bands_l=filters_l or [],
+                bands_r=filters_r or [],
+            )
+        else:
+            intended = PEQSettings(
+                source_name=source_name,
+                channel_mode=ChannelMode.STEREO,
+                bands=filters,
+            )
+
+        read_back = await self._adapter.read_roomfit(source_name, profile_name)
+        if verify_bands(intended, read_back):
+            return WriteResult(success=True, backup_path=backup_path)
+
+        if is_new:
+            await self._adapter.delete_roomfit_profile(profile_name)
+            return WriteResult(
+                success=False,
+                rollback_success=True,
+                backup_path=None,
+                error_message=(
+                    f"RoomFit profile '{profile_name}' verification failed; "
+                    f"the new profile was removed."
+                ),
+            )
+
+        assert existing_settings is not None
+        await self._adapter.write_roomfit(
+            source_name,
+            profile_name,
+            existing_settings.bands,
+            channel_mode=existing_settings.channel_mode,
+            filters_l=existing_settings.bands_l,
+            filters_r=existing_settings.bands_r,
+        )
+        rollback_read_back = await self._adapter.read_roomfit(source_name, profile_name)
+        rollback_ok = verify_bands(existing_settings, rollback_read_back)
+        if rollback_ok:
+            return WriteResult(
+                success=False,
+                rollback_success=True,
+                backup_path=backup_path,
+                error_message=(
+                    f"RoomFit profile '{profile_name}' verification failed; "
+                    f"original profile restored."
+                ),
+            )
+
+        logger.critical(
+            "RoomFit rollback FAILED for profile '%s'. Manual recovery required. "
+            "Backup file: %s",
+            profile_name,
+            backup_path,
+        )
+        return WriteResult(
+            success=False,
+            rollback_success=False,
+            backup_path=backup_path,
+            error_message=(
+                f"RoomFit profile '{profile_name}' verification AND restore "
+                f"failed. Manual recovery required. Backup: {backup_path}"
             ),
         )

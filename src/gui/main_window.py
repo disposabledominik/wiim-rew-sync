@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from src.adapters.capability_prober import CapabilityProber
 from src.adapters.rew_http_client import MeasurementSummary, REWHttpApiClient
-from src.adapters.safe_write import SafeWrite, WriteResult
+from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
@@ -225,6 +225,7 @@ class MainWindow(QMainWindow):
         self._capability_prober: CapabilityProber | None = None
         self._wiim_adapter: WiiMAdapter | None = None
         self._safe_write: SafeWrite | None = None
+        self._roomfit_safe_write: RoomFitSafeWrite | None = None
         self._device_caps: object | None = None
         # Bumped on every device selection; lets a stale/superseded capability
         # probe (e.g. user selects a second device before the first probe
@@ -1282,6 +1283,7 @@ class MainWindow(QMainWindow):
         assert self._wiim_http_client is not None
         self._wiim_adapter = WiiMAdapter(self._wiim_http_client, caps)  # type: ignore[arg-type]
         self._safe_write = SafeWrite(self._wiim_adapter, self._backup_manager)
+        self._roomfit_safe_write = RoomFitSafeWrite(self._wiim_adapter, self._backup_manager)
 
         # Configure SecondaryWorkflowManager with adapter factories (Req 8.1, 9.3, 10.3, 15.3)
         self._secondary_workflows.configure(
@@ -2543,38 +2545,15 @@ class MainWindow(QMainWindow):
                 self._bridge.write_complete.emit(result)
                 return
 
+            assert self._roomfit_safe_write is not None
             try:
-                # Check if profile already exists — if so, back up its bands first
-                backup_path: str | None = None
-                existing_profiles = await self._wiim_adapter.list_roomfit_profiles(
-                    source_name
-                )
-                existing_names = [p.get("Name", "") for p in existing_profiles]
-
-                if profile_name in existing_names:
-                    # Read existing profile bands for backup
-                    self._bridge.progress_update.emit(
-                        f"Backing up existing '{profile_name}'..."
-                    )
-                    # Load profile into buffer then read
-                    existing_settings = await self._wiim_adapter.read_roomfit(
-                        source_name, profile_name
-                    )
-                    # Store backup via BackupManager
-                    caps = self._wiim_adapter.capabilities
-                    bp = self._backup_manager.create_backup(
-                        existing_settings, caps, trigger="pre_write"
-                    )
-                    backup_path = str(bp)
-
-                # Write new bands to the named profile (respecting channel mode)
                 self._bridge.progress_update.emit(
                     f"Writing RoomFit profile '{profile_name}'..."
                 )
                 if channel_mode.is_lr:
                     # Use stored L/R lists if available (avoids naive 50/50 split)
                     left, right = get_lr_filters(state, filters)
-                    await self._wiim_adapter.write_roomfit(
+                    result = await self._roomfit_safe_write.execute(
                         source_name,
                         profile_name,
                         filters,
@@ -2583,17 +2562,14 @@ class MainWindow(QMainWindow):
                         filters_r=right,
                     )
                 else:
-                    await self._wiim_adapter.write_roomfit(
-                        source_name, profile_name, filters
+                    result = await self._roomfit_safe_write.execute(
+                        source_name, profile_name, filters, channel_mode=ChannelMode.STEREO
                     )
 
-                result = WriteResult(
-                    success=True,
-                    backup_path=Path(backup_path) if backup_path else None,
-                )
-                self._bridge.progress_update.emit(
-                    f"RoomFit profile '{profile_name}' saved"
-                )
+                if result.success:
+                    self._bridge.progress_update.emit(
+                        f"RoomFit profile '{profile_name}' saved"
+                    )
                 self._bridge.write_complete.emit(result)
             except Exception as exc:
                 result = WriteResult(success=False, error_message=str(exc), backup_path=None)

@@ -84,6 +84,28 @@ If rollback itself fails (e.g. network drop during rollback write):
 - Display an explicit user-facing message with the backup file path and manual recovery instructions.
 - Do NOT silently fail.
 
+### Two rollback shapes: RESTORE vs DELETE_NEW
+
+The sequence above assumes a write always overwrites a pre-existing device
+state, so step 5b always has something to restore. RoomFit profile writes
+break that assumption — a save targets a *named* profile that may not have
+existed before this write, so there are two distinct rollback shapes
+(implemented in `safe_write.py`):
+
+- **RESTORE** (`SafeWrite`, and `RoomFitSafeWrite` when the named profile
+  already existed): step 1 backs up the prior state, so a verify failure
+  writes that backup back and re-verifies, exactly as steps 1-5b describe
+  above.
+- **DELETE_NEW** (`RoomFitSafeWrite` only, when the profile is brand-new):
+  there is no prior state — the profile didn't exist before this write — so
+  there's nothing to restore. A verify failure instead deletes the
+  just-created profile via `delete_roomfit_profile()` (`EQv2Delete` with
+  `EQLevel: 2`), and `WriteResult.error_message` says so explicitly rather
+  than describing a restore that didn't happen.
+
+Both shapes still log CRITICAL and report `rollback_success=False` if the
+rollback action itself fails verification.
+
 ---
 
 ## Dry Run Mode
