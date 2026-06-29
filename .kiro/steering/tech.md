@@ -169,7 +169,7 @@ Before dispatching any wave of concurrent tasks, the orchestrator MUST perform a
 
 1. `python3 -m pytest src/tests/test_<module>.py -v --no-cov` — task's own tests pass
 2. `python3 -m ruff check src/` — zero lint errors
-3. `python3 -m mypy src/translator src/models` — zero type errors
+3. `python3 -m mypy src/` — zero type errors repo-wide (translator/models additionally run under strict-mode overrides; see pyproject.toml)
 4. (Optional) `python3 -m pytest --no-header -q` — full suite, only if time allows
 
 Steps 1-3 are mandatory. Step 4 will likely timeout — only attempt after all other work is done.

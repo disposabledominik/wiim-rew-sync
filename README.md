@@ -14,6 +14,9 @@ No cloud services, no telemetry, no accounts — everything runs locally.
 - Export WiiM PEQ to REW-compatible text files
 - Local profile library: save, load, rename, delete, duplicate, tag
 - RoomFit support (experimental, capability-gated per device)
+- Per-model capability overrides via an editable `device_capabilities.json` in the app data
+  directory (seeded from a bundled default on first run) — lets you correct or extend detected
+  capabilities for a specific WiiM model without code changes
 - Dry-run mode: preview a translated import before writing anything to a device
 - Safe write protocol on every device write: backup → write → read back → verify → rollback on mismatch
 

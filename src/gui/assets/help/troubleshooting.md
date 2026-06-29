@@ -74,11 +74,18 @@ If a push fails partway through:
 ### Verification Failed
 
 After writing, the app reads back the filters to confirm they were applied
-correctly. If verification fails:
+correctly. If verification fails, what happens next depends on whether you
+were overwriting something that already existed:
 
-- The app automatically rolls back to your previous settings.
-- A status message explains what went wrong.
-- Your original configuration is preserved.
+- **Overwriting an existing PEQ source or RoomFit profile** — the app
+  restores your previous settings from the automatic backup. Your original
+  configuration is preserved.
+- **Saving a brand-new RoomFit profile** — there is no previous state to
+  restore, so the app deletes the newly-created profile instead. You're back
+  to where you started, just without the (unverified) new profile.
+
+Either way, a status message explains what went wrong and which of the two
+outcomes occurred.
 
 ### Network Interrupted
 
@@ -117,6 +124,23 @@ as a JSON file. You can find the path:
 
 To manually restore: re-connect to your device, load the backup file as
 a preset from My Saved Presets, and push it again.
+
+## Wrong Capabilities Detected for Your Device
+
+If the app gets your device's capabilities wrong — e.g. shows RoomFit as
+unavailable when your model supports it, omits a source you actually have,
+or applies the wrong max-band limit — you can correct this without waiting
+for an app update:
+
+- Open `device_capabilities.json` in the app data folder (path shown in
+  Settings under "Paths"). It's seeded from a bundled default on first run.
+- Add or edit the entry for your device model to override the detected
+  values (RoomFit support, sources, max bands, supported filter types).
+- Restart the app to pick up the change.
+
+This file is for advanced users comfortable editing JSON; malformed entries
+are skipped (logged, not crashed) and the app falls back to its normal
+detection for that device.
 
 ## REW API Connection Issues
 

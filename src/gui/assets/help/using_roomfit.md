@@ -75,6 +75,12 @@ After a successful push, Undo is available if you overwrote an existing
 profile (the previous version is restored). For new profiles, Undo is not
 shown since there was nothing to restore.
 
+If the post-write verification fails, the same overwrite-vs-new distinction
+applies to the automatic rollback: an overwritten profile's previous version
+is restored, while a brand-new profile that failed verification is deleted
+instead (there's no prior version to go back to). Either way you end up back
+where you started, and the failure is reported clearly.
+
 ## RoomFit Toggle
 
 Enabling or disabling RoomFit on the device is not supported via the API.

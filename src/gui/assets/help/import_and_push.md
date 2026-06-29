@@ -60,7 +60,16 @@ After loading, the Review step shows a table of all filter bands:
 
 - Bands marked OFF are shown at reduced opacity.
 - Clamped values (adjusted to fit device limits) are marked with an orange
-  indicator. Hover to see the original vs. adjusted value.
+  indicator. The cell shows the final value that will be written; hover to
+  see the original value from your file.
+- Filter types with no WiiM equivalent (e.g. Notch, Modal, All Pass, Linkwitz
+  Transform) are dropped and shown as a crossed-out, unnumbered ("N/A") row —
+  hover it to see why. Bands cut for exceeding the device's band limit are
+  shown the same way.
+- Filter types auto-converted to a different WiiM-supported type, and bare
+  LP/HP filters that had no Q specified in your file (filled in with REW's
+  documented default of 0.7071), are flagged with a small indicator on the
+  Type or Q column — hover for details. These are not dropped, just adjusted.
 - For L/R mode, the table shows separate Left and Right tabs.
 
 ## Dry Run Mode

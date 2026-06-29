@@ -28,7 +28,7 @@ python3 -m pytest src/tests/test_a.py src/tests/test_b.py --no-cov -q
 # Lint / type check
 python3 -m ruff check src/
 python3 -m mypy src/translator src/models   # strict mode lives here
-python3 -m mypy src/   # complete type check (perform occasionally)
+python3 -m mypy src/   # complete type check — zero-error gate, run before calling a task done
 
 # Install deps (only if pyproject.toml changed)
 pip3 install -e ".[dev]"
@@ -47,7 +47,7 @@ treat as passing). GUI integration tests (`test_wizard_integration.py`, `test_gu
 Task completion gate (mandatory steps 1-3):
 1. `pytest` for the touched module(s) passes
 2. `ruff check src/` — zero errors
-3. `mypy src/translator src/models` — zero errors
+3. `mypy src/` — zero errors (translator/models additionally run under strict-mode overrides; see pyproject.toml)
 
 **Known noise:** with coverage enabled, Qt-based tests (GUI pages, wizard controller, dialogs) show
 `ERROR` during pytest-cov's SQLite combine step on WSL2's `/mnt/c/` filesystem. Not real failures —
