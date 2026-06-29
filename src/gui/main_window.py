@@ -1066,7 +1066,10 @@ class MainWindow(QMainWindow):
         """Restore a RoomFit profile from backup.
 
         Reads the backup JSON via shared parse_backup_filters helper, then
-        writes the filters back to the same profile name via write_roomfit.
+        writes the filters back to the same profile name via RoomFitSafeWrite
+        (verified and rolled back on mismatch, smoke #154 -- previously this
+        called write_roomfit() directly with no verification, the same gap
+        fixed elsewhere for the Push and Copy flows).
         """
         assert self._wiim_adapter is not None
         from src.gui.shared_helpers import parse_backup_filters
@@ -1080,14 +1083,31 @@ class MainWindow(QMainWindow):
             import json
 
             backup_data = json.loads(path.read_text(encoding="utf-8"))
-            bands, _channel_mode, _filters_l, _filters_r = parse_backup_filters(backup_data)
+            bands, channel_mode, filters_l, filters_r = parse_backup_filters(backup_data)
 
             if not bands:
                 self._status_banner.show_error("Backup contains no filters")
                 return
 
             self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
-            await self._wiim_adapter.write_roomfit(source_name, profile_name, bands)
+            roomfit_safe_write = RoomFitSafeWrite(self._wiim_adapter, self._backup_manager)
+            if is_lr_mode(channel_mode):
+                result = await roomfit_safe_write.execute(
+                    source_name, profile_name, bands,
+                    channel_mode=ChannelMode.LR,
+                    filters_l=filters_l,
+                    filters_r=filters_r,
+                )
+            else:
+                result = await roomfit_safe_write.execute(
+                    source_name, profile_name, bands,
+                    channel_mode=ChannelMode.STEREO,
+                )
+            if not result.success:
+                self._status_banner.show_error(
+                    result.error_message or "RoomFit undo verification failed"
+                )
+                return
             self._status_banner.show_success(
                 f"Profile '{profile_name}' restored from backup"
             )
@@ -1392,10 +1412,14 @@ class MainWindow(QMainWindow):
             state.pending_conversion_notes_r = {}
 
         if count > 0:
-            # Determine device max_filters
+            # Determine device max_filters and supported filter types
             max_filters = 10  # Default
+            supported_filter_types: list[str] | None = None
             if self._device_caps is not None:
                 max_filters = getattr(self._device_caps, "max_filters", 10) or 10
+                supported_filter_types = (
+                    getattr(self._device_caps, "supported_filter_types", None) or None
+                )
 
             # Populate ReviewPage — branch on channel mode (smoke #28)
             channel = state.channel_mode
@@ -1417,10 +1441,12 @@ class MainWindow(QMainWindow):
 
                 # Validate each channel independently
                 validated_l, warnings_l, clamping_l, rows_l = validate_filters_for_device(
-                    list(bands_l), max_filters, state.pending_rows_l or None
+                    list(bands_l), max_filters, state.pending_rows_l or None,
+                    supported_filter_types,
                 )
                 validated_r, warnings_r, clamping_r, rows_r = validate_filters_for_device(
-                    list(bands_r), max_filters, state.pending_rows_r or None
+                    list(bands_r), max_filters, state.pending_rows_r or None,
+                    supported_filter_types,
                 )
                 notes_l = state.pending_conversion_notes_l
                 notes_r = state.pending_conversion_notes_r
@@ -1474,7 +1500,8 @@ class MainWindow(QMainWindow):
             else:
                 # Stereo: validate the full list
                 validated, all_warnings, clamping_map, rows = validate_filters_for_device(
-                    filters, max_filters, state.pending_rows or None
+                    filters, max_filters, state.pending_rows or None,
+                    supported_filter_types,
                 )
                 notes = state.pending_conversion_notes
                 state.pending_rows = []
@@ -1558,7 +1585,19 @@ class MainWindow(QMainWindow):
         backup_path = str(getattr(result, "backup_path", "") or "")
 
         if success:
-            self._push_page.set_success(backup_path)
+            read_back = getattr(result, "read_back", None)
+            filters: list[Any] | None = None
+            filters_l: list[Any] | None = None
+            filters_r: list[Any] | None = None
+            if read_back is not None:
+                if read_back.channel_mode == ChannelMode.LR:
+                    filters_l = read_back.bands_l
+                    filters_r = read_back.bands_r
+                else:
+                    filters = read_back.bands
+            self._push_page.set_success(
+                backup_path, filters=filters, filters_l=filters_l, filters_r=filters_r
+            )
             self._wizard_controller.state.last_backup_path = backup_path
             # Mark PUSH step as completed in the step indicator
             self._wizard_controller.state.completed_steps[WizardStep.PUSH] = "Done"
@@ -1567,11 +1606,22 @@ class MainWindow(QMainWindow):
             if self._wizard_controller.flow_type == FlowType.ROOMFIT and not backup_path:
                 self._push_page._undo_button.setVisible(False)
             self._status_banner.show_success("Filters pushed successfully")
+            logger.info("Push succeeded. Backup: %s", backup_path or "(none)")
         else:
             error_msg = getattr(result, "error_message", None) or "Unknown error"
-            critical = getattr(result, "critical", False)
+            # rollback_success is None when the write failed before any backup/
+            # rollback was attempted (e.g. bad profile name); False means the
+            # rollback restore itself failed too -- the only state that needs
+            # the "Critical: Manual recovery required" UI, not just any failure.
+            critical = getattr(result, "rollback_success", None) is False
             self._push_page.set_failure(error_msg, backup_path, critical)
             self._status_banner.show_error(f"Push failed: {error_msg}")
+            logger.error(
+                "Push failed (critical=%s): %s. Backup: %s",
+                critical,
+                error_msg,
+                backup_path or "(none)",
+            )
 
     @Slot(str, str)
     def _on_operation_error(self, error_type: str, message: str) -> None:
@@ -2163,30 +2213,44 @@ class MainWindow(QMainWindow):
             target_adapter = WiiMAdapter(target_client, target_caps)
 
             if preset_type == "RoomFit":
-                # RoomFit: write as RoomFit profile on target (smoke #34, #79)
+                # RoomFit: write as RoomFit profile on target (smoke #34, #79),
+                # verified and rolled back on mismatch via RoomFitSafeWrite --
+                # same protocol as the main Push flow (smoke #153), not a bare
+                # write_roomfit() with no verification at all.
+                roomfit_safe_write = RoomFitSafeWrite(target_adapter, self._backup_manager)
                 if is_lr_mode(channel_mode):
                     # Use the L/R bands just read from the source preset —
                     # not wizard state, which may be stale or unrelated to
                     # this preset (e.g. never populated in this session).
-                    await target_adapter.write_roomfit(
+                    result = await roomfit_safe_write.execute(
                         target_source, preset_name, filters,
-                        channel_mode="lr",
+                        channel_mode=ChannelMode.LR,
                         filters_l=peq_settings.bands_l,
                         filters_r=peq_settings.bands_r,
                     )
                 else:
-                    await target_adapter.write_roomfit(
-                        target_source, preset_name, filters
+                    result = await roomfit_safe_write.execute(
+                        target_source, preset_name, filters,
+                        channel_mode=ChannelMode.STEREO,
+                    )
+                if not result.success:
+                    raise RuntimeError(
+                        result.error_message or "RoomFit copy verification failed"
                     )
             else:
-                # PEQ: write filters then save as named PEQ preset
+                # PEQ: write filters (verified via SafeWrite, smoke #153), then
+                # save as named PEQ preset -- only if the write actually verified.
                 settings = build_peq_settings(
                     target_source, filters, channel_mode,
                     filters_l=peq_settings.bands_l,
                     filters_r=peq_settings.bands_r,
                 )
                 safe_write = SafeWrite(target_adapter, self._backup_manager)
-                await safe_write.execute(target_source, settings)
+                result = await safe_write.execute(target_source, settings)
+                if not result.success:
+                    raise RuntimeError(
+                        result.error_message or "PEQ copy verification failed"
+                    )
                 await target_adapter.save_peq_profile(
                     target_source, preset_name
                 )
@@ -2612,6 +2676,10 @@ class MainWindow(QMainWindow):
                 result = WriteResult(
                     success=True,
                     backup_path=combined_backup,
+                    # Same filters/channel_mode were pushed to every source
+                    # in this loop, so the last source's read-back is
+                    # representative of what's now on every one of them.
+                    read_back=last_result.read_back,
                 )
                 self._bridge.progress_update.emit("Verifying...")
                 self._bridge.write_complete.emit(result)

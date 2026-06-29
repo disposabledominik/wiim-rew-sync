@@ -130,17 +130,63 @@ a preset from My Saved Presets, and push it again.
 If the app gets your device's capabilities wrong — e.g. shows RoomFit as
 unavailable when your model supports it, omits a source you actually have,
 or applies the wrong max-band limit — you can correct this without waiting
-for an app update:
+for an app update, by editing `device_capabilities.json` in the app data
+folder (path shown in Settings under "Paths"). It's seeded from a bundled
+default on first run; restart the app after editing to pick up changes.
 
-- Open `device_capabilities.json` in the app data folder (path shown in
-  Settings under "Paths"). It's seeded from a bundled default on first run.
-- Add or edit the entry for your device model to override the detected
-  values (RoomFit support, sources, max bands, supported filter types).
-- Restart the app to pick up the change.
-
-This file is for advanced users comfortable editing JSON; malformed entries
+This file is for advanced users comfortable editing JSON. Malformed entries
 are skipped (logged, not crashed) and the app falls back to its normal
 detection for that device.
+
+### File Format
+
+The file has one top-level `models` object. Each key is a device model name
+exactly as the device reports it (e.g. `"WiiM_Amp"`), mapped to an object of
+overrides:
+
+```json
+{
+  "models": {
+    "WiiM_Mini": {
+      "aliases": ["Muzo_Mini"],
+      "supports_roomfit": false,
+      "supports_roomfit_read": false,
+      "supports_roomfit_write": false,
+      "roomfit_level": 0,
+      "supports_lr_filters": true,
+      "supports_profile_enumeration": true,
+      "supports_batch_write": false,
+      "max_bands": 10,
+      "supported_filter_types": ["PEAK", "LS", "HS"],
+      "sources": ["wifi", "bluetooth", "line-in"],
+      "source_aliases": {"line-in": "AUX"}
+    }
+  }
+}
+```
+
+Every field is optional — only include the ones you want to override. Any
+field you omit keeps whatever the app's normal runtime detection found for
+your device.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `aliases` | list of text | Alternate model names that should match this same entry (e.g. an older firmware reports a different model string for the same hardware). Matching ignores case, spaces, and underscores. |
+| `supports_roomfit` | true/false | Whether the device supports RoomFit at all. |
+| `supports_roomfit_read` | true/false | Whether RoomFit profiles can be read from the device. |
+| `supports_roomfit_write` | true/false | Whether RoomFit profiles can be written to the device. |
+| `roomfit_level` | number | The device's RoomFit feature level (advanced/internal use). |
+| `supports_lr_filters` | true/false | Whether independent Left/Right channel filters are supported. |
+| `supports_profile_enumeration` | true/false | Whether the device can list its saved PEQ/RoomFit profiles. |
+| `supports_batch_write` | true/false | Whether all bands can be written in a single command instead of one at a time. |
+| `max_bands` | number | Maximum PEQ/RoomFit bands to use for this model. This is a ceiling, not an override — it can lower the number of bands the app uses below what your device actually reports, but never raise it above that. |
+| `supported_filter_types` | list of text | Which filter types this model accepts, e.g. `["PEAK", "LS", "HS", "LP", "HP"]`. |
+| `sources` | list of text | The list of audio source names shown for this model (e.g. `"wifi"`, `"bluetooth"`, `"optical"`, `"line-in"`, `"HDMI"`, `"auxIn"`). |
+| `source_aliases` | object of text:text | Maps an internal source name to a friendlier display name shown in the app, e.g. `{"line-in": "AUX"}`. |
+
+A model not listed in the file at all keeps fully automatic, runtime-probed
+behavior — this file only needs entries for the specific models you want to
+correct or extend.
 
 ## REW API Connection Issues
 

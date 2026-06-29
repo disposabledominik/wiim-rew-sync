@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.rew_http_client import MeasurementSummary
-from src.adapters.safe_write import RoomFitSafeWrite
+from src.adapters.safe_write import RoomFitSafeWrite, WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.gui.shared_helpers import (
@@ -306,7 +306,12 @@ class TestImportExport:
         channel each one belongs to, not present an unlabeled combined list.
         """
         _setup_device(window)
-        window._device_caps = MagicMock(max_filters=2)
+        # supported_filter_types must be an explicit empty list -- a bare
+        # MagicMock() auto-attribute is truthy (enters the type-restriction
+        # branch in validate_filters_for_device()) but iterates as empty,
+        # which would mark every band "unsupported" and mask this test's
+        # actual truncation-warning assertion entirely.
+        window._device_caps = MagicMock(max_filters=2, supported_filter_types=[])
         state = window._wizard_controller.state
         filters_l = [_make_filter(100), _make_filter(200), _make_filter(300)]
         filters_r = [_make_filter(400), _make_filter(500), _make_filter(600)]
@@ -923,6 +928,119 @@ class TestSettingsUIState:
             assert call_args_list[1][0][3] == "wifi"
 
 
+    def test_issue153_copy_batch_counts_verification_failure(self, window) -> None:
+        """#153: a verification failure during copy must count as a real
+        failure in the batch summary, not be silently treated as success.
+        Previously _do_copy_preset_to_device never checked SafeWrite's
+        result at all, so save_peq_profile() ran and "saved" was reported
+        unconditionally even after a failed/rolled-back write."""
+        _setup_device(window)
+        source_adapter = window._wiim_adapter
+        source_adapter.load_peq_profile = AsyncMock()
+        source_adapter.read_peq = AsyncMock(
+            return_value=MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
+        )
+
+        with (
+            patch("src.gui.main_window.WiiMHttpClient"),
+            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
+        ):
+            mock_prober = MagicMock()
+            mock_prober.probe = AsyncMock(return_value=_make_caps())
+            mock_prober_cls.return_value = mock_prober
+
+            mock_target_client = MagicMock()
+            mock_target_client.close = AsyncMock()
+            target_adapter = MagicMock()
+            target_adapter.save_peq_profile = AsyncMock()
+            mock_adapter_cls.return_value = target_adapter
+
+            safe_write = MagicMock()
+            safe_write.execute = AsyncMock(
+                return_value=WriteResult(
+                    success=False,
+                    rollback_success=True,
+                    error_message="Write verification failed; original state restored.",
+                )
+            )
+            mock_safe_write_cls.return_value = safe_write
+
+            import asyncio
+
+            mock_wiim_http = MagicMock(return_value=mock_target_client)
+            with patch("src.gui.main_window.WiiMHttpClient", mock_wiim_http):
+                with pytest.raises(RuntimeError):
+                    asyncio.run(
+                        window._do_copy_preset_to_device(
+                            "Movie Night", "PEQ", "192.168.1.200", "wifi"
+                        )
+                    )
+            # The failed write must not be saved as if it succeeded.
+            target_adapter.save_peq_profile.assert_not_called()
+
+    def test_issue154_undo_roomfit_uses_safe_write(self, window, tmp_path) -> None:
+        """#154: _do_undo_roomfit must go through RoomFitSafeWrite (verified,
+        rolled back on mismatch) like every other RoomFit write path, not
+        call adapter.write_roomfit() directly with no verification at all."""
+        _setup_device(window)
+        backup_path = tmp_path / "roomfit_backup.json"
+        backup_path.write_text(
+            '{"channel_mode": "stereo", "filters": '
+            '[{"type": "PEAK", "frequency_hz": 100.0, "gain_db": -3.0, "q": 1.0}]}',
+            encoding="utf-8",
+        )
+
+        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
+            roomfit_safe_write = MagicMock()
+            roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+
+            import asyncio
+
+            asyncio.run(
+                window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+            )
+
+            roomfit_safe_write.execute.assert_called_once()
+            window._wiim_adapter.write_roomfit.assert_not_called()
+
+    def test_issue154_undo_roomfit_surfaces_verification_failure(
+        self, window, tmp_path
+    ) -> None:
+        """#154: a verification failure during RoomFit undo must be reported
+        as an error, not silently shown as "restored from backup"."""
+        _setup_device(window)
+        backup_path = tmp_path / "roomfit_backup.json"
+        backup_path.write_text(
+            '{"channel_mode": "stereo", "filters": '
+            '[{"type": "PEAK", "frequency_hz": 100.0, "gain_db": -3.0, "q": 1.0}]}',
+            encoding="utf-8",
+        )
+
+        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
+            roomfit_safe_write = MagicMock()
+            roomfit_safe_write.execute = AsyncMock(
+                return_value=WriteResult(
+                    success=False,
+                    rollback_success=True,
+                    error_message="RoomFit verification failed; original profile restored.",
+                )
+            )
+            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+
+            with patch.object(window._status_banner, "show_error") as mock_show_error, \
+                 patch.object(window._status_banner, "show_success") as mock_show_success:
+                import asyncio
+
+                asyncio.run(
+                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+                )
+
+                mock_show_success.assert_not_called()
+                mock_show_error.assert_called_once()
+
     # --- Issue #34: _do_copy_preset_to_device branches on preset_type ---
 
     def test_issue34_copy_branches_on_preset_type(self, window) -> None:
@@ -949,6 +1067,7 @@ class TestSettingsUIState:
             patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
             patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
             patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
+            patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls,
         ):
             mock_prober = MagicMock()
             mock_prober.probe = AsyncMock(return_value=_make_caps())
@@ -964,8 +1083,12 @@ class TestSettingsUIState:
             mock_wiim_http = MagicMock(return_value=mock_target_client)
 
             safe_write = MagicMock()
-            safe_write.execute = AsyncMock()
+            safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
             mock_safe_write_cls.return_value = safe_write
+
+            roomfit_safe_write = MagicMock()
+            roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
 
             import asyncio
 
@@ -979,18 +1102,22 @@ class TestSettingsUIState:
                 target_adapter.save_peq_profile.assert_called_once_with(
                     "wifi", "Movie Night"
                 )
-                target_adapter.write_roomfit.assert_not_called()
+                roomfit_safe_write.execute.assert_not_called()
 
                 safe_write.execute.reset_mock()
                 target_adapter.save_peq_profile.reset_mock()
-                target_adapter.write_roomfit.reset_mock()
+                roomfit_safe_write.execute.reset_mock()
 
                 asyncio.run(
                     window._do_copy_preset_to_device(
                         "RoomFit A", "RoomFit", "192.168.1.200", "wifi"
                     )
                 )
-                target_adapter.write_roomfit.assert_called_once()
+                # RoomFit copies now go through RoomFitSafeWrite (verified +
+                # rolled back on mismatch, smoke #153), not a bare
+                # write_roomfit() call with no verification.
+                roomfit_safe_write.execute.assert_called_once()
+                target_adapter.write_roomfit.assert_not_called()
                 safe_write.execute.assert_not_called()
                 target_adapter.save_peq_profile.assert_not_called()
 
@@ -1303,6 +1430,7 @@ class TestSettingsUIState:
             patch("src.gui.main_window.WiiMHttpClient") as mock_client_cls,
             patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
             patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls,
         ):
             mock_client = AsyncMock()
             mock_client_cls.return_value = mock_client
@@ -1312,6 +1440,10 @@ class TestSettingsUIState:
             mock_target_adapter = AsyncMock()
             mock_adapter_cls.return_value = mock_target_adapter
 
+            roomfit_safe_write = MagicMock()
+            roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+
             import asyncio
 
             asyncio.run(
@@ -1319,13 +1451,12 @@ class TestSettingsUIState:
                     "My RoomFit", "RoomFit", "192.168.1.200", "wifi"
                 )
             )
-            # Target adapter should have write_roomfit called with L/R params
-            mock_target_adapter.write_roomfit.assert_called_once()
-            call_kwargs = mock_target_adapter.write_roomfit.call_args
-            assert (
-                "channel_mode" in str(call_kwargs)
-                or call_kwargs.kwargs.get("channel_mode") == "lr"
-            )
+            # RoomFit copy is verified via RoomFitSafeWrite (smoke #153),
+            # not a bare write_roomfit() call -- assert the L/R channel mode
+            # is passed through to its execute() call.
+            roomfit_safe_write.execute.assert_called_once()
+            call_kwargs = roomfit_safe_write.execute.call_args
+            assert call_kwargs.kwargs.get("channel_mode") == ChannelMode.LR
 
     # --- Issue #85: Diagnostics raw_command_requested connected ---
 

@@ -210,14 +210,20 @@ _Q_MIN = Q_MIN
 _Q_MAX = Q_MAX
 
 
+_DEVICE_FILTER_TYPES = {"PEAK", "LS", "HS", "LP", "HP"}
+
+
 def validate_filters_for_device(
     filters: list[CanonicalFilter],
     max_filters: int = 10,
     rows: list[FilterRow] | None = None,
+    supported_filter_types: list[str] | None = None,
 ) -> tuple[list[CanonicalFilter], list[str], dict[int, list[str]], list[FilterRow]]:
     """Validate and prepare filters for a WiiM device.
 
     Checks for:
+    - Filter types this device doesn't support (skips them; see
+      supported_filter_types below)
     - More filters than device supports (truncates to max_filters)
     - Gain values outside +/-12 dB (flags for clamping)
     - Q values outside 0.01-24 (flags for clamping)
@@ -232,21 +238,65 @@ def validate_filters_for_device(
             *_with_rows methods), used to mark truncated-away bands as
             disabled placeholders instead of dropping them silently. When
             omitted, defaults to `filters` itself (no prior skips to preserve).
+        supported_filter_types: Device's supported canonical filter types
+            (DeviceCapabilities.supported_filter_types, e.g. from the device
+            capability file -- a WiiM Mini entry without "LP"/"HP" listed).
+            Empty/None means "no restriction" (every device-probe path that
+            doesn't set this stays exactly as before this check existed).
 
     Returns:
         Tuple of:
-        - truncated_filters: filters capped to max_filters
+        - truncated_filters: filters capped to max_filters, with
+          type-unsupported bands already removed
         - warnings: list of human-readable warning strings for the UI
         - clamping_map: dict mapping band index (0-based) to list of
           clamping reasons (for ReviewPage orange indicators)
-        - rows: display rows with any truncated-away bands converted to
-          SkippedBand placeholders, in original order
+        - rows: display rows with any skipped/truncated-away bands converted
+          to SkippedBand placeholders, in original order
     """
     if rows is None:
         rows = list(filters)
 
     warnings: list[str] = []
     clamping_map: dict[int, list[str]] = {}
+
+    # Device filter-type support check — runs before band-limit truncation
+    # so an unsupported-type band doesn't consume a slot it could never use.
+    # OFF/UNKNOWN aren't "filter types" needing device support, so they're
+    # left alone regardless of what's listed.
+    if supported_filter_types:
+        allowed = set(supported_filter_types)
+        unsupported_types: set[str] = set()
+        type_filtered_rows: list[FilterRow] = []
+        kept_filters: list[CanonicalFilter] = []
+        for row in rows:
+            if (
+                isinstance(row, CanonicalFilter)
+                and row.type in _DEVICE_FILTER_TYPES
+                and row.type not in allowed
+            ):
+                unsupported_types.add(row.type)
+                type_filtered_rows.append(
+                    SkippedBand(
+                        original_type=row.type,
+                        reason=f"'{row.type}' filter type is not supported on this device",
+                        frequency_hz=row.frequency_hz,
+                        gain_db=row.gain_db,
+                        q=row.q,
+                    )
+                )
+            else:
+                type_filtered_rows.append(row)
+                if isinstance(row, CanonicalFilter):
+                    kept_filters.append(row)
+        rows = type_filtered_rows
+        filters = kept_filters
+        if unsupported_types:
+            warnings.append(
+                "Filter type(s) "
+                + ", ".join(sorted(unsupported_types))
+                + " are not supported on this device and were skipped."
+            )
 
     # Truncation check
     if len(filters) > max_filters:

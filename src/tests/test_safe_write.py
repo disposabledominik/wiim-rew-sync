@@ -11,12 +11,13 @@ Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
+from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, _describe_first_mismatch
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
@@ -466,6 +467,140 @@ class TestBandCountTolerance:
 
 
 # ---------------------------------------------------------------------------
+# Tests: Verification must compare against post-clamp values, not raw imports
+# (hardware testing regression -- a band needing gain/Q clamping always
+# failed verification and triggered a spurious rollback)
+# ---------------------------------------------------------------------------
+
+
+class TestDescribeFirstMismatch:
+    """_describe_first_mismatch() must mirror compare_band_lists()'s own
+    pass/fail logic, or its message can point at the wrong cause -- it
+    originally reported "band count mismatch" any time lengths differed,
+    even when the truncated comparison compare_band_lists() actually
+    performs would have passed (e.g. extra OFF bands, or any case
+    matching TestBandCountTolerance/TestClampedVerification above).
+    """
+
+    def test_does_not_report_length_difference_when_content_matches(self) -> None:
+        """12 read-back bands vs 10 intended, but the first 10 all match
+        -- compare_band_lists() passes this, so the diagnostic must not
+        claim a "band count mismatch" caused a failure here.
+        """
+        intended_bands = _make_bands(freq=100.0, gain=-2.0, q=1.0)
+        readback_bands = [
+            *intended_bands,
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+        ]
+        intended = _make_settings(bands=intended_bands)
+        readback = _make_settings(bands=readback_bands)
+
+        message = _describe_first_mismatch(intended, readback)
+
+        assert "band count" not in message
+        assert "nothing to compare" not in message
+
+    def test_reports_genuine_band_count_failure(self) -> None:
+        """When one side is empty and the other isn't, compare_band_lists()
+        does treat that as a failure -- the diagnostic must still flag it.
+        """
+        intended = _make_settings(bands=_make_bands())
+        readback = _make_settings(bands=[])
+
+        message = _describe_first_mismatch(intended, readback)
+
+        assert "nothing to compare" in message
+
+    def test_reports_actual_value_mismatch_not_length(self) -> None:
+        """Lengths differ (10 vs 12) AND content differs -- message should
+        point at the real per-band mismatch, not just the length.
+        """
+        intended_bands = _make_bands(freq=100.0, gain=-2.0, q=1.0)
+        readback_bands = list(intended_bands)
+        readback_bands[0] = CanonicalFilter(
+            type="PEAK", frequency_hz=100.0, gain_db=5.0, q=1.0
+        )
+        readback_bands.extend([
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+            CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0),
+        ])
+        intended = _make_settings(bands=intended_bands)
+        readback = _make_settings(bands=readback_bands)
+
+        message = _describe_first_mismatch(intended, readback)
+
+        assert "band=0" in message
+        assert "band count" not in message
+
+
+class TestClampedVerification:
+    """generate_wiim_band_array() clamps out-of-range gain/Q at write time
+    without mutating the caller's filters -- verify_bands() must compare
+    against the clamped values (what the device actually stores), not the
+    raw pre-clamp CanonicalFilter the user imported.
+    """
+
+    async def test_verify_passes_when_only_difference_is_clamping(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """Intended band has out-of-range gain/Q; device read-back reflects
+        the clamped values generate_wiim_band_array() actually wrote -> the
+        write must still be reported as a success, not rolled back.
+        """
+        intended_bands = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=15.0, q=29.255),
+            *[
+                CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0)
+                for _ in range(9)
+            ],
+        ]
+        # What the device actually stores after generate_wiim_band_array()
+        # clamps gain to +12 dB and Q to 24.0.
+        readback_bands = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=12.0, q=24.0),
+            *[
+                CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0)
+                for _ in range(9)
+            ],
+        ]
+
+        intended = _make_settings(bands=intended_bands)
+        readback = _make_settings(bands=readback_bands)
+
+        mock_adapter.read_peq.side_effect = [intended, readback]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is True
+
+    async def test_verify_still_fails_on_a_genuine_mismatch(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, mock_backup_manager: MagicMock
+    ) -> None:
+        """Clamping tolerance must not mask an actual write/verify failure
+        unrelated to clamping (e.g. wrong frequency)."""
+        intended_bands = _make_bands(freq=100.0, gain=-2.0, q=1.0)
+        original_bands = _make_bands(freq=200.0, gain=0.0, q=1.5)
+        readback_bands = _make_bands(freq=999.0, gain=-2.0, q=1.0)  # wrong freq
+
+        intended = _make_settings(bands=intended_bands)
+        original = _make_settings(bands=original_bands)
+        bad_readback = _make_settings(bands=readback_bands)
+
+        mock_adapter.read_peq.side_effect = [
+            original,
+            bad_readback,
+            bad_readback,
+            original,
+        ]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is False
+        assert result.rollback_success is True
+
+
+# ---------------------------------------------------------------------------
 # Tests: Rollback with L/R data (hardware testing regression)
 # ---------------------------------------------------------------------------
 
@@ -742,3 +877,59 @@ class TestRoomFitOverwriteProfile:
             assert len(critical_records) >= 1
         finally:
             app_logger.propagate = False
+
+
+# ---------------------------------------------------------------------------
+# Structural regression guard (smoke #154)
+# ---------------------------------------------------------------------------
+
+# Files allowed to call adapter.write_peq()/write_roomfit() directly: the
+# safe-write module itself (the only legitimate caller), the adapter module
+# that defines the methods (matched only via leading "." below, so method
+# *definitions* never match), and the test suite (which mocks adapters and
+# must be free to call/assert on them).
+_DIRECT_WRITE_PATTERN = re.compile(r"\.write_peq\(|\.write_roomfit\(")
+_ALLOWED_DIRECT_WRITE_FILES = {
+    Path("src/adapters/safe_write.py"),
+    Path("src/adapters/wiim_adapter.py"),
+}
+
+
+def _iter_src_python_files() -> list[Path]:
+    repo_root = Path(__file__).resolve().parents[2]
+    return sorted((repo_root / "src").rglob("*.py"))
+
+
+class TestNoDirectWriteBypass:
+    """Every device write must go through SafeWrite/RoomFitSafeWrite (the
+    five-step backup/write/read-back/verify/rollback protocol) -- never a
+    bare adapter.write_peq()/write_roomfit() call. Smoke #154 found two such
+    bypasses (Copy to Another Device's RoomFit branch, the CLI's
+    set-roomfit-filters command) that were each added independently and
+    never cross-checked against this invariant. This test makes a future
+    bypass fail CI instead of waiting for someone to notice during a manual
+    audit.
+    """
+
+    def test_no_file_outside_safe_write_calls_adapter_write_directly(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        violations: list[str] = []
+
+        for path in _iter_src_python_files():
+            rel_path = path.relative_to(repo_root)
+            if rel_path in _ALLOWED_DIRECT_WRITE_FILES:
+                continue
+            if rel_path.parts[:2] == ("src", "tests"):
+                continue  # tests mock adapters; calling/asserting is expected
+
+            text = path.read_text(encoding="utf-8")
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if _DIRECT_WRITE_PATTERN.search(line):
+                    violations.append(f"{rel_path}:{line_no}: {line.strip()}")
+
+        assert not violations, (
+            "Found direct adapter.write_peq()/write_roomfit() call(s) outside "
+            "SafeWrite/RoomFitSafeWrite -- every device write must go through "
+            "the verified five-step protocol (see safe_write.py):\n"
+            + "\n".join(violations)
+        )

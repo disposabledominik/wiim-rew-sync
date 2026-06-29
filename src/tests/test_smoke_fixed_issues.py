@@ -184,6 +184,48 @@ def test_validate_filters_for_device_preserves_parser_skip_rows():
     assert rows_out == [skip, filters[0]]
 
 
+# Issue 150: supported_filter_types from the device capability file was
+# defined on DeviceCapabilities and merged in, but never actually consulted
+# anywhere -- a WiiM Mini entry without "LP"/"HP" listed had no effect on
+# the Review step or the filters actually written to the device.
+def test_validate_filters_for_device_skips_unsupported_types():
+    filters = [
+        CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0),
+        CanonicalFilter(type="LP", frequency_hz=8000.0, gain_db=0.0, q=0.7071),
+        CanonicalFilter(type="HP", frequency_hz=30.0, gain_db=0.0, q=0.7071),
+    ]
+
+    truncated, warnings, _clamping_map, rows = validate_filters_for_device(
+        filters, max_filters=10, supported_filter_types=["PEAK", "LS", "HS"]
+    )
+
+    assert len(truncated) == 1
+    assert truncated[0].type == "PEAK"
+    assert any("LP" in w and "HP" in w for w in warnings)
+
+    assert len(rows) == 3
+    assert isinstance(rows[0], CanonicalFilter)
+    skipped_lp, skipped_hp = rows[1], rows[2]
+    assert isinstance(skipped_lp, SkippedBand)
+    assert skipped_lp.original_type == "LP"
+    assert "not supported on this device" in skipped_lp.reason
+    assert isinstance(skipped_hp, SkippedBand)
+    assert skipped_hp.original_type == "HP"
+
+
+def test_validate_filters_for_device_no_type_restriction_when_unset():
+    """Empty/None supported_filter_types means no restriction (default behavior)."""
+    filters = [CanonicalFilter(type="LP", frequency_hz=8000.0, gain_db=0.0, q=0.7071)]
+
+    truncated, warnings, _clamping_map, rows = validate_filters_for_device(
+        filters, max_filters=10, supported_filter_types=None
+    )
+
+    assert len(truncated) == 1
+    assert rows == filters
+    assert warnings == []
+
+
 # Issue 98: PushPage.reset must clear stale DRY RUN content from previous runs
 def test_pushpage_reset_clears_dry_run_badge(qtbot):
     page = PushPage()
@@ -193,6 +235,46 @@ def test_pushpage_reset_clears_dry_run_badge(qtbot):
     assert page._dry_run_badge.isVisible()
     page.reset()
     assert not page._dry_run_badge.isVisible()
+
+
+# Issue 151: PushPage's inline filter table didn't fit on screen alongside
+# the result summary -- replaced with a "Show Pushed Filters" button that
+# opens a dialog instead.
+def test_pushpage_show_filters_button_visible_only_with_data(qtbot):
+    page = PushPage()
+    qtbot.addWidget(page)
+    page.show()
+
+    page.set_success("backup.json")
+    assert not page._show_pushed_filters_button.isVisible()
+
+    filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)]
+    page.set_success("backup.json", filters=filters)
+    assert page._show_pushed_filters_button.isVisible()
+
+    page.set_failure("verification failed", "backup.json")
+    assert not page._show_pushed_filters_button.isVisible()
+
+
+def test_pushpage_show_filters_button_opens_dialog(qtbot, monkeypatch):
+    page = PushPage()
+    qtbot.addWidget(page)
+    page.show()
+
+    filters_l = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)]
+    filters_r = [CanonicalFilter(type="PEAK", frequency_hz=200.0, gain_db=2.0, q=1.0)]
+    page.set_success("backup.json", filters_l=filters_l, filters_r=filters_r)
+
+    opened: list[Any] = []
+
+    def fake_exec(self: QDialog) -> int:
+        opened.append(self)
+        return int(QDialog.DialogCode.Accepted)
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    page._on_show_pushed_filters_clicked()
+
+    assert len(opened) == 1
 
 
 # Issue 111: Sidebar device label click should emit 'connect' and set home active

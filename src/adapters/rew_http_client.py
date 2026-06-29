@@ -50,6 +50,10 @@ class REWHttpApiClient:
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
         self._parser = REWParser()
+        # Per-client request counter -- mirrors WiiMHttpClient: gives each
+        # REQ/RESP pair a shared short ID so the response line can reference
+        # it instead of repeating the full request URL.
+        self._request_count = 0
 
     # ------------------------------------------------------------------
     # Async context manager
@@ -67,6 +71,40 @@ class REWHttpApiClient:
         await self.close()
 
     # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _get(self, url: str) -> httpx.Response:
+        """GET *url*, logging the request/response pair with a shared req_id.
+
+        Single logging implementation reused by every REW API call site
+        (mirrors WiiMHttpClient.command()) -- the response body is logged
+        in full, not truncated, since callers previously had their own
+        ad-hoc, inconsistent (and in one case 500-char-truncated) logging.
+
+        Raises:
+            REWNotConnectedError: REW is not running or API is not enabled.
+        """
+        self._request_count += 1
+        req_id = self._request_count
+        logger.debug("REQ  #%d → GET %s", req_id, url)
+
+        try:
+            response = await self._client.get(url)
+        except httpx.ConnectError as exc:
+            logger.error("CONNECT_ERR #%d → %s: %s", req_id, url, exc)
+            raise REWNotConnectedError(
+                "REW is not connected. Please ensure REW is running and "
+                "its HTTP API is enabled (localhost:4735)."
+            ) from exc
+
+        body = response.text
+        logger.debug(
+            "RESP #%d ← %d (len=%d) body=%s", req_id, response.status_code, len(body), body
+        )
+        return response
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -80,20 +118,7 @@ class REWHttpApiClient:
             REWNotConnectedError: REW is not running or API is not enabled.
         """
         url = f"{self._base_url}/measurements"
-        logger.debug("REQ  -> GET %s", url)
-
-        try:
-            response = await self._client.get(url)
-        except httpx.ConnectError as exc:
-            logger.error("CONNECT_ERR -> %s: %s", url, exc)
-            raise REWNotConnectedError(
-                "REW is not connected. Please ensure REW is running and "
-                "its HTTP API is enabled (localhost:4735)."
-            ) from exc
-
-        logger.debug(
-            "RESP <- %d %s (len=%d)", response.status_code, url, len(response.text)
-        )
+        response = await self._get(url)
 
         if response.status_code != 200:
             raise REWNotConnectedError(
@@ -110,7 +135,6 @@ class REWHttpApiClient:
                 f"ensure REW is running and its HTTP API is enabled "
                 f"(localhost:4735)."
             ) from exc
-        logger.debug("REW measurements response: %s", repr(data)[:500])
 
         # Handle both bare array and dict-keyed responses
         items: list[dict[str, object]] = []
@@ -187,20 +211,7 @@ class REWHttpApiClient:
     async def _fetch_filter_settings(self, uuid: str) -> list[dict[str, object]]:
         """GET and JSON-decode the raw FilterSetting list for a measurement."""
         url = f"{self._base_url}/measurements/{uuid}/filters"
-        logger.debug("REQ  -> GET %s", url)
-
-        try:
-            response = await self._client.get(url)
-        except httpx.ConnectError as exc:
-            logger.error("CONNECT_ERR -> %s: %s", url, exc)
-            raise REWNotConnectedError(
-                "REW is not connected. Please ensure REW is running and "
-                "its HTTP API is enabled (localhost:4735)."
-            ) from exc
-
-        logger.debug(
-            "RESP <- %d %s (len=%d)", response.status_code, url, len(response.text)
-        )
+        response = await self._get(url)
 
         if response.status_code == 404:
             raise REWMeasurementNotFoundError(

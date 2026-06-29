@@ -191,3 +191,30 @@ def generate_wiim_band_array(
         result.extend([float(_TYPE_TO_MODE["OFF"]), _OFF_FREQ, _OFF_GAIN, _OFF_Q])
 
     return result, warnings
+
+
+def clamp_filters_for_verification(
+    filters: list[CanonicalFilter], max_bands: int = 10
+) -> list[CanonicalFilter]:
+    """Return filters truncated/clamped exactly as generate_wiim_band_array()
+    will write them to the device, for use as the write-verification baseline.
+
+    SafeWrite compares its "intended" bands against what the device reads
+    back -- but generate_wiim_band_array() clamps out-of-range gain/Q at
+    write time without mutating the caller's CanonicalFilter list. Comparing
+    the *pre*-clamp intended values against the device's (necessarily
+    post-clamp) read-back guarantees a false-positive mismatch -- and
+    therefore a spurious rollback -- on every band that needed clamping.
+    Does not log: generate_wiim_band_array() already logs each clamp/
+    truncation when it actually performs the write.
+    """
+    truncated = filters[:max_bands]
+    clamped: list[CanonicalFilter] = []
+    for f in truncated:
+        gain = min(max(f.gain_db, _GAIN_MIN), _GAIN_MAX)
+        q = min(max(f.q, _Q_MIN), _Q_MAX)
+        if gain != f.gain_db or q != f.q:
+            clamped.append(f.model_copy(update={"gain_db": gain, "q": q}))
+        else:
+            clamped.append(f)
+    return clamped

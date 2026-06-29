@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
+from src.translator.wiim_generator import clamp_filters_for_verification
 from src.utils.fp_compare import band_matches
 
 if TYPE_CHECKING:
@@ -39,6 +40,11 @@ class WriteResult:
     rollback_success: bool | None = None  # None if no rollback needed
     backup_path: Path | str | None = None
     error_message: str | None = None
+    # Populated only on success, from the same read-back used to verify the
+    # write -- so the UI can show exactly what's on the device, not just what
+    # was intended. Left None on failure: the rolled-back/deleted state isn't
+    # useful to show, only the failure message is.
+    read_back: PEQSettings | None = None
 
 
 def compare_band_lists(
@@ -71,6 +77,29 @@ def compare_band_lists(
     )
 
 
+def _clamped_for_verification(settings: PEQSettings, max_bands: int) -> PEQSettings:
+    """Build the write-verification baseline: settings as they'll actually
+    land on the device, not as originally imported.
+
+    generate_wiim_band_array() truncates to max_bands and clamps out-of-range
+    gain/Q at write time without mutating the caller's CanonicalFilter list.
+    Comparing against the original, pre-clamp values would guarantee a
+    mismatch (and a spurious rollback) for every band that needed clamping.
+    """
+    if settings.channel_mode == ChannelMode.STEREO:
+        return PEQSettings(
+            source_name=settings.source_name,
+            channel_mode=ChannelMode.STEREO,
+            bands=clamp_filters_for_verification(settings.bands, max_bands),
+        )
+    return PEQSettings(
+        source_name=settings.source_name,
+        channel_mode=ChannelMode.LR,
+        bands_l=clamp_filters_for_verification(settings.bands_l or [], max_bands),
+        bands_r=clamp_filters_for_verification(settings.bands_r or [], max_bands),
+    )
+
+
 def verify_bands(intended: PEQSettings, read_back: PEQSettings) -> bool:
     """Compare intended vs read-back bands using tolerance predicates.
 
@@ -86,6 +115,54 @@ def verify_bands(intended: PEQSettings, read_back: PEQSettings) -> bool:
         left_ok = compare_band_lists(intended.bands_l or [], read_back.bands_l or [])
         right_ok = compare_band_lists(intended.bands_r or [], read_back.bands_r or [])
         return left_ok and right_ok
+
+
+def _describe_first_mismatch(intended: PEQSettings, read_back: PEQSettings) -> str:
+    """Find and describe the first band that fails verification, for logging.
+
+    Best-effort diagnostic only -- never raises, never affects control flow.
+    verify_bands() above remains the single source of truth for pass/fail.
+    """
+    channels: list[tuple[str, list[CanonicalFilter], list[CanonicalFilter]]]
+    if intended.channel_mode == ChannelMode.STEREO:
+        channels = [("stereo", intended.bands, read_back.bands)]
+    else:
+        channels = [
+            ("L", intended.bands_l or [], read_back.bands_l or []),
+            ("R", intended.bands_r or [], read_back.bands_r or []),
+        ]
+
+    for label, intended_bands, actual_bands in channels:
+        # Mirror compare_band_lists() exactly: it only ever looks at the
+        # first compare_count bands of each side, so a length difference
+        # alone is NOT a failure (e.g. a 12-band device read-back vs a
+        # 10-band intended write -- see TestBandCountTolerance). Checking
+        # length before content here previously produced a misleading
+        # "band count mismatch" message that masked the real cause (a
+        # clamped value, in the case this diagnostic was added to debug).
+        compare_count = min(len(intended_bands), len(actual_bands))
+        if compare_count == 0:
+            if len(intended_bands) == 0 and len(actual_bands) == 0:
+                continue  # vacuous pass, matches compare_band_lists()
+            return (
+                f"channel={label}: nothing to compare "
+                f"(intended={len(intended_bands)}, read_back={len(actual_bands)}) -- "
+                f"compare_band_lists() fails whenever exactly one side is empty"
+            )
+        for i in range(compare_count):
+            want, got = intended_bands[i], actual_bands[i]
+            if not band_matches(want, got):
+                return (
+                    f"channel={label} band={i}: intended "
+                    f"type={want.type} freq={want.frequency_hz} gain={want.gain_db} "
+                    f"q={want.q} vs read_back "
+                    f"type={got.type} freq={got.frequency_hz} gain={got.gain_db} q={got.q}"
+                )
+        # All compare_count bands matched -- this channel did not cause the
+        # failure (compare_band_lists() ignores any extra bands beyond
+        # compare_count), even if intended/read_back lengths differ. Move on
+        # to the next channel rather than reporting a false cause.
+    return "no per-band mismatch found (unexpected -- verify_bands() said it failed)"
 
 
 class SafeWrite:
@@ -143,12 +220,22 @@ class SafeWrite:
         # Step 3: Read-back (fresh call to device)
         read_back = await self._adapter.read_peq(source_name)
 
-        # Step 4: Verify each band matches
-        if verify_bands(settings, read_back):
+        # Step 4: Verify each band matches. Compare against what was
+        # *actually* written (post-truncation/clamping), not the raw
+        # imported values -- otherwise any band that needed clamping would
+        # always read back "different" from its pre-clamp original and
+        # fail verification spuriously.
+        verify_settings = _clamped_for_verification(settings, capabilities.max_filters)
+        if verify_bands(verify_settings, read_back):
             # Step 5a: Commit - verification passed
-            return WriteResult(success=True, backup_path=backup_path)
+            return WriteResult(success=True, backup_path=backup_path, read_back=read_back)
 
         # Step 5b: Rollback - verification failed
+        logger.warning(
+            "PEQ write verification failed for source '%s': %s",
+            source_name,
+            _describe_first_mismatch(verify_settings, read_back),
+        )
         return await self._rollback(source_name, current_settings, backup_path)
 
     async def _rollback(
@@ -179,9 +266,14 @@ class SafeWrite:
         # Write backup state back via queue
         await self._adapter.write_peq(source_name, original_settings, self._queue)
 
-        # Verify rollback succeeded
+        # Verify rollback succeeded. Same reasoning as the primary write
+        # verify above: original_settings may carry more bands than
+        # max_filters (the device can report more bands than this app
+        # writes -- see clamp_filters_for_verification's docstring), and
+        # write_peq() truncates to max_filters when restoring it.
         rollback_read_back = await self._adapter.read_peq(source_name)
-        if verify_bands(original_settings, rollback_read_back):
+        verify_original = _clamped_for_verification(original_settings, capabilities.max_filters)
+        if verify_bands(verify_original, rollback_read_back):
             return WriteResult(
                 success=False,
                 rollback_success=True,
@@ -284,9 +376,23 @@ class RoomFitSafeWrite:
                 bands=filters,
             )
 
+        # write_roomfit() truncates/clamps via the same generate_wiim_band_array()
+        # SafeWrite's PEQ path uses -- verify against that baseline, not the raw
+        # imported values (see clamp_filters_for_verification's docstring).
+        verify_intended = _clamped_for_verification(
+            intended, self._adapter.capabilities.max_filters
+        )
+
         read_back = await self._adapter.read_roomfit(source_name, profile_name)
-        if verify_bands(intended, read_back):
-            return WriteResult(success=True, backup_path=backup_path)
+        if verify_bands(verify_intended, read_back):
+            return WriteResult(success=True, backup_path=backup_path, read_back=read_back)
+
+        logger.warning(
+            "RoomFit write verification failed for profile '%s' (source '%s'): %s",
+            profile_name,
+            source_name,
+            _describe_first_mismatch(verify_intended, read_back),
+        )
 
         if is_new:
             await self._adapter.delete_roomfit_profile(profile_name)
@@ -310,7 +416,10 @@ class RoomFitSafeWrite:
             filters_r=existing_settings.bands_r,
         )
         rollback_read_back = await self._adapter.read_roomfit(source_name, profile_name)
-        rollback_ok = verify_bands(existing_settings, rollback_read_back)
+        verify_existing = _clamped_for_verification(
+            existing_settings, self._adapter.capabilities.max_filters
+        )
+        rollback_ok = verify_bands(verify_existing, rollback_read_back)
         if rollback_ok:
             return WriteResult(
                 success=False,

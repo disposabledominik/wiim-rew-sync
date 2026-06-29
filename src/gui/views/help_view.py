@@ -13,7 +13,7 @@ import importlib.resources
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QTextCursor
+from PySide6.QtGui import QColor, QKeyEvent, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -38,6 +38,43 @@ from src.gui.constants import (
 
 _KEY_RETURN = getattr(Qt, "Key_Return", 0x01000004)
 _KEY_ENTER = getattr(Qt, "Key_Enter", 0x01000005)
+
+# Extra block spacing (px) applied after rendering, since QTextDocument's
+# Markdown importer (setMarkdown()) builds block formats directly rather
+# than through a CSS stylesheet -- setDefaultStyleSheet() has no effect on
+# heading/paragraph/list spacing here, only on inline HTML embedded in the
+# Markdown. Margins must be set per-block after the fact instead.
+_HEADING_TOP_MARGIN = {1: 24, 2: 18, 3: 14}
+_HEADING_BOTTOM_MARGIN = 8
+_LIST_ITEM_BOTTOM_MARGIN = 6
+_PARAGRAPH_TOP_MARGIN = 4
+_PARAGRAPH_BOTTOM_MARGIN = 12
+
+
+def _apply_block_spacing(document: QTextDocument) -> None:
+    """Widen the gaps between headings, paragraphs, and list items.
+
+    Qt's default Markdown rendering packs blocks tightly together. This
+    walks every block in the already-rendered document and sets a more
+    comfortable top/bottom margin based on what kind of block it is.
+    """
+    cursor = QTextCursor(document)
+    block = document.begin()
+    while block.isValid():
+        block_format = block.blockFormat()
+        heading_level = block_format.headingLevel()
+        if heading_level > 0:
+            block_format.setTopMargin(_HEADING_TOP_MARGIN.get(heading_level, 12))
+            block_format.setBottomMargin(_HEADING_BOTTOM_MARGIN)
+        elif block.textList() is not None:
+            block_format.setTopMargin(0)
+            block_format.setBottomMargin(_LIST_ITEM_BOTTOM_MARGIN)
+        elif block.text().strip():
+            block_format.setTopMargin(_PARAGRAPH_TOP_MARGIN)
+            block_format.setBottomMargin(_PARAGRAPH_BOTTOM_MARGIN)
+        cursor.setPosition(block.position())
+        cursor.setBlockFormat(block_format)
+        block = block.next()
 
 # ---------------------------------------------------------------------------
 # Section-to-file mapping and wizard step context mapping
@@ -317,6 +354,7 @@ class HelpView(QFrame):
 
         # Use QTextBrowser's built-in markdown support (Qt 5.14+)
         self._content_browser.setMarkdown(content)
+        _apply_block_spacing(self._content_browser.document())
         self._content_browser.setExtraSelections([])
         self.section_changed.emit(section_id)
 

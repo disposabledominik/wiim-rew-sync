@@ -813,7 +813,7 @@ def test_set_roomfit_filters_success(
     monkeypatch.setattr(
         cli,
         "_set_roomfit_filters",
-        AsyncMock(return_value=None),
+        AsyncMock(return_value=WriteResult(success=True)),
     )
 
     code = cli.cmd_set_roomfit_filters(
@@ -827,6 +827,46 @@ def test_set_roomfit_filters_success(
     out = capsys.readouterr().out
     assert code == 0
     assert "saved successfully" in out
+
+
+def test_set_roomfit_filters_verification_failure_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """set-roomfit-filters must exit 1 -- not print "saved successfully" --
+    when RoomFitSafeWrite reports a verification failure (smoke #153:
+    set-roomfit-filters used to call write_roomfit() directly with no
+    verification at all, so a failed write was indistinguishable from a
+    successful one)."""
+    rew_file = tmp_path / "filters.txt"
+    rew_file.write_text(
+        "Equaliser: Parametric EQ\nFilter  1: ON  PK Fc 100.0 Hz  Gain 3.0 dB  Q 2.0\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        cli,
+        "_set_roomfit_filters",
+        AsyncMock(
+            return_value=WriteResult(
+                success=False,
+                rollback_success=True,
+                error_message="RoomFit profile verification failed; original profile restored.",
+            )
+        ),
+    )
+
+    code = cli.cmd_set_roomfit_filters(
+        device="192.168.1.50",
+        source="wifi",
+        profile_name="REW Export",
+        file=str(rew_file),
+        timeout=5.0,
+    )
+
+    out = capsys.readouterr()
+    assert code == 1
+    assert "saved successfully" not in out.out
+    assert "was not saved" in out.err
 
 
 def test_set_roomfit_filters_level_too_low(

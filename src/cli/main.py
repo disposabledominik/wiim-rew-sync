@@ -25,7 +25,7 @@ from pathlib import Path
 
 from src.adapters.capability_prober import CapabilityProber
 from src.adapters.command_queue import WiiMCommandQueue
-from src.adapters.safe_write import SafeWrite, WriteResult
+from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
@@ -583,8 +583,13 @@ async def _set_roomfit_filters(
     profile_name: str,
     file: str,
     timeout: float,
-) -> None:
-    """Parse REW file, probe device, write filters to a RoomFit profile."""
+) -> WriteResult:
+    """Parse REW file, probe device, write filters to a RoomFit profile.
+
+    Verified and rolled back on mismatch via RoomFitSafeWrite -- same five-
+    step safety protocol as the GUI's RoomFit push and the PEQ CLI command
+    above, not a bare write_roomfit() with no verification (smoke #153).
+    """
     path = Path(file)
     filters = TranslationEngine.parse_rew_file(path)
 
@@ -593,10 +598,23 @@ async def _set_roomfit_filters(
         print("Probing device capabilities...")
         capabilities = await CapabilityProber(client).probe()
         adapter = WiiMAdapter(client, capabilities)
+        backup_manager = BackupManager(get_app_data_dir())
+        roomfit_safe_write = RoomFitSafeWrite(adapter, backup_manager)
 
         print(f"Writing to RoomFit profile '{profile_name}'...")
-        await adapter.write_roomfit(source, profile_name, filters)
-        print("Done!")
+        result = await roomfit_safe_write.execute(
+            source, profile_name, filters, channel_mode=ChannelMode.STEREO
+        )
+
+        print("Verifying...")
+        if result.success:
+            print("Done!")
+        elif result.rollback_success is True:
+            print(f"ROLLBACK: {result.error_message}")
+        else:
+            print(f"ROLLBACK FAILED: {result.error_message}")
+
+        return result
     finally:
         await client.close()
 
@@ -610,7 +628,7 @@ def cmd_set_roomfit_filters(
 ) -> int:
     """Write REW filters to a RoomFit profile. Exit 0 on success, 1 on error."""
     try:
-        asyncio.run(
+        result = asyncio.run(
             _set_roomfit_filters(device, source, profile_name, file, timeout)
         )
     except (WiiMConnectionError, WiiMResponseError) as exc:
@@ -629,6 +647,10 @@ def cmd_set_roomfit_filters(
         return 1
     except OSError as exc:
         print(f"Error: cannot read file '{file}': {exc}", file=sys.stderr)
+        return 1
+
+    if not result.success:
+        print(f"Error: RoomFit profile '{profile_name}' was not saved.", file=sys.stderr)
         return 1
 
     print(f"RoomFit profile '{profile_name}' saved successfully.")

@@ -24,7 +24,9 @@ from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
 )
+from src.gui.dialogs.pushed_filters_dialog import PushedFiltersDialog
 from src.gui.style_utils import set_qss_property
+from src.models.canonical import CanonicalFilter
 
 # ---------------------------------------------------------------------------
 # Stage definitions
@@ -106,6 +108,9 @@ class PushPage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("PushPage")
+        self._success_filters: list[CanonicalFilter] | None = None
+        self._success_filters_l: list[CanonicalFilter] | None = None
+        self._success_filters_r: list[CanonicalFilter] | None = None
         self._setup_ui()
         self.reset()
 
@@ -133,7 +138,13 @@ class PushPage(QWidget):
             else:
                 row.set_status("pending")
 
-    def set_success(self, backup_path: str = "") -> None:
+    def set_success(
+        self,
+        backup_path: str = "",
+        filters: list[CanonicalFilter] | None = None,
+        filters_l: list[CanonicalFilter] | None = None,
+        filters_r: list[CanonicalFilter] | None = None,
+    ) -> None:
         """Transition to success state.
 
         Shows green checkmark, success message, OK/Undo buttons,
@@ -141,6 +152,11 @@ class PushPage(QWidget):
 
         Args:
             backup_path: Optional path to the backup file (for reference).
+            filters: Stereo-mode bands read back from the device after the
+                write (i.e. what's actually on the device now, not just what
+                was intended). Ignored if filters_l/filters_r are given.
+            filters_l: Left-channel bands read back from the device (L/R mode).
+            filters_r: Right-channel bands read back from the device (L/R mode).
         """
         # Mark all stages complete
         for row in self._stage_rows.values():
@@ -151,6 +167,12 @@ class PushPage(QWidget):
         self._set_result_class("success")
         self._result_message.setText("Filters pushed successfully")
         self._detail_label.setVisible(False)
+
+        self._success_filters = filters
+        self._success_filters_l = filters_l
+        self._success_filters_r = filters_r
+        has_filter_data = filters is not None or filters_l is not None or filters_r is not None
+        self._show_pushed_filters_button.setVisible(has_filter_data)
 
         # Show success actions
         self._ok_button.setVisible(True)
@@ -203,6 +225,10 @@ class PushPage(QWidget):
         self._backup_path_label.setText(backup_path)
         self._backup_path_label.setVisible(bool(backup_path))
 
+        # No filter data on failure — the rolled-back/deleted state isn't
+        # useful to show, only the failure message matters here.
+        self._clear_success_filters()
+
         # Show failure actions
         self._ok_button.setVisible(True)
         self._undo_button.setVisible(False)
@@ -227,6 +253,7 @@ class PushPage(QWidget):
         self._detail_label.setText(summary)
         self._detail_label.setVisible(True)
         self._backup_path_label.setVisible(False)
+        self._clear_success_filters()
 
         # Only OK button for dry run
         self._ok_button.setVisible(True)
@@ -240,12 +267,30 @@ class PushPage(QWidget):
         self._result_container.setVisible(False)
         self._dry_run_badge.setVisible(False)
         self._backup_path_label.setVisible(False)
+        self._clear_success_filters()
         for row in self._stage_rows.values():
             row.set_status("pending")
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _clear_success_filters(self) -> None:
+        """Clear stored read-back filter data and hide the "Show" button."""
+        self._success_filters = None
+        self._success_filters_l = None
+        self._success_filters_r = None
+        self._show_pushed_filters_button.setVisible(False)
+
+    def _on_show_pushed_filters_clicked(self) -> None:
+        """Open the read-only dialog showing the device's confirmed filters."""
+        dialog = PushedFiltersDialog(
+            filters=self._success_filters,
+            filters_l=self._success_filters_l,
+            filters_r=self._success_filters_r,
+            parent=self,
+        )
+        dialog.exec()
 
     def _set_result_class(self, status: str) -> None:
         """Set the result icon/message QSS class (success/error/warning/info)."""
@@ -335,6 +380,24 @@ class PushPage(QWidget):
         )
         self._backup_path_label.setVisible(False)
         result_layout.addWidget(self._backup_path_label)
+
+        # Opens a dialog showing the read-back filters confirmed on the
+        # device (success only; not shown on failure since the rolled-back
+        # or deleted state isn't useful to display). A dialog rather than an
+        # inline table, since a full 10-band (or L/R, 2x10-band) table does
+        # not comfortably fit on this page alongside the result summary.
+        self._show_pushed_filters_button = QPushButton(
+            "Show Pushed Filters", self._result_container
+        )
+        self._show_pushed_filters_button.setObjectName("PushPageShowFiltersButton")
+        self._show_pushed_filters_button.setFlat(True)
+        self._show_pushed_filters_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._show_pushed_filters_button.setProperty("class", "linkButton")
+        self._show_pushed_filters_button.clicked.connect(
+            self._on_show_pushed_filters_clicked
+        )
+        self._show_pushed_filters_button.setVisible(False)
+        result_layout.addWidget(self._show_pushed_filters_button)
 
         # Primary action buttons row (OK + Undo)
         action_layout = QHBoxLayout()
