@@ -31,11 +31,9 @@ from src.translator._warnings import FilterRow, SkippedBand
 
 _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
 
-_DISABLED_OPACITY = 0.7
 _SKIPPED_OPACITY = 0.45
 _HIGHLIGHT_ALPHA = 40  # Accent background alpha for comparison highlights
 _NA_LABEL = "N/A"
-_OFF_TOOLTIP = "Deactivated \u2014 still pushed to the device"
 
 
 class FilterTable(QWidget):
@@ -249,7 +247,6 @@ class FilterTable(QWidget):
         notes_map: dict[int, list[str]] | None = None,
     ) -> None:
         """Fill one row for a usable filter, at the given band number."""
-        is_disabled = filt.type == "OFF"
         is_clamped = clamping_map is not None and band_number in clamping_map
 
         # Band number (1-based)
@@ -324,10 +321,6 @@ class FilterTable(QWidget):
             q_item.setToolTip("Note: " + "; ".join(band_notes))
             q_item.setForeground(self._note_color())
         table.setItem(row, 4, q_item)
-
-        # Disabled/OFF bands at reduced opacity
-        if is_disabled:
-            self._apply_disabled_style(table, row)
 
     def _populate_skipped_row(
         self, table: QTableWidget, row: int, skipped: SkippedBand
@@ -407,8 +400,6 @@ class FilterTable(QWidget):
             if display_filt is None:
                 continue
 
-            is_disabled = display_filt.type == "OFF"
-
             # Band number
             band_item = QTableWidgetItem(str(row + 1))
             band_item.setTextAlignment(
@@ -454,10 +445,6 @@ class FilterTable(QWidget):
             if changed:
                 self._apply_highlight_style(table, row)
 
-            # Disabled styling (applied after highlight for proper layering)
-            if is_disabled:
-                self._apply_disabled_style(table, row)
-
     def _filters_differ(
         self,
         a: CanonicalFilter | None,
@@ -485,21 +472,6 @@ class FilterTable(QWidget):
     def _note_color() -> QColor:
         """Return the conversion-note foreground color (accent, not a warning)."""
         return QColor(ACCENT_COLOR)
-
-    def _apply_disabled_style(self, table: QTableWidget, row: int) -> None:
-        """Apply reduced opacity and an explanatory tooltip to a disabled/OFF band row.
-
-        OFF bands are still pushed to the device (deactivated, but occupying a
-        band slot) — kept clearly more opaque than skipped rows so the two
-        states read as distinct at a glance.
-        """
-        for col in range(table.columnCount()):
-            item = table.item(row, col)
-            if item is not None:
-                color = item.foreground().color()
-                color.setAlphaF(_DISABLED_OPACITY)
-                item.setForeground(color)
-                item.setToolTip(_OFF_TOOLTIP)
 
     def _apply_skipped_style(self, table: QTableWidget, row: int, reason: str) -> None:
         """Apply crossed-out, dimmed styling and a reason tooltip to a skipped row."""
