@@ -20,7 +20,6 @@ Requirements referenced: 17.2, 18.1, 18.2, 18.3, 18.4, 18.6.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -234,10 +233,10 @@ class SecondaryWorkflowManager(QObject):
             return
 
         try:
-            # Read and parse backup using shared helper
-            from src.gui.shared_helpers import parse_backup_filters
+            # Read and parse backup using shared helpers
+            from src.gui.shared_helpers import load_backup_json, parse_backup_filters
 
-            backup_data = json.loads(path.read_text(encoding="utf-8"))
+            backup_data = load_backup_json(path)
             filters, channel_mode, filters_l, filters_r = parse_backup_filters(backup_data)
 
             # Build PEQSettings from parsed filters — pass filters_l/filters_r

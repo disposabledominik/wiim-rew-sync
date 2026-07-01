@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.models.canonical import CanonicalFilter
+from src.models.constants import DEFAULT_MAX_BANDS
 from src.translator._warnings import ValidationWarning
 from src.translator.rew_generator import REWGenerator
 from src.translator.rew_parser import REWParser
@@ -32,7 +33,7 @@ class TranslationEngine:
 
     @staticmethod
     def generate_rew_file(
-        filters: list[CanonicalFilter], path: Path, max_filters: int = 10
+        filters: list[CanonicalFilter], path: Path, max_filters: int = DEFAULT_MAX_BANDS
     ) -> list[ValidationWarning]:
         """Generate a REW EQ text file.
 
@@ -46,7 +47,7 @@ class TranslationEngine:
         filters_l: list[CanonicalFilter],
         filters_r: list[CanonicalFilter],
         base_path: Path,
-        max_filters: int = 10,
+        max_filters: int = DEFAULT_MAX_BANDS,
     ) -> tuple[Path, Path, list[ValidationWarning]]:
         """Generate L/R REW text files.
 
@@ -67,7 +68,7 @@ class TranslationEngine:
     @staticmethod
     def generate_wiim_band_array(
         filters: list[CanonicalFilter],
-        max_bands: int = 10,
+        max_bands: int = DEFAULT_MAX_BANDS,
     ) -> tuple[list[float], list[ValidationWarning]]:
         """Generate WiiM EQBand flat parameter array."""
         return generate_wiim_band_array_fn(filters, max_bands=max_bands)

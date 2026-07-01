@@ -10,6 +10,7 @@ Requirements referenced: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6,
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import traceback
@@ -80,6 +81,7 @@ from src.gui.wizard_controller import FlowType, WizardController, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
 from src.models.channel_mode import ChannelMode
+from src.models.constants import DEFAULT_MAX_BANDS
 from src.models.errors import (
     ParseError,
     REWNotConnectedError,
@@ -1073,7 +1075,7 @@ class MainWindow(QMainWindow):
         fixed elsewhere for the Push and Copy flows).
         """
         assert self._wiim_adapter is not None
-        from src.gui.shared_helpers import parse_backup_filters
+        from src.gui.shared_helpers import load_backup_json, parse_backup_filters
 
         path = Path(backup_path) if backup_path else Path(".")
         if not path.exists() or not path.is_file():
@@ -1081,9 +1083,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            import json
-
-            backup_data = json.loads(path.read_text(encoding="utf-8"))
+            backup_data = load_backup_json(path)
             bands, channel_mode, filters_l, filters_r = parse_backup_filters(backup_data)
 
             if not bands:
@@ -1427,10 +1427,13 @@ class MainWindow(QMainWindow):
 
         if count > 0:
             # Determine device max_filters and supported filter types
-            max_filters = 10  # Default
+            max_filters = DEFAULT_MAX_BANDS
             supported_filter_types: list[str] | None = None
             if self._device_caps is not None:
-                max_filters = getattr(self._device_caps, "max_filters", 10) or 10
+                max_filters = (
+                    getattr(self._device_caps, "max_filters", DEFAULT_MAX_BANDS)
+                    or DEFAULT_MAX_BANDS
+                )
                 supported_filter_types = (
                     getattr(self._device_caps, "supported_filter_types", None) or None
                 )
@@ -2959,10 +2962,8 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
 
         try:
-            client = self._wiim_adapter._client
-            response = await client.command(command)
+            response = await self._wiim_adapter.raw_command(command)
             # Format the response as JSON if possible
-            import json
             if isinstance(response, dict):
                 formatted = json.dumps(response, indent=2, ensure_ascii=False)
             else:

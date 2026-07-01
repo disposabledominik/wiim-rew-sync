@@ -122,6 +122,26 @@ class WiiMAdapter:
         """Expose the device capabilities for external consumers (e.g. SafeWrite)."""
         return self._capabilities
 
+    async def raw_command(self, command: str) -> dict[str, Any] | str:
+        """Issue an arbitrary httpapi command and return the raw response.
+
+        Escape hatch for the Diagnostics panel's raw-command console. Bypasses
+        all PEQ/RoomFit domain parsing — callers get back exactly what
+        WiiMHttpClient.command() returns.
+
+        Args:
+            command: The WiiM API command string (already URL-encoded if needed).
+
+        Returns:
+            Parsed JSON dict, or the raw response text if not valid JSON.
+
+        Raises:
+            WiiMTimeoutError: Device did not respond within the timeout window.
+            WiiMConnectionError: Device unreachable or connection refused.
+            WiiMResponseError: Non-200 HTTP status code.
+        """
+        return await self._client.command(command)
+
     # ------------------------------------------------------------------
     # PEQ Read
     # ------------------------------------------------------------------
@@ -850,5 +870,12 @@ class WiiMAdapter:
                 f"got: {type(response).__name__}"
             )
 
-        custom_list: list[dict[str, str]] = response.get("custom", [])
+        custom_list: list[dict[str, str]] = []
+        for entry in response.get("custom", []):
+            custom_list.append({
+                "Name": str(entry.get("Name", "")),
+                "channelMode": str(entry.get("channelMode", "")),
+                "Type": str(entry.get("Type", "")),
+            })
+
         return custom_list

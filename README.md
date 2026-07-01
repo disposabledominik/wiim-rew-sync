@@ -1,10 +1,25 @@
 # WiiM ↔ REW PEQ Sync Tool
 
-A cross-platform desktop application for transferring, synchronizing, and managing Parametric EQ
-(PEQ) and RoomFit filter configurations between [Room EQ Wizard](https://www.roomeqwizard.com/)
-(REW) and WiiM devices on your local network.
+A cross-platform, portable desktop application for transferring, synchronizing, and managing Parametric 
+EQ (PEQ) and RoomFit filter configurations between Room EQ Wizard (REW) and WiiM devices on your local 
+network.
 
 No cloud services, no telemetry, no accounts — everything runs locally.
+
+Open-source software licensed under the MIT License.
+
+## Disclaimer
+
+This is an independent open-source project.
+
+- [WiiM](https://www.wiimhome.com/) and RoomFit™ are trademarks of Linkplay Technology Inc.
+- REW ([Room EQ Wizard](https://www.roomeqwizard.com/)) is developed by John Mulcahy.
+
+This project is not affiliated with, endorsed by, or sponsored by Linkplay Technology Inc. or John Mulcahy.
+
+**This software is provided as-is with no warranty.
+The authors assume no responsibility for any damage to your devices. 
+Use at your own risk.**
 
 ## Features
 

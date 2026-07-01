@@ -23,8 +23,9 @@ from __future__ import annotations
 import logging
 
 from src.models.canonical import CanonicalFilter, FilterType
-from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
+from src.models.constants import DEFAULT_MAX_BANDS, GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.translator._warnings import ValidationWarning
+from src.utils.clamping import clamp_with_warning
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
@@ -52,13 +53,10 @@ _OFF_Q: float = 1.0
 # Number of decimal places the WiiM API likes for filter values.
 _WIIM_VALUE_PRECISION: int = 3
 
-# Total number of bands the WiiM API expects
-_MAX_BANDS: int = 10
-
 
 def generate_wiim_band_array(
     filters: list[CanonicalFilter],
-    max_bands: int = 10,
+    max_bands: int = DEFAULT_MAX_BANDS,
 ) -> tuple[list[float], list[ValidationWarning]]:
     """Convert a list of CanonicalFilters to a WiiM flat parameter array.
 
@@ -113,68 +111,34 @@ def generate_wiim_band_array(
         q = f.q
 
         # Clamp gain
-        if gain > _GAIN_MAX:
-            logger.warning(
-                "Band %d: gain %.2f dB exceeds +12 dB limit, clamping to +12.0 dB",
-                i + 1,
-                gain,
-            )
+        clamped_gain, gain_reason = clamp_with_warning(
+            gain, _GAIN_MIN, _GAIN_MAX, "gain", unit=" dB", signed=True
+        )
+        if gain_reason is not None:
+            logger.warning("Band %d: %s", i + 1, gain_reason)
             warnings.append(
                 ValidationWarning(
                     field=f"band_{i + 1}_gain",
-                    message=f"Band {i + 1}: gain {gain:.2f} dB clamped to +12.0 dB",
+                    message=f"Band {i + 1}: {gain_reason}",
                     original_value=gain,
-                    clamped_value=_GAIN_MAX,
+                    clamped_value=clamped_gain,
                 )
             )
-            gain = _GAIN_MAX
-        elif gain < _GAIN_MIN:
-            logger.warning(
-                "Band %d: gain %.2f dB exceeds -12 dB limit, clamping to -12.0 dB",
-                i + 1,
-                gain,
-            )
-            warnings.append(
-                ValidationWarning(
-                    field=f"band_{i + 1}_gain",
-                    message=f"Band {i + 1}: gain {gain:.2f} dB clamped to -12.0 dB",
-                    original_value=gain,
-                    clamped_value=_GAIN_MIN,
-                )
-            )
-            gain = _GAIN_MIN
+        gain = clamped_gain
 
         # Clamp Q
-        if q > _Q_MAX:
-            logger.warning(
-                "Band %d: Q %.4f exceeds 24.0 limit, clamping to 24.0",
-                i + 1,
-                q,
-            )
+        clamped_q, q_reason = clamp_with_warning(q, _Q_MIN, _Q_MAX, "Q")
+        if q_reason is not None:
+            logger.warning("Band %d: %s", i + 1, q_reason)
             warnings.append(
                 ValidationWarning(
                     field=f"band_{i + 1}_q",
-                    message=f"Band {i + 1}: Q {q:.4f} clamped to 24.0",
+                    message=f"Band {i + 1}: {q_reason}",
                     original_value=q,
-                    clamped_value=_Q_MAX,
+                    clamped_value=clamped_q,
                 )
             )
-            q = _Q_MAX
-        elif q < _Q_MIN:
-            logger.warning(
-                "Band %d: Q %.4f below 0.01 limit, clamping to 0.01",
-                i + 1,
-                q,
-            )
-            warnings.append(
-                ValidationWarning(
-                    field=f"band_{i + 1}_q",
-                    message=f"Band {i + 1}: Q {q:.4f} clamped to 0.01",
-                    original_value=q,
-                    clamped_value=_Q_MIN,
-                )
-            )
-            q = _Q_MIN
+        q = clamped_q
 
         result.extend(
             [
@@ -194,7 +158,7 @@ def generate_wiim_band_array(
 
 
 def clamp_filters_for_verification(
-    filters: list[CanonicalFilter], max_bands: int = 10
+    filters: list[CanonicalFilter], max_bands: int = DEFAULT_MAX_BANDS
 ) -> list[CanonicalFilter]:
     """Return filters truncated/clamped exactly as generate_wiim_band_array()
     will write them to the device, for use as the write-verification baseline.

@@ -143,12 +143,16 @@ _SKIP_TYPES: set[str] = {
 }
 
 
-def _validate_frequency(freq: float, *, line_number: int | None = None) -> None:
+def _validate_frequency(
+    freq: float, *, line_number: int | None = None, band_index: int | None = None
+) -> None:
     """Raise ValidationError if frequency is outside 10-22000 Hz."""
     if not (10.0 <= freq <= 22000.0):
         msg = f"Frequency {freq} Hz is outside valid range 10-22000 Hz"
         if line_number is not None:
             msg = f"Line {line_number}: {msg}"
+        elif band_index is not None:
+            msg = f"Band {band_index}: {msg}"
         raise ValidationError(msg)
 
 
@@ -168,11 +172,6 @@ def _classify_filter_type(type_token: str, index: int) -> str | None:
     # Unknown type - skip with warning
     logger.warning("Filter %d: unknown type '%s' - skipping", index, type_token)
     return None
-
-
-def _clamp_frequency(freq: float) -> float:
-    """Clamp frequency to valid WiiM range (10-22000 Hz)."""
-    return max(10.0, min(freq, 22000.0))
 
 
 def _is_unsupported_filter(body: str) -> str | None:
@@ -402,7 +401,7 @@ class REWParser:
         Emits ValidationWarning for unsupported filter types (skips those bands).
 
         Returns:
-            Tuple-like: list of CanonicalFilter objects. Access warnings via
+            List of CanonicalFilter objects. Access warnings via
             parse_file_with_warnings() for the full result.
         """
         result, _warnings = self.parse_file_with_warnings(path)
@@ -549,6 +548,9 @@ class REWParser:
         LP1/HP1, and the shelf-slope LS/HS/LS 6dB/HS 6dB/LS 12dB/HS 12dB
         variants — see _SKIP_TYPES) are skipped with a logged warning rather
         than raising a hard error.
+
+        Raises:
+            ValidationError: A band's frequency is outside 10-22000 Hz.
         """
         filters, _rows, _notes = self.parse_filter_settings_with_rows(filter_settings)
         return filters
@@ -566,6 +568,9 @@ class REWParser:
             exactly. `conversion_notes` maps a band's 0-based index in `filters`
             to a list of notes about values REW's API omitted and had to be
             substituted (currently: the fixed Q applied to a bare, Q-less LP/HP).
+
+        Raises:
+            ValidationError: A band's frequency is outside 10-22000 Hz.
         """
         filters: list[CanonicalFilter] = []
         rows: list[FilterRow] = []
@@ -600,11 +605,10 @@ class REWParser:
                 continue
 
             # Parse numeric fields (REW uses "gaindB" or "gain", "frequency" or "freq")
-            freq = _clamp_frequency(
-                float(
-                    setting.get("frequency", setting.get("freq", 1000.0))  # type: ignore[arg-type]
-                )
+            freq = float(
+                setting.get("frequency", setting.get("freq", 1000.0))  # type: ignore[arg-type]
             )
+            _validate_frequency(freq, band_index=i + 1)
             gain = float(
                 setting.get("gaindB", setting.get("gain", 0.0))  # type: ignore[arg-type]
             )

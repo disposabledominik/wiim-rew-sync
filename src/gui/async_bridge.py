@@ -74,7 +74,7 @@ class AsyncBridge(QObject):
             coro: An awaitable coroutine to run on the async worker thread.
 
         Returns:
-            An asyncio.Future representing the pending result.
+            A concurrent.futures.Future representing the pending result.
 
         Raises:
             RuntimeError: If the event loop has not been started.

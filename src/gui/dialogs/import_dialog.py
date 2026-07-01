@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from src.gui.constants import WARNING_COLOR_DARK, WARNING_COLOR_LIGHT
 from src.gui.theme import get_active_theme
 from src.models.canonical import CanonicalFilter
+from src.models.constants import DEFAULT_MAX_BANDS
 from src.models.errors import ParseError, ValidationError
 from src.translator._warnings import ValidationWarning
 from src.translator.rew_parser import REWParser
@@ -50,7 +51,7 @@ class ImportDialog(QDialog):
     any validation warnings highlighted, and returns the parsed filters on accept.
     """
 
-    def __init__(self, max_filters: int = 10, parent: QWidget | None = None) -> None:
+    def __init__(self, max_filters: int = DEFAULT_MAX_BANDS, parent: QWidget | None = None) -> None:
         """Initialize the import dialog.
 
         Args:
@@ -233,7 +234,7 @@ class ImportDialog(QDialog):
 
     @staticmethod
     def get_filters(
-        max_filters: int = 10, parent: QWidget | None = None
+        max_filters: int = DEFAULT_MAX_BANDS, parent: QWidget | None = None
     ) -> list[CanonicalFilter] | None:
         """Show the dialog and return parsed filters, or None if cancelled.
 

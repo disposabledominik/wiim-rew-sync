@@ -971,17 +971,28 @@ class TestParseFilterSettings:
         assert result[0].type == "PEAK"
         assert result[0].frequency_hz == 200.0
 
-    def test_frequency_out_of_range_clamped(self, parser: REWParser) -> None:
-        """Frequencies outside valid range are clamped (not rejected)."""
+    def test_frequency_below_range_raises_validation_error(self, parser: REWParser) -> None:
+        """Frequencies outside valid range are rejected, not silently clamped.
+
+        Matches the text-file import path's behavior (TestParseFileFrequencyError) --
+        clamping a frequency to the device's supported range silently changes
+        the EQ curve the user is applying, which is not a safe substitution.
+        """
         settings = [
             {"enabled": True, "type": "PK", "frequency": 5.0, "gaindB": 0.0, "q": 1.0},
+        ]
+
+        with pytest.raises(ValidationError, match="outside valid range"):
+            parser.parse_filter_settings(settings)
+
+    def test_frequency_above_range_raises_validation_error(self, parser: REWParser) -> None:
+        """Frequencies outside valid range are rejected, not silently clamped."""
+        settings = [
             {"enabled": True, "type": "PK", "frequency": 30000.0, "gaindB": 0.0, "q": 1.0},
         ]
 
-        result = parser.parse_filter_settings(settings)
-        assert len(result) == 2
-        assert result[0].frequency_hz == 10.0   # Clamped to minimum
-        assert result[1].frequency_hz == 22000.0  # Clamped to maximum
+        with pytest.raises(ValidationError, match="outside valid range"):
+            parser.parse_filter_settings(settings)
 
     def test_filter_type_none_handling(self, parser: REWParser) -> None:
         """Smoke #97: Filter type 'None' becomes an explicit OFF band.

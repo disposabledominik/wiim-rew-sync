@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from src.models.canonical import CanonicalFilter
+from src.models.constants import DEFAULT_MAX_BANDS
 from src.translator._warnings import ValidationWarning
 
 logger = logging.getLogger("wiim_rew_sync.app")
@@ -59,7 +60,7 @@ class REWGenerator:
         self,
         filters: list[CanonicalFilter],
         path: Path,
-        max_filters: int = 10,
+        max_filters: int = DEFAULT_MAX_BANDS,
     ) -> list[ValidationWarning]:
         """Write a REW-compatible EQ text file.
 
@@ -111,7 +112,7 @@ class REWGenerator:
         filters_l: list[CanonicalFilter],
         filters_r: list[CanonicalFilter],
         base_path: Path,
-        max_filters: int = 10,
+        max_filters: int = DEFAULT_MAX_BANDS,
     ) -> tuple[Path, Path, list[ValidationWarning]]:
         """Write two REW files for L/R mode.
 

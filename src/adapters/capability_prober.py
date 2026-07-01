@@ -343,6 +343,7 @@ class CapabilityProber:
         # that EQSourceSave works. The buffer already has data from our level 2
         # read, so saving it to a temp profile name confirms write capability.
         _PROBE_PROFILE_NAME = "__wiim_rew_sync_probe__"
+        save_issued = False
         try:
             # Save buffer contents to a temporary profile
             save_payload = json.dumps({
@@ -351,6 +352,7 @@ class CapabilityProber:
                 "Name": _PROBE_PROFILE_NAME,
                 "EQLevel": 2,
             })
+            save_issued = True
             save_resp = await self._client.command(
                 f"EQSourceSave:{quote(save_payload)}"
             )
@@ -360,24 +362,29 @@ class CapabilityProber:
             caps.roomfit_level = 4
             caps.supports_roomfit_write = True
 
-            # Cleanup: delete the temporary probe profile (best-effort)
-            try:
-                delete_payload = json.dumps({
-                    "pluginURI": PLUGIN_URI,
-                    "Name": _PROBE_PROFILE_NAME,
-                    "EQLevel": 2,
-                })
-                await self._client.command(
-                    f"EQv2Delete:{quote(delete_payload)}"
-                )
-            except Exception:
-                logger.debug(
-                    "RoomFit probe cleanup (EQv2Delete) failed; non-critical."
-                )
-
         except Exception:
             logger.info("RoomFit level 4 probe (EQSourceSave+EQLevel:2) failed.")
             # Keep at whatever level was last confirmed (level 3)
+        finally:
+            # Cleanup: delete the temporary probe profile (best-effort). Run
+            # this unconditionally once the save command was issued -- a
+            # timeout or error response doesn't guarantee the device didn't
+            # still create the profile before the failure, so skipping
+            # cleanup on those paths would leak it permanently.
+            if save_issued:
+                try:
+                    delete_payload = json.dumps({
+                        "pluginURI": PLUGIN_URI,
+                        "Name": _PROBE_PROFILE_NAME,
+                        "EQLevel": 2,
+                    })
+                    await self._client.command(
+                        f"EQv2Delete:{quote(delete_payload)}"
+                    )
+                except Exception:
+                    logger.debug(
+                        "RoomFit probe cleanup (EQv2Delete) failed; non-critical."
+                    )
 
     async def _probe_multiroom(self, caps: DeviceCapabilities) -> None:
         """Probe GetMultiroomInfo for multiroom role.

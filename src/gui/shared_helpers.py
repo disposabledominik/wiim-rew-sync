@@ -7,14 +7,17 @@ and Profile building.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
-from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
+from src.models.constants import DEFAULT_MAX_BANDS, GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.models.peq import PEQSettings
 from src.models.profile import Profile
 from src.translator._warnings import FilterRow, SkippedBand
+from src.utils.clamping import clamp_with_warning
 
 
 def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], ChannelMode]:
@@ -163,6 +166,21 @@ def build_profile(
     )
 
 
+def load_backup_json(path: Path) -> dict[str, Any]:
+    """Read and parse a backup JSON file.
+
+    Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
+    (MainWindow) to avoid duplicating the file-read + json.loads call.
+
+    Raises:
+        ValueError: if the file does not contain a JSON object.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Backup file {path} does not contain a JSON object")
+    return data
+
+
 def parse_backup_filters(
     backup_data: dict[str, Any],
 ) -> tuple[
@@ -215,7 +233,7 @@ _DEVICE_FILTER_TYPES = {"PEAK", "LS", "HS", "LP", "HP"}
 
 def validate_filters_for_device(
     filters: list[CanonicalFilter],
-    max_filters: int = 10,
+    max_filters: int = DEFAULT_MAX_BANDS,
     rows: list[FilterRow] | None = None,
     supported_filter_types: list[str] | None = None,
 ) -> tuple[list[CanonicalFilter], list[str], dict[int, list[str]], list[FilterRow]]:
@@ -328,23 +346,21 @@ def validate_filters_for_device(
                 new_rows.append(row)
         rows = list(reversed(new_rows))
 
-    # Gain/Q clamping check (per band)
+    # Gain/Q clamping check (per band) -- uses the same clamp_with_warning()
+    # boundary logic the WiiM generator applies at write time, so this
+    # pre-write detection can't drift from what actually gets clamped.
     for i, f in enumerate(filters):
         reasons: list[str] = []
 
-        if f.gain_db > _GAIN_MAX:
-            reasons.append(
-                f"gain {f.gain_db:+.1f} dB will be clamped to +{_GAIN_MAX:.0f} dB"
-            )
-        elif f.gain_db < _GAIN_MIN:
-            reasons.append(
-                f"gain {f.gain_db:+.1f} dB will be clamped to {_GAIN_MIN:.0f} dB"
-            )
+        _, gain_reason = clamp_with_warning(
+            f.gain_db, _GAIN_MIN, _GAIN_MAX, "gain", unit=" dB", signed=True
+        )
+        if gain_reason is not None:
+            reasons.append(gain_reason)
 
-        if f.q > _Q_MAX:
-            reasons.append(f"Q {f.q:.2f} will be clamped to {_Q_MAX}")
-        elif f.q < _Q_MIN:
-            reasons.append(f"Q {f.q:.4f} will be clamped to {_Q_MIN}")
+        _, q_reason = clamp_with_warning(f.q, _Q_MIN, _Q_MAX, "Q")
+        if q_reason is not None:
+            reasons.append(q_reason)
 
         if reasons:
             clamping_map[i] = reasons

@@ -16,12 +16,12 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from src.models.capabilities import DeviceCapabilities
+from src.models.constants import DEFAULT_MAX_BANDS
 from src.utils.app_dirs import get_app_data_dir
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
 _USER_FILENAME = "device_capabilities.json"
-_DEFAULT_MAX_BANDS = 10
 
 
 class CapabilityFileEntry(BaseModel):
@@ -198,7 +198,7 @@ def merge_into(
         # firmware and 12 on firmware 20260409+ -- see docs/corrections.md).
         capabilities.max_filters = min(entry.max_bands, capabilities.max_filters)
     else:
-        capabilities.max_filters = min(capabilities.max_filters, _DEFAULT_MAX_BANDS)
+        capabilities.max_filters = min(capabilities.max_filters, DEFAULT_MAX_BANDS)
 
     return capabilities
 
