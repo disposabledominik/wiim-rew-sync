@@ -181,15 +181,30 @@ class TestIssue14ConnectPageShowEvent:
 
 
 class TestIssue15FlowTypeSwitchStepLabels:
-    """Smoke #15: Changing flow type updates step indicator labels."""
+    """Smoke #15: Changing flow type updates step indicator labels and
+    replays completed-step checkmarks (regression: _on_flow_type_changed
+    used to rebuild the indicator via set_steps() without replaying
+    completed_steps, so the CONNECT checkmark vanished on flow switch)."""
 
     def test_flow_type_peq_to_roomfit_updates_labels(self, window) -> None:
-        """Change flow from PEQ to ROOMFIT updates step indicator labels."""
-        # Initial default is PEQ
-        assert window._wizard_controller.flow_type == FlowType.PEQ
+        """Change flow from PEQ to ROOMFIT updates labels and keeps checkmarks."""
+        from src.gui.components.step_indicator import _StepState
 
-        # Switch to ROOMFIT
-        window._wizard_controller.set_flow_type(FlowType.ROOMFIT)
+        wc = window._wizard_controller
+
+        # Initial default is PEQ
+        assert wc.flow_type == FlowType.PEQ
+
+        # Complete the CONNECT step via the real controller API (same
+        # pattern as TestIssue57) so completed_steps is populated with a
+        # real summary before the flow switch.
+        wc.advance(summary="Connected")
+        assert WizardStep.CONNECT in wc.completed_steps
+        assert wc.completed_steps[WizardStep.CONNECT] == "Connected"
+
+        # Switch to ROOMFIT — triggers the real flow_type_changed signal,
+        # which runs _on_flow_type_changed and rebuilds the step indicator.
+        wc.set_flow_type(FlowType.ROOMFIT)
 
         # Verify step indicator now has ROOMFIT flow labels
         expected_steps = steps_for_flow(FlowType.ROOMFIT)
@@ -200,6 +215,14 @@ class TestIssue15FlowTypeSwitchStepLabels:
         assert len(step_widgets) == len(expected_labels)
         for widget, expected_label in zip(step_widgets, expected_labels, strict=True):
             assert widget._label.text() == expected_label
+
+        # CONNECT is step 0 in both PEQ and ROOMFIT sequences — its
+        # checkmark (COMPLETED state) and summary must have been replayed,
+        # not wiped by the set_steps() rebuild.
+        connect_index = expected_steps.index(WizardStep.CONNECT)
+        connect_widget = step_widgets[connect_index]
+        assert connect_widget.state == _StepState.COMPLETED
+        assert connect_widget._summary.text() == "Connected"
 
 
 # ---------------------------------------------------------------------------
@@ -391,15 +414,23 @@ class TestIssue72FiltersPageNextButton:
         assert not filters_page._next_btn.isEnabled()
 
     def test_next_button_enabled_after_stereo_file_browse(self, window) -> None:
-        """Simulating file selection enables the next button."""
+        """Calling the real browse handler with a chosen file enables Next."""
         filters_page = window._filters_page
+        assert not filters_page._next_btn.isEnabled()
 
-        # Simulate what _on_browse_stereo does internally after file selection
-        filters_page._stereo_path = "/tmp/test.txt"
-        filters_page._stereo_file_label.setText("test.txt")
-        filters_page._next_btn.setEnabled(True)
+        # Patch the file dialog at the exact import path used by
+        # FiltersPage._on_stereo_browse (src.gui.pages.filters_page.QFileDialog),
+        # then invoke the real handler -- not a hand-rolled simulation of its
+        # effects -- so a regression in the handler itself would be caught.
+        with patch(
+            "src.gui.pages.filters_page.QFileDialog.getOpenFileName",
+            return_value=("/tmp/test.txt", "REW Text Files (*.txt)"),
+        ):
+            filters_page._on_stereo_browse()
 
         assert filters_page._next_btn.isEnabled()
+        assert filters_page._stereo_path == "/tmp/test.txt"
+        assert filters_page._stereo_file_label.text() == "test.txt"
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,24 @@ def test_hardware_constants_present():
     assert model_constants.Q_MIN < model_constants.Q_MAX
 
 
+# Issue 100: wiim_generator and shared_helpers must import the shared
+# constants rather than defining their own independent literals. Numeric
+# equality (the previous test's only real check) can't catch a reintroduced
+# duplicate that merely happens to match today's values -- `is` identity on
+# the private module-level aliases proves they're the *same object* bound
+# from src.models.constants, so any future duplicate literal (numerically
+# equal or not) fails this test immediately.
+def test_hardware_constants_imported_not_duplicated():
+    import src.gui.shared_helpers as shared_helpers
+    import src.translator.wiim_generator as wiim_generator
+
+    for module in (wiim_generator, shared_helpers):
+        assert module._GAIN_MIN is model_constants.GAIN_MIN
+        assert module._GAIN_MAX is model_constants.GAIN_MAX
+        assert module._Q_MIN is model_constants.Q_MIN
+        assert module._Q_MAX is model_constants.Q_MAX
+
+
 # Issue 102: install_crash_handler should log unhandled exceptions to app.log
 def test_install_crash_handler_writes_log(tmp_path, monkeypatch):
     logs_dir = tmp_path / "logs"
@@ -339,7 +357,13 @@ def test_onboarding_overlay_theme_and_no_skip(qtbot):
     marker and applied colors via setStyleSheet() in Python. That hack was removed
     as part of the QSS decoupling refactor; theming is now handled entirely by the
     QLabel#onboarding_title selector in fluent_dark.qss / fluent_light.qss.
+
+    Also guards against a regression where both theme files resolve
+    QLabel#onboarding_title to the *same* color -- which would silently defeat
+    the original bug's fix (overlay always looked like one theme) without
+    breaking the "no inline stylesheet" / "selector exists" checks above.
     """
+    import re
     from pathlib import Path
 
     from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
@@ -356,7 +380,26 @@ def test_onboarding_overlay_theme_and_no_skip(qtbot):
     assert title.styleSheet() == ""
 
     dark_qss = Path("src/gui/assets/styles/fluent_dark.qss").read_text(encoding="utf-8")
+    light_qss = Path("src/gui/assets/styles/fluent_light.qss").read_text(encoding="utf-8")
     assert "QLabel#onboarding_title" in dark_qss
+    assert "QLabel#onboarding_title" in light_qss
+
+    def _onboarding_title_color(qss_text: str) -> str:
+        """Extract the `color:` hex value from the QLabel#onboarding_title rule block."""
+        match = re.search(
+            r"QLabel#onboarding_title\s*\{([^}]*)\}", qss_text, re.DOTALL
+        )
+        assert match is not None, "QLabel#onboarding_title rule block not found"
+        color_match = re.search(r"color:\s*(#[0-9A-Fa-f]{3,8})\s*;", match.group(1))
+        assert color_match is not None, "no color: value in QLabel#onboarding_title block"
+        return color_match.group(1).lower()
+
+    dark_color = _onboarding_title_color(dark_qss)
+    light_color = _onboarding_title_color(light_qss)
+    # Regression guard: dark and light themes must resolve to visibly
+    # different colors -- if they matched, the overlay would render
+    # identically regardless of active theme (the original #91/#117 bug).
+    assert dark_color != light_color
 
     # Skip button was removed; ensure no skip_button exists
     skip = overlay.findChild(QLabel, "skip_button")

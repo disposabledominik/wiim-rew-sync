@@ -1014,6 +1014,60 @@ class TestParseFilterSettings:
         )
         assert filters[1].type == "PEAK"
 
+    def test_filter_type_none_at_middle_index_no_band_shift(
+        self, parser: REWParser
+    ) -> None:
+        """Smoke #97 (refined): a 'None' slot at a MIDDLE index (not first/last)
+        must become an OFF band exactly at that index, with no shift of the
+        bands before or after it.
+
+        This is the actual regression the bug fix targeted: the live-API path
+        used to silently *omit* None slots entirely, which shifts every
+        subsequent filter's index by one -- and WiiM band letters (A, B, C...)
+        are assigned by list index, so a shift silently reassigns filters to
+        the wrong hardware band. A None slot only at index 0 (or the edges)
+        can't distinguish "omitted" from "kept" as clearly as a middle slot,
+        where an omission would visibly pull a later filter's frequency back
+        by one position.
+        """
+        settings = [
+            {"enabled": True, "type": "PK", "frequency": 100.0, "gaindB": -1.0, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 200.0, "gaindB": -2.0, "q": 1.1},
+            {"enabled": True, "type": "None", "frequency": 500.0, "gain": 0.0, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 400.0, "gaindB": -3.0, "q": 1.2},
+            {"enabled": True, "type": "PK", "frequency": 500.0, "gaindB": -4.0, "q": 1.3},
+        ]
+
+        filters = parser.parse_filter_settings(settings)
+
+        # Nothing was omitted -- 5 slots in, 5 CanonicalFilters out.
+        assert len(filters) == 5
+
+        # The None slot (index 2) became an explicit OFF band at that exact
+        # index -- not skipped, not moved.
+        assert filters[2].type == "OFF"
+        assert filters[2] == CanonicalFilter(
+            type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0
+        )
+
+        # The two bands before the None slot kept their original values at
+        # their original indices.
+        assert filters[0].type == "PEAK"
+        assert filters[0].frequency_hz == 100.0
+        assert filters[0].gain_db == -1.0
+        assert filters[1].type == "PEAK"
+        assert filters[1].frequency_hz == 200.0
+        assert filters[1].gain_db == -2.0
+
+        # The two bands after the None slot also kept their original values
+        # at their original indices -- proving no shift occurred.
+        assert filters[3].type == "PEAK"
+        assert filters[3].frequency_hz == 400.0
+        assert filters[3].gain_db == -3.0
+        assert filters[4].type == "PEAK"
+        assert filters[4].frequency_hz == 500.0
+        assert filters[4].gain_db == -4.0
+
     def test_filter_type_none_in_rows_not_a_skipped_band(self, parser: REWParser) -> None:
         """A 'None' slot's row is the OFF CanonicalFilter itself, not a SkippedBand."""
         settings = [
@@ -1028,6 +1082,52 @@ class TestParseFilterSettings:
         assert rows[0] is filters[0]
         assert rows[0].type == "OFF"
         assert rows[1] is filters[1]
+        assert notes == {}
+
+    def test_filter_type_none_at_middle_index_rows_identity_no_shift(
+        self, parser: REWParser
+    ) -> None:
+        """Smoke #97 (refined): with a 'None' slot at a MIDDLE index among 5+
+        filters, `rows[i] is filters[i]` must hold for EVERY index (not just
+        the None one), and the surrounding bands' values must be unchanged at
+        their original indices -- proving parse_filter_settings_with_rows()
+        doesn't shift WiiM band-letter alignment either.
+        """
+        settings = [
+            {"enabled": True, "type": "PK", "frequency": 110.0, "gaindB": -1.1, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 220.0, "gaindB": -2.2, "q": 1.1},
+            {"enabled": True, "type": "PK", "frequency": 330.0, "gaindB": -3.3, "q": 1.2},
+            {"enabled": True, "type": "None", "frequency": 999.0, "gain": 0.0, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 440.0, "gaindB": -4.4, "q": 1.3},
+            {"enabled": True, "type": "PK", "frequency": 550.0, "gaindB": -5.5, "q": 1.4},
+        ]
+
+        filters, rows, notes = parser.parse_filter_settings_with_rows(settings)
+
+        assert len(filters) == 6
+        assert len(rows) == 6
+
+        # Identity holds for every index, not just the None slot (index 3).
+        for i in range(6):
+            assert rows[i] is filters[i], f"rows[{i}] is not filters[{i}]"
+
+        # The None slot became OFF at its original index.
+        assert filters[3].type == "OFF"
+
+        # Bands before and after kept their original freq/gain at their
+        # original indices -- no shift.
+        expected = [
+            (0, "PEAK", 110.0, -1.1),
+            (1, "PEAK", 220.0, -2.2),
+            (2, "PEAK", 330.0, -3.3),
+            (4, "PEAK", 440.0, -4.4),
+            (5, "PEAK", 550.0, -5.5),
+        ]
+        for idx, expected_type, expected_freq, expected_gain in expected:
+            assert filters[idx].type == expected_type
+            assert filters[idx].frequency_hz == expected_freq
+            assert filters[idx].gain_db == expected_gain
+
         assert notes == {}
 
     def test_filter_type_none_disabled_still_becomes_off(self, parser: REWParser) -> None:
@@ -1045,6 +1145,37 @@ class TestParseFilterSettings:
         assert filters == [
             CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0)
         ]
+
+    def test_filter_type_none_disabled_at_middle_index_no_band_shift(
+        self, parser: REWParser
+    ) -> None:
+        """Smoke #97 (refined): a disabled ('enabled': False) 'None' slot at a
+        MIDDLE index among 5+ filters still becomes OFF at its exact index,
+        with no shift to the surrounding bands -- same guarantee as the
+        enabled=True case, proving the empty-slot check truly doesn't depend
+        on `enabled`.
+        """
+        settings = [
+            {"enabled": True, "type": "PK", "frequency": 60.0, "gaindB": -0.6, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 70.0, "gaindB": -0.7, "q": 1.0},
+            {"enabled": False, "type": "None"},
+            {"enabled": True, "type": "PK", "frequency": 80.0, "gaindB": -0.8, "q": 1.0},
+            {"enabled": True, "type": "PK", "frequency": 90.0, "gaindB": -0.9, "q": 1.0},
+        ]
+
+        filters, rows, _notes = parser.parse_filter_settings_with_rows(settings)
+
+        assert len(filters) == 5
+        for i in range(5):
+            assert rows[i] is filters[i], f"rows[{i}] is not filters[{i}]"
+
+        assert filters[2] == CanonicalFilter(
+            type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0
+        )
+        assert filters[0].frequency_hz == 60.0
+        assert filters[1].frequency_hz == 70.0
+        assert filters[3].frequency_hz == 80.0
+        assert filters[4].frequency_hz == 90.0
 
     def test_notch_skipped_not_converted_to_peak(self, parser: REWParser) -> None:
         """Notch implies >60 dB attenuation, which WiiM can't reproduce (-12 dB cap).

@@ -500,7 +500,12 @@ class TestFilterTable:
         assert not item.font().strikeOut()
 
     def test_skipped_band_has_strikethrough_off_does_not(self, qtbot) -> None:
-        """Skipped bands (excluded) carry strikethrough; OFF bands (still pushed) do not."""
+        """Skipped bands (excluded) carry strikethrough; OFF bands (still pushed) do not.
+
+        Also guards the #157 fix: OFF bands must render fully opaque while
+        skipped bands stay dimmed (_SKIPPED_OPACITY), so the two states don't
+        regress back to looking visually identical.
+        """
         table = FilterTable()
         qtbot.addWidget(table)
 
@@ -518,6 +523,12 @@ class TestFilterTable:
         assert skipped_item is not None
         assert not off_item.font().strikeOut()
         assert skipped_item.font().strikeOut()
+
+        off_alpha = off_item.foreground().color().alphaF()
+        skipped_alpha = skipped_item.foreground().color().alphaF()
+        assert off_alpha == pytest.approx(1.0, abs=1e-3)
+        assert skipped_alpha < off_alpha
+        assert skipped_alpha == pytest.approx(0.45, abs=1e-3)
 
     def test_lr_filters_creates_tabs(self, qtbot) -> None:
         """set_lr_filters creates a QTabWidget with L and R tabs."""
@@ -747,29 +758,49 @@ class TestDeviceCard:
 
 
 def test_pushpage_dry_run_badge_preserves_reserved_space(qtbot) -> None:
-    """#109: Dry-run badge keeps a stable size hint when toggled."""
+    """#109: toggling the dry-run badge must not shift the layout below it.
+
+    sizeHint() alone can't catch this regression -- Qt widgets report a
+    non-zero sizeHint whether or not they're visible, so a plain
+    setVisible(False) with no retainSizeWhenHidden would still pass a
+    sizeHint-only check while collapsing the badge's row and shifting
+    everything below it up.
+
+    Instead this asserts the actual on-screen y-position of the widget
+    laid out directly after the badge (_progress_container) is identical
+    whether the badge is hidden or shown -- i.e. the badge's row always
+    occupies the same space in the layout. Toggling _progress_container's
+    own visibility (as set_dry_run_result()/reset() do) is irrelevant to
+    this -- Qt still reports a hidden widget's last-computed position, so
+    the check has to happen while _progress_container itself stays
+    visible; only the badge's visibility is toggled, exactly as it would
+    be if retainSizeWhenHidden were flipped off and everything below the
+    badge shifted up by the badge's row height.
+    """
     page = PushPage()
     qtbot.addWidget(page)
     page.show()
     qtbot.wait(10)
 
-    initial_badge_hint = page._dry_run_badge.sizeHint().height()
-    initial_page_hint = page.sizeHint().height()
+    assert not page._dry_run_badge.isVisible()
+    hidden_y = page._progress_container.pos().y()
 
+    page._dry_run_badge.setVisible(True)
+    qtbot.wait(10)
+    shown_y = page._progress_container.pos().y()
+    assert shown_y == hidden_y
+
+    page._dry_run_badge.setVisible(False)
+    qtbot.wait(10)
+    hidden_again_y = page._progress_container.pos().y()
+    assert hidden_again_y == hidden_y
+
+    # Exercise the real public API too, to confirm set_dry_run_result/reset
+    # still show/hide the badge as expected (behavioral smoke check).
     page.set_dry_run_result("Preview")
     qtbot.wait(10)
-
-    visible_badge_hint = page._dry_run_badge.sizeHint().height()
-    visible_page_hint = page.sizeHint().height()
+    assert page._dry_run_badge.isVisible()
 
     page.reset()
     qtbot.wait(10)
-
-    reset_badge_hint = page._dry_run_badge.sizeHint().height()
-    reset_page_hint = page.sizeHint().height()
-
-    assert initial_badge_hint > 0
-    assert visible_badge_hint == initial_badge_hint
-    assert reset_badge_hint == initial_badge_hint
-    assert visible_page_hint >= initial_page_hint
-    assert reset_page_hint >= initial_page_hint
+    assert not page._dry_run_badge.isVisible()

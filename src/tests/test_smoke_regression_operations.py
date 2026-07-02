@@ -108,10 +108,13 @@ class TestPushWriteOperations:
     # --- Issue #7: _on_peq_ready populates ReviewPage and advances wizard ---
 
     def test_issue7_on_peq_ready_populates_review_page(self, window) -> None:
-        """#7: _on_peq_ready populates ReviewPage with filters and advances wizard."""
+        """#7: _on_peq_ready populates ReviewPage with the real filter rows
+        (not just "called once" -- must be the actual imported filters, not
+        an empty list or an unrelated placeholder)."""
         _setup_device(window)
         state = window._wizard_controller.state
-        state.current_filters = [_make_filter(100), _make_filter(200)]
+        filters = [_make_filter(100), _make_filter(200)]
+        state.current_filters = filters
         state.channel_mode = ChannelMode.STEREO
 
         peq_data = MagicMock()
@@ -122,9 +125,13 @@ class TestPushWriteOperations:
         with patch.object(window._review_page, "set_filters") as mock_set:
             window._on_peq_ready(peq_data)
             mock_set.assert_called_once()
+            passed_filters = mock_set.call_args[0][0]
+            assert [f.frequency_hz for f in passed_filters] == [100, 200]
 
     def test_issue7_on_peq_ready_advances_to_review(self, window) -> None:
-        """#7: _on_peq_ready advances wizard (not a stub)."""
+        """#7: _on_peq_ready actually advances the wizard controller's real
+        state to REVIEW (not a mocked advance() -- verifies the real step
+        transition happens, not merely that *some* method got called)."""
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
@@ -133,9 +140,9 @@ class TestPushWriteOperations:
         window._wizard_controller.state.current_step = WizardStep.FILTERS
 
         peq_data = MagicMock(channel_mode="stereo", bands_l=None, bands_r=None)
-        with patch.object(window._wizard_controller, "advance") as mock_adv:
-            window._on_peq_ready(peq_data)
-            mock_adv.assert_called_once()
+        window._on_peq_ready(peq_data)
+
+        assert window._wizard_controller.state.current_step == WizardStep.REVIEW
 
     # --- Issue #55: _do_push checks both "lr" and "l/r" via is_lr_mode ---
 
@@ -154,6 +161,78 @@ class TestPushWriteOperations:
     def test_issue55_is_lr_mode_stereo_false(self) -> None:
         """#55: is_lr_mode returns False for 'Stereo'."""
         assert is_lr_mode("Stereo") is False
+
+    # --- Issue #58: Multi-device push respects channel_mode (live equivalent) ---
+
+    def test_issue58_copy_presets_batch_multi_peq_lr_uses_lr_channel_mode(
+        self, window
+    ) -> None:
+        """#58: Multi-device PEQ push/copy must build L/R PEQSettings (not
+        always stereo) when the source preset is L/R.
+
+        NOTE: the function the doc originally cited, apply_to_devices(), no
+        longer exists anywhere in the codebase (confirmed via repo-wide
+        grep) -- it was superseded by
+        MainWindow._do_copy_presets_batch_multi() ->
+        _do_copy_preset_to_device(), which is the current live multi-device
+        write path (see docstrings in src/gui/secondary_workflows.py noting
+        "Apply to multiple devices" was removed as dead code in the
+        2026-06-28 quality audit). This test exercises that current path
+        with 2 devices and an L/R PEQ preset, asserting the PEQSettings
+        built for the SafeWrite call has channel_mode=ChannelMode.LR with
+        the correct per-channel bands -- not a stereo fallback.
+        """
+        _setup_device(window)
+        source_adapter = window._wiim_adapter
+        filters_l = [_make_filter(100)]
+        filters_r = [_make_filter(200)]
+        source_adapter.load_peq_profile = AsyncMock()
+        source_adapter.read_peq = AsyncMock(
+            return_value=MagicMock(
+                channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
+            )
+        )
+
+        items = [MagicMock()]
+        items[0].name = "LR Preset"
+        items[0].preset_type = "PEQ"
+        device1 = MagicMock(ip="192.168.1.201", name="Device A")
+        device2 = MagicMock(ip="192.168.1.202", name="Device B")
+
+        with (
+            patch("src.gui.main_window.WiiMHttpClient"),
+            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
+        ):
+            mock_prober = MagicMock()
+            mock_prober.probe = AsyncMock(return_value=_make_caps())
+            mock_prober_cls.return_value = mock_prober
+
+            target_adapter = MagicMock()
+            target_adapter.save_peq_profile = AsyncMock()
+            mock_adapter_cls.return_value = target_adapter
+
+            mock_target_client = MagicMock()
+            mock_target_client.close = AsyncMock()
+
+            safe_write = MagicMock()
+            safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+            mock_safe_write_cls.return_value = safe_write
+
+            import asyncio
+
+            with patch("src.gui.main_window.WiiMHttpClient", return_value=mock_target_client):
+                asyncio.run(
+                    window._do_copy_presets_batch_multi(items, [device1, device2], "wifi")
+                )
+
+            assert safe_write.execute.call_count == 2
+            for call in safe_write.execute.call_args_list:
+                settings = call.args[1]
+                assert settings.channel_mode == ChannelMode.LR
+                assert settings.bands_l == filters_l
+                assert settings.bands_r == filters_r
 
     # --- Issue #61: RoomFit push deferred via _on_name_confirmed ---
 
@@ -190,7 +269,14 @@ class TestPushWriteOperations:
     # --- Issue #63: write_roomfit accepts channel_mode parameter ---
 
     def test_issue63_do_push_roomfit_lr_passes_channel_mode(self, window) -> None:
-        """#63: RoomFit push with L/R sends channel_mode='lr' to write_roomfit."""
+        """#63: RoomFit push with L/R sends channel_mode=ChannelMode.LR to
+        write_roomfit. The real value on the wire is the ChannelMode enum,
+        not the string "lr" -- a previous version of this assertion checked
+        `== "lr" or "lr" in str(call_kwargs)`, where the primary comparison
+        was always False and the test only passed via the loose string
+        fallback (which would also spuriously match unrelated kwargs
+        containing "lr" as a substring, e.g. a source name).
+        """
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter(100), _make_filter(200)]
@@ -212,8 +298,7 @@ class TestPushWriteOperations:
         asyncio.run(window._do_push())
         mock_adapter.write_roomfit.assert_called_once()
         call_kwargs = mock_adapter.write_roomfit.call_args
-        # Should pass channel_mode="lr" for L/R
-        assert call_kwargs.kwargs.get("channel_mode") == "lr" or "lr" in str(call_kwargs)
+        assert call_kwargs.kwargs.get("channel_mode") == ChannelMode.LR
 
     # --- Issue #77: Multi-source push stores per-source backup paths ---
 
@@ -337,27 +422,70 @@ class TestImportExport:
 
     # --- Issue #29: Export branches on channel_mode for L/R ---
 
-    def test_issue29_export_lr_mode_uses_export_dialog(self, window) -> None:
-        """#29: L/R export opens ExportDialog for dual-file selection."""
+    def test_issue29_export_lr_mode_uses_export_dialog(self, window, tmp_path) -> None:
+        """#29: L/R export opens ExportDialog and, given two real paths (not
+        a cancel), actually writes two files with correct per-channel
+        content -- not a single 10-band file (the original smoke bug).
+        """
         _setup_device(window)
         state = window._wizard_controller.state
-        state.current_filters = [_make_filter(100), _make_filter(200)]
+        filters_l = [_make_filter(100, gain=-2.0)]
+        filters_r = [_make_filter(200, gain=-4.0)]
+        state.current_filters = filters_l + filters_r
+        state.filters_l = filters_l
+        state.filters_r = filters_r
         state.channel_mode = ChannelMode.LR
 
-        with patch(
-            "src.gui.dialogs.export_dialog.ExportDialog.get_paths", return_value=None
-        ) as mock_dialog:
+        path_l = tmp_path / "export_L.txt"
+        path_r = tmp_path / "export_R.txt"
+
+        with (
+            patch(
+                "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
+                return_value=(path_l, path_r),
+            ) as mock_dialog,
+            patch.object(
+                window._bridge, "run_async", side_effect=close_coroutine_tree
+            ) as mock_run,
+        ):
             window._export_filters_as_rew(state.current_filters, "L/R")
             mock_dialog.assert_called_once()
+            mock_run.assert_called_once()
+
+        # Run the captured export coroutine for real to verify file content,
+        # since run_async was mocked above (close_coroutine_tree only closes it).
+        import asyncio
+
+        asyncio.run(window._do_export_lr(filters_l, filters_r, path_l, path_r))
+        assert path_l.exists()
+        assert path_r.exists()
+        left_content = path_l.read_text()
+        right_content = path_r.read_text()
+        assert "Fc   100.00 Hz" in left_content
+        assert "Gain  -2.00 dB" in left_content
+        assert "Fc   200.00 Hz" in right_content
+        assert "Gain  -4.00 dB" in right_content
+        # Each file must contain only its own channel's band, not both.
+        assert "200.00 Hz" not in left_content
+        assert "100.00 Hz" not in right_content
 
     # --- Issue #30: Stereo export appends .txt extension ---
 
     def test_issue30_stereo_export_appends_txt(self, window) -> None:
-        """#30: Stereo export appends .txt if not present in chosen path."""
+        """#30: Stereo export appends .txt if not present in chosen path.
+
+        Patches the underlying _do_export() coroutine function directly so
+        the actual `path` argument it receives can be asserted, instead of
+        only checking that run_async was called once (which would pass even
+        if the ".txt" append were removed).
+        """
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
         state.channel_mode = ChannelMode.STEREO
+
+        async def _fake_do_export(filters: object, path: str) -> None:
+            del filters
 
         with (
             patch(
@@ -365,11 +493,67 @@ class TestImportExport:
                 return_value=("/tmp/myfile", ""),
             ),
             patch.object(
+                window, "_do_export", side_effect=_fake_do_export
+            ) as mock_do_export,
+            patch.object(
                 window._bridge, "run_async", side_effect=close_coroutine_tree
             ) as mock_run,
         ):
             window._export_filters_as_rew(state.current_filters, "Stereo")
             mock_run.assert_called_once()
+
+        mock_do_export.assert_called_once()
+        path_arg = mock_do_export.call_args[0][1]
+        assert path_arg == "/tmp/myfile.txt"
+
+    # --- Issue #40: L/R export from Presets on Device generates dual files ---
+
+    def test_issue40_lr_export_generates_dual_files(self, window, tmp_path) -> None:
+        """#40: Exporting an L/R preset from Presets-on-Device/Review must
+        generate two files (_L.txt/_R.txt) with correct per-channel content
+        -- unlike #29's test (ReviewPage export), this exercises the
+        Presets-on-Device export path (_on_preset_export_requested ->
+        _do_preset_export), giving the export dialog two real save paths
+        instead of a cancel.
+        """
+        mock_adapter = _setup_device(window)
+        filters_l = [_make_filter(100, gain=-1.0)]
+        filters_r = [_make_filter(200, gain=-2.0)]
+        mock_adapter.load_peq_profile = AsyncMock()
+        mock_adapter.read_peq = AsyncMock(
+            return_value=MagicMock(
+                channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
+            )
+        )
+
+        item = PresetItem(name="Movie Night", channel_mode="L/R", preset_type="PEQ")
+        path_l = tmp_path / "Movie Night_L.txt"
+        path_r = tmp_path / "Movie Night_R.txt"
+
+        def _run_now(coro: object) -> None:
+            import asyncio
+
+            asyncio.run(coro)
+
+        with (
+            patch(
+                "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
+                return_value=(path_l, path_r),
+            ),
+            patch.object(window._bridge, "run_async", side_effect=_run_now),
+        ):
+            window._presets_device_view.export_requested.emit([item])
+
+        exported_l = (tmp_path / "Movie Night_L.txt")
+        exported_r = (tmp_path / "Movie Night_R.txt")
+        assert exported_l.exists()
+        assert exported_r.exists()
+        left_content = exported_l.read_text()
+        right_content = exported_r.read_text()
+        assert "Fc   100.00 Hz" in left_content
+        assert "Fc   200.00 Hz" in right_content
+        assert "200.00 Hz" not in left_content
+        assert "100.00 Hz" not in right_content
 
     # --- Issue #44: build_profile sanitizes name ---
 
@@ -391,6 +575,52 @@ class TestImportExport:
         filters = [_make_filter()]
         profile = build_profile("/\\:*?", filters, "Stereo")
         assert profile.name == "Untitled Preset"
+
+    # --- Issue #51: REW file import supports L/R (two files) ---
+
+    def test_issue51_lr_import_dual_file_picker(self, window, qtbot) -> None:
+        """#51: Choosing L/R mode on FiltersPage's Stereo/L/R toggle reveals
+        the dual (left/right) file browse controls, and browsing both files
+        then confirming emits file_import_lr_requested with two distinct
+        paths -- not the single-file stereo path.
+
+        The "Stereo/L/R choice" is FiltersPage's inline radio toggle (not a
+        separate modal dialog), and the "dual file picker" is two
+        independent browse buttons (left channel, right channel), each
+        driving its own QFileDialog.getOpenFileName call.
+        """
+        page = window._filters_page
+        window._stacked_widget.setCurrentWidget(page)
+        window.show()
+        qtbot.wait(10)
+
+        # Select L/R mode -- reveals the dual-file section.
+        page._lr_radio.setChecked(True)
+        assert page._lr_section.isVisible() is True
+        assert page._stereo_section.isVisible() is False
+
+        left_path = "C:/rew/left_channel.txt"
+        right_path = "C:/rew/right_channel.txt"
+
+        with patch(
+            "src.gui.pages.filters_page.QFileDialog.getOpenFileName",
+            side_effect=[(left_path, ""), (right_path, "")],
+        ):
+            page._on_left_browse()
+            page._on_right_browse()
+
+        assert page._left_path == left_path
+        assert page._right_path == right_path
+        assert page._left_path != page._right_path
+        assert page._import_lr_btn.isEnabled() is True
+
+        emitted: list[tuple[str, str]] = []
+        page.file_import_lr_requested.connect(
+            lambda pl, pr: emitted.append((pl, pr))
+        )
+        page._on_import_lr_confirmed()
+
+        assert emitted == [(left_path, right_path)]
 
     # --- Issue #65: Loading L/R profile sets channel_mode from profile ---
 
@@ -455,11 +685,31 @@ class TestPresets:
     # --- Issue #20: Navigation to presets_device triggers _load_device_presets ---
 
     def test_issue20_nav_presets_device_triggers_load(self, window) -> None:
-        """#20: Navigating to presets_device calls _load_device_presets."""
-        _setup_device(window)
-        with patch.object(window, "_load_device_presets") as mock_load:
+        """#20: Navigating to presets_device actually populates the view.
+
+        Does not mock _load_device_presets itself (that would only prove the
+        method gets called, not that the view ends up with real data) --
+        lets it run for real with a mocked adapter, matching the pattern
+        used by test_issue22_do_list_presets_fetches_both.
+        """
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(
+            return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
+        )
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
+        )
+
+        def _run_now(coro: object) -> None:
+            asyncio.run(coro)
+
+        with patch.object(window._bridge, "run_async", side_effect=_run_now):
             window._on_navigation_requested("presets_device")
-            mock_load.assert_called_once()
+
+        assert window._presets_device_view._peq_list.count() == 1
+        assert window._presets_device_view._roomfit_list.count() == 1
 
     # --- Issue #22: _do_list_presets fetches both PEQ + RoomFit ---
 
@@ -589,8 +839,18 @@ class TestPresets:
 
     # --- Issue #156: Delete from Presets on Device ---
 
-    def test_delete_confirmed_dispatches_by_preset_type(self, window) -> None:
-        """Confirming delete calls delete_peq_profile/delete_roomfit_profile by type."""
+    def test_delete_confirmed_after_dialog_triggers_run_async(self, window) -> None:
+        """Confirming the delete dialog (Yes) calls run_async exactly once.
+
+        Renamed from test_delete_confirmed_dispatches_by_preset_type: this
+        test mocks run_async with close_coroutine_tree, so the real
+        per-preset-type dispatch inside _do_delete_presets never actually
+        runs here -- it only verifies the confirmation-dialog gating before
+        run_async is invoked. Real per-type dispatch coverage (which adapter
+        method gets called for PEQ vs RoomFit) lives in
+        test_do_delete_presets_dispatches_and_refreshes below, which awaits
+        the coroutine for real.
+        """
         mock_adapter = _setup_device(window)
         mock_adapter.delete_peq_profile = AsyncMock()
         mock_adapter.delete_roomfit_profile = AsyncMock()
@@ -699,7 +959,16 @@ class TestPresets:
     # --- Issue #31: Save to My Presets refreshes preset list ---
 
     def test_issue31_save_preset_refreshes_list(self, window) -> None:
-        """#31: After saving a preset, the presets list is refreshed."""
+        """#31: After saving a preset from Review, it is actually persisted
+        and the My Presets view is refreshed with it.
+
+        Real behavior-level coverage of the refresh mechanics (repository
+        .list() -> view.set_presets()) already lives in
+        test_issue48_save_filters_to_presets_callable; this test instead
+        exercises the real _on_review_save_preset() -> _save_filters_to_presets()
+        call chain end-to-end (name generation included) rather than mocking
+        away the shared helper, so a regression in that wiring is caught.
+        """
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
@@ -708,10 +977,17 @@ class TestPresets:
         window._discovered_devices = []
 
         with (
-            patch.object(window, "_save_filters_to_presets") as mock_save,
+            patch.object(window._profile_repository, "save") as mock_save,
+            patch.object(
+                window._profile_repository, "list", return_value=[]
+            ) as mock_list,
+            patch.object(window._my_presets_view, "set_presets") as mock_set_presets,
         ):
             window._on_review_save_preset()
-            mock_save.assert_called_once()
+
+        mock_save.assert_called_once()
+        mock_list.assert_called_once()
+        mock_set_presets.assert_called_once_with([])
 
     # --- Issue #37: ReviewPage save_preset_requested signal connected ---
 
@@ -727,6 +1003,73 @@ class TestPresets:
             window._review_page.save_preset_requested.emit()
 
         mock_save.assert_called_once()
+
+    # --- Issue #45: Export from Review vs Presets on Device consolidated ---
+
+    def test_issue45_export_consolidated_helper(self, window) -> None:
+        """#45: ReviewPage and PushPage export both funnel through the same
+        _export_filters_as_rew helper (both wired to _on_export_requested).
+        Patches the shared helper once, fires both signals, and asserts it
+        was invoked twice with matching filter/channel_mode args -- proving
+        there's a single implementation, not two independently-drifting
+        copies (the original bug: Review and Presets on Device showed
+        different dialogs because each had its own export code path).
+        """
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter(100), _make_filter(200)]
+        state.channel_mode = ChannelMode.STEREO
+
+        with patch.object(window, "_export_filters_as_rew") as mock_export:
+            window._review_page.export_rew_requested.emit()
+            window._push_page.export_requested.emit()
+
+        assert mock_export.call_count == 2
+        for call in mock_export.call_args_list:
+            assert call.args[0] == state.current_filters
+            assert call.args[1] == state.channel_mode
+
+    # --- Issue #47: Duplicate save/export logic consolidated into shared helpers ---
+
+    def test_issue47_shared_helpers_consolidated(self, window) -> None:
+        """#47: Every known save/export trigger call-site converges on the
+        same shared primitives rather than reimplementing name-sanitizing,
+        channel-split, or Profile-construction logic inline.
+
+        - Review save and Push save both call MainWindow._save_filters_to_presets.
+        - Review export and Push export both call MainWindow._export_filters_as_rew.
+        - Presets-on-Device save (_do_preset_save) builds its Profile via the
+          same shared_helpers.build_profile() used by _save_filters_to_presets,
+          rather than constructing a Profile inline with duplicated
+          name-sanitization/channel-split logic.
+        """
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.selected_source = "wifi"
+
+        # Review save + Push save -> _save_filters_to_presets
+        with patch.object(window, "_save_filters_to_presets") as mock_save:
+            window._review_page.save_preset_requested.emit()
+            window._push_page.save_preset_requested.emit()
+        assert mock_save.call_count == 2
+
+        # Review export + Push export -> _export_filters_as_rew
+        with patch.object(window, "_export_filters_as_rew") as mock_export:
+            window._review_page.export_rew_requested.emit()
+            window._push_page.export_requested.emit()
+        assert mock_export.call_count == 2
+
+        # Presets-on-Device save path uses the same build_profile() helper
+        # (not a locally-duplicated Profile construction).
+        import inspect
+
+        from src.gui.shared_helpers import build_profile as shared_build_profile
+
+        source = inspect.getsource(window._do_preset_save)
+        assert "build_profile(" in source
+        assert shared_build_profile.__module__ == "src.gui.shared_helpers"
 
     # --- Issue #53: PushPage export + save signals connected ---
 
@@ -766,6 +1109,64 @@ class TestPresets:
             window._on_write_complete(result)
 
         assert WizardStep.PUSH in window._wizard_controller.state.completed_steps
+
+    # --- Issue #121: Push failure shows the actual error, not "Unknown error" ---
+
+    def test_issue121_write_complete_shows_actual_error(self, window) -> None:
+        """#121: _on_write_complete surfaces WriteResult.error_message
+        verbatim on failure. The original bug read `result.error` (an
+        attribute that doesn't exist on WriteResult), so getattr() always
+        fell through to the "Unknown error" default regardless of what the
+        real failure was."""
+        _setup_device(window)
+        result = WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path="/tmp/backup.json",
+            error_message="Clamped values rejected",
+        )
+
+        with (
+            patch.object(window._push_page, "set_failure") as mock_set_failure,
+            patch.object(window._status_banner, "show_error") as mock_show_error,
+        ):
+            window._on_write_complete(result)
+
+        mock_set_failure.assert_called_once_with(
+            "Clamped values rejected", "/tmp/backup.json", False
+        )
+        mock_show_error.assert_called_once_with("Push failed: Clamped values rejected")
+
+    # --- Issue #123: L/R clamping uses separate maps per channel ---
+
+    def test_issue123_lr_clamping_separate_maps(self, window) -> None:
+        """#123: When only the left channel has out-of-range values, the
+        clamping map passed to set_lr_filters for the left channel must be
+        non-empty and the right channel's must stay empty -- previously a
+        single combined clamping_map was applied to both channels, marking
+        clean right-channel bands as "clamped" too."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        # Left: gain of 20 dB is outside GAIN_MAX (12.0) -- must be clamped.
+        filters_l = [_make_filter(100, gain=20.0)]
+        # Right: fully in-range -- must NOT be clamped.
+        filters_r = [_make_filter(200, gain=-3.0)]
+        state.current_filters = filters_l + filters_r
+        state.channel_mode = ChannelMode.LR
+
+        peq_data = MagicMock(channel_mode="lr", bands_l=filters_l, bands_r=filters_r)
+
+        with patch.object(window._review_page, "set_lr_filters") as mock_lr:
+            window._on_peq_ready(peq_data)
+
+        mock_lr.assert_called_once()
+        call_args = mock_lr.call_args[0]
+        # set_lr_filters(validated_l, validated_r, clamping_l, clamping_r, ...)
+        clamping_l = call_args[2]
+        clamping_r = call_args[3]
+        assert clamping_l != {}
+        assert 0 in clamping_l
+        assert clamping_r == {}
 
     # --- Issue #158: unsaved-changes dialog false positive after push ---
 
@@ -892,6 +1293,79 @@ class TestPresets:
         # Backup should have been created for the existing profile
         mock_backup.create_backup.assert_called_once()
 
+    def test_issue62_do_undo_roomfit_completes_without_exception(
+        self, window, tmp_path
+    ) -> None:
+        """#62: The method that actually crashed ("Is a directory" error) --
+        _do_undo_roomfit -- must complete cleanly given a valid backup file
+        path, going through RoomFitSafeWrite like every other RoomFit write.
+        """
+        _setup_device(window)
+        backup_path = tmp_path / "roomfit_backup.json"
+        backup_path.write_text(
+            '{"channel_mode": "stereo", "filters": '
+            '[{"type": "PEAK", "frequency_hz": 100.0, "gain_db": -3.0, "q": 1.0}]}',
+            encoding="utf-8",
+        )
+
+        from src.models.peq import PEQSettings
+
+        mock_adapter = window._wiim_adapter
+        # _make_caps() doesn't set max_filters, leaving it an
+        # auto-MagicMock -- RoomFitSafeWrite.execute() slices bands with
+        # `filters[:max_filters]`, which requires a real int.
+        mock_adapter.capabilities.max_filters = 10
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "My Profile"}]
+        )
+        # RoomFitSafeWrite.execute() reconstructs a PEQSettings from
+        # read_roomfit()'s return value for both the pre-write backup and
+        # the post-write verification read-back -- it must be a real
+        # PEQSettings (source_name must be a str for pydantic, and
+        # channel_mode must be the real ChannelMode.STEREO enum, not a
+        # MagicMock/string that would fail validation or mismatch the
+        # `== ChannelMode.STEREO` branch check). Frequency matches the
+        # backup file's content so write-then-verify actually agrees.
+        mock_adapter.read_roomfit = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi",
+                channel_mode=ChannelMode.STEREO,
+                bands=[_make_filter(100.0)],
+            )
+        )
+        mock_adapter.write_roomfit = AsyncMock()
+        # Stub out the real BackupManager -- it constructs a pydantic
+        # BackupRecord from capabilities.uuid/firmware_version, which the
+        # MagicMock capabilities from _make_caps() can't satisfy, and that
+        # validation is orthogonal to what this test verifies (that the
+        # undo path routes through RoomFitSafeWrite and reaches write_roomfit).
+        mock_backup = MagicMock()
+        mock_backup.create_backup = MagicMock(return_value="/tmp/pre_undo_backup.json")
+        window._backup_manager = mock_backup
+        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
+
+        import asyncio
+
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            asyncio.run(
+                window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+            )
+
+        mock_adapter.write_roomfit.assert_called_once()
+        mock_success.assert_called_once()
+
+    def test_issue62_undo_button_hidden_for_new_roomfit_profile(self, window) -> None:
+        """#62: Undo must be hidden after pushing a brand-new RoomFit
+        profile (backup_path is None/empty -- nothing to restore), matching
+        the _on_write_complete special case for RoomFit."""
+        _setup_device(window)
+        window._wizard_controller.state.flow_type = FlowType.ROOMFIT
+        result = MagicMock(success=True, backup_path="")
+
+        window._on_write_complete(result)
+
+        assert window._push_page._undo_button.isVisible() is False
+
 
 # ===========================================================================
 # SETTINGS / UI STATE
@@ -906,8 +1380,20 @@ class TestSettingsUIState:
     # --- Issue #2/#9: HelpView close navigates back to wizard ---
 
     def test_issue2_help_close_signal_connected(self, window) -> None:
-        """#2/#9: HelpView close_requested signal is connected."""
+        """#2/#9: HelpView close_requested signal is actually wired to the
+        handler that hides the help dialog -- not just present as an
+        attribute (a bare hasattr() would pass even if the .connect() call
+        were deleted). Emits the real signal and asserts the dialog closes.
+
+        This subsumes test_issue9_help_close_navigates_back below, which
+        exercises the same behavior by calling the handler directly; kept
+        as a separate test because it verifies the signal *wiring* itself.
+        """
         assert hasattr(window._help_view, "close_requested")
+        window._help_dialog.show()
+        assert window._help_dialog.isVisible()
+        window._help_view.close_requested.emit()
+        assert window._help_dialog.isVisible() is False
 
     def test_issue9_help_close_navigates_back(self, window) -> None:
         """#9: _on_help_close_requested hides the help dialog window."""
@@ -919,7 +1405,13 @@ class TestSettingsUIState:
     # --- Issue #8: OperationFeedbackManager.finish_operation doesn't wipe success ---
 
     def test_issue8_finish_operation_preserves_success(self, window) -> None:
-        """#8: finish_operation only clears banner if still showing progress."""
+        """#8: finish_operation only clears banner if still showing progress.
+
+        Asserts the banner *text* survives finish_operation() -- not just
+        that fm.is_active flips False. A regression that made
+        finish_operation() call banner.clear() unconditionally would still
+        pass an is_active-only check but would wipe the success message the
+        user needs to see (the original smoke bug)."""
         fm = window._feedback_manager
         # Simulate: banner shows a success message (not progress)
         window._status_banner.show_success("Done!")
@@ -928,6 +1420,12 @@ class TestSettingsUIState:
         # Banner should still show success (not cleared)
         # finish_operation only clears if is_progress() returns True
         assert not fm.is_active
+        assert window._status_banner._message_label.text() == "Done!"
+        # setVisible(True) was called and the widget was never explicitly
+        # hidden by finish_operation() -- isVisible() itself would report
+        # False here regardless because the top-level window is never
+        # shown in this fixture, which isn't what this test is about.
+        assert window._status_banner._message_label.isHidden() is False
 
 
     # --- Issue #10: Measurement picker cancel shows info banner ---
@@ -1193,6 +1691,128 @@ class TestSettingsUIState:
                 mock_show_success.assert_not_called()
                 mock_show_error.assert_called_once()
 
+    # --- Issue #26: Copy to Another Device actually writes to target ---
+
+    def test_issue26_copy_preset_to_device_writes_to_target(self, window) -> None:
+        """#26: A full successful "Copy to Another Device" for a PEQ preset
+        must actually write the target device's data (via SafeWrite.execute,
+        then save_peq_profile) and show a success status -- not just pick
+        the right branch (that narrower claim is already covered by #34's
+        test). This is the end-to-end happy path: read from source, connect
+        to target, write+verify, persist as a named preset, report success.
+        """
+        _setup_device(window)
+        source_adapter = window._wiim_adapter
+        peq_settings = MagicMock(
+            channel_mode="stereo", bands=[_make_filter(100), _make_filter(200)]
+        )
+        source_adapter.load_peq_profile = AsyncMock()
+        source_adapter.read_peq = AsyncMock(return_value=peq_settings)
+
+        with (
+            patch("src.gui.main_window.WiiMHttpClient") as mock_client_cls,
+            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
+            patch.object(window._status_banner, "show_success") as mock_show_success,
+        ):
+            mock_target_client = MagicMock()
+            mock_target_client.close = AsyncMock()
+            mock_client_cls.return_value = mock_target_client
+
+            mock_prober = MagicMock()
+            mock_prober.probe = AsyncMock(return_value=_make_caps())
+            mock_prober_cls.return_value = mock_prober
+
+            target_adapter = MagicMock()
+            target_adapter.save_peq_profile = AsyncMock()
+            mock_adapter_cls.return_value = target_adapter
+
+            safe_write = MagicMock()
+            safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+            mock_safe_write_cls.return_value = safe_write
+
+            import asyncio
+
+            asyncio.run(
+                window._do_copy_preset_to_device(
+                    "Movie Night", "PEQ", "192.168.1.200", "wifi"
+                )
+            )
+
+        # Write must have actually happened, targeting the real data read
+        # from the source device.
+        safe_write.execute.assert_called_once()
+        written_settings = safe_write.execute.call_args[0][1]
+        assert written_settings.bands == peq_settings.bands
+        # And the write must be saved as a named preset on the target.
+        target_adapter.save_peq_profile.assert_called_once_with("wifi", "Movie Night")
+        mock_show_success.assert_called_once()
+        assert "Movie Night" in mock_show_success.call_args[0][0]
+
+    # --- Issue #69: Copy preset to device carries channel_mode through (PEQ) ---
+
+    def test_issue69_copy_preset_to_device_has_channel_mode(self, window) -> None:
+        """#69: Copying an L/R PEQ preset (not RoomFit -- #79 already covers
+        the RoomFit case) must carry channel_mode=ChannelMode.LR through to
+        the PEQ write path, not silently default to stereo.
+
+        NOTE: the doc's originally-cited SecondaryWorkflowManager
+        .copy_preset_to_device() no longer exists -- "Copy to another
+        source" / "Apply to multiple devices" were removed as dead code
+        (see src/gui/secondary_workflows.py module docstring, 2026-06-28
+        audit). The live copy-to-device implementation is
+        MainWindow._do_copy_preset_to_device(), which already takes
+        channel_mode from the source read rather than a hardcoded default --
+        this test targets that current path.
+        """
+        _setup_device(window)
+        source_adapter = window._wiim_adapter
+        filters_l = [_make_filter(100)]
+        filters_r = [_make_filter(200)]
+        source_adapter.load_peq_profile = AsyncMock()
+        source_adapter.read_peq = AsyncMock(
+            return_value=MagicMock(
+                channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
+            )
+        )
+
+        with (
+            patch("src.gui.main_window.WiiMHttpClient"),
+            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
+        ):
+            mock_prober = MagicMock()
+            mock_prober.probe = AsyncMock(return_value=_make_caps())
+            mock_prober_cls.return_value = mock_prober
+
+            target_adapter = MagicMock()
+            target_adapter.save_peq_profile = AsyncMock()
+            mock_adapter_cls.return_value = target_adapter
+
+            mock_target_client = MagicMock()
+            mock_target_client.close = AsyncMock()
+
+            safe_write = MagicMock()
+            safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+            mock_safe_write_cls.return_value = safe_write
+
+            import asyncio
+
+            with patch("src.gui.main_window.WiiMHttpClient", return_value=mock_target_client):
+                asyncio.run(
+                    window._do_copy_preset_to_device(
+                        "LR Preset", "PEQ", "192.168.1.200", "wifi"
+                    )
+                )
+
+            safe_write.execute.assert_called_once()
+            written_settings = safe_write.execute.call_args[0][1]
+            assert written_settings.channel_mode == ChannelMode.LR
+            assert written_settings.bands_l == filters_l
+            assert written_settings.bands_r == filters_r
+
     # --- Issue #34: _do_copy_preset_to_device branches on preset_type ---
 
     def test_issue34_copy_branches_on_preset_type(self, window) -> None:
@@ -1331,6 +1951,43 @@ class TestSettingsUIState:
         profile = build_profile("Test", filters, "Stereo")
         assert profile.channel_mode == ChannelMode.STEREO
 
+    def test_issue39_lr_profile_renders_lr_badge_not_stereo(self, window) -> None:
+        """#39: An L/R profile rendered in MyPresetsView shows the "L/R"
+        badge (not "Stereo") and a per-channel band count -- not a flat
+        combined count. This is the actual UI-visible manifestation of the
+        original bug; the build_profile-level tests above only prove the
+        enum is stored correctly, not that the view renders it right.
+        """
+        filters_l = [_make_filter(100), _make_filter(200)]
+        filters_r = [_make_filter(300)]
+        profile = build_profile(
+            "LR Test", filters_l + filters_r, "L/R",
+            filters_l=filters_l, filters_r=filters_r,
+        )
+
+        view = window._my_presets_view
+        view.set_presets([profile])
+
+        item = view._list_widget.item(0)
+        item_widget = view._list_widget.itemWidget(item)
+        assert item_widget._mode_badge.text() == "L/R"
+        # _count_bands() uses the left channel as the representative count
+        # for L/R profiles (2 bands), not a flat/combined 3.
+        assert item_widget._band_label.text() == "2/2 bands"
+
+    def test_issue39_stereo_profile_renders_stereo_badge(self, window) -> None:
+        """#39 sibling: a stereo profile still shows "Stereo" (not "L/R")."""
+        filters = [_make_filter(100), _make_filter(200), _make_filter(300)]
+        profile = build_profile("Stereo Test", filters, "Stereo")
+
+        view = window._my_presets_view
+        view.set_presets([profile])
+
+        item = view._list_widget.item(0)
+        item_widget = view._list_widget.itemWidget(item)
+        assert item_widget._mode_badge.text() == "Stereo"
+        assert item_widget._band_label.text() == "3/3 bands"
+
     # --- Issue #42: Source page receives all common sources including line-in ---
 
     def test_issue42_source_page_has_set_sources(self, window) -> None:
@@ -1373,7 +2030,12 @@ class TestSettingsUIState:
     # --- Issue #49: recall_profile handles L/R profiles ---
 
     def test_issue49_recall_profile_lr(self, window) -> None:
-        """#49: recall_profile extracts filters from L/R profile correctly."""
+        """#49: recall_profile extracts filters from L/R profile correctly,
+        in the right order/content -- not just the right count. Uses
+        distinguishable per-channel frequencies (100 Hz left, 200 Hz right)
+        so a bug that swapped or merged channels incorrectly would be
+        caught, unlike a bare len()==2 check.
+        """
         swm = window._secondary_workflows
         profile = MagicMock()
         profile.name = "LR Profile"
@@ -1388,10 +2050,13 @@ class TestSettingsUIState:
             mock_signal.emit.assert_called_once()
             emitted_filters = mock_signal.emit.call_args[0][0]
             assert len(emitted_filters) == 2
+            assert emitted_filters[0].frequency_hz == 100
+            assert emitted_filters[1].frequency_hz == 200
 
 
     def test_issue49_recall_profile_stereo(self, window) -> None:
-        """#49: recall_profile extracts filters from stereo profile correctly."""
+        """#49: recall_profile extracts filters from stereo profile correctly,
+        preserving original order/content."""
         swm = window._secondary_workflows
         profile = MagicMock()
         profile.name = "Stereo Profile"
@@ -1406,6 +2071,8 @@ class TestSettingsUIState:
             mock_signal.emit.assert_called_once()
             emitted_filters = mock_signal.emit.call_args[0][0]
             assert len(emitted_filters) == 2
+            assert emitted_filters[0].frequency_hz == 100
+            assert emitted_filters[1].frequency_hz == 200
 
     # --- Issue #50: Copy to another source reads from SourcePage source list ---
 
@@ -1512,7 +2179,11 @@ class TestSettingsUIState:
     # --- Issue #74: _do_copy_presets_batch_multi iterates all devices ---
 
     def test_issue74_copy_batch_multi_iterates_all_devices(self, window) -> None:
-        """#74: _do_copy_presets_batch_multi iterates all target devices."""
+        """#74: _do_copy_presets_batch_multi iterates all target devices --
+        and, critically, actually *targets* each distinct device (the
+        original regression called selected_devices[0] repeatedly, which a
+        bare call_count==2 check wouldn't catch if both calls silently hit
+        the same IP)."""
         _setup_device(window)
         items = [MagicMock()]
         items[0].name = "Preset1"
@@ -1531,6 +2202,9 @@ class TestSettingsUIState:
                 window._do_copy_presets_batch_multi(items, devices, "wifi")
             )
             assert mock_copy.call_count == 2
+            # _do_copy_preset_to_device(preset_name, preset_type, target_ip, target_source)
+            ips_called = [c.args[2] for c in mock_copy.call_args_list]
+            assert ips_called == ["192.168.1.201", "192.168.1.202"]
 
 
     # --- Issue #78: Copy status message says "X preset(s) copied to Y device(s)" ---
@@ -1613,21 +2287,22 @@ class TestSettingsUIState:
     # --- Issue #85: Diagnostics raw_command_requested connected ---
 
     def test_issue85_diagnostics_raw_command_connected(self, window) -> None:
-        """#85: Diagnostics raw command signal triggers async command execution."""
-        _setup_device(window)
-        captured_coroutines: list[object] = []
+        """#85: Diagnostics raw command signal triggers async command
+        execution and actually reaches the adapter with the exact command
+        string requested -- not just "some coroutine got run"."""
+        mock_adapter = _setup_device(window)
+        mock_adapter.raw_command = AsyncMock(return_value={"foo": "bar"})
 
-        def _capture_and_close(coro: object) -> None:
-            captured_coroutines.append(coro)
+        def _run_now(coro: object) -> None:
             import asyncio
 
             asyncio.run(coro)
 
-        with patch.object(window._bridge, "run_async", side_effect=_capture_and_close) as mock_run:
+        with patch.object(window._bridge, "run_async", side_effect=_run_now) as mock_run:
             window._diagnostics_panel.raw_command_requested.emit("getStatusEx")
 
         assert mock_run.call_count == 1
-        assert len(captured_coroutines) == 1
+        mock_adapter.raw_command.assert_called_once_with("getStatusEx")
 
     def test_issue85_raw_command_handler_exists(self, window) -> None:
         """#85: _on_raw_command_requested handler exists and is callable."""
@@ -1650,6 +2325,58 @@ class TestSettingsUIState:
 
 class TestSharedHelpers:
     """Direct unit tests for shared_helpers functions (no Qt needed)."""
+
+    # --- Issue #64: shared_helpers.py is the single source of truth ---
+
+    def test_issue64_shared_helpers_created(self) -> None:
+        """#64: src/gui/shared_helpers.py exports the documented shared
+        functions, and the two GUI modules that need channel-mode/profile
+        logic (main_window.py, secondary_workflows.py) import from it rather
+        than reimplementing it locally.
+
+        Behavior-level coverage of each individual function already exists
+        elsewhere in this file (is_lr_mode, build_profile, build_peq_settings,
+        parse_backup_filters, get_lr_filters tests above); this test is
+        specifically about the "single source of truth" claim: that the
+        module exists with the right surface and that call-sites import
+        from it instead of duplicating the logic inline.
+        """
+        import inspect
+
+        from src.gui import main_window, secondary_workflows, shared_helpers
+
+        # The documented shared surface (get_lr_filters, is_lr_mode,
+        # build_peq_settings, build_profile, parse_backup_filters) plus the
+        # closely related helpers that grew out of the same consolidation
+        # (extract_filters, load_backup_json, validate_filters_for_device).
+        for name in (
+            "get_lr_filters",
+            "is_lr_mode",
+            "build_peq_settings",
+            "build_profile",
+            "parse_backup_filters",
+            "extract_filters",
+            "load_backup_json",
+            "validate_filters_for_device",
+        ):
+            assert hasattr(shared_helpers, name), f"shared_helpers missing {name}"
+            assert callable(getattr(shared_helpers, name))
+
+        # Call-sites import from shared_helpers rather than defining their
+        # own local copies of the same logic.
+        main_window_source = inspect.getsource(main_window)
+        secondary_workflows_source = inspect.getsource(secondary_workflows)
+        assert "from src.gui.shared_helpers import" in main_window_source
+        assert "from src.gui.shared_helpers import" in secondary_workflows_source
+
+        # Spot-check: no duplicate local reimplementation of is_lr_mode's
+        # channel-string matching (the specific bug pattern smoke #55/#69
+        # were about) anywhere outside shared_helpers.py itself.
+        assert "def is_lr_mode" not in main_window_source
+        assert "def is_lr_mode" not in secondary_workflows_source
+        assert inspect.getsourcefile(shared_helpers.is_lr_mode) == inspect.getsourcefile(
+            shared_helpers
+        )
 
     # --- Issue #93: Ensure filter values are rounded to expected precision ---
 

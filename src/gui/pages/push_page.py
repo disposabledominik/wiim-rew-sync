@@ -317,12 +317,14 @@ class PushPage(QWidget):
         )
         content_layout.addWidget(title)
 
-        # Dry Run badge (hidden by default)
+        # Dry Run badge (hidden by default). Reserves its layout space even
+        # while hidden so toggling it via set_dry_run_result()/reset() doesn't
+        # shift the progress/result content below it (#109).
         self._dry_run_badge = QLabel("DRY RUN", content_wrapper)
         self._dry_run_badge.setObjectName("PushPageDryRunBadge")
-        self._dry_run_badge.setSizePolicy(
-            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
-        )
+        size_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        size_policy.setRetainSizeWhenHidden(True)
+        self._dry_run_badge.setSizePolicy(size_policy)
         self._dry_run_badge.setVisible(False)
         content_layout.addWidget(self._dry_run_badge)
 

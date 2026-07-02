@@ -179,6 +179,32 @@ class TestCreateBackup:
         with pytest.raises(BackupError, match="both bands_l and bands_r must be populated"):
             backup_manager.create_backup(lr_settings, capabilities, "pre_write")
 
+    def test_lr_mode_none_bands_l_raises_backup_error_not_typeerror(
+        self,
+        backup_manager: BackupManager,
+        capabilities: DeviceCapabilities,
+    ) -> None:
+        """L/R mode settings with bands_l=None raise BackupError, not TypeError.
+
+        RoomFit-derived PEQSettings (not per-channel) can reach create_backup
+        with bands_l/bands_r as None rather than an empty list -- regression
+        for issue #62's do-undo-roomfit crash (`len(None)` in the error
+        message). model_construct() bypasses pydantic validation to build
+        this otherwise-unreachable-via-normal-construction state.
+        """
+        lr_settings = PEQSettings.model_construct(
+            source_name="wifi",
+            enabled=True,
+            channel_mode=ChannelMode.LR,
+            name="",
+            bands=[],
+            bands_l=None,
+            bands_r=None,
+        )
+
+        with pytest.raises(BackupError, match="both bands_l and bands_r must be populated"):
+            backup_manager.create_backup(lr_settings, capabilities, "pre_write")
+
 
 class TestRetentionPolicy:
     """Tests for the MAX 20 per device retention policy."""
