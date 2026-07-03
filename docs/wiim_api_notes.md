@@ -32,6 +32,8 @@
 }
 ```
 
+> ⚠️ **The `InputList` field shown above is illustrative, not observed.** `getStatusEx`'s `InputList` field is unpopulated/absent on every device tested by this project (see `docs/corrections.md`, 2026-06-12 and 2026-07-03 rows) — don't rely on it. Use the "Source Enumeration" commands under "PEQ Source Names" below instead.
+
 `plm_support` is a bitmask for physical inputs:
 - bit1: LineIn (Aux)
 - bit2: Bluetooth
@@ -58,9 +60,51 @@ These four models (Mini, Amp Ultra, Sound, Sound Lite) are device-owner-confirme
 **Key findings:**
 - Source names are **case-sensitive**: `HDMI` (uppercase) returns Stereo slot; `hdmi` (lowercase) returns L/R slot
 - The API **accepts any source name** and returns valid-looking PEQ data even for non-existent inputs (returns default L/R template)
-- There is **no API command to enumerate valid source names** for a device
+- Source names **can** be enumerated at runtime on most devices — see "Source Enumeration" below (WiiM Mini is the confirmed exception; keep using the per-model table above and the capability-file override for it)
 - `wifi` source label is shared across Wi-Fi, Ethernet, and USB disk inputs on Amp Ultra
 - WiiM Mini appears to have **global PEQ** (all sources share the same EQ data)
+
+### Source Enumeration (confirmed 2026-07-03)
+
+Two plain commands (no JSON payload, same style as `getStatusEx`) return a device's input list directly. (Note: `getAudioInputCapbility` is spelled that way on the wire — missing the second "a" in "Capability" — this is the device's own command name, not a typo in this doc; do not "fix" the spelling when implementing.)
+
+**`getAudioInputCapbility`** — the device's supported/physical inputs:
+```
+GET https://<ip>/httpapi.asp?command=getAudioInputCapbility
+```
+```json
+{"ver": "1.0", "audioInput": [{"mode": "wifi"}, {"mode": "line-in"}, {"mode": "bluetooth"}, {"mode": "optical"}, {"mode": "HDMI"}, {"mode": "udisk"}]}
+```
+
+**`getAudioInputEnable`** — the same set, plus whether each is currently enabled/shown in the WiiM app (`enable: 0` = present in hardware but hidden in the app UI):
+```
+GET https://<ip>/httpapi.asp?command=getAudioInputEnable
+```
+```json
+{"ver": "1.0", "audioInput": [{"mode": "wifi", "enable": 1}, {"mode": "bluetooth", "enable": 0}, {"mode": "line-in", "enable": 1}, {"mode": "optical", "enable": 0}, {"mode": "HDMI", "enable": 1}]}
+```
+
+The `mode` value in both responses is exactly the `source_name` used by every PEQ/RoomFit command.
+
+**Confirmed against real hardware (2026-07-03):**
+
+| Device | `getAudioInputCapbility` | `getAudioInputEnable` |
+|---|---|---|
+| WiiM Amp Ultra | `wifi`, `line-in`, `bluetooth`, `optical`, `HDMI`, `udisk` | `wifi`(1), `bluetooth`(0), `line-in`(1), `optical`(0), `HDMI`(1) |
+| WiiM Sound / Sound Lite | `wifi`, `auxIn`, `bluetooth` | `wifi`(1), `bluetooth`(1), `auxIn`(1) — same on both models |
+| WiiM Mini | `"unknown command"` | `"unknown command"` |
+
+**WiiM Mini supports neither command** — it needs the hardcoded fallback table above and the `device_capabilities.json` override; don't rely on runtime enumeration for it. Other untested/older devices should probe both commands and fall back to the hardcoded table on `"unknown command"`.
+
+> ⚠️ **`udisk` is not a real PEQ source — confirmed 2026-07-03.** `getAudioInputCapbility` lists `udisk` as a distinct hardware input mode on Amp Ultra, but at the PEQ layer it behaves exactly like a nonexistent source name: `EQGetLV2SourceBandEx` with `source_name:"udisk"` returned `Name:""` and an all-default L/R template (stock frequencies, zero gain) — the same fallback already documented for made-up source names — and writing to it (`EQv2SourceLoad` targeting `udisk`) returned `{"status":"Failed"}` outright, unlike genuine sources (`wifi`, `HDMI`, `line-in`), which accept loads normally.
+>
+> **Note `udisk` only appears in `getAudioInputCapbility`'s output, never in `getAudioInputEnable`'s** (confirmed across all tested devices, including with a USB drive connected and actively playing — not just `enable:0`, it's absent from the list entirely even then). Explanation (device owner, 2026-07-03): USB playback on Amp Ultra is implemented as a media server and routes through the same network-playback pipeline as `wifi` — it's not a distinct physical input line the way `line-in`/`HDMI`/`optical`/`bluetooth` are, so it never needs (or gets) its own switchable-input entry or its own PEQ source slot. `getAudioInputCapbility` reports the broader hardware-capability concept (the device supports USB media playback as a feature); `getAudioInputEnable` tracks the narrower set of inputs the app treats as switchable, which is what the PEQ engine's behavior agrees with. **Practical consequence, confirmed safe: build a PEQ source picker from `getAudioInputEnable`'s output, not `getAudioInputCapbility`'s** — it already excludes `udisk` without needing a hardcoded denylist. This confirms the original "PEQ Source Names" table's claim that `wifi` covers USB disk, with no separate PEQ source needed.
+
+curl:
+```bash
+curl -sk "https://$WIIM_IP/httpapi.asp?command=getAudioInputCapbility"
+curl -sk "https://$WIIM_IP/httpapi.asp?command=getAudioInputEnable"
+```
 
 ---
 
@@ -90,7 +134,7 @@ JSON payload:
 
 **Response format:** Identical to PEQ — contains `channelMode`, `EQBandL`/`EQBandR` or `EQBand`, `Name` (loaded profile name), `EQStat` (On/Off).
 
-**Write RoomFit bands (confirmed save, write untested):**
+**Write RoomFit bands (confirmed 2026-06-14):**
 ```
 EQSetLV2SourceBand:<url_encoded_json>
 ```
@@ -125,31 +169,88 @@ The complete write sequence is:
 - Non-destructive: Save as a new profile name → tell user to switch in WiiM app when ready
 - Overwrite: Save to the active profile → warn "RoomFit will deactivate; re-select to apply"
 
+### Previewing a Saved Profile's Bands Without Disrupting the Active One
+
+There is no stateless "peek" command — reading a specific saved profile's band data requires `EQv2SourceLoad` (stage it into the working buffer) followed by `EQGetLV2SourceBandEx` (read the buffer). This does **not** change the DSP on/off state (a separate toggle — see "RoomFit DSP Toggle" below) but it does replace whichever profile the working buffer, and the WiiM app's own "currently selected" UI state, was previously pointing at.
+
+**Recommended approach:** read the currently-active profile `Name` first (via the empty-`source_name` status read documented under "RoomFit DSP Toggle" below), then before loading a different profile purely to preview its bands, warn the user that doing so changes the selected profile — and offer to restore the original `Name` via a second `EQv2SourceLoad` afterward — rather than silently swapping it.
+
+> This whole approach is confirmed workable for **RoomFit** (global scope, no ambiguity about what gets loaded) and, as of 2026-07-03, also for **PEQ** as long as `source_name` is included explicitly in the `EQv2SourceLoad` payload (see "RoomFit Profile CRUD" below) — read the target source's current `Name` first, load-and-read to preview, then load the original `Name` back to restore.
+>
+> **Ruled out (2026-07-03):** omitting `source_name` from a PEQ `EQv2SourceLoad` call is *not* a safe stateless preview. It's a real write that silently lands on whichever input is currently live/active on the device — confirmed by observing it follow a live input switch from `HDMI` to `wifi` between two tests. This means it will overwrite whatever the user is actually listening to, with no warning. Always use the explicit-`source_name` load-then-restore pattern above for PEQ; never call `EQv2SourceLoad` without `source_name` for PEQ under any circumstances. See `docs/corrections.md` for the full test trail.
+
 ### RoomFit Three-Layer Architecture
 
 | Layer | Command | Behaviour |
 |-------|---------|-----------|
 | Profile storage | `EQv2GetNewList` / `EQSourceSave` / `EQv2Delete` | CRUD for saved profiles |
 | API working buffer | `EQv2SourceLoad` → `EQGetLV2SourceBandEx` / `EQSetLV2SourceBand` | Read/write bands of loaded profile |
-| DSP-active state | WiiM app only (**no API command exists** — confirmed 2026-06-15) | What's actually applied to audio |
+| DSP-active state | `EQChangeSourceFX` / `EQSourceOff` (+ `EQLevel:2`, empty `source_name`) to toggle; `EQGetLV2SourceBandEx` (+ `EQLevel:2`, empty `source_name`) → `EQStat` to read — **confirmed 2026-07-02**, see below | What's actually applied to audio |
 
 **Key difference from PEQ:** For PEQ (EQLevel 1), `EQGetLV2SourceBandEx` returns the live DSP state without needing a prior load. For RoomFit (EQLevel 2), reads return the working buffer — which is device-global and persistent across connections (not session-scoped). Always `EQv2SourceLoad` before reading to ensure you're reading the intended profile.
 
-### RoomFit DSP Toggle — NOT POSSIBLE (confirmed 2026-06-15)
+### RoomFit DSP Toggle — CONFIRMED (2026-07-02)
 
-There is **no HTTP API command** to enable or disable RoomFit processing on the DSP. The following were tested against a WiiM device with RoomFit active:
+**The DSP toggle exists and is reachable over the local HTTP API.** The 2026-06-15 conclusion below ("not possible") was wrong — see corrected findings first, historical (failed) test table kept afterward for context. Full investigation trail in `docs/corrections.md` (2026-07-02 entry).
 
-| Command | Response | Effect on DSP |
-|---------|----------|---------------|
-| `EQSourceOff` + `EQLevel: 2` + pluginURI | `{'status': 'OK'}` | None |
-| `EQChangeSourceFX` + `EQLevel: 2` + pluginURI | `{'status': 'OK'}` | None |
-| `EQSourceOff` + `EQLevel: 2` (no pluginURI) | `{'status': 'Failed'}` | None |
-| `setRoomCorrection:0` | `OK` (readable via `getRoomCorrection` → `0`) | None — unrelated to LV2 RoomFit |
-| `MCURoomCorrection:0` | `unknown command` | N/A |
-| `EQSetRoomFit:Off` | `{'status': 'Failed'}` | N/A |
-| `EQSetLV2Stat` + `EQLevel: 2` + `EQStat: Off` | `{'status': 'Failed'}` | N/A |
+**Read current on/off status + active profile name:**
+```
+EQGetLV2SourceBandEx:<url-encoded json>
+```
+```json
+{"EQLevel": 2, "source_name": "", "pluginURI": "http://moddevices.com/plugins/caps/EqNp"}
+```
+`EQStat` (`"On"`/`"Off"`) in the response is the toggle state; `Name` is the active profile.
 
-**Conclusion:** The DSP-active state (which RoomFit profile is applied to audio) is controlled exclusively by the WiiM app's internal logic. The HTTP API can read/write/save profiles but cannot activate or deactivate them on the DSP.
+> This is a **different read from the buffer-band read** documented above under "RoomFit Band Read/Write" (which uses a real `source_name`, e.g. `"wifi"`, and returns the loaded profile's band data). The empty-`source_name` variant here is scoped to the global on/off state, not any particular profile's bands — use whichever matches what you need.
+
+**Enable:**
+```
+EQChangeSourceFX:{"EQLevel":2,"source_name":"","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}
+```
+
+**Disable:**
+```
+EQSourceOff:{"EQLevel":2,"source_name":"","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}
+```
+
+> ⚠️ **`source_name` must be an empty string `""`, not a populated source name.** This is the single detail that made the 2026-06-15 test (table below) conclude no toggle existed: the same two commands (`EQChangeSourceFX`/`EQSourceOff`) were tried with a real source name (following the convention every other PEQ/RoomFit command uses), which the device silently accepts — returning `{"status":"OK"}` — but applies to the wrong (per-source) scope instead of the global master switch. RoomFit on/off is global, not per-source, unlike the buffer read/write commands documented above (which do use a real `source_name`, e.g. `"wifi"`).
+
+**curl reproduction (verified against real hardware, 2026-07-02):**
+```bash
+WIIM_IP=192.168.1.50   # replace with your device's IP
+
+# Read status
+curl -sk -G --data-urlencode 'command=EQGetLV2SourceBandEx:{"EQLevel":2,"source_name":"","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}' "https://$WIIM_IP/httpapi.asp"
+
+# Enable
+curl -sk -G --data-urlencode 'command=EQChangeSourceFX:{"EQLevel":2,"source_name":"","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}' "https://$WIIM_IP/httpapi.asp"
+
+# Disable
+curl -sk -G --data-urlencode 'command=EQSourceOff:{"EQLevel":2,"source_name":"","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}' "https://$WIIM_IP/httpapi.asp"
+```
+
+| Command | Payload | Result |
+|---|---|---|
+| `EQChangeSourceFX` + `EQLevel:2` + `source_name:""` + pluginURI | Enable | ✅ Confirmed — `EQStat` flips to `"On"` |
+| `EQSourceOff` + `EQLevel:2` + `source_name:""` + pluginURI | Disable | ✅ Confirmed — `EQStat` flips to `"Off"` |
+| `EQGetLV2SourceBandEx` + `EQLevel:2` + `source_name:""` + pluginURI | Read status | ✅ Confirmed — returns `EQStat` and `Name` |
+
+**Note on adapter code:** this documents the API only — `src/adapters/wiim_adapter.py` does not implement `enable_roomfit()`/`disable_roomfit()`/status-read using these commands, and a GUI toggle is intentionally out of scope (product decision, 2026-07-02). The existing `# TODO: RoomFit toggle` marker and disabled-toggle tooltip in the GUI are now stale references to the old "not possible" conclusion and can be removed if touched.
+
+#### Historical failed attempts (2026-06-15) — root cause now understood
+
+The following were tested against a WiiM device with RoomFit active, all before the empty-`source_name` requirement was discovered:
+
+| Command | Response | Effect on DSP | Now understood as |
+|---------|----------|---------------|---|
+| `EQSourceOff` + `EQLevel: 2` + pluginURI | `{'status': 'OK'}` | None | Non-empty `source_name` — wrong scope (see above) |
+| `EQChangeSourceFX` + `EQLevel: 2` + pluginURI | `{'status': 'OK'}` | None | Non-empty `source_name` — wrong scope (see above) |
+| `EQSourceOff` + `EQLevel: 2` (no pluginURI) | `{'status': 'Failed'}` | None | pluginURI is required |
+| `setRoomCorrection:0` | `OK` (readable via `getRoomCorrection` → `0`) | None — unrelated to LV2 RoomFit | Writes calibration metadata (`{"RC_Version": "...", "Time": "yyyy:MM:dd HH:mm"}`) recorded after a calibration run — not a DSP toggle at all |
+| `MCURoomCorrection:0` | `unknown command` | N/A | Not a real command |
+| `EQSetRoomFit:Off` | `{'status': 'Failed'}` | N/A | Not a real command |
+| `EQSetLV2Stat` + `EQLevel: 2` + `EQStat: Off` | `{'status': 'Failed'}` | N/A | Not a real command |
 
 ### RoomFit Profile CRUD (all confirmed 2026-06-14)
 
@@ -161,12 +262,18 @@ There is **no HTTP API command** to enable or disable RoomFit processing on the 
 | Save current as RC profile | `EQSourceSave:<json>` | `{"pluginURI": "...", "source_name": "...", "Name": "...", "EQLevel": 2}` |
 | Delete PEQ profile | `EQv2Delete:<json>` | `{"pluginURI": "...", "Name": "..."}` |
 | Delete RC profile | `EQv2Delete:<json>` | `{"pluginURI": "...", "Name": "...", "EQLevel": 2}` |
-| Load PEQ profile | `EQv2SourceLoad:<json>` | `{"pluginURI": "...", "source_name": "...", "Name": "..."}` (untested) |
-| Load RC profile | `EQv2SourceLoad:<json>` | `{"pluginURI": "...", "source_name": "...", "Name": "...", "EQLevel": 2}` (untested) |
+| Load PEQ profile | `EQv2SourceLoad:<json>` | `{"EQLevel": 1, "source_name": "wifi", "pluginURI": "http://moddevices.com/plugins/caps/EqNp", "Name": "..."}` — **confirmed 2026-07-03** (curl-tested against real hardware: round-tripped `wifi` from `M16` to `flat` and back, response and follow-up read both correctly reflected `wifi`). **`source_name` is required** — omitting it does not fail, but silently targets a different, unintended source instead (see caveat below). |
+| Load RC profile | `EQv2SourceLoad:<json>` | `{"EQLevel": 2, "pluginURI": "http://moddevices.com/plugins/caps/EqNp", "Name": "..."}` — **confirmed 2026-07-02** (curl-tested against real hardware). No `source_name` field. |
 | Read active PEQ bands | `EQGetLV2SourceBandEx:<json>` | `{"pluginURI": "...", "source_name": "..."}` |
 | Read active RC bands | `EQGetLV2SourceBandEx:<json>` | `{"pluginURI": "...", "source_name": "...", "EQLevel": 2}` |
 | Write PEQ bands | `EQSetLV2SourceBand:<json>` | `{"pluginURI": "...", "source_name": "...", "EQBand": [...]}` |
-| Write RC bands | `EQSetLV2SourceBand:<json>` | `{"pluginURI": "...", "source_name": "...", "EQBand": [...], "EQLevel": 2}` (untested) |
+| Write RC bands | `EQSetLV2SourceBand:<json>` | `{"pluginURI": "...", "source_name": "...", "EQBand": [...], "EQLevel": 2}` — confirmed 2026-06-14 |
+
+> ⚠️ **`EQv2SourceLoad` at `EQLevel: 1` (PEQ) requires an explicit `source_name` — confirmed 2026-07-03.** Omitting it (as the RoomFit row's payload does, since RoomFit omits `source_name` on purpose for its global scope) does **not** fail and does **not** target the source you're working with elsewhere in the same session. Adding `"source_name":"wifi"` (or whichever source you mean) to the payload fixes it completely and is confirmed safe — round-tripped repeatedly with correct results.
+>
+> **Resolved (2026-07-03): omitting `source_name` is a real write, not a preview.** It applies to **whichever input is currently live/active on the device** — confirmed by switching the device's active input from `HDMI` to `wifi` between two otherwise-identical tests and observing the no-`source_name` load's target follow the switch exactly. This is *not* a safe way to inspect a saved preset's bands: it silently overwrites whatever the user happens to be listening to at that moment, with no error and no indication anything unexpected happened. **Never omit `source_name` on a PEQ `EQv2SourceLoad` call.** There is no confirmed stateless way to preview a saved PEQ preset's bands without changing a real source — use the explicit-`source_name` load-then-restore pattern in "Previewing a Saved Profile's Bands" above, which is slower but safe.
+>
+> **Good news for error handling:** a write targeting an invalid/non-PEQ source (e.g. `udisk` — see "Source Enumeration" above) returns `{"status":"Failed"}` outright rather than silently misbehaving, so a caller can safely check the response status after every `EQv2SourceLoad` call.
 
 ### Profile List Response
 
@@ -223,6 +330,17 @@ There is **no HTTP API command** to enable or disable RoomFit processing on the 
 | 4 | `EQSetLV2SourceBand` + `EQSourceSave` with `EQLevel: 2` | Buffer write + profile save both succeed (CONFIRMED 2026-06-14). Note: saving to the ACTIVE profile name deactivates RoomFit; saving to a new name does not. |
 
 **Older list command:** `EQv2GetList:<pluginURI>` (plain URI, no JSON) — returns PEQ profiles only, without metadata (just names).
+
+**curl reproduction (verified against real hardware, 2026-07-02):**
+```bash
+WIIM_IP=192.168.1.50   # replace with your device's IP
+
+# List saved RoomFit profiles
+curl -sk -G --data-urlencode 'command=EQv2GetNewList:{"pluginURI":"http://moddevices.com/plugins/caps/EqNp","EQLevel":2}' "https://$WIIM_IP/httpapi.asp"
+
+# Load/activate a profile by name (use a Name from the list above)
+curl -sk -G --data-urlencode 'command=EQv2SourceLoad:{"EQLevel":2,"pluginURI":"http://moddevices.com/plugins/caps/EqNp","Name":"YOUR_PROFILE_NAME"}' "https://$WIIM_IP/httpapi.asp"
+```
 ---
 
 ## EQ (Non-PEQ) Commands
@@ -249,7 +367,7 @@ This is the **only** plugin addressed by the PEQ commands below. A separate 10-b
 
 ### Capability Check
 
-Before issuing any PEQ command, probe for `supports_peq` by attempting `EQGetLV2BandEx`. If it returns a valid response, PEQ is supported. All current WiiM devices (including WiiM Mini) support the LV2 PEQ API. Generic LinkPlay devices do not.
+Before issuing any PEQ command, probe for `supports_peq` by attempting `EQGetLV2BandEx`. If it returns a valid response, PEQ is supported. All current WiiM devices (including WiiM Mini) support the LV2 PEQ API. Generic (non-WiiM) LinkPlay devices are assumed not to — this has never actually been tested against real generic LinkPlay hardware by this project; all testing to date has been against WiiM-branded devices only. Treat as a reasonable inference, not a confirmed fact — runtime probing (attempt `EQGetLV2BandEx`, fall back gracefully on `"unknown command"`) is required regardless, so this assumption being wrong wouldn't break anything, just mis-set an expectation.
 
 ### PEQ Band Model
 
@@ -357,7 +475,7 @@ JSON: `{"source_name": "wifi", "pluginURI": "...", "channelMode": "L/R"}`
 ```
 EQChangeSourceFX:<url-encoded JSON>
 ```
-JSON: `{"source_name": "wifi", "pluginURI": "http://moddevices.com/plugins/caps/EqNp"}`
+JSON: `{"EQLevel": 1, "source_name": "wifi", "pluginURI": "http://moddevices.com/plugins/caps/EqNp"}`
 
 Or (current source, legacy):
 ```
@@ -368,14 +486,36 @@ EQChangeFX:<url-encoded pluginURI>
 ```
 EQSourceOff:<url-encoded JSON>
 ```
-JSON: `{"source_name": "wifi", "pluginURI": "..."}`
+JSON: `{"EQLevel": 1, "source_name": "wifi", "pluginURI": "..."}`
 
 Or legacy (current source):
 ```
 EQOff
 ```
 
+> This is the **same command pair as the RoomFit DSP Toggle** documented above — the difference is entirely in the payload: `EQLevel: 1` + a real `source_name` (e.g. `"wifi"`) toggles PEQ for that one source; `EQLevel: 2` + an empty `source_name` toggles RoomFit globally.
+>
+> **Confirmed working against real hardware (2026-07-03)** — round-tripped on a `line-in` source with an unaffected read in between:
+> ```bash
+> WIIM_IP=192.168.0.222
+>
+> # 1. Baseline: EQStat "On"
+> curl -sk -G --data-urlencode 'command=EQGetLV2SourceBandEx:{"EQLevel":1,"source_name":"line-in","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}' "https://$WIIM_IP/httpapi.asp"
+> # 2. Disable
+> curl -sk -G --data-urlencode 'command=EQSourceOff:{"EQLevel":1,"source_name":"line-in","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}' "https://$WIIM_IP/httpapi.asp"
+> # 3. Read back: EQStat flipped to "Off", bands unchanged
+> curl -sk -G --data-urlencode 'command=EQGetLV2SourceBandEx:{"EQLevel":1,"source_name":"line-in","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}' "https://$WIIM_IP/httpapi.asp"
+> # 4. Enable
+> curl -sk -G --data-urlencode 'command=EQChangeSourceFX:{"EQLevel":1,"source_name":"line-in","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}' "https://$WIIM_IP/httpapi.asp"
+> # 5. Read back: EQStat flipped back to "On"
+> curl -sk -G --data-urlencode 'command=EQGetLV2SourceBandEx:{"EQLevel":1,"source_name":"line-in","pluginURI":"http://moddevices.com/plugins/caps/EqNp"}' "https://$WIIM_IP/httpapi.asp"
+> ```
+
 ### PEQ Preset Commands
+
+> ⚠️ **Confirmed non-functional on current firmware (2026-07-03).** These commands don't appear in use anywhere in the current WiiM Home app (the app uses the `EQv2GetNewList`/`EQv2SourceLoad`/`EQSourceSave`/`EQv2Delete` family instead — see "RoomFit Profile CRUD" above — for both PEQ and RoomFit, distinguished by `EQLevel`), and direct testing backs that up: `EQGetLV2List` (bare `EqNp` pluginURI), `EQGetLV2NewList` (`EqNp` with and without `EQLevel`), and both variants against the older `Eq4p` plugin URI all returned `{"status":"Failed"}` — five different call shapes, zero successes. **Do not use this table; use the `EQv2*` family above instead.**
+>
+> ⚠️ **Capability gap: there is no known working command to rename a saved PEQ/RoomFit profile.** `EQRenameLV2Preset` was tested directly (`{"pluginURI":"...","Name":"<existing>","newName":"<new>"}`) and returned `{"status":"Failed"}`, confirmed by a follow-up list read showing the name unchanged. Since nothing in the confirmed `EQv2*` family performs a rename either, renaming a saved profile currently has no known API path — the only confirmed workaround is save-as-new-name-then-delete-old (`EQSourceSave` + `EQv2Delete`), which loses the original `UpdateAt`/creation metadata.
 
 | Command | Payload / Notes |
 |---|---|
@@ -431,7 +571,8 @@ Fallback strategy if mDNS yields no results: subnet scan on ports 80 and 443 wit
 - RoomFit is **per-source** — same `source_name` semantics as PEQ.
 - WiiM Mini supports the full per-input PEQ (including L/R channel mode) but has **no RoomFit capability** (confirmed: empty profile list, bands show `EQStat: Off`).
 - Band count varies by device/firmware: 10 bands (a-j) standard, 12 bands (a-l) on WiiM Amp Ultra firmware 20260409+. Always probe dynamically.
-- **Confirmed (device owner, 2026-06-27):** on hardware that returns 12 bands via the API (WiiM Amp Ultra), the WiiM Home App itself only exposes/uses 10 of them — the 11th/12th bands are reachable over the API but not surfaced in the official app's PEQ UI. The bundled `device_capabilities.json` intentionally does **not** raise `WiiM_Amp_Ultra`'s `max_bands` ceiling above the generic default for this reason: this app's 10-band cap matches WiiM's own app behaviour rather than under-using available hardware. See `docs/corrections.md` for the related open question on whether the 12-band count is per-channel or total in L/R mode.
+- **Confirmed (device owner, 2026-06-27):** on hardware that returns 12 bands via the API (WiiM Amp Ultra), the WiiM Home App itself only exposes/uses 10 of them — the 11th/12th bands are reachable over the API but not surfaced in the official app's PEQ UI. The bundled `device_capabilities.json` intentionally does **not** raise `WiiM_Amp_Ultra`'s `max_bands` ceiling above the generic default for this reason: this app's 10-band cap matches WiiM's own app behaviour rather than under-using available hardware.
+- **Confirmed (2026-07-03):** the 12-band count is genuinely per-channel in L/R mode, not a total split across both channels. `EQBandL`/`EQBandR` each independently report 12 bands (letters a-l) in L/R mode — 24 addressable bands total — while `EQBand` reports 12 bands total in Stereo mode. See `docs/corrections.md`.
 - Capability detection must still probe at runtime — firmware updates can change behaviour. Never hard-code capabilities by model name alone.
 
 **Batch Write:** Some firmware supports writing all 10 bands in a single `EQSetLV2Band` payload (standard). Sequential fallback via `WiiMCommandQueue` is still needed if a single-band variant is required by capability detection.
@@ -440,7 +581,7 @@ Fallback strategy if mDNS yields no results: subnet scan on ports 80 and 443 wit
 
 ## RoomFit API — Implementation Reference
 
-> The RoomFit API has been **confirmed via hardware testing** (2026-06-14). See "RoomFit / Room Correction API" section above for the complete, verified command reference.
+> The RoomFit API has been **confirmed via hardware testing** (2026-06-14). See "RoomFit / Room Correction API" section above for the complete, verified command reference. The DSP on/off toggle — previously believed impossible — was also confirmed 2026-07-02; see "RoomFit DSP Toggle — CONFIRMED" above.
 
 ### Capability Probe Sequence (Confirmed)
 
@@ -487,11 +628,14 @@ The `source_name` parameter used in PEQ commands corresponds to the device input
 
 | Scenario | Expected behaviour |
 |---|---|
-| Command not supported | Returns `"unknown command"` or HTTP 400 |
+| Command name not recognized at all | Returns `"unknown command"` or HTTP 400 |
+| Command recognized but rejected (bad/missing parameter, wrong target) | Returns `{"status":"Failed"}` — distinct from `"unknown command"`; confirmed for e.g. a `pluginURI`-less `EQSourceOff`, an `EQv2SourceLoad` targeting a non-PEQ source (`udisk`), and every tested variant of the dead "PEQ Preset Commands" family. Check for this explicitly; don't treat any non-`"OK"` response the same as a network failure. |
 | Device offline | Connection timeout; catch `httpx.TimeoutException` |
 | Self-signed cert | Use `verify=False`; do not reject — expected behaviour |
 | Malformed JSON response | Log error, raise `WiiMResponseError`, return safe default |
 | Slave node targeted | PEQ writes work directly on slave nodes (PEQ is per-device); no redirect needed |
+
+> ⚠️ **`{"status":"OK"}` confirms the command was accepted — never that it did what you intended.** This project has hit that gap twice on hardware: the RoomFit toggle accepted a populated `source_name` and returned `OK` while silently applying to the wrong scope (`docs/corrections.md`, 2026-07-02), and PEQ's `EQv2SourceLoad` accepted a missing `source_name` and returned success while silently writing to whichever source was currently live rather than the one requested (`docs/corrections.md`, 2026-07-03). **Always verify the specific field you care about changed as expected** (`EQStat`, `Name`, the actual band values) via a follow-up read — don't treat `"OK"` alone as proof of the intended effect. This is exactly what `SafeWrite`/`RoomFitSafeWrite`'s read-back verification already does; the lesson here is to apply the same skepticism to one-off diagnostic/administrative calls, not just the main write path.
 
 ---
 
