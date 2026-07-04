@@ -12,69 +12,38 @@ current release but may be reconsidered in future versions. Backend support may 
 
 **What:** A visible on/off toggle in the UI allowing users to quickly enable or disable PEQ or RoomFit on the connected device for A/B listening tests.
 
-**Why deferred:** The WiiM Home app already provides this functionality. Adding it to the sync tool adds UI clutter without enabling a workflow that isn't already covered. The tool's primary purpose is filter transfer, not device configuration.
+**Why deferred:** The WiiM Home app already provides this functionality. Adding it to the sync tool adds UI clutter without enabling a workflow that isn't already covered. The tool's primary purpose is filter transfer, not device configuration. As of 2026-07-02 this is an explicit product decision, not a technical blocker (see backend status below) — reactivating this item is a scope call, not an investigation.
 
 **Backend status:**
 - ✅ `WiiMAdapter.enable_peq()` / `disable_peq()` / `get_peq_enabled()` — implemented (Task 57)
 - ✅ CLI `peq-toggle --device --source --state on|off` — implemented and working
-- ⏳ RoomFit toggle — API mechanism unconfirmed (Task 58 not started, requires hardware testing)
+- ✅ RoomFit DSP toggle — **API mechanism confirmed** (`docs/corrections.md`, 2026-07-02): `EQChangeSourceFX`/`EQSourceOff` at `EQLevel:2` with `source_name:""` (empty, not omitted) reliably toggle RoomFit; status read via `EQGetLV2SourceBandEx` (same empty `source_name`) + `EQStat`. Round-tripped on real hardware. See `docs/wiim_api_notes.md` "RoomFit DSP Toggle — CONFIRMED".
+- ⏳ Not implemented in `WiiMAdapter` — no `enable_roomfit()`/`disable_roomfit()`/status-read methods exist yet. Not a hardware-testing gap anymore, just unwritten code, deliberately not written per the product decision above.
+- **Stale artifacts from before the mechanism was confirmed, not yet cleaned up:** `docs/architecture.md:208` still states "RoomFit toggle ... is not supported via API"; a `# TODO: RoomFit toggle` marker in `wiim_adapter.py` and a GUI tooltip referenced in `docs/corrections.md` (2026-06-15 row) predate the confirmation. If this item stays deferred, these should be corrected to say "confirmed possible, intentionally not implemented" rather than "not possible."
 
-**To reactivate:** Restore Requirement 22 to the GUI redesign spec, add `PEQToggle` component back to design.md, and create implementation tasks for the toggle widget and its WizardController wiring.
-
----
-
-## 2. RoomFit Enable/Disable API Investigation
-
-**Originally:** Original spec Task 58
-
-**What:** Determine whether RoomFit can be toggled on/off independently via the WiiM HTTP API.
-
-**Why deferred:** Requires physical hardware testing. The PEQ toggle already works via CLI for users who want it. RoomFit toggle has no confirmed API command.
-
-**Backend status:**
-- ⏳ Not started — API commands still not found. Investigation steps documented in Task 58 didn't surface the required API calls.
-- Uncertainty Protocol applies: if confirmed, implement adapter methods; if not, document as unsupported
-
-**To reactivate:** Reverse-engineer the API call against real hardware. If successful, implement adapter methods and optionally restore the GUI toggle.
+**To reactivate:** Restore Requirement 22 to the GUI redesign spec, add `PEQToggle` component back to design.md, and create implementation tasks for the toggle widget and its WizardController wiring. The RoomFit half no longer needs an investigation step — go straight to implementing `enable_roomfit()`/`disable_roomfit()` using the confirmed commands above.
 
 ---
 
-## 3. Rethink Source Discovery
-
-**Originally:** Pre-GUI phase backlog (root `BACKLOG.md`)
-
-**What:** The WiiM API accepts any source name and returns valid PEQ data regardless of whether the physical input exists. Need a reliable mechanism to show only real inputs.
-
-**Why deferred:** No confirmed API call enumerates real inputs per device/model. `src/cli/main.py` currently falls back to a hardcoded default (`"wifi"`) when no input list is available — see the `# ASSUMPTION` comment there.
-
-**Options to investigate:**
-- A per-model list of inputs (and other model-specific attributes), managed via a config file (no app rebuild required)
-- `GetAudioInputList` or similar undocumented endpoints on newer firmware
-- Maintain a model-to-inputs mapping table (fragile but functional)
-- Accept the limitation and let users configure which sources to show (per-device preference)
-
-**To reactivate:** Hardware-test candidate endpoints across WiiM models/firmware; if none work, build the config-file-based mapping approach.
-
----
-
-## 4. HP/LP Capability Detection and Write-Time Validation
+## 2. HP/LP Capability Detection and Write-Time Validation
 
 **Originally:** Pre-GUI phase backlog (root `BACKLOG.md`, flagged for review 2026-06-27 — confirmed still applicable, not implemented)
 
 **What:** Add a `supports_hp_lp: bool` flag to `DeviceCapabilities`. During `_probe_peq()`, set it to `True` if mode 3 or 5 is seen in the EQBand response. In `dry-run-import`, warn if the import contains HP/LP filters targeting a device without support.
 
-**Why deferred:** The safe-write verify step already catches the mismatch at write time, so this is a UX improvement (earlier warning) rather than a correctness gap. WiiM Mini currently doesn't support HP/LP; newer firmware may add it.
+**Already substantially covered — the original problem this item describes is solved, just not by a dedicated flag** (confirmed 2026-07-04): `DeviceCapabilities.supported_filter_types` (`src/models/capabilities.py:37`) already exists as a general per-model allowed-filter-types list, populated from the static capability file (`src/models/assets/device_capabilities.json`) via `device_capability_file.py::merge_into()`. WiiM Mini's entry already lists `["PEAK", "LS", "HS"]` — HP/LP excluded. `validate_filters_for_device()` (`src/gui/shared_helpers.py:234`) consumes this list and does exactly the "warn (and skip) unsupported-type bands before write" behavior this item asks for, wired into the Review page via `main_window.py`. So the write-time-validation half of this item is done, just generalized to any filter type rather than HP/LP specifically.
 
-**Status:** ⏳ Not implemented — `supports_hp_lp` does not yet exist on `DeviceCapabilities` (confirmed 2026-06-27).
+**What's actually still missing:** the *dynamic runtime probing* half — nothing in `_probe_peq()` inspects the live `EQBand` response to auto-detect HP/LP support and populate the capability file entry automatically. Today, a newly-discovered device without HP/LP support needs a manual capability-file entry (like WiiM Mini's) added by hand; it isn't detected automatically the way the original item envisioned. Since WiiM Mini is the only currently-known no-HP/LP device and it's already hand-covered, this is now a "nice-to-have for future unknown devices" rather than a live gap.
 
-**Options to investigate:**
-- A per-model list of capabilities managed via a config file (no app rebuild required)
+**Why deferred:** The safe-write verify step already catches the mismatch at write time regardless, and the static per-model list already covers every currently-known device. Runtime auto-detection would only matter for a not-yet-catalogued device.
 
-**To reactivate:** Add the capability flag, wire up probing, and add the pre-write warning in dry-run-import.
+**Status:** ⏳ Runtime probing not implemented — no code path sets `supported_filter_types` (or a dedicated `supports_hp_lp`) from a live `EQBand` response; it's populated by the static JSON file only (re-confirmed 2026-07-04).
+
+**To reactivate:** During `_probe_peq()`, inspect the live `EQBand`/`EQBandL`/`EQBandR` response for mode `3`/`5` and merge a detected HP/LP-support signal into `DeviceCapabilities.supported_filter_types` alongside (not replacing) the static capability-file entry, so newly-seen devices get correct behavior without waiting for a manual JSON update.
 
 ---
 
-## 5. `ProfileRepository.list()` Shadows Builtin (Tech Debt)
+## 3. `ProfileRepository.list()` Shadows Builtin (Tech Debt)
 
 **Originally:** Code quality audit (2026-06-22)
 
@@ -82,27 +51,27 @@ current release but may be reconsidered in future versions. Backend support may 
 
 **Why deferred:** Renaming a public method on `ProfileRepository` would break the GUI layer, tests, and any code that calls `.list()`. Cosmetic improvement with non-trivial migration effort.
 
-**Status:** Still present (confirmed 2026-06-28, `src/repository/profile_repository.py:5,166`). Production call sites: 1 internal (`filter_by_tag`), 1 in `main_window.py:1798` inside `_do_list_presets`.
+**Status:** Still present (confirmed 2026-07-04, `src/repository/profile_repository.py:5,98`). Production call sites: 1 internal (`get_by_tag`), 1 in `main_window.py:1994` inside `_do_list_presets`.
 
 **To reactivate:** Rename method to `list_all()`, update all call sites (~2 production + 4 test locations). Bundle with the MainWindow extraction (backlog item below) — `_do_list_presets` is already a Phase-1 extraction candidate there, so the one production GUI call site gets touched anyway.
 
 ---
 
-## 6. Hardware QA Sign-off
+## 4. Hardware QA Sign-off
 
 **Originally:** `docs/qa_signoff.md` final verdict (2026-06-15)
 
 **What:** Full-flow validation against real WiiM device(s) covering the GUI-era scenarios that can't be automated (multiroom groups, RoomFit push with naming, device reboot mid-write, etc. — see `docs/qa.md` and `docs/qa_signoff.md` §5).
 
-**Why deferred:** Requires physical hardware sessions; software QA (470 tests, 96.52% translator coverage, lint/type-check clean) already passed pre-GUI.
+**Why deferred:** Requires physical hardware sessions.
 
-**Status:** ⏳ Pending — not yet executed against the post-GUI build.
+**Status:** ✅ Largely superseded by events, not "pending" anymore. `docs/qa_signoff.md` itself is a frozen pre-GUI snapshot (2026-06-15, 470 tests, translator-only coverage) and hasn't been re-run/updated since, but extensive GUI-era hardware/manual QA has happened since via a different mechanism: `docs/smoke_test_issues.md` now tracks 168 logged issues, of which 162 are `FIXED`, 3 `WONTFIX`, 1 `REASSIGNED`, and only **one remains genuinely `OPEN`** (#119, an intermittent window-restore-from-maximized clipping bug — low severity, needs a consistent repro). The automated suite has grown to 1181 tests (confirmed 2026-07-04) from the 470 at the original sign-off. CLAUDE.md's own phase-status line still says GUI-era hardware QA is "ongoing," which is technically true (#119 open, and `docs/wiim_api_notes.md`/`docs/corrections.md` hardware investigations are still adding findings weekly as of 2026-07-04) but understates how much has actually been validated against real devices at this point.
 
-**To reactivate:** Run the hardware-required scenarios listed in `docs/qa_signoff.md` §5 against the current build, update the sign-off doc with results.
+**To reactivate:** Either (a) close out #119 and formally refresh `docs/qa_signoff.md` with current test counts/coverage to retire this item for good, or (b) decide the smoke-test log is the de facto ongoing sign-off mechanism going forward and archive this item as superseded.
 
 ---
 
-## 7. Profile Comparison & Diffing
+## 5. Profile Comparison & Diffing
 
 **Originally:** Master spec, Future Phase Features; root `BACKLOG.md`
 
@@ -112,7 +81,7 @@ current release but may be reconsidered in future versions. Backend support may 
 
 ---
 
-## 8. Advanced Filter Types
+## 6. Advanced Filter Types
 
 **Originally:** Master spec, Future Phase Features; root `BACKLOG.md`
 
@@ -122,13 +91,14 @@ current release but may be reconsidered in future versions. Backend support may 
 
 ---
 
-## 9. MainWindow God-Object — Extract Business Logic from GUI Layer (Tech Debt)
+## 7. MainWindow God-Object — Extract Business Logic from GUI Layer (Tech Debt)
 
 **Originally:** Code quality audit (2026-06-28)
 
-**What:** `src/gui/main_window.py` is ~159KB / 137 methods / ~3,800 lines.
-~18 of its `async def _do_*` methods call adapters/repository directly
-(network I/O + data manipulation in a GUI class), violating
+**What:** `src/gui/main_window.py` is ~180KB / 150 methods / ~4,270 lines (grown
+from ~159KB / 137 methods / ~3,800 lines at the original audit — confirmed
+2026-07-04). 25 of its `async def _do_*` methods call adapters/repository
+directly (network I/O + data manipulation in a GUI class), violating
 `.kiro/steering/rules.md` rule #14 ("Separate UI from business logic
 strictly. No network calls or data manipulation in GUI components").
 `SecondaryWorkflowManager` (`src/gui/secondary_workflows.py`) already
@@ -144,6 +114,11 @@ new `PrimaryWorkflowOrchestrator` or by growing `SecondaryWorkflowManager`.
 `_do_populate_name_profiles`, `_do_rew_list_measurements`,
 `_do_rew_get_filters`, `_do_rew_get_filters_lr`, `_do_export`,
 `_do_export_lr`, `_do_preset_export`, `_do_preset_save`, `_do_raw_command`.
+**Added since the original audit, same low-risk shape** (confirmed
+2026-07-04): `_do_delete_presets` — thin per-item dispatch to
+`delete_peq_profile`/`delete_roomfit_profile`, though note it's a
+destructive write rather than read-only, so worth an explicit test pass
+if extracted.
 
 **Must stay in MainWindow** (too risky/entangled to move yet): `_do_push`
 (the safety-critical core push path), `_do_undo_roomfit`,
@@ -164,24 +139,54 @@ handlers (same shape as `SecondaryWorkflowManager.undo_complete` etc.).
 ~Medium, best done incrementally (4-6 methods per pass) rather than
 big-bang, to keep each step independently testable.
 
-**Status:** Not started. Priority: High — recommend tackling Phase 1
-(discovery, probing, file imports — 4 methods, lowest risk) before or
-alongside the *next* feature that would otherwise add more orchestration
-to MainWindow, to stop the file from growing further. Does not need to
-block all feature work, but adopt the rule now: new orchestration logic
-goes into a controller/manager class, never directly into MainWindow.
+**Status:** Not started — and the file has grown ~13% (methods and size)
+since the audit that flagged it, since new features keep landing directly
+in MainWindow (e.g. `_do_delete_presets` above). Priority: High — recommend
+tackling Phase 1 (discovery, probing, file imports — 4 methods, lowest
+risk) before or alongside the *next* feature that would otherwise add more
+orchestration to MainWindow. Does not need to block all feature work, but
+adopt the rule now: new orchestration logic goes into a controller/manager
+class, never directly into MainWindow.
 
 **To reactivate:** Start with the 4 Phase-1 methods, write
 `test_primary_workflows.py` mirroring `test_secondary_workflows.py`'s
 structure, wire signals in a `_setup_secondary_workflows()`-style method,
 verify smoke tests still pass, then proceed to the next phase. **Bundle
-opportunity:** while moving `_do_list_presets`, also resolve item #5
+opportunity:** while moving `_do_list_presets`, also resolve item #3
 above (`ProfileRepository.list()` shadows builtin) — rename to
 `list_all()` at the same time, since that line is already being touched.
 
 ---
 
 ## Completed Items (Archive)
+
+### Rethink Source Discovery
+**Completed:** 2026-07-03/04, shipped in commit `6bc189d` ("feat: UX & Capability
+Improvements - Phase A"). Formerly backlog item "3. Rethink Source Discovery" —
+the premise (no API enumerates real physical inputs) turned out to be
+incomplete: `getAudioInputEnable` returns each input's `mode` (the exact
+`source_name` PEQ/RoomFit commands use) plus an enabled/shown flag, correctly
+excluding non-addressable entries like `udisk` (`docs/corrections.md`,
+2026-07-03). `CapabilityProber._probe_source_names()`
+(`src/adapters/capability_prober.py`) now calls this directly, replacing the
+old dead `getStatusEx` `InputList` parsing; devices with no `getAudioInputEnable`
+(WiiM Mini) fall back to the existing per-model capability-file/hardcoded table
+as before, so nothing regressed for that case. Confirmed still wired in and
+tested as of 2026-07-04.
+
+### RoomFit DSP Toggle — API Investigation
+**Completed:** 2026-07-02. Formerly backlog item "2. RoomFit Enable/Disable API
+Investigation." Original 2026-06-15 hardware test concluded no API command
+could toggle RoomFit; a 2026-07-02 retest found the same two commands
+(`EQChangeSourceFX`/`EQSourceOff` at `EQLevel:2`) work when `source_name` is
+the empty string rather than omitted or populated — the earlier test's
+populated `source_name` silently targeted the wrong (per-source) scope
+instead of failing. Confirmed round-trip against real hardware
+(`docs/corrections.md`, 2026-07-02; `docs/wiim_api_notes.md` "RoomFit DSP
+Toggle — CONFIRMED"). The investigation is closed; whether to wire this into
+`WiiMAdapter`/the GUI is now a product-scope question, tracked under
+backlog item "1. PEQ / RoomFit Enable/Disable Toggle in GUI" above rather
+than as its own open investigation.
 
 ### Backward-Compat `ValidationError` Re-export in wiim_parser
 **Completed:** 2026-06-28 (code quality audit follow-up). Confirmed zero real

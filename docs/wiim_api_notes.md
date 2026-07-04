@@ -249,9 +249,39 @@ named one.
 ```
 EQSetLV2SourceBand:{"source_name":"wifi","pluginURI":"...","channelMode":"Stereo","EQBand":[...]}
 ```
-`EQSetLV2Band` (no `source_name`) writes the current/live source instead.
-`EQSetLV2ChannelMode:{"source_name":"wifi","pluginURI":"...","channelMode":"L/R"}` switches
-Stereo/L-R.
+`EQSetLV2Band` (no `source_name`) writes the current/live source instead. `channelMode` is set
+inline as part of this same write — the only reliable way to switch it (see "Dead commands" below).
+
+**Switching a source's channel mode reveals separately-stored data for that mode — it is not reset
+to defaults.** Bands are stored keyed by `(source_name, channelMode)`, not just `source_name`:
+writing L/R data to a source previously in Stereo mode can surface a completely different,
+pre-existing L/R-mode band set for any bands the write doesn't touch (`docs/corrections.md`,
+2026-07-04). **Always include the full intended band set in the same call whenever you change
+`channelMode`** — never assume a fresh/default state on a mode switch, and never rely on a partial
+write to "top up" a mode you haven't fully specified.
+
+**Known corner case (low-priority tech debt): the non-batch sequential write path is not atomic
+across a mode switch.** `WiiMAdapter._write_peq_sequential`/`_write_peq_sequential_lr` (used
+whenever `capabilities.supports_batch_write` is `False` — the conservative default, and also what a
+*probe exception* falls back to, not just genuinely incapable hardware) send one band per
+`EQSetLV2SourceBand` call with a 100ms gap, each call carrying the target `channelMode`. The array
+sent is always the full, `max_bands`-padded set (see Band model above — unused bands are already
+explicit OFF, not sparse), so this is *not* a missing-content problem. The issue is delivery
+granularity: a band's decided-on final value (even OFF) has no effect until that band's own call has
+actually gone out, so every call before the last leaves not-yet-sent bands holding whatever was last
+stored for that `(source_name, channelMode)` slot — for a mode-switching write, this can be a
+completely unrelated old filter curve. For the full ~1s+ duration of the sequential run, the device
+processes live audio through this mix, and an interruption partway through (crash, network drop) can
+leave the device in a state matching neither the old nor the new configuration. `SafeWrite`'s
+rollback (`safe_write.py::_rollback`) shares this: it restores state via the same `write_peq()`, so
+it takes the identical one-band-per-call route on the same non-batch devices (low practical risk
+when the failed write changed `channelMode` — the mode being rolled back to was untouched by the
+failed write — but shares the full risk otherwise). **Trigger requires both:** a device that failed
+or lacks the batch-write probe, *and* a write that changes `channelMode`, in the same call — a narrow
+intersection, and `SafeWrite`'s read-back verification already catches a wrong end state regardless.
+Not queued for a code fix; see `docs/corrections.md`, 2026-07-04, for the full analysis and the
+possible mitigations (batch-attempt-first override, `EQSourceOff` muting bracket) if this is ever
+prioritized.
 
 ### Enable / disable
 ```
@@ -281,15 +311,19 @@ real source. Read the target source's current `Name` first, `EQv2SourceLoad` the
 read its bands, then `EQv2SourceLoad` the original `Name` back to restore — slower, but the only
 confirmed-safe pattern (`docs/corrections.md`, 2026-07-03).
 
-### Legacy preset commands — do not use
+### Dead commands — do not use
 
-`EQGetLV2List` / `EQGetLV2NewList` / `EQSaveLV2Preset` / `EQSaveLV2SourcePreset` /
-`EQLoadLV2Preset` / `EQLoadLV2SourcePreset` / `EQDeleteLV2Preset` / `EQRenameLV2Preset` —
-confirmed non-functional on current firmware; every variant tested returns `{"status":"Failed"}`
-(`docs/corrections.md`, 2026-07-03). Use the `EQv2*` family above instead.
+**Legacy preset family:** `EQGetLV2List` / `EQGetLV2NewList` / `EQSaveLV2Preset` /
+`EQSaveLV2SourcePreset` / `EQLoadLV2Preset` / `EQLoadLV2SourcePreset` / `EQDeleteLV2Preset` /
+`EQRenameLV2Preset` — every variant tested returns `{"status":"Failed"}`
+(`docs/corrections.md`, 2026-07-03). Use the `EQv2*` family (Profile CRUD above) instead.
 
 **Capability gap:** no known command renames a saved profile (`EQRenameLV2Preset` fails; nothing in
 `EQv2*` does it either). Workaround: save-as-new-name + delete-old (loses `UpdateAt` metadata).
+
+**`EQSetLV2ChannelMode`** — every tested source (`bluetooth`, `wifi`, `HDMI`) returns
+`{"status":"Failed"}` (`docs/corrections.md`, 2026-07-04). No functional impact: `EQSetLV2SourceBand`'s
+inline `channelMode` (see Write above) reliably switches mode on its own.
 
 ---
 
@@ -434,19 +468,22 @@ the LV2 PEQ API above; do not use these in implementation.
 
 ## Device Capability Matrix
 
-| Device | PEQ | L/R filters | RoomFit | Notes |
-|---|---|---|---|---|
-| WiiM Ultra | ✅ | ✅ | ✅ | Per-input PEQ, dedicated RoomFit band set |
-| WiiM Amp Ultra | ✅ | ✅ | ✅ | 12 bands on firmware 20260409+ (12 per channel in L/R mode); app UI only exposes 10, so this app's default cap matches the app, not just a safety margin |
-| WiiM Amp Pro / Pro / Pro Plus / Amp / Sound / Sound Lite | ✅ | ✅ | ✅ | Same as Ultra |
-| WiiM Mini | ✅ | ✅ | ❌ | No RoomFit (empty profile list, `EQStat:Off` on band read) |
-| Generic LinkPlay | ❌ (assumed) | ❌ | ❌ | Untested against real hardware — always probe at runtime regardless |
+| Device | PEQ | L/R filters | RoomFit | Batch write | Notes |
+|---|---|---|---|---|---|
+| WiiM Ultra | ✅ | ✅ | ✅ | untested (not owned) | Per-input PEQ, dedicated RoomFit band set |
+| WiiM Amp Ultra | ✅ | ✅ | ✅ | ✅ confirmed | 12 bands on firmware 20260409+ (12 per channel in L/R mode); app UI only exposes 10, so this app's default cap matches the app, not just a safety margin |
+| WiiM Amp Pro / Pro / Pro Plus / Amp / Sound / Sound Lite | ✅ | ✅ | ✅ | ✅ confirmed for Sound & Sound Lite; untested for Amp Pro/Pro/Pro Plus/Amp | Same as Ultra |
+| WiiM Mini | ✅ | ✅ | ❌ | ❌ confirmed | No RoomFit (empty profile list, `EQStat:Off` on band read). The only owned/tested model that exercises the sequential write path (`_write_peq_sequential`/`_write_peq_sequential_lr`) — see the mode-switch tech debt note below |
+| Generic LinkPlay | ❌ (assumed) | ❌ | ❌ | ❌ (assumed) | Untested against real hardware — always probe at runtime regardless |
 
 Band count varies by device/firmware (10 standard, 12 on Amp Ultra 20260409+) — always probe
 dynamically, never hard-code by model name alone; firmware updates can change behavior.
 
 Some firmware supports writing all bands in a single `EQSetLV2Band` payload; sequential fallback via
-`WiiMCommandQueue` covers devices needing single-band writes.
+`WiiMCommandQueue` covers devices needing single-band writes. Confirmed via the GUI Diagnostics
+panel (device owner, 2026-07-04) across all 4 currently-owned devices: only **WiiM Mini** reports
+`supports_batch_write: false` — WiiM Amp Ultra, WiiM Sound, and WiiM Sound Lite all report `true`.
+See `docs/corrections.md`, 2026-07-04.
 
 ---
 

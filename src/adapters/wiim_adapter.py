@@ -366,9 +366,12 @@ class WiiMAdapter:
     ) -> None:
         """Write PEQ bands to the device for a given source.
 
-        Switches the device's channel mode if needed, then writes bands using
-        the batch path (single ``EQSetLV2SourceBand``) when supported, or
-        sequentially via the queue otherwise.
+        Writes bands using the batch path (single ``EQSetLV2SourceBand``) when
+        supported, or sequentially via the queue otherwise. ``channelMode`` is
+        set inline as part of that same write — confirmed the only reliable
+        way to switch it (`docs/wiim_api_notes.md` PEQ "Write" section;
+        `EQSetLV2ChannelMode` is confirmed dead on current firmware, see
+        `docs/corrections.md`, 2026-07-04).
 
         Args:
             source_name: Audio input source (e.g. "wifi", "bluetooth").
@@ -385,10 +388,6 @@ class WiiMAdapter:
             channel_mode_wire = "Stereo"
         else:
             channel_mode_wire = "L/R"
-
-        # Switch device channel mode explicitly before writing bands.
-        # This ensures the device is in the correct mode to receive our data.
-        await self._set_channel_mode(source_name, channel_mode_wire)
 
         if channel_mode_wire == "L/R":
             # L/R mode: write both channels
@@ -445,7 +444,16 @@ class WiiMAdapter:
         channel_mode: str,
         queue: WiiMCommandQueue | None,
     ) -> None:
-        """Write bands one at a time via queue with 100ms inter-command delay."""
+        """Write bands one at a time via queue with 100ms inter-command delay.
+
+        # TODO (low-priority tech debt): when this write changes the source's
+        # channelMode, each call before the last leaves not-yet-sent bands holding
+        # whatever was last stored for this (source_name, channelMode) slot --
+        # confirmed to be stale/unrelated data, not a default template. Narrow
+        # corner case (needs a non-batch device AND a mode switch in the same
+        # write); SafeWrite's read-back verification already catches a wrong end
+        # state. See docs/corrections.md, 2026-07-04.
+        """
         num_bands = self._capabilities.max_filters
         for i in range(num_bands):
             band_params = _flat_array_to_band_params(
@@ -465,24 +473,6 @@ class WiiMAdapter:
             # 100ms delay between sequential band writes
             if i < num_bands - 1:
                 await asyncio.sleep(0.1)
-
-    async def _set_channel_mode(self, source_name: str, channel_mode: str) -> None:
-        """Switch the device's PEQ channel mode for a source.
-
-        Issues EQSetLV2ChannelMode to explicitly set Stereo or L/R before
-        writing bands. This ensures the device accepts band data in the
-        correct format.
-
-        Args:
-            source_name: Audio input source.
-            channel_mode: "Stereo" or "L/R" (wire format).
-        """
-        command = encode_wiim_command(
-            "EQSetLV2ChannelMode",
-            {"channelMode": channel_mode},
-            source_name=source_name,
-        )
-        await self._client.command(command)
 
     async def _write_peq_batch_lr(
         self,
@@ -511,6 +501,9 @@ class WiiMAdapter:
         """Write L/R bands one at a time via queue with 100ms inter-command delay.
 
         Each command writes one band's L+R params together.
+
+        # TODO (low-priority tech debt): same mode-switch corner case as
+        # _write_peq_sequential -- see docs/corrections.md, 2026-07-04.
         """
         num_bands = self._capabilities.max_filters
         for i in range(num_bands):

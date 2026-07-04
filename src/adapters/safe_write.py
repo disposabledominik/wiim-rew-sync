@@ -212,9 +212,8 @@ class SafeWrite:
             current_settings, capabilities, "pre_write"
         )
 
-        # Step 2: Write new settings. If the device's current channel mode
-        # differs from settings.channel_mode, WiiMAdapter.write_peq() switches
-        # the device's mode (via _set_channel_mode) before writing the bands.
+        # Step 2: Write new settings. WiiMAdapter.write_peq() sets channelMode
+        # inline as part of the same EQSetLV2SourceBand write.
         await self._adapter.write_peq(source_name, settings, self._queue)
 
         # Step 3: Read-back (fresh call to device)
@@ -256,6 +255,14 @@ class SafeWrite:
 
         Returns:
             WriteResult with rollback status.
+
+        # TODO (low-priority tech debt): restoring via write_peq() below takes the
+        # same one-band-per-call sequential path as the forward write on non-batch
+        # devices -- it is not a separately-atomic path. If the failed write did
+        # not change channelMode, this rollback write can itself be interrupted
+        # mid-sequence, leaving a third state matching neither the original nor
+        # the attempted write. Narrow corner case (non-batch device AND a mode
+        # switch involved). See docs/corrections.md, 2026-07-04.
         """
         capabilities = self._adapter.capabilities
 

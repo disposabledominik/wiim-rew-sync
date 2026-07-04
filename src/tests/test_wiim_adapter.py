@@ -455,17 +455,15 @@ class TestWritePeqBatch:
     async def test_batch_write_issues_single_command(
         self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """Batch write issues EQSetLV2ChannelMode + one EQSetLV2SourceBand."""
+        """Batch write issues exactly one EQSetLV2SourceBand call."""
         mock_client.command.return_value = "OK"
         settings = self._make_settings()
 
         await batch_adapter.write_peq("wifi", settings)
 
-        # Two calls: channel mode switch + batch write
-        assert mock_client.command.call_count == 2
+        assert mock_client.command.call_count == 1
         calls = [c[0][0] for c in mock_client.command.call_args_list]
-        assert calls[0].startswith("EQSetLV2ChannelMode:")
-        assert calls[1].startswith("EQSetLV2SourceBand:")
+        assert calls[0].startswith("EQSetLV2SourceBand:")
 
     async def test_batch_write_payload_contains_source_and_plugin(
         self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
@@ -561,8 +559,8 @@ class TestWritePeqSequential:
 
         await seq_adapter.write_peq("wifi", settings, queue=None)
 
-        # 1 channel mode switch + 10 band writes = 11 commands
-        assert mock_client.command.call_count == 11
+        # 10 band writes
+        assert mock_client.command.call_count == 10
 
     async def test_sequential_write_commands_contain_single_band(
         self, seq_adapter: WiiMAdapter, mock_client: AsyncMock
@@ -1146,25 +1144,23 @@ class TestWritePeqLRBatch:
 
         await lr_batch_adapter.write_peq("wifi", settings)
 
-        # Two calls: channel mode switch + batch write
-        assert mock_client.command.call_count == 2
-        batch_call = mock_client.command.call_args_list[1][0][0]
+        assert mock_client.command.call_count == 1
+        batch_call = mock_client.command.call_args_list[0][0][0]
         assert "EQSetLV2SourceBand:" in batch_call
         assert "EQBandL" in batch_call
         assert "EQBandR" in batch_call
 
-    async def test_write_peq_lr_calls_set_channel_mode_lr(
+    async def test_write_peq_lr_sets_channel_mode_inline(
         self, lr_batch_adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """Writing L/R mode calls EQSetLV2ChannelMode with 'L/R' before writing bands."""
+        """Writing L/R mode sets channelMode:'L/R' inline on the EQSetLV2SourceBand call."""
         mock_client.command.return_value = "OK"
         settings = self._make_lr_settings()
 
         await lr_batch_adapter.write_peq("wifi", settings)
 
-        first_call = mock_client.command.call_args_list[0][0][0]
-        assert "EQSetLV2ChannelMode:" in first_call
-        assert "L%2FR" in first_call or "L/R" in first_call
+        call = mock_client.command.call_args_list[0][0][0]
+        assert "L%2FR" in call or "L/R" in call
 
 
 # ---------------------------------------------------------------------------
@@ -1222,22 +1218,23 @@ class TestWritePeqLRSequential:
 
         await lr_seq_adapter.write_peq("wifi", settings, queue=None)
 
-        # 1 channel mode switch + 10 band writes = 11 commands
-        assert mock_client.command.call_count == 11
-        # Each band write (calls[1:]) should contain both L and R data
-        for call in mock_client.command.call_args_list[1:]:
+        # 10 band writes
+        assert mock_client.command.call_count == 10
+        # Each band write should contain both L and R data
+        for call in mock_client.command.call_args_list:
             cmd = call[0][0]
             assert "EQBandL" in cmd
             assert "EQBandR" in cmd
 
 
 # ---------------------------------------------------------------------------
-# Tests: _set_channel_mode (hardware testing regression)
+# Tests: EQSetLV2ChannelMode is never issued (confirmed dead command, see
+# docs/corrections.md 2026-07-04 — channelMode is set inline on the write)
 # ---------------------------------------------------------------------------
 
 
-class TestSetChannelMode:
-    """Test that write_peq always sets the channel mode before writing."""
+class TestNoStandaloneChannelModeCommand:
+    """Regression guard: write_peq must never issue EQSetLV2ChannelMode."""
 
     @pytest.fixture
     def batch_capabilities(self) -> DeviceCapabilities:
@@ -1259,10 +1256,10 @@ class TestSetChannelMode:
         """Adapter configured for batch write."""
         return WiiMAdapter(http_client=mock_client, capabilities=batch_capabilities)
 
-    async def test_set_channel_mode_stereo(
+    async def test_stereo_write_does_not_call_channel_mode_command(
         self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """Writing stereo settings sends EQSetLV2ChannelMode with 'Stereo' first."""
+        """Writing stereo settings never issues EQSetLV2ChannelMode."""
         from src.models.canonical import CanonicalFilter
 
         mock_client.command.return_value = "OK"
@@ -1275,14 +1272,13 @@ class TestSetChannelMode:
 
         await batch_adapter.write_peq("wifi", settings)
 
-        first_call = mock_client.command.call_args_list[0][0][0]
-        assert "EQSetLV2ChannelMode:" in first_call
-        assert "Stereo" in first_call
+        calls = [c[0][0] for c in mock_client.command.call_args_list]
+        assert not any("EQSetLV2ChannelMode:" in call for call in calls)
 
-    async def test_set_channel_mode_lr(
+    async def test_lr_write_does_not_call_channel_mode_command(
         self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """Writing L/R settings sends EQSetLV2ChannelMode with 'L/R' first."""
+        """Writing L/R settings never issues EQSetLV2ChannelMode."""
         from src.models.canonical import CanonicalFilter
 
         mock_client.command.return_value = "OK"
@@ -1296,9 +1292,8 @@ class TestSetChannelMode:
 
         await batch_adapter.write_peq("wifi", settings)
 
-        first_call = mock_client.command.call_args_list[0][0][0]
-        assert "EQSetLV2ChannelMode:" in first_call
-        assert "L%2FR" in first_call or "L/R" in first_call
+        calls = [c[0][0] for c in mock_client.command.call_args_list]
+        assert not any("EQSetLV2ChannelMode:" in call for call in calls)
 
 
 # ---------------------------------------------------------------------------
@@ -1616,16 +1611,14 @@ class TestReadPeqPresetPreview:
             unnamed_response,  # read_peq (original, no name)
             "OK",  # load_peq_profile (target)
             preview_response,  # read_peq (preview)
-            "OK",  # _set_channel_mode (restore via write_peq)
             "OK",  # _write_peq_batch (restore via write_peq)
         ]
 
         await adapter.read_peq_preset_preview("wifi", "Preview")
 
         calls = mock_client.command.call_args_list
-        assert len(calls) == 5
-        assert "EQSetLV2ChannelMode:" in calls[3][0][0]
-        assert "EQSetLV2SourceBand:" in calls[4][0][0]
+        assert len(calls) == 4
+        assert "EQSetLV2SourceBand:" in calls[3][0][0]
 
     async def test_restore_failure_is_logged_not_raised(
         self, adapter: WiiMAdapter, mock_client: AsyncMock, caplog: pytest.LogCaptureFixture

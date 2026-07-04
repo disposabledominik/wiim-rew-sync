@@ -202,10 +202,18 @@ Steps 1–2 same as PEQ. Source step is skipped.
 
 ### Design Notes
 
-- Source page shows all common WiiM sources (no reliable API to enumerate physical inputs).
+- Source page shows the device's real enabled inputs via `getAudioInputEnable`
+  (`CapabilityProber._probe_source_names()`), falling back to the common
+  WiiM source list only for devices with no such API (currently WiiM Mini) —
+  see `docs/corrections.md`, 2026-07-03.
 - WiiM Mini is forced to PEQ-only flow even though it accepts RoomFit API commands (no actual hardware support).
 - All async operations run via AsyncBridge (dedicated asyncio thread); GUI remains responsive.
-- RoomFit toggle (enable/disable on device) is not supported via API — users must use WiiM Home app.
+- RoomFit toggle (enable/disable on device) has a confirmed working API
+  (`EQChangeSourceFX`/`EQSourceOff` at `EQLevel:2` with an empty
+  `source_name` — see `docs/wiim_api_notes.md` "RoomFit DSP Toggle —
+  CONFIRMED"), but it is not wired into `WiiMAdapter` or the GUI — this is
+  an intentional product decision (WiiM Home app already covers it), not a
+  technical limitation. See `docs/backlog.md` item 1.
 
 ---
 
