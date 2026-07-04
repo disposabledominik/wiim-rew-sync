@@ -77,11 +77,11 @@ from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetsDeviceView
 from src.gui.views.rew_pull_view import RewPullView
 from src.gui.views.settings_view import SettingsView
-from src.gui.wizard_controller import FlowType, WizardController, WizardStep
+from src.gui.wizard_controller import FlowType, WizardController, WizardState, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
 from src.models.channel_mode import ChannelMode
-from src.models.constants import DEFAULT_MAX_BANDS
+from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE_NAMES
 from src.models.errors import (
     ParseError,
     REWNotConnectedError,
@@ -136,6 +136,11 @@ _PAGE_KEY_TO_STEP: dict[str, WizardStep] = {v: k for k, v in _STEP_TO_PAGE_KEY.i
 _SIDEBAR_DESTINATION_KEYS: frozenset[str] = frozenset(
     {"presets_device", "my_presets", "settings", "rew_api"}
 )
+
+# Canonical EQ_TYPE step summary wording, used by every entry point that
+# completes this step (normal flow, sidebar jump, QuickSetupDialog) so they
+# never drift independently again (#162).
+_EQ_TYPE_SUMMARY: dict[str, str] = {"peq": "PEQ", "roomfit": "RoomFit"}
 
 
 def _crash_handler(
@@ -229,6 +234,10 @@ class MainWindow(QMainWindow):
         self._safe_write: SafeWrite | None = None
         self._roomfit_safe_write: RoomFitSafeWrite | None = None
         self._device_caps: object | None = None
+        # Set by _do_populate_name_profiles from get_roomfit_status() (#165) --
+        # whether RoomFit is currently on, gating the overwrite-active-profile
+        # confirmation in _on_name_confirmed.
+        self._roomfit_enabled: bool = False
         # Bumped on every device selection; lets a stale/superseded capability
         # probe (e.g. user selects a second device before the first probe
         # resolves) detect that it's no longer current and avoid corrupting
@@ -752,12 +761,26 @@ class MainWindow(QMainWindow):
         state.selected_source = ""
         state.current_filters = []
         state.last_pushed_filters = []
+        # A stale "what current_filters came from" string from the previous
+        # device must not linger into this one (#162d).
+        state.filters_origin = ""
+        # A stale "RoomFit is active" flag from the previous device must not
+        # linger either -- it gates the overwrite-active-profile confirmation
+        # in _on_name_confirmed, and a leftover True from device A would let
+        # device B's overwrite proceed without warning if reached before
+        # _do_populate_name_profiles() re-fetches device B's real status.
+        self._roomfit_enabled = False
         # Clear completed steps beyond CONNECT
         state.completed_steps.pop(WizardStep.EQ_TYPE, None)
         state.completed_steps.pop(WizardStep.SOURCE, None)
         state.completed_steps.pop(WizardStep.FILTERS, None)
         state.completed_steps.pop(WizardStep.REVIEW, None)
         state.completed_steps.pop(WizardStep.PUSH, None)
+        state.completed_step_tooltips.pop(WizardStep.EQ_TYPE, None)
+        state.completed_step_tooltips.pop(WizardStep.SOURCE, None)
+        state.completed_step_tooltips.pop(WizardStep.FILTERS, None)
+        state.completed_step_tooltips.pop(WizardStep.REVIEW, None)
+        state.completed_step_tooltips.pop(WizardStep.PUSH, None)
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
         self._wiim_http_client = WiiMHttpClient(device_ip)
@@ -789,6 +812,62 @@ class MainWindow(QMainWindow):
         )
         logger.debug("Discovery refresh requested")
 
+    # ------------------------------------------------------------------
+    # Step-summary helpers -- shared by every entry point that completes a
+    # wizard step (normal flow, sidebar jump, QuickSetupDialog), so the same
+    # step always shows the same wording regardless of path (#162).
+    # ------------------------------------------------------------------
+
+    def _resolve_connect_summary(self) -> str:
+        """Friendly device name for the Connect step -- same on every entry point."""
+        caps = self._device_caps
+        device_name = getattr(caps, "model", "") or "WiiM Device"
+        selected_ip = self._wizard_controller.state.selected_device
+        for d in self._discovered_devices:
+            if d.ip == selected_ip:
+                device_name = d.name
+                break
+        return device_name
+
+    def _compute_source_summary(self, source_name: str) -> tuple[str, str]:
+        """(summary, tooltip) for the Sources step -- same on every entry point.
+
+        Single source -> its name, no tooltip. All available sources ->
+        "All sources", with a tooltip listing them. Otherwise -> "N sources"
+        with a tooltip listing them.
+        """
+        sources = [s.strip() for s in source_name.split(",") if s.strip()]
+        if not sources:
+            return "", ""
+        available = list(getattr(self._device_caps, "source_names", []) or [])
+        if len(sources) == 1:
+            return sources[0], ""
+        if available and set(sources) == set(available):
+            return "All sources", ", ".join(sources)
+        return f"{len(sources)} sources", ", ".join(sources)
+
+    def _apply_source_summary(self, state: WizardState, source_name: str) -> None:
+        """Set completed_steps[SOURCE] + its tooltip together, out of the
+        normal advance() flow -- used by the two out-of-sequence completion
+        paths (sidebar jump, QuickSetupDialog) where SOURCE isn't
+        necessarily the step currently being transitioned through. Dict
+        writes only, no signal emission -- both callers already replay-emit
+        every completed step's summary+tooltip once they're done.
+        """
+        summary, tooltip = self._compute_source_summary(source_name)
+        state.completed_steps[WizardStep.SOURCE] = summary
+        state.completed_step_tooltips[WizardStep.SOURCE] = tooltip
+
+    def _resolve_filters_summary(self, n_filters: int) -> str:
+        """Standardize on the most informative existing wording everywhere.
+
+        0 -> "Loaded" (no count to show); 1 -> "1 filter" (singular);
+        N -> "N filters".
+        """
+        if not n_filters:
+            return "Loaded"
+        return f"{n_filters} filter" if n_filters == 1 else f"{n_filters} filters"
+
     @Slot(str)
     def _on_eq_type_selected(self, eq_type: str) -> None:
         """Handle EQ type selection — set flow type and advance.
@@ -807,7 +886,7 @@ class MainWindow(QMainWindow):
                 self._bridge_wrapper("list_roomfit", self._do_list_roomfit_profiles())
             )
 
-        self._wizard_controller.advance(summary=eq_type.upper())
+        self._wizard_controller.advance(summary=_EQ_TYPE_SUMMARY[eq_type])
 
     @Slot(str, str)
     def _on_source_selected(self, source_name: str, channel_mode: str) -> None:
@@ -821,18 +900,15 @@ class MainWindow(QMainWindow):
         state.selected_source = source_name
         state.channel_mode = ChannelMode.from_any(channel_mode)
 
-        # Build summary label showing selected source(s)
-        sources = [s.strip() for s in source_name.split(",") if s.strip()]
-        if len(sources) == 1:
-            summary = sources[0]
-        else:
-            summary = f"{len(sources)} sources"
-        self._wizard_controller.advance(summary=summary)
+        summary, tooltip = self._compute_source_summary(source_name)
+        self._wizard_controller.advance(summary=summary, tooltip=tooltip)
 
     @Slot()
     def _on_filters_accepted(self) -> None:
         """Handle user accepting filters (with or without warnings) — advance."""
-        self._wizard_controller.advance(summary="Filters loaded")
+        state = self._wizard_controller.state
+        summary = self._resolve_filters_summary(len(state.current_filters))
+        self._wizard_controller.advance(summary=summary, tooltip=state.filters_origin)
 
     @Slot(str)
     def _on_file_import_requested(self, path: str) -> None:
@@ -1013,9 +1089,25 @@ class MainWindow(QMainWindow):
     def _on_name_confirmed(self, name: str) -> None:
         """Handle RoomFit profile name confirmation — store, advance, and push.
 
+        Confirms with the user before overwriting the currently-active RoomFit
+        profile (#165) -- `Name` persists as "last selected" even when RoomFit
+        is off, so this only warns when overwriting would actually affect
+        live audio (RoomFit enabled AND the chosen name matches the active one).
+
         Args:
             name: The profile name chosen by the user.
         """
+        if (
+            self._roomfit_enabled
+            and name == self._name_profile_page.active_profile
+            and not self._confirm_action(
+                "Overwrite Active Profile",
+                f"'{name}' is currently active on your device. Overwriting it will "
+                "deactivate RoomFit until you reselect a profile in the WiiM Home app. "
+                "Continue?",
+            )
+        ):
+            return
         self._wizard_controller.state.roomfit_profile_name = name
         self._wizard_controller.advance(summary=name)
         # Now execute the actual push (deferred from _on_push_requested)
@@ -1227,11 +1319,12 @@ class MainWindow(QMainWindow):
         labels = [step.value.replace("_", " ").title() for step in sequence]
         self._step_indicator.set_steps(labels)
 
-        # Replay completed step summaries (rebuilding wiped them)
+        # Replay completed step summaries + tooltips (rebuilding wiped them)
+        tooltips = self._wizard_controller.state.completed_step_tooltips
         for step, summary in self._wizard_controller.completed_steps.items():
             if step in sequence:
                 index = sequence.index(step)
-                self._step_indicator.set_completed(index, summary)
+                self._step_indicator.set_completed(index, summary, tooltips.get(step, ""))
 
         # Re-apply current step highlighting
         current = self._wizard_controller.current_step
@@ -1252,13 +1345,14 @@ class MainWindow(QMainWindow):
         self._step_indicator.set_steps(labels)
         self._step_indicator.set_current(0)
 
-    @Slot(object, str)
-    def _on_step_summary_updated(self, step: object, summary: str) -> None:
-        """Handle step summary update — show summary on StepIndicator.
+    @Slot(object, str, str)
+    def _on_step_summary_updated(self, step: object, summary: str, tooltip: str = "") -> None:
+        """Handle step summary update — show summary + tooltip on StepIndicator.
 
         Args:
             step: The WizardStep whose summary changed.
             summary: The summary text to display.
+            tooltip: Optional longer text shown on hover.
         """
         if not isinstance(step, WizardStep):
             return
@@ -1266,7 +1360,7 @@ class MainWindow(QMainWindow):
         sequence = self._wizard_controller.get_steps()
         if step in sequence:
             index = sequence.index(step)
-            self._step_indicator.set_completed(index, summary)
+            self._step_indicator.set_completed(index, summary, tooltip)
 
     # ------------------------------------------------------------------
     # AsyncBridge → Page update handlers
@@ -1330,24 +1424,16 @@ class MainWindow(QMainWindow):
         )
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)
 
-        # Source names: WiiM API has no reliable source enumeration endpoint.
-        # getStatusEx may or may not include InputList (see corrections.md 2026-06-12).
-        # The PEQ engine accepts ANY source name, so showing extra sources is harmless —
-        # the user just picks which input to apply EQ to.
-        # Source names are model-dependent (see docs/wiim_api_notes.md):
-        #   Mini: wifi, bluetooth, line-in
-        #   Pro/Pro Plus/Amp/Ultra: wifi, bluetooth, line-in, optical, HDMI
-        #   Sound/Sound Lite: wifi, bluetooth, auxIn (NOT line-in)
-        # We show a superset; extras just sit unused in device PEQ slots.
+        # Source names: resolved once, centrally, in merge_into() (#167) --
+        # real enumeration via getAudioInputEnable where the device supports
+        # it, falling back to DEFAULT_SOURCE_NAMES otherwise. caps.source_names
+        # is guaranteed non-empty by the time probe()/merge_into() returns.
         source_names = getattr(caps, "source_names", [])
-        if not source_names:
-            source_names = ["wifi", "bluetooth", "line-in", "auxIn", "optical", "HDMI"]
-            logger.info(
-                "Device reported no source_names; showing all known WiiM sources"
-            )
 
-        # Store capabilities for later use (smoke #35, #36)
+        # Store capabilities for later use (smoke #35, #36) -- set before
+        # _resolve_connect_summary() below, which reads self._device_caps.
         self._device_caps = caps
+        device_name = self._resolve_connect_summary()
 
         # Determine flow type and advance wizard
         # Guard: some devices may incorrectly report roomfit_level >= 2 due to
@@ -1366,19 +1452,12 @@ class MainWindow(QMainWindow):
                     roomfit_level,
                 )
             self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
-            self._wizard_controller.advance(summary="Connected")
+            self._wizard_controller.advance(summary=device_name)
         else:
             # Device supports RoomFit — show EQ_TYPE choice (Req 1.9)
-            self._wizard_controller.advance(summary="Connected")
+            self._wizard_controller.advance(summary=device_name)
 
         # Update sidebar with device info
-        device_name = getattr(caps, "model", "") or "WiiM Device"
-        # Try to get the friendly name from discovered devices list
-        selected_ip = self._wizard_controller.state.selected_device
-        for d in self._discovered_devices:
-            if d.ip == selected_ip:
-                device_name = d.name
-                break
         self._sidebar_nav.set_device_info(device_name, connected=True)
 
         # Populate SourcePage with available sources
@@ -1430,10 +1509,11 @@ class MainWindow(QMainWindow):
             max_filters = DEFAULT_MAX_BANDS
             supported_filter_types: list[str] | None = None
             if self._device_caps is not None:
-                max_filters = (
-                    getattr(self._device_caps, "max_filters", DEFAULT_MAX_BANDS)
-                    or DEFAULT_MAX_BANDS
-                )
+                # merge_into() (#167c) guarantees max_filters is always a valid
+                # positive int once capabilities are resolved -- no "or
+                # DEFAULT_MAX_BANDS" fallback needed here; that used to be a
+                # second, independently-drifting copy of the same default.
+                max_filters = getattr(self._device_caps, "max_filters", DEFAULT_MAX_BANDS)
                 supported_filter_types = (
                     getattr(self._device_caps, "supported_filter_types", None) or None
                 )
@@ -1551,16 +1631,22 @@ class MainWindow(QMainWindow):
                 state.current_step = WizardStep.REVIEW
                 # Mark all prior steps as completed for step indicator
                 self._mark_prior_steps_completed(state)
-                # Emit step summaries for the step indicator
+                # Emit step summaries + tooltips for the step indicator
+                tooltips = state.completed_step_tooltips
                 for step, summary in state.completed_steps.items():
-                    self._wizard_controller.step_summary_updated.emit(step, summary)
+                    self._wizard_controller.step_summary_updated.emit(
+                        step, summary, tooltips.get(step, "")
+                    )
                 # Switching the page fires currentChanged, which
                 # _sync_navigation_chrome handles centrally (step pill
                 # highlight + undim, sidebar reset to "home") — no manual
                 # sync needed here.
                 self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
             else:
-                self._wizard_controller.advance(summary=f"{validated_count} filters")
+                self._wizard_controller.advance(
+                    summary=self._resolve_filters_summary(validated_count),
+                    tooltip=state.filters_origin,
+                )
 
             # Show warnings or success in status banner
             if all_warnings:
@@ -1620,8 +1706,7 @@ class MainWindow(QMainWindow):
                 self._wizard_controller.state.current_filters
             )
             # Mark PUSH step as completed in the step indicator
-            self._wizard_controller.state.completed_steps[WizardStep.PUSH] = "Done"
-            self._wizard_controller.step_summary_updated.emit(WizardStep.PUSH, "Done")
+            self._wizard_controller.set_step_summary(WizardStep.PUSH, "Done")
             # Hide Undo for RoomFit when writing a NEW profile (no backup to restore)
             if self._wizard_controller.flow_type == FlowType.ROOMFIT and not backup_path:
                 self._push_page._undo_button.setVisible(False)
@@ -1757,7 +1842,10 @@ class MainWindow(QMainWindow):
             self._bridge.run_async(
                 self._bridge_wrapper(
                     "rew_filters_lr",
-                    self._do_rew_get_filters_lr(measurement_l.uuid, measurement_r.uuid),
+                    self._do_rew_get_filters_lr(
+                        measurement_l.uuid, measurement_r.uuid,
+                        measurement_l.name, measurement_r.name,
+                    ),
                 )
             )
             logger.info(
@@ -1769,7 +1857,8 @@ class MainWindow(QMainWindow):
             measurement = result
             self._bridge.run_async(
                 self._bridge_wrapper(
-                    "rew_filters", self._do_rew_get_filters(measurement.uuid)
+                    "rew_filters",
+                    self._do_rew_get_filters(measurement.uuid, measurement.name),
                 )
             )
             logger.info("REW measurement selected: %s", measurement.name)
@@ -2050,6 +2139,9 @@ class MainWindow(QMainWindow):
         self._wizard_controller.state.channel_mode = ChannelMode.STEREO
         self._wizard_controller.state.pending_rows = rows
         self._wizard_controller.state.pending_conversion_notes = notes
+        self._wizard_controller.state.filters_origin = (
+            f"Imported from REW file: {file_path.name}"
+        )
 
         # Notify FiltersPage of success via peq_ready signal
         self._bridge.peq_ready.emit(filters)
@@ -2085,6 +2177,9 @@ class MainWindow(QMainWindow):
         self._wizard_controller.state.pending_rows_r = rows_r
         self._wizard_controller.state.pending_conversion_notes_l = notes_l
         self._wizard_controller.state.pending_conversion_notes_r = notes_r
+        self._wizard_controller.state.filters_origin = (
+            f"Imported from REW files: L={Path(path_l).name}, R={Path(path_r).name}"
+        )
 
         # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
         peq_data = PEQSettings(
@@ -2119,6 +2214,9 @@ class MainWindow(QMainWindow):
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.device_filters = filters
+        self._wizard_controller.state.filters_origin = (
+            f"Pulled from device (source: {source_name})"
+        )
 
         # Emit result signal
         self._bridge.peq_ready.emit(peq_settings)
@@ -2135,7 +2233,7 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
         source_name = self._wizard_controller.state.selected_source or "wifi"
 
-        peq_settings = await self._wiim_adapter.read_roomfit(
+        peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
             source_name, profile_name
         )
 
@@ -2145,6 +2243,7 @@ class MainWindow(QMainWindow):
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.device_filters = filters
+        self._wizard_controller.state.filters_origin = f"RoomFit profile: {profile_name}"
 
         # Emit result signal (triggers _on_peq_ready -> Review page)
         self._bridge.peq_ready.emit(peq_settings)
@@ -2152,9 +2251,12 @@ class MainWindow(QMainWindow):
     async def _do_load_peq_preset(self, preset_name: str) -> None:
         """Load a named PEQ preset from device and emit peq_ready.
 
-        Loads the preset via EQv2SourceLoad then reads the resulting bands.
-        Sets channel_mode in wizard state from the device response to avoid
-        stale L/R state from a previous load (smoke #111).
+        Loads the preset via EQv2SourceLoad then reads the resulting bands,
+        then restores the source's original active preset (#166) -- the
+        confirmation dialog in _on_preset_load_into_editor already warned the
+        user this briefly changes what's playing. Sets channel_mode in wizard
+        state from the device response to avoid stale L/R state from a
+        previous load (smoke #111).
 
         Args:
             preset_name: Name of the PEQ preset to load.
@@ -2162,11 +2264,9 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
         source_name = self._wizard_controller.state.selected_source or "wifi"
 
-        # Load the preset onto the current source
-        await self._wiim_adapter.load_peq_profile(source_name, preset_name)
-
-        # Read back the resulting PEQ state
-        peq_settings = await self._wiim_adapter.read_peq(source_name)
+        peq_settings = await self._wiim_adapter.read_peq_preset_preview(
+            source_name, preset_name
+        )
 
         # Determine channel_mode from the device data and update wizard state
         peq_channel = getattr(peq_settings, "channel_mode", None)
@@ -2181,6 +2281,7 @@ class MainWindow(QMainWindow):
         # Store in wizard state
         self._wizard_controller.state.current_filters = filters
         self._wizard_controller.state.device_filters = filters
+        self._wizard_controller.state.filters_origin = f"PEQ preset: {preset_name}"
 
         # Emit result signal
         self._bridge.peq_ready.emit(peq_settings)
@@ -2208,17 +2309,18 @@ class MainWindow(QMainWindow):
 
         source_name = self._wizard_controller.state.selected_source or "wifi"
 
-        # Step 1: Read filters from current device
+        # Step 1: Read filters from current device (previewing + restoring --
+        # the confirmation dialog in _on_copy_to_device_requested already
+        # warned the user this briefly changes what's playing, see #166)
         if preset_type == "RoomFit":
-            peq_settings = await self._wiim_adapter.read_roomfit(
+            peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
                 source_name, preset_name
             )
-            filters, channel_mode = extract_filters(peq_settings)
         else:
-            # Load PEQ preset, then read
-            await self._wiim_adapter.load_peq_profile(source_name, preset_name)
-            peq_settings = await self._wiim_adapter.read_peq(source_name)
-            filters, channel_mode = extract_filters(peq_settings)
+            peq_settings = await self._wiim_adapter.read_peq_preset_preview(
+                source_name, preset_name
+            )
+        filters, channel_mode = extract_filters(peq_settings)
 
         if not filters:
             self._status_banner.show_error(
@@ -2433,12 +2535,17 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
         source_name = self._wizard_controller.state.selected_source or "wifi"
 
-        # Read preset filters from device
+        # Read preset filters from device (previewing + restoring -- the
+        # confirmation dialog in _on_preset_export_requested already warned
+        # the user this briefly changes what's playing, see #166)
         if preset_type == "RoomFit":
-            peq_settings = await self._wiim_adapter.read_roomfit(source_name, preset_name)
+            peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
+                source_name, preset_name
+            )
         else:
-            await self._wiim_adapter.load_peq_profile(source_name, preset_name)
-            peq_settings = await self._wiim_adapter.read_peq(source_name)
+            peq_settings = await self._wiim_adapter.read_peq_preset_preview(
+                source_name, preset_name
+            )
 
         from src.translator.rew_generator import REWGenerator
 
@@ -2507,14 +2614,17 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
         source_name = self._wizard_controller.state.selected_source or "wifi"
 
-        # Read preset filters from device
+        # Read preset filters from device (previewing + restoring -- the
+        # confirmation dialog in _on_preset_save_requested already warned the
+        # user this briefly changes what's playing, see #166)
         if preset_type == "RoomFit":
-            peq_settings = await self._wiim_adapter.read_roomfit(
+            peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
                 source_name, preset_name
             )
         else:
-            await self._wiim_adapter.load_peq_profile(source_name, preset_name)
-            peq_settings = await self._wiim_adapter.read_peq(source_name)
+            peq_settings = await self._wiim_adapter.read_peq_preset_preview(
+                source_name, preset_name
+            )
 
         # Determine channel mode and filter list
         filters, channel_mode = extract_filters(peq_settings)
@@ -2558,7 +2668,7 @@ class MainWindow(QMainWindow):
         # Emit measurement list for the picker dialog
         self._bridge.rew_measurements_ready.emit(measurements)
 
-    async def _do_rew_get_filters(self, uuid: str) -> None:
+    async def _do_rew_get_filters(self, uuid: str, measurement_name: str = "") -> None:
         """Fetch filters for a specific REW measurement.
 
         Calls REWHttpApiClient.get_filters(uuid), stores in wizard state,
@@ -2566,6 +2676,9 @@ class MainWindow(QMainWindow):
 
         Args:
             uuid: The measurement UUID selected by the user.
+            measurement_name: Display name of the measurement, for the
+                Filters step tooltip (#162d) -- referenced by UUID for the
+                actual fetch since names aren't stable identifiers.
         """
         filters, rows, notes = await self._rew_client.get_filters_with_rows(uuid)
 
@@ -2574,11 +2687,20 @@ class MainWindow(QMainWindow):
         self._wizard_controller.state.channel_mode = ChannelMode.STEREO
         self._wizard_controller.state.pending_rows = rows
         self._wizard_controller.state.pending_conversion_notes = notes
+        self._wizard_controller.state.filters_origin = (
+            f"Pulled from REW measurement: {measurement_name}"
+        )
 
         # Emit result signal
         self._bridge.rew_filters_ready.emit(filters)
 
-    async def _do_rew_get_filters_lr(self, uuid_l: str, uuid_r: str) -> None:
+    async def _do_rew_get_filters_lr(
+        self,
+        uuid_l: str,
+        uuid_r: str,
+        measurement_name_l: str = "",
+        measurement_name_r: str = "",
+    ) -> None:
         """Fetch filters for Left and Right REW measurements.
 
         Calls get_filters for each UUID, combines into L+R format,
@@ -2587,6 +2709,9 @@ class MainWindow(QMainWindow):
         Args:
             uuid_l: UUID of the Left channel measurement.
             uuid_r: UUID of the Right channel measurement.
+            measurement_name_l: Display name of the Left measurement, for
+                the Filters step tooltip (#162d).
+            measurement_name_r: Display name of the Right measurement.
         """
         from src.translator._warnings import SkippedBand
 
@@ -2601,6 +2726,9 @@ class MainWindow(QMainWindow):
         self._wizard_controller.state.pending_rows_r = rows_r
         self._wizard_controller.state.pending_conversion_notes_l = notes_l
         self._wizard_controller.state.pending_conversion_notes_r = notes_r
+        self._wizard_controller.state.filters_origin = (
+            f"Pulled from REW measurements: L={measurement_name_l}, R={measurement_name_r}"
+        )
 
         # Emit peq_ready with a PEQSettings carrying L/R bands
         peq_data = PEQSettings(
@@ -2845,12 +2973,22 @@ class MainWindow(QMainWindow):
             if self._wiim_adapter.capabilities.roomfit_level >= 1:
                 profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
                 profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
-                # TODO: detect active profile name (not currently available from API)
-                self._name_profile_page.set_existing_profiles(profile_names, "")
+                try:
+                    self._roomfit_enabled, active_profile = (
+                        await self._wiim_adapter.get_roomfit_status()
+                    )
+                except Exception:
+                    self._roomfit_enabled, active_profile = False, ""
+                    logger.warning(
+                        "Failed to read RoomFit active-profile status", exc_info=True
+                    )
+                self._name_profile_page.set_existing_profiles(profile_names, active_profile)
             else:
+                self._roomfit_enabled = False
                 self._name_profile_page.set_existing_profiles([])
         except Exception:
             logger.warning("Failed to list RoomFit profiles for naming", exc_info=True)
+            self._roomfit_enabled = False
             self._name_profile_page.set_existing_profiles([])
 
     async def _do_list_roomfit_profiles(self) -> None:
@@ -2888,7 +3026,15 @@ class MainWindow(QMainWindow):
                     )
                     for p in peq_presets
                 ]
-                self._presets_device_view.set_peq_presets(peq_items)
+                # A failed active-name read just means no highlight, not a
+                # failed view (#165c) -- read_peq() is a plain, harmless read,
+                # unlike load_peq_profile()/EQv2SourceLoad.
+                active_peq_name = ""
+                try:
+                    active_peq_name = (await self._wiim_adapter.read_peq(source_name)).name
+                except Exception:
+                    logger.warning("Failed to read active PEQ preset name", exc_info=True)
+                self._presets_device_view.set_peq_presets(peq_items, active_peq_name)
             else:
                 self._presets_device_view.set_peq_unavailable()
         except Exception:
@@ -2907,7 +3053,14 @@ class MainWindow(QMainWindow):
                     )
                     for p in rf_profiles
                 ]
-                self._presets_device_view.set_roomfit_profiles(rf_items)
+                active_roomfit_name = ""
+                try:
+                    _enabled, active_roomfit_name = await self._wiim_adapter.get_roomfit_status()
+                except Exception:
+                    logger.warning(
+                        "Failed to read active RoomFit profile name", exc_info=True
+                    )
+                self._presets_device_view.set_roomfit_profiles(rf_items, active_roomfit_name)
             else:
                 self._presets_device_view.set_roomfit_hidden()
         except Exception:
@@ -3516,6 +3669,9 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
+        if not self._confirm_preset_preview(items):
+            return
+
         # Get current device IP to exclude from picker
         state = self._wizard_controller.state
         current_ip = state.selected_device or ""
@@ -3648,6 +3804,9 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
+        if not self._confirm_preset_preview(items):
+            return
+
         item = items[0]
         preset_name = getattr(item, "name", "")
         preset_type = getattr(item, "preset_type", "PEQ")
@@ -3705,6 +3864,9 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
+        if not self._confirm_preset_preview(items):
+            return
+
         item = items[0]
         preset_name = getattr(item, "name", "")
         preset_type = getattr(item, "preset_type", "PEQ")
@@ -3734,6 +3896,9 @@ class MainWindow(QMainWindow):
         if not name:
             return
 
+        if not self._confirm_preset_preview([item]):
+            return
+
         if self._wiim_adapter is None:
             self._status_banner.show_error("No device connected")
             return
@@ -3756,6 +3921,41 @@ class MainWindow(QMainWindow):
             )
         logger.info("Preset load into editor: %s (type=%s)", name, preset_type)
 
+    def _format_preset_names(self, items: list[Any]) -> str:
+        """Bullet-list "Name (Type)" for each item, shared by every preset
+        confirmation dialog (delete, preview-activation)."""
+        return "\n".join(
+            f"• {getattr(i, 'name', '')} ({getattr(i, 'preset_type', 'PEQ')})"
+            for i in items
+        )
+
+    def _confirm_action(self, title: str, message: str) -> bool:
+        """Shared Yes/No confirmation dialog, default button No."""
+        from PySide6.QtWidgets import QMessageBox
+
+        reply = QMessageBox.question(
+            self, title, message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _confirm_preset_preview(self, items: list[Any]) -> bool:
+        """Warn that reading these PEQ presets' filters will briefly change what's
+        playing on the device (#166). RoomFit items are excluded -- RoomFit's
+        API working buffer is decoupled from its DSP on/off state, per
+        docs/wiim_api_notes.md, so there's no audible effect to consent to.
+        """
+        peq_items = [i for i in items if getattr(i, "preset_type", "PEQ") != "RoomFit"]
+        if not peq_items:
+            return True
+        return self._confirm_action(
+            "Preset Will Briefly Activate on Device",
+            "Reading the filters for the following will temporarily switch your "
+            "device's current input to that preset, then restore what was "
+            f"playing:\n\n{self._format_preset_names(peq_items)}\n\nContinue?",
+        )
+
     @Slot(list)
     def _on_preset_delete_requested(self, items: list[Any]) -> None:
         """Handle PresetsDeviceView "Delete" for selected items.
@@ -3769,21 +3969,11 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
-        from PySide6.QtWidgets import QMessageBox
-
-        names = "\n".join(
-            f"• {getattr(i, 'name', '')} ({getattr(i, 'preset_type', 'PEQ')})"
-            for i in items
-        )
-        reply = QMessageBox.question(
-            self,
+        if not self._confirm_action(
             "Delete Preset(s)",
-            f"Permanently delete the following from the device?\n\n{names}\n\n"
-            "This cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            f"Permanently delete the following from the device?\n\n"
+            f"{self._format_preset_names(items)}\n\nThis cannot be undone.",
+        ):
             return
 
         self._bridge.run_async(
@@ -3793,8 +3983,10 @@ class MainWindow(QMainWindow):
 
     # --- Outbound handlers (workflow manager → UI updates) ---
 
-    @Slot(list)
-    def _on_profile_recalled(self, filters: list[CanonicalFilter]) -> None:
+    @Slot(list, str)
+    def _on_profile_recalled(
+        self, filters: list[CanonicalFilter], profile_name: str = ""
+    ) -> None:
         """Handle profile recall — populate ReviewPage and navigate.
 
         Loads the recalled filters into the wizard state and ReviewPage,
@@ -3805,6 +3997,9 @@ class MainWindow(QMainWindow):
 
         Args:
             filters: List of CanonicalFilter objects from the recalled profile.
+            profile_name: Name of the recalled profile, for the Filters step
+                tooltip (#162d). Defaults to "" so direct callers passing
+                only filters (e.g. existing tests) stay compatible.
         """
         if not filters:
             self._status_banner.show_error("Profile contains no filters")
@@ -3813,6 +4008,8 @@ class MainWindow(QMainWindow):
         # Store filters in wizard state
         state = self._wizard_controller.state
         state.current_filters = filters
+        if profile_name:
+            state.filters_origin = f"My Presets: {profile_name}"
 
         # Populate ReviewPage with the recalled filters (L/R aware)
         channel = state.channel_mode
@@ -3838,9 +4035,12 @@ class MainWindow(QMainWindow):
         # undim, sidebar reset to "home") — no manual sync needed here.
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
 
-        # Emit step summaries for the step indicator (smoke #87)
+        # Emit step summaries + tooltips for the step indicator (smoke #87)
+        tooltips = state.completed_step_tooltips
         for step, summary in state.completed_steps.items():
-            self._wizard_controller.step_summary_updated.emit(step, summary)
+            self._wizard_controller.step_summary_updated.emit(
+                step, summary, tooltips.get(step, "")
+            )
 
         self._status_banner.show_success(
             f"Profile loaded: {active_bands} bands ready for review"
@@ -3928,11 +4128,13 @@ class MainWindow(QMainWindow):
 
         # Show dialog — source list and RoomFit support come from the
         # connected device's (capability-file-merged) capabilities; fall back
-        # to the generic list only when no device/capabilities are available.
+        # to the shared generic list (#167b) only when no device/capabilities
+        # are available yet (e.g. loading a My Presets profile before ever
+        # connecting) -- not a third, independently-drifting UI-widget scrape.
         device_caps = self._device_caps
-        available_sources = list(getattr(device_caps, "source_names", []) or [])
-        if not available_sources:
-            available_sources = list(self._source_page._source_checkboxes.keys())
+        available_sources = list(
+            getattr(device_caps, "source_names", []) or DEFAULT_SOURCE_NAMES
+        )
         supports_roomfit = bool(getattr(device_caps, "supports_roomfit", True))
 
         current_eq_type = "roomfit" if flow_type == FlowType.ROOMFIT else "peq"
@@ -3959,21 +4161,21 @@ class MainWindow(QMainWindow):
 
         # Apply EQ type to wizard state
         if need_eq_type:
-            if eq_type == "roomfit":
-                self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
-                state.completed_steps[WizardStep.EQ_TYPE] = "RoomFit"
-            else:
-                self._wizard_controller.set_flow_type(FlowType.PEQ)
-                state.completed_steps[WizardStep.EQ_TYPE] = "PEQ"
+            self._wizard_controller.set_flow_type(
+                FlowType.ROOMFIT if eq_type == "roomfit" else FlowType.PEQ
+            )
 
         # Apply source to wizard state (PEQ only)
-        current_flow = self._wizard_controller.flow_type
-        if current_flow != FlowType.ROOMFIT and sources:
+        if self._wizard_controller.flow_type != FlowType.ROOMFIT and sources:
             state.selected_source = ",".join(sources)
-            state.completed_steps[WizardStep.SOURCE] = ",".join(sources)
 
-        # Mark FILTERS as completed (we're loading filters from sidebar)
-        state.completed_steps[WizardStep.FILTERS] = "Loaded from preset"
+        # Delegate to the single shared function that marks CONNECT/EQ_TYPE/
+        # SOURCE/FILTERS completed consistently, instead of reimplementing
+        # that logic a third time with its own literals (#162) -- EQ_TYPE and
+        # SOURCE are genuinely missing from completed_steps at this point
+        # (that's why the dialog was shown), so this sets them for the first
+        # time rather than skipping them via the "already completed" guard.
+        self._mark_prior_steps_completed(state)
 
         return True
 
@@ -3982,36 +4184,41 @@ class MainWindow(QMainWindow):
 
         Called when all info is already present so the step indicator shows
         proper checkmarks when navigating to Review from sidebar.
-        """
-        from src.gui.wizard_controller import WizardState
 
+        The guard ("only set if not already completed") is right for
+        CONNECT/EQ_TYPE/SOURCE, which represent sticky prior decisions that
+        genuinely shouldn't change just because this function runs again --
+        but wrong for FILTERS, which represents "what's loaded right now"
+        and must always reflect current reality. Without recomputing FILTERS
+        unconditionally, a repeat "Load into Editor" after the first would
+        keep showing the count from whatever was loaded the first time
+        (#162d) -- this function runs once before a sidebar load dispatches
+        (stale data) and once after it completes (correct data); nothing
+        repaints between those two calls, so recomputing both times is safe.
+        """
         assert isinstance(state, WizardState)
         flow_type = self._wizard_controller.flow_type
 
         # CONNECT step — always mark if device is selected
         if WizardStep.CONNECT not in state.completed_steps and state.selected_device:
-            state.completed_steps[WizardStep.CONNECT] = "Connected"
+            state.completed_steps[WizardStep.CONNECT] = self._resolve_connect_summary()
 
         # EQ_TYPE step — only exists in PEQ and ROOMFIT flows (not PEQ_ONLY)
         if flow_type == FlowType.PEQ and WizardStep.EQ_TYPE not in state.completed_steps:
-            state.completed_steps[WizardStep.EQ_TYPE] = "PEQ"
+            state.completed_steps[WizardStep.EQ_TYPE] = _EQ_TYPE_SUMMARY["peq"]
         elif flow_type == FlowType.ROOMFIT and WizardStep.EQ_TYPE not in state.completed_steps:
-            state.completed_steps[WizardStep.EQ_TYPE] = "RoomFit"
+            state.completed_steps[WizardStep.EQ_TYPE] = _EQ_TYPE_SUMMARY["roomfit"]
 
         # SOURCE step — only needed for PEQ/PEQ_ONLY flows (not ROOMFIT)
         if flow_type != FlowType.ROOMFIT and WizardStep.SOURCE not in state.completed_steps:
             source = state.selected_source or "wifi"
-            if not source:
-                source = "wifi"
             state.selected_source = source
-            state.completed_steps[WizardStep.SOURCE] = source
+            self._apply_source_summary(state, source)
 
-        # FILTERS step
-        if WizardStep.FILTERS not in state.completed_steps:
-            n_filters = len(state.current_filters)
-            state.completed_steps[WizardStep.FILTERS] = (
-                f"{n_filters} filters" if n_filters else "Loaded"
-            )
+        # FILTERS step — always recompute, see docstring above.
+        n_filters = len(state.current_filters)
+        state.completed_steps[WizardStep.FILTERS] = self._resolve_filters_summary(n_filters)
+        state.completed_step_tooltips[WizardStep.FILTERS] = state.filters_origin
 
     # ------------------------------------------------------------------
     # Close Event

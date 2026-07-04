@@ -141,6 +141,20 @@ code, actively guard against both:
   un-awaited coroutine triggers a "never awaited" `RuntimeWarning` only when garbage collected,
   which is often during an unrelated *later* test. Also explicitly `.close()` any window/dialog the
   test opens, so it doesn't stay alive past the test.
+- **Any blocking modal (`QMessageBox`, a custom `QDialog.exec()`) will hang a test run until a
+  human clicks it if a test path reaches it unmocked.** `QMessageBox.question/warning/critical/
+  information` are auto-answered for every test by an autouse fixture
+  ([conftest.py:62](src/tests/conftest.py:62), same pattern as `_suppress_unsaved_changes_dialog`
+  right above it) — you don't need to mock these yourself unless a test cares about a specific
+  answer (the No/decline branch, or asserting the dialog was/wasn't shown), in which case patch
+  `PySide6.QtWidgets.QMessageBox.<method>` locally; it layers correctly over the fixture's default.
+  **Custom `QDialog` subclasses are not covered by that fixture** (`QuickSetupDialog`,
+  `DevicePickerDialog`, `MeasurementPickerDialog`, pickers, etc.) — each must still be mocked
+  individually at its own static factory method (e.g. `QuickSetupDialog.get_setup`) in any test
+  whose code path reaches it. If you add a new modal dialog and a test starts hanging (or a real
+  window pops up during `pytest`), this is almost always the cause — extend the autouse fixture for
+  a new `QMessageBox` method, or add the per-test static-method mock for a new custom dialog; don't
+  work around it by clicking through it manually.
 
 ## Steering docs
 

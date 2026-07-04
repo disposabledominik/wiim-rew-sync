@@ -34,8 +34,6 @@ from src.gui.constants import (
     SPACING_SM,
 )
 
-_FALLBACK_SOURCES: list[str] = ["wifi", "bluetooth", "line-in", "optical", "HDMI", "auxIn"]
-
 
 class QuickSetupDialog(QDialog):
     """Modal dialog that collects missing wizard state before loading filters.
@@ -67,8 +65,9 @@ class QuickSetupDialog(QDialog):
                 When False, the Source section is shown pre-set to
                 `current_sources` but disabled.
             available_sources: Source names to offer, from the connected
-                device's capabilities. Falls back to a generic list when no
-                device/capabilities are available.
+                device's (capability-file-merged) capabilities -- resolved
+                and guaranteed non-empty by merge_into() (#167b). Callers
+                should never need to pass a generic fallback list here.
             current_eq_type: The already-fixed EQ type ('peq'/'roomfit'),
                 used to pre-select the section when `need_eq_type` is False.
             current_sources: The already-fixed source selection, used to
@@ -84,7 +83,7 @@ class QuickSetupDialog(QDialog):
 
         self._need_eq_type = need_eq_type
         self._need_source = need_source
-        self._available_sources = available_sources or _FALLBACK_SOURCES
+        self._available_sources = available_sources or []
         self._supports_roomfit = supports_roomfit
 
         self._eq_type: str = current_eq_type if current_eq_type == "roomfit" else "peq"

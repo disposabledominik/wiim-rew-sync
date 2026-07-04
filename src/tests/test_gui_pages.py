@@ -478,3 +478,51 @@ class TestNameProfilePage:
 
         page._name_input.setText("New Name")
         assert not page._warning_label.isVisible()
+
+    def test_active_profile_property(self, qtbot) -> None:
+        """active_profile reflects the last value passed to set_existing_profiles."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+
+        assert page.active_profile == ""
+
+        page.set_existing_profiles(["Default", "Night"], active_profile="Night")
+        assert page.active_profile == "Night"
+
+        page.set_existing_profiles(["Default"], active_profile="")
+        assert page.active_profile == ""
+
+    def test_active_item_has_label_and_styling(self, qtbot) -> None:
+        """The active profile's list item gets a "(active)" label, bold font,
+        and accent foreground color; non-active items get neither (#165a)."""
+        from PySide6.QtGui import QColor
+
+        from src.gui.constants import ACCENT_COLOR
+
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+
+        page.set_existing_profiles(["Default", "Night"], active_profile="Night")
+
+        default_item = page._profiles_list.item(0)
+        night_item = page._profiles_list.item(1)
+
+        assert default_item.text() == "Default"
+        assert not default_item.font().bold()
+
+        assert night_item.text() == "Night (active)"
+        assert night_item.font().bold()
+        assert night_item.foreground().color() == QColor(ACCENT_COLOR)
+        assert night_item.toolTip() == "Currently active on this device"
+
+    def test_no_active_profile_no_item_styled(self, qtbot) -> None:
+        """When active_profile is "" (or matches nothing), no item is styled."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+
+        page.set_existing_profiles(["Default", "Night"], active_profile="")
+
+        for i in range(page._profiles_list.count()):
+            item = page._profiles_list.item(i)
+            assert not item.text().endswith("(active)")
+            assert not item.font().bold()

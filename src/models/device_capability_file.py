@@ -11,12 +11,13 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
 from src.models.capabilities import DeviceCapabilities
-from src.models.constants import DEFAULT_MAX_BANDS
+from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE_NAMES
 from src.utils.app_dirs import get_app_data_dir
 
 logger = logging.getLogger("wiim_rew_sync.app")
@@ -85,16 +86,26 @@ def ensure_user_capability_file() -> Path:
     return user_path
 
 
-def load_capability_file(path: Path) -> dict[str, CapabilityFileEntry]:
+@dataclass
+class LoadedCapabilityFile:
+    """The result of loading the device capability file: per-model overrides
+    plus the optional global default-max-bands override (#167c)."""
+
+    entries: dict[str, CapabilityFileEntry]
+    default_max_bands: int
+
+
+def load_capability_file(path: Path) -> LoadedCapabilityFile:
     """Load and validate the device capability file.
 
     Malformed entries are logged and skipped rather than raising -- a bad
     file degrades to "no overrides" (full generic probed behaviour) for the
     affected model(s), never a crash, per the Uncertainty Protocol
-    (.kiro/steering/rules.md #18).
+    (.kiro/steering/rules.md #18). The same applies to `default_max_bands`:
+    missing or invalid values degrade to the built-in `DEFAULT_MAX_BANDS`.
     """
     if not path.exists():
-        return {}
+        return LoadedCapabilityFile(entries={}, default_max_bands=DEFAULT_MAX_BANDS)
 
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -102,14 +113,14 @@ def load_capability_file(path: Path) -> dict[str, CapabilityFileEntry]:
         logger.warning(
             "Failed to read device capability file %s (%s); ignoring.", path, exc
         )
-        return {}
+        return LoadedCapabilityFile(entries={}, default_max_bands=DEFAULT_MAX_BANDS)
 
     models = raw.get("models", {}) if isinstance(raw, dict) else {}
     if not isinstance(models, dict):
         logger.warning(
             "Device capability file %s has no 'models' object; ignoring.", path
         )
-        return {}
+        models = {}
 
     entries: dict[str, CapabilityFileEntry] = {}
     for model_key, model_data in models.items():
@@ -122,7 +133,25 @@ def load_capability_file(path: Path) -> dict[str, CapabilityFileEntry]:
                 path,
                 exc,
             )
-    return entries
+
+    default_max_bands = (
+        raw.get("default_max_bands", DEFAULT_MAX_BANDS)
+        if isinstance(raw, dict)
+        else DEFAULT_MAX_BANDS
+    )
+    is_valid = (
+        isinstance(default_max_bands, int)
+        and not isinstance(default_max_bands, bool)
+        and default_max_bands > 0
+    )
+    if not is_valid:
+        if default_max_bands != DEFAULT_MAX_BANDS:
+            logger.warning(
+                "Invalid default_max_bands in %s; using built-in default.", path
+            )
+        default_max_bands = DEFAULT_MAX_BANDS
+
+    return LoadedCapabilityFile(entries=entries, default_max_bands=default_max_bands)
 
 
 def _normalize_model(value: str) -> str:
@@ -154,15 +183,19 @@ def find_entry(
 
 
 def merge_into(
-    capabilities: DeviceCapabilities, entry: CapabilityFileEntry | None
+    capabilities: DeviceCapabilities,
+    entry: CapabilityFileEntry | None,
+    default_max_bands: int = DEFAULT_MAX_BANDS,
 ) -> DeviceCapabilities:
     """Apply capability-file overrides onto probed capabilities, returning it.
 
     Fields absent from `entry` (or when `entry` is None) keep their probed
-    value. `max_filters` gets the 10-band default cap (Requirement 7) unless
-    the entry states a `max_bands` for this model -- which acts as a ceiling
-    on the probed count, never raising it past physical reality (see the
-    note above `min(entry.max_bands, capabilities.max_filters)` below).
+    value. `max_filters` gets the `default_max_bands` cap (Requirement 7,
+    optionally overridden file-wide via the capability file's
+    `"default_max_bands"` key, #167c) unless the entry states a `max_bands`
+    for this model -- which acts as a ceiling on the probed count, never
+    raising it past physical reality (see the note above
+    `min(entry.max_bands, capabilities.max_filters)` below).
     """
     if entry is not None:
         if entry.supports_roomfit is not None:
@@ -186,6 +219,26 @@ def merge_into(
         if entry.source_aliases is not None:
             capabilities.source_aliases = entry.source_aliases
 
+    # Re-enforce the roomfit_level ladder invariant (0 -> no RoomFit at all,
+    # 1 -> supports_roomfit, 2 -> +read, 4 -> +write) after applying overrides
+    # above, since a capability-file entry can set supports_roomfit/_read/_write
+    # independently of roomfit_level -- without this, e.g. supports_roomfit=False
+    # alone would leave whatever roomfit_level the runtime probe found, and the
+    # flow-type gate (which only inspects roomfit_level) would still activate
+    # RoomFit despite the override.
+    if not capabilities.supports_roomfit:
+        capabilities.roomfit_level = 0
+    elif not capabilities.supports_roomfit_read:
+        capabilities.roomfit_level = min(capabilities.roomfit_level, 1)
+    elif not capabilities.supports_roomfit_write:
+        capabilities.roomfit_level = min(capabilities.roomfit_level, 3)
+
+    # Fall back to the generic source list (#167b) when neither the runtime
+    # probe (getAudioInputEnable) nor a capability-file `sources` override
+    # produced anything -- e.g. WiiM Mini, which supports neither.
+    if not capabilities.source_names:
+        capabilities.source_names = list(DEFAULT_SOURCE_NAMES)
+
     if not capabilities.supports_peq:
         return capabilities
 
@@ -198,24 +251,24 @@ def merge_into(
         # firmware and 12 on firmware 20260409+ -- see docs/corrections.md).
         capabilities.max_filters = min(entry.max_bands, capabilities.max_filters)
     else:
-        capabilities.max_filters = min(capabilities.max_filters, DEFAULT_MAX_BANDS)
+        capabilities.max_filters = min(capabilities.max_filters, default_max_bands)
 
     return capabilities
 
 
-_cached_entries: dict[str, CapabilityFileEntry] | None = None
+_cached_capability_file: LoadedCapabilityFile | None = None
 
 
-def get_cached_entries(force_reload: bool = False) -> dict[str, CapabilityFileEntry]:
-    """Return the process-wide cached capability-file entries.
+def get_cached_capability_file(force_reload: bool = False) -> LoadedCapabilityFile:
+    """Return the process-wide cached capability file (entries + default_max_bands).
 
     Loaded once (seeding the user copy from the bundled default on first
     access) and cached for the lifetime of the process -- restarting the app
     is what picks up manual edits, matching the existing `AppSettings`
     load-once-at-startup convention.
     """
-    global _cached_entries
-    if _cached_entries is None or force_reload:
+    global _cached_capability_file
+    if _cached_capability_file is None or force_reload:
         path = ensure_user_capability_file()
-        _cached_entries = load_capability_file(path)
-    return _cached_entries
+        _cached_capability_file = load_capability_file(path)
+    return _cached_capability_file

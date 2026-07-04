@@ -528,3 +528,122 @@ class TestREWPullBusyGuard:
         window._on_rew_api_pull_requested()
 
         window._bridge.run_async.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# filters_origin — what current_filters currently came from (#162d)
+# ---------------------------------------------------------------------------
+
+
+class TestFiltersOrigin:
+    """Each producer of current_filters sets state.filters_origin so the
+    Filters step tooltip can show what's actually loaded."""
+
+    @pytest.mark.asyncio
+    async def test_file_import_sets_origin_to_basename(self, window) -> None:
+        filters = [_make_filter(100.0)]
+        with patch(
+            "src.translator.rew_parser.REWParser.parse_file_with_rows",
+            return_value=(filters, [], list(filters), {}),
+        ):
+            await window._do_file_import("/fake/path/my_eq.txt")
+
+        assert window._wizard_controller.state.filters_origin == (
+            "Imported from REW file: my_eq.txt"
+        )
+
+    @pytest.mark.asyncio
+    async def test_file_import_lr_sets_origin_with_both_basenames(self, window) -> None:
+        filters = [_make_filter(100.0)]
+        with patch(
+            "src.translator.rew_parser.REWParser.parse_file_with_rows",
+            return_value=(filters, [], list(filters), {}),
+        ):
+            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+
+        assert window._wizard_controller.state.filters_origin == (
+            "Imported from REW files: L=left.txt, R=right.txt"
+        )
+
+    @pytest.mark.asyncio
+    async def test_device_pull_sets_origin_with_source(self, window) -> None:
+        peq_settings = PEQSettings(
+            source_name="wifi", enabled=True, channel_mode="stereo",
+            bands=[_make_filter(100.0)],
+        )
+        mock_adapter = AsyncMock()
+        mock_adapter.read_peq = AsyncMock(return_value=peq_settings)
+        window._wiim_adapter = mock_adapter
+        window._wizard_controller.state.selected_source = "wifi"
+
+        await window._do_device_pull()
+
+        assert window._wizard_controller.state.filters_origin == (
+            "Pulled from device (source: wifi)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_roomfit_pull_sets_origin_with_profile_name(self, window) -> None:
+        peq_settings = PEQSettings(
+            source_name="wifi", enabled=True, channel_mode="stereo",
+            bands=[_make_filter(100.0)],
+        )
+        mock_adapter = AsyncMock()
+        mock_adapter.read_roomfit_preset_preview = AsyncMock(return_value=peq_settings)
+        window._wiim_adapter = mock_adapter
+        window._wizard_controller.state.selected_source = "wifi"
+
+        await window._do_roomfit_pull("Living Room")
+
+        assert window._wizard_controller.state.filters_origin == (
+            "RoomFit profile: Living Room"
+        )
+
+    @pytest.mark.asyncio
+    async def test_load_peq_preset_sets_origin_with_preset_name(self, window) -> None:
+        peq_settings = PEQSettings(
+            source_name="wifi", enabled=True, channel_mode="stereo",
+            bands=[_make_filter(100.0)],
+        )
+        mock_adapter = AsyncMock()
+        mock_adapter.read_peq_preset_preview = AsyncMock(return_value=peq_settings)
+        window._wiim_adapter = mock_adapter
+        window._wizard_controller.state.selected_source = "wifi"
+
+        await window._do_load_peq_preset("Movie Night")
+
+        assert window._wizard_controller.state.filters_origin == (
+            "PEQ preset: Movie Night"
+        )
+
+    @pytest.mark.asyncio
+    async def test_rew_get_filters_sets_origin_with_measurement_name(self, window) -> None:
+        filters = [_make_filter(100.0)]
+        mock_client = AsyncMock()
+        mock_client.get_filters_with_rows = AsyncMock(
+            return_value=(filters, list(filters), {})
+        )
+        window._rew_client = mock_client
+
+        await window._do_rew_get_filters("uuid-123", "Main Seat")
+
+        assert window._wizard_controller.state.filters_origin == (
+            "Pulled from REW measurement: Main Seat"
+        )
+
+    @pytest.mark.asyncio
+    async def test_rew_get_filters_lr_sets_origin_with_both_names(self, window) -> None:
+        filters = [_make_filter(100.0)]
+        mock_client = AsyncMock()
+        mock_client.get_filters_with_rows = AsyncMock(
+            return_value=(filters, list(filters), {})
+        )
+        window._rew_client = mock_client
+
+        await window._do_rew_get_filters_lr(
+            "uuid-left", "uuid-right", "Left Seat", "Right Seat"
+        )
+
+        assert window._wizard_controller.state.filters_origin == (
+            "Pulled from REW measurements: L=Left Seat, R=Right Seat"
+        )

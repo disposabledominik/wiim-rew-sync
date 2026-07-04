@@ -56,12 +56,14 @@ class SecondaryWorkflowManager(QObject):
     connects to for UI updates (StatusBanner messages, dialogs, etc.).
 
     Signals:
-        profile_recalled(list): List of CanonicalFilter loaded from a profile.
+        profile_recalled(list, str): List of CanonicalFilter loaded from a
+            profile, and the profile's name (for the Filters step tooltip,
+            #162d).
         undo_complete(bool, str): Success flag and message after undo.
     """
 
     # --- Signals ---
-    profile_recalled = Signal(list)
+    profile_recalled = Signal(list, str)
     undo_complete = Signal(bool, str)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -167,7 +169,7 @@ class SecondaryWorkflowManager(QObject):
                 "Profile recall: profile '%s' has no filters",
                 profile_name,
             )
-            self.profile_recalled.emit([])
+            self.profile_recalled.emit([], profile_name)
             return
 
         logger.info(
@@ -176,7 +178,7 @@ class SecondaryWorkflowManager(QObject):
             profile_name,
             channel_mode,
         )
-        self.profile_recalled.emit(filters)
+        self.profile_recalled.emit(filters, profile_name)
 
     def _store_lr_state(
         self, filters_l: list[CanonicalFilter], filters_r: list[CanonicalFilter]

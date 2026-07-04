@@ -76,6 +76,16 @@ class WizardState:
     dry_run: bool = False
     last_backup_path: str = ""
     completed_steps: dict[WizardStep, str] = field(default_factory=dict)
+    # Optional longer text shown on hover for a completed step's summary
+    # (e.g. the full source list behind an "N sources" summary, or what the
+    # loaded filters came from) -- keyed the same as completed_steps, but a
+    # step may be present in one dict without the other (empty tooltip).
+    completed_step_tooltips: dict[WizardStep, str] = field(default_factory=dict)
+    # Persists across producer swaps describing *what current_filters
+    # currently is* (unlike pending_rows/pending_conversion_notes below,
+    # which are transient and reset per-load) -- set by whichever producer
+    # populates current_filters, shown as the Filters step's tooltip (#162d).
+    filters_origin: str = ""
 
     @property
     def filters(self) -> list[CanonicalFilter]:
@@ -137,7 +147,7 @@ class WizardController(QObject):
     step_changed = Signal(object)  # WizardStep
     flow_type_changed = Signal(object)  # FlowType
     wizard_reset = Signal()
-    step_summary_updated = Signal(object, str)  # (WizardStep, summary_text)
+    step_summary_updated = Signal(object, str, str)  # (WizardStep, summary_text, tooltip)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -175,12 +185,25 @@ class WizardController(QObject):
         """Return the step sequence for the current flow type."""
         return steps_for_flow(self._state.flow_type)
 
-    def advance(self, summary: str = "") -> None:
+    def set_step_summary(self, step: WizardStep, summary: str, tooltip: str = "") -> None:
+        """Set one step's summary + tooltip directly and emit immediately,
+        without transitioning ``current_step``.
+
+        This is the shared primitive ``advance()`` uses internally for the
+        current step; it's also used directly for out-of-band single-step
+        updates that aren't a forward transition (e.g. marking PUSH done,
+        where there's no next step to advance to).
+        """
+        self._state.completed_steps[step] = summary
+        self._state.completed_step_tooltips[step] = tooltip
+        self.step_summary_updated.emit(step, summary, tooltip)
+
+    def advance(self, summary: str = "", tooltip: str = "") -> None:
         """Move to the next step in the current flow sequence.
 
-        Adds the current step to the completed set with the given summary,
-        then advances to the immediately next step.  Emits ``step_changed``
-        and ``step_summary_updated``.
+        Adds the current step to the completed set with the given summary
+        (and optional tooltip), then advances to the immediately next step.
+        Emits ``step_changed`` and ``step_summary_updated``.
 
         Does nothing if the current step is the final step in the sequence.
         """
@@ -192,8 +215,7 @@ class WizardController(QObject):
             return
 
         # Mark current step as completed
-        self._state.completed_steps[self._state.current_step] = summary
-        self.step_summary_updated.emit(self._state.current_step, summary)
+        self.set_step_summary(self._state.current_step, summary, tooltip)
 
         # Move to next step
         next_step = sequence[current_idx + 1]

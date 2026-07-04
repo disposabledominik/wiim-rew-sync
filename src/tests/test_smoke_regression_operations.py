@@ -192,6 +192,12 @@ class TestPushWriteOperations:
                 channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
             )
         )
+        # _do_copy_preset_to_device now reads via read_peq_preset_preview (#166)
+        source_adapter.read_peq_preset_preview = AsyncMock(
+            return_value=MagicMock(
+                channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
+            )
+        )
 
         items = [MagicMock()]
         items[0].name = "LR Preset"
@@ -265,6 +271,137 @@ class TestPushWriteOperations:
 
         assert state.roomfit_profile_name == "My RoomFit Profile"
         window._bridge.run_async.assert_called_once()
+
+    # --- Issue #165: overwrite-active-profile confirmation ---
+
+    def test_165_name_confirmed_no_dialog_when_roomfit_disabled(self, window) -> None:
+        """No confirm dialog when RoomFit is off, even if the name matches
+        the page's active_profile (overwriting an inactive selection has no
+        live-audio consequence)."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+        window._roomfit_enabled = False
+        window._name_profile_page.set_existing_profiles(["Living Room"], "Living Room")
+
+        with (
+            patch.object(window._wizard_controller, "advance"),
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question"
+            ) as mock_question,
+        ):
+            window._on_name_confirmed("Living Room")
+
+        mock_question.assert_not_called()
+        assert state.roomfit_profile_name == "Living Room"
+        window._bridge.run_async.assert_called_once()
+
+    def test_165_name_confirmed_no_dialog_when_name_not_active(self, window) -> None:
+        """No confirm dialog when RoomFit is on but the chosen name isn't the
+        currently-active profile."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+        window._roomfit_enabled = True
+        window._name_profile_page.set_existing_profiles(["Living Room"], "Living Room")
+
+        with (
+            patch.object(window._wizard_controller, "advance"),
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question"
+            ) as mock_question,
+        ):
+            window._on_name_confirmed("New Profile")
+
+        mock_question.assert_not_called()
+        window._bridge.run_async.assert_called_once()
+
+    def test_165_name_confirmed_dialog_shown_when_overwriting_active(self, window) -> None:
+        """Confirm dialog appears when RoomFit is on and the name matches the
+        active profile; declining aborts the push."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+        window._roomfit_enabled = True
+        window._name_profile_page.set_existing_profiles(["Living Room"], "Living Room")
+
+        with (
+            patch.object(window._wizard_controller, "advance") as mock_adv,
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ) as mock_question,
+        ):
+            window._on_name_confirmed("Living Room")
+
+        mock_question.assert_called_once()
+        mock_adv.assert_not_called()
+        window._bridge.run_async.assert_not_called()
+
+    def test_165_name_confirmed_proceeds_on_yes(self, window) -> None:
+        """Accepting the overwrite-active-profile confirmation proceeds with push."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+        window._roomfit_enabled = True
+        window._name_profile_page.set_existing_profiles(["Living Room"], "Living Room")
+
+        with (
+            patch.object(window._wizard_controller, "advance"),
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+        ):
+            window._on_name_confirmed("Living Room")
+
+        assert state.roomfit_profile_name == "Living Room"
+        window._bridge.run_async.assert_called_once()
+
+    def test_165_populate_name_profiles_sets_active_and_enabled(self, window) -> None:
+        """_do_populate_name_profiles fetches roomfit status and applies it."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.roomfit_level = 3
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room"}, {"Name": "Office"}]
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
+
+        asyncio.run(window._do_populate_name_profiles())
+
+        assert window._roomfit_enabled is True
+        assert window._name_profile_page.active_profile == "Living Room"
+
+    def test_165_populate_name_profiles_degrades_gracefully_on_status_failure(
+        self, window
+    ) -> None:
+        """A failed get_roomfit_status() call degrades to disabled/no-active-name
+        rather than failing the whole profile list population."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.roomfit_level = 3
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room"}]
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(side_effect=RuntimeError("boom"))
+
+        asyncio.run(window._do_populate_name_profiles())
+
+        assert window._roomfit_enabled is False
+        assert window._name_profile_page.active_profile == ""
+        # The profile list itself is still populated despite the status failure.
+        assert window._name_profile_page._profiles_list.count() == 1
 
     # --- Issue #63: write_roomfit accepts channel_mode parameter ---
 
@@ -525,6 +662,12 @@ class TestImportExport:
                 channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
             )
         )
+        # _do_preset_export now reads via read_peq_preset_preview (#166)
+        mock_adapter.read_peq_preset_preview = AsyncMock(
+            return_value=MagicMock(
+                channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
+            )
+        )
 
         item = PresetItem(name="Movie Night", channel_mode="L/R", preset_type="PEQ")
         path_l = tmp_path / "Movie Night_L.txt"
@@ -536,6 +679,10 @@ class TestImportExport:
             asyncio.run(coro)
 
         with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
             patch(
                 "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
                 return_value=(path_l, path_r),
@@ -726,6 +873,72 @@ class TestPresets:
         mock_adapter.list_peq_profiles.assert_called_once()
         mock_adapter.list_roomfit_profiles.assert_called_once()
 
+    # --- Issue #165c: active preset/profile highlight in Presets on Device ---
+
+    def test_165c_do_list_presets_passes_active_names(self, window) -> None:
+        """_do_list_presets fetches the active PEQ name via read_peq and the
+        active RoomFit name via get_roomfit_status, passing both through."""
+        import asyncio
+
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(
+            return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
+        )
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi", channel_mode=ChannelMode.STEREO, name="Movie Night"
+            )
+        )
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
+
+        with patch.object(
+            window._presets_device_view, "set_peq_presets"
+        ) as mock_set_peq, patch.object(
+            window._presets_device_view, "set_roomfit_profiles"
+        ) as mock_set_roomfit:
+            asyncio.run(window._do_list_presets())
+
+        mock_set_peq.assert_called_once()
+        assert mock_set_peq.call_args[0][1] == "Movie Night"
+        mock_set_roomfit.assert_called_once()
+        assert mock_set_roomfit.call_args[0][1] == "Living Room"
+
+    def test_165c_do_list_presets_degrades_gracefully_on_active_name_failure(
+        self, window
+    ) -> None:
+        """A failed active-name read doesn't fail the whole preset list --
+        it just means no highlight for that section."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(
+            return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
+        )
+        mock_adapter.read_peq = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with patch.object(
+            window._presets_device_view, "set_peq_presets"
+        ) as mock_set_peq, patch.object(
+            window._presets_device_view, "set_roomfit_profiles"
+        ) as mock_set_roomfit:
+            asyncio.run(window._do_list_presets())
+
+        # Still populated with the real items, just no active-name highlight.
+        assert len(mock_set_peq.call_args[0][0]) == 1
+        assert mock_set_peq.call_args[0][1] == ""
+        assert len(mock_set_roomfit.call_args[0][0]) == 1
+        assert mock_set_roomfit.call_args[0][1] == ""
+
     # --- Issue #23: _on_eq_type_selected("roomfit") triggers async fetch ---
 
     def test_issue23_eq_type_roomfit_triggers_profile_fetch(self, window) -> None:
@@ -760,6 +973,10 @@ class TestPresets:
 
         with (
             patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch(
                 "src.gui.main_window.QFileDialog.getSaveFileName",
                 return_value=("/tmp/movie-night.txt", ""),
             ),
@@ -782,6 +999,10 @@ class TestPresets:
         item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
 
         with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
             patch.object(window, "_do_preset_save", return_value=object()) as mock_save_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
             patch.object(
@@ -800,6 +1021,10 @@ class TestPresets:
         item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
 
         with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
             patch.object(window, "_ensure_wizard_state_for_load", return_value=True),
             patch.object(
                 window, "_do_load_peq_preset", return_value=object()
@@ -836,6 +1061,86 @@ class TestPresets:
         view._roomfit_list.setCurrentRow(0)
         assert len(view._roomfit_list.selectedItems()) == 1
         assert view._peq_list.selectedItems() == []
+
+    # --- Issue #166: preset preview actions briefly activate live audio ---
+
+    def test_166_confirm_preview_no_dialog_for_roomfit_only(self, window) -> None:
+        """A RoomFit-only selection shows no confirmation -- reading a RoomFit
+        profile's buffer has no live-audio consequence to consent to."""
+        items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
+
+        with patch("PySide6.QtWidgets.QMessageBox.question") as mock_question:
+            result = window._confirm_preset_preview(items)
+
+        mock_question.assert_not_called()
+        assert result is True
+
+    def test_166_confirm_preview_dialog_for_peq_only(self, window) -> None:
+        """A PEQ-only selection shows the confirmation, naming the item."""
+        items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
+
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as mock_question:
+            result = window._confirm_preset_preview(items)
+
+        mock_question.assert_called_once()
+        message = mock_question.call_args[0][2]
+        assert "Movie Night" in message
+        assert result is True
+
+    def test_166_confirm_preview_mixed_selection_names_only_peq_items(self, window) -> None:
+        """A mixed PEQ+RoomFit selection shows the dialog, naming only the
+        PEQ items (RoomFit items have nothing to consent to)."""
+        items = [
+            PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit"),
+        ]
+
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as mock_question:
+            window._confirm_preset_preview(items)
+
+        message = mock_question.call_args[0][2]
+        assert "Movie Night" in message
+        assert "Living Room" not in message
+
+    def test_166_confirm_preview_declined_returns_false(self, window) -> None:
+        """Declining the confirmation returns False."""
+        items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
+
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            result = window._confirm_preset_preview(items)
+
+        assert result is False
+
+    def test_166_copy_to_device_declined_skips_device_picker(self, window) -> None:
+        """Declining the preview confirmation aborts before the device picker
+        or any run_async call for _on_copy_to_device_requested."""
+        _setup_device(window)
+        window._discovered_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
+        items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
+
+        with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ),
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices"
+            ) as mock_picker,
+            patch.object(window._bridge, "run_async") as mock_run,
+        ):
+            window._on_copy_to_device_requested(items)
+
+        mock_picker.assert_not_called()
+        mock_run.assert_not_called()
 
     # --- Issue #156: Delete from Presets on Device ---
 
@@ -1590,6 +1895,10 @@ class TestSettingsUIState:
         source_adapter.read_peq = AsyncMock(
             return_value=MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
         )
+        # _do_copy_preset_to_device now reads via read_peq_preset_preview (#166)
+        source_adapter.read_peq_preset_preview = AsyncMock(
+            return_value=MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
+        )
 
         with (
             patch("src.gui.main_window.WiiMHttpClient"),
@@ -1708,6 +2017,8 @@ class TestSettingsUIState:
         )
         source_adapter.load_peq_profile = AsyncMock()
         source_adapter.read_peq = AsyncMock(return_value=peq_settings)
+        # _do_copy_preset_to_device now reads via read_peq_preset_preview (#166)
+        source_adapter.read_peq_preset_preview = AsyncMock(return_value=peq_settings)
 
         with (
             patch("src.gui.main_window.WiiMHttpClient") as mock_client_cls,
@@ -1776,6 +2087,12 @@ class TestSettingsUIState:
                 channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
             )
         )
+        # _do_copy_preset_to_device now reads via read_peq_preset_preview (#166)
+        source_adapter.read_peq_preset_preview = AsyncMock(
+            return_value=MagicMock(
+                channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
+            )
+        )
 
         with (
             patch("src.gui.main_window.WiiMHttpClient"),
@@ -1823,6 +2140,8 @@ class TestSettingsUIState:
         peq_settings = MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
         source_adapter.load_peq_profile = AsyncMock()
         source_adapter.read_peq = AsyncMock(return_value=peq_settings)
+        # _do_copy_preset_to_device now reads via the preview methods (#166)
+        source_adapter.read_peq_preset_preview = AsyncMock(return_value=peq_settings)
 
         roomfit_settings = MagicMock(
             channel_mode="lr",
@@ -1831,6 +2150,7 @@ class TestSettingsUIState:
             bands_r=[_make_filter(200)],
         )
         source_adapter.read_roomfit = AsyncMock(return_value=roomfit_settings)
+        source_adapter.read_roomfit_preset_preview = AsyncMock(return_value=roomfit_settings)
         window._wizard_controller.state.filters_l = list(roomfit_settings.bands_l)
         window._wizard_controller.state.filters_r = list(roomfit_settings.bands_r)
 
@@ -2250,6 +2570,8 @@ class TestSettingsUIState:
         peq_settings.bands_r = [_make_filter(200)]
         peq_settings.bands = []
         mock_adapter.read_roomfit = AsyncMock(return_value=peq_settings)
+        # _do_copy_preset_to_device now reads via read_roomfit_preset_preview (#166)
+        mock_adapter.read_roomfit_preset_preview = AsyncMock(return_value=peq_settings)
 
         # Mock the target device connection
         with (

@@ -129,6 +129,91 @@ class TestPresetsDeviceViewSections:
 
         assert not view._roomfit_section.isVisible()
 
+    def test_set_roomfit_profiles_reshows_hidden_section(self, qtbot) -> None:
+        """set_roomfit_profiles() re-shows the section after set_roomfit_hidden()
+        (#168) -- previously it stayed hidden for the rest of the session after
+        connecting to a non-RoomFit device, even once a RoomFit-capable device
+        connected afterward."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_roomfit_hidden()
+        assert not view._roomfit_section.isVisible()
+
+        view.set_roomfit_profiles(_make_roomfit_profiles())
+        assert view._roomfit_section.isVisible()
+
+
+class TestPresetsDeviceViewActiveHighlight:
+    """Tests for the #165c active-preset/profile highlight."""
+
+    def test_active_peq_item_has_label_and_styling(self, qtbot) -> None:
+        """The active PEQ preset's item gets a "(active)" label, bold font,
+        and accent foreground; other items get neither."""
+        from PySide6.QtGui import QColor
+
+        from src.gui.constants import ACCENT_COLOR
+
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        presets = _make_peq_presets(2)
+        view.set_peq_presets(presets, active_name="PEQ Preset 2")
+
+        item1 = view._peq_list.item(0)
+        item2 = view._peq_list.item(1)
+
+        assert "(active)" not in item1.text()
+        assert not item1.font().bold()
+
+        assert item2.text().startswith("PEQ Preset 2")
+        assert "(active)" in item2.text()
+        assert item2.font().bold()
+        assert item2.foreground().color() == QColor(ACCENT_COLOR)
+        assert item2.toolTip() == "Currently active on this device"
+
+    def test_active_roomfit_item_has_label_and_styling(self, qtbot) -> None:
+        """Same active-item convention applies to the RoomFit list."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        profiles = _make_roomfit_profiles(2)
+        view.set_roomfit_profiles(profiles, active_name="RoomFit Profile 1")
+
+        item1 = view._roomfit_list.item(0)
+        item2 = view._roomfit_list.item(1)
+
+        assert "(active)" in item1.text()
+        assert item1.font().bold()
+        assert "(active)" not in item2.text()
+        assert not item2.font().bold()
+
+    def test_no_active_name_no_item_styled(self, qtbot) -> None:
+        """An empty active_name (default) styles nothing."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(_make_peq_presets(3))
+
+        for i in range(view._peq_list.count()):
+            item = view._peq_list.item(i)
+            assert "(active)" not in item.text()
+            assert not item.font().bold()
+
+    def test_active_name_matching_nothing_styles_nothing(self, qtbot) -> None:
+        """An active_name that doesn't match any item styles nothing (e.g. the
+        active preset was deleted from the device since the last refresh)."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(_make_peq_presets(2), active_name="Deleted Preset")
+
+        for i in range(view._peq_list.count()):
+            item = view._peq_list.item(i)
+            assert "(active)" not in item.text()
+            assert not item.font().bold()
+
 
 class TestPresetsDeviceViewSearch:
     """Tests for search field visibility and filtering."""

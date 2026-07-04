@@ -81,11 +81,22 @@ is restored, while a brand-new profile that failed verification is deleted
 instead (there's no prior version to go back to). Either way you end up back
 where you started, and the failure is reported clearly.
 
-## RoomFit Toggle
+## RoomFit Activation
 
-Enabling or disabling RoomFit on the device is not supported via the API.
-Use the WiiM Home app to activate or deactivate RoomFit profiles for
-playback.
+This app doesn't include a manual RoomFit on/off switch — use the WiiM Home
+app for that. RoomFit does activate automatically as a side effect of some
+actions here, though:
+
+- **Pushing a profile** makes it the active one on your device.
+- **Loading a profile** (via "Presets on Device" or the Filters page) briefly
+  selects it on the device so its filters can be read, then restores whatever
+  was previously active — this has no audible effect, since RoomFit's
+  selected-but-not-applied state doesn't change what's playing.
+
+The "Name Your Profile" step and "Presets on Device" both mark the
+currently-active RoomFit profile (and PEQ preset) with a bold, colored
+"(active)" label, so you can see what's live on your device before you name
+or overwrite anything.
 
 ## Tips
 

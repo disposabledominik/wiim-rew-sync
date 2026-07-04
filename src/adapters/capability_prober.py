@@ -7,31 +7,34 @@ logged, and the affected capability is set to its most conservative (safest)
 default value.
 
 Probing sequence:
-  1. getStatusEx        -> model, firmware, uuid, mac_address, source_names
-  2. EQGetLV2BandEx     -> supports_peq, supports_lr_filters
-  3. EQSetLV2Band (batch) -> supports_batch_write
-  4. EQGetLV2List       -> supports_profile_enumeration
-  5. RoomFit levels 0-4 -> roomfit_level, supports_roomfit*
-  6. GetMultiroomInfo   -> role
+  1. getStatusEx        -> model, firmware, uuid, mac_address
+  2. getAudioInputEnable -> source_names
+  3. EQGetLV2BandEx     -> supports_peq, supports_lr_filters
+  4. EQSetLV2Band (batch) -> supports_batch_write
+  5. EQGetLV2List       -> supports_profile_enumeration
+  6. RoomFit levels 0-4 -> roomfit_level, supports_roomfit*
+  7. GetMultiroomInfo   -> role
 
 Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 from urllib.parse import quote
 
+from src.adapters.wiim_commands import PLUGIN_URI, encode_wiim_command
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
-from src.models.device_capability_file import find_entry, get_cached_entries, merge_into
+from src.models.device_capability_file import (
+    find_entry,
+    get_cached_capability_file,
+    merge_into,
+)
 from src.utils.device_identity import is_wiim_device
 
 logger = logging.getLogger("wiim_rew_sync.wiim_api")
-
-PLUGIN_URI = "http://moddevices.com/plugins/caps/EqNp"
 
 
 class CapabilityProber:
@@ -54,7 +57,7 @@ class CapabilityProber:
         """
         caps = DeviceCapabilities()
 
-        # Step 1: getStatusEx — identity & source list
+        # Step 1: getStatusEx — identity
         status = await self._probe_status(caps)
 
         # Determine if this is a WiiM device
@@ -73,19 +76,22 @@ class CapabilityProber:
             await self._probe_multiroom(caps)
             return self._apply_capability_file(caps)
 
-        # Step 2: EQGetLV2BandEx — PEQ support & channel mode
+        # Step 2: getAudioInputEnable — source list
+        await self._probe_source_names(caps)
+
+        # Step 3: EQGetLV2BandEx — PEQ support & channel mode
         await self._probe_peq(caps)
 
-        # Step 3: Batch write test
+        # Step 4: Batch write test
         await self._probe_batch_write(caps, status)
 
-        # Step 4: EQGetLV2List — profile enumeration
+        # Step 5: EQGetLV2List — profile enumeration
         await self._probe_profile_enumeration(caps)
 
-        # Step 5: RoomFit sequential probe (levels 0-4)
+        # Step 6: RoomFit sequential probe (levels 0-4)
         await self._probe_roomfit(caps)
 
-        # Step 6: GetMultiroomInfo — multiroom role
+        # Step 7: GetMultiroomInfo — multiroom role
         await self._probe_multiroom(caps)
 
         # max_filters is set dynamically by _probe_peq(); ensure 0 if PEQ unsupported
@@ -103,17 +109,18 @@ class CapabilityProber:
 
         This is the single merge point (Requirement 6): every caller of
         `probe()` -- CLI commands, GUI connect flow, secondary workflows --
-        automatically gets capability-file overrides and the 10-band default
-        cap (Requirement 7) applied here, with no per-caller changes needed.
-        Models absent from the file are returned unchanged (full generic
-        probed behaviour).
+        automatically gets capability-file overrides, the default max-bands
+        cap (Requirement 7, file-configurable via `"default_max_bands"`,
+        #167c), and the source-name fallback (#167b) applied here, with no
+        per-caller changes needed. Models absent from the file are returned
+        unchanged (full generic probed behaviour).
         """
-        entries = get_cached_entries()
-        entry = find_entry(caps.model, entries)
-        return merge_into(caps, entry)
+        loaded = get_cached_capability_file()
+        entry = find_entry(caps.model, loaded.entries)
+        return merge_into(caps, entry, default_max_bands=loaded.default_max_bands)
 
     async def _probe_status(self, caps: DeviceCapabilities) -> dict[str, Any]:
-        """Probe getStatusEx for device identity and source names."""
+        """Probe getStatusEx for device identity."""
         try:
             resp = await self._client.command("getStatusEx")
         except Exception:
@@ -129,20 +136,40 @@ class CapabilityProber:
         caps.uuid = str(resp.get("uuid", ""))
         caps.mac_address = str(resp.get("MAC", resp.get("mac", "")))
 
-        # Parse InputList for source_names
-        input_list_raw = resp.get("InputList", "")
-        if isinstance(input_list_raw, list):
-            caps.source_names = [str(s) for s in input_list_raw]
-        elif isinstance(input_list_raw, str) and input_list_raw:
-            # InputList is often a JSON-encoded string, e.g. '["wifi","bluetooth"]'
-            try:
-                parsed = json.loads(input_list_raw)
-                if isinstance(parsed, list):
-                    caps.source_names = [str(s) for s in parsed]
-            except (json.JSONDecodeError, ValueError):
-                logger.warning("Could not parse InputList: %r", input_list_raw)
-
         return resp
+
+    async def _probe_source_names(self, caps: DeviceCapabilities) -> None:
+        """Probe getAudioInputEnable for the device's real enabled source list.
+
+        Replaces the previous getStatusEx 'InputList' parsing, confirmed dead
+        on every tested device. getAudioInputEnable returns each input's
+        'mode' (the exact source_name value PEQ/RoomFit commands use) and
+        whether it's enabled (shown/switchable in the WiiM app), correctly
+        excluding hardware-capability entries like 'udisk' that aren't real
+        PEQ sources. WiiM Mini returns "unknown command" -- it falls through
+        to the merge_into()/capability-file fallback instead (#167).
+        """
+        try:
+            resp = await self._client.command("getAudioInputEnable")
+        except Exception:
+            logger.warning("getAudioInputEnable probe failed.", exc_info=True)
+            return
+
+        if isinstance(resp, str) and "unknown" in resp.lower():
+            logger.info("Device has no getAudioInputEnable; using fallback source list.")
+            return
+
+        if not isinstance(resp, dict):
+            logger.warning("getAudioInputEnable returned non-dict: %r", resp)
+            return
+
+        audio_inputs = resp.get("audioInput", [])
+        if isinstance(audio_inputs, list):
+            caps.source_names = [
+                str(item["mode"])
+                for item in audio_inputs
+                if isinstance(item, dict) and item.get("enable") == 1 and "mode" in item
+            ]
 
     async def _probe_peq(self, caps: DeviceCapabilities) -> None:
         """Probe EQGetLV2BandEx for PEQ and channel-mode support."""
@@ -221,13 +248,10 @@ class CapabilityProber:
                 return
 
             # Build the write payload — write the same data back
-            payload: dict[str, Any] = {
-                "pluginURI": PLUGIN_URI,
-                "channelMode": channel_mode,
-                "EQBand": eq_band,
-            }
-            encoded_payload = quote(json.dumps(payload))
-            resp = await self._client.command(f"EQSetLV2Band:{encoded_payload}")
+            command = encode_wiim_command(
+                "EQSetLV2Band", {"channelMode": channel_mode, "EQBand": eq_band}
+            )
+            resp = await self._client.command(command)
 
             # Success if we get "OK" or a dict response without error
             if isinstance(resp, str) and resp.strip().lower() == "ok":
@@ -290,9 +314,8 @@ class CapabilityProber:
 
         # Level 1: EQv2GetNewList with EQLevel: 2
         try:
-            list_payload = json.dumps({"pluginURI": PLUGIN_URI, "EQLevel": 2})
             resp = await self._client.command(
-                f"EQv2GetNewList:{quote(list_payload)}"
+                encode_wiim_command("EQv2GetNewList", eq_level=2)
             )
             if isinstance(resp, str) and "unknown" in resp.lower():
                 # Device doesn't support RoomFit
@@ -306,15 +329,12 @@ class CapabilityProber:
             logger.info("RoomFit level 1 probe (EQv2GetNewList+EQLevel:2) failed.")
             return
 
-        # Level 2: EQGetLV2SourceBandEx with EQLevel: 2
+        # Level 2: EQGetLV2SourceBandEx with EQLevel: 2 (no source_name -- the
+        # WiiM app never sends it in RoomFit payloads; see #164 for the same
+        # fix in wiim_adapter.py's read_roomfit()/write_roomfit()).
         try:
-            read_payload = json.dumps({
-                "pluginURI": PLUGIN_URI,
-                "source_name": "wifi",
-                "EQLevel": 2,
-            })
             band_resp = await self._client.command(
-                f"EQGetLV2SourceBandEx:{quote(read_payload)}"
+                encode_wiim_command("EQGetLV2SourceBandEx", eq_level=2)
             )
             if not isinstance(band_resp, dict):
                 return
@@ -345,16 +365,13 @@ class CapabilityProber:
         _PROBE_PROFILE_NAME = "__wiim_rew_sync_probe__"
         save_issued = False
         try:
-            # Save buffer contents to a temporary profile
-            save_payload = json.dumps({
-                "pluginURI": PLUGIN_URI,
-                "source_name": "wifi",
-                "Name": _PROBE_PROFILE_NAME,
-                "EQLevel": 2,
-            })
+            # Save buffer contents to a temporary profile (no source_name --
+            # see the level 2 probe above).
             save_issued = True
             save_resp = await self._client.command(
-                f"EQSourceSave:{quote(save_payload)}"
+                encode_wiim_command(
+                    "EQSourceSave", {"Name": _PROBE_PROFILE_NAME}, eq_level=2
+                )
             )
             if isinstance(save_resp, str) and "unknown" in save_resp.lower():
                 return
@@ -373,13 +390,10 @@ class CapabilityProber:
             # cleanup on those paths would leak it permanently.
             if save_issued:
                 try:
-                    delete_payload = json.dumps({
-                        "pluginURI": PLUGIN_URI,
-                        "Name": _PROBE_PROFILE_NAME,
-                        "EQLevel": 2,
-                    })
                     await self._client.command(
-                        f"EQv2Delete:{quote(delete_payload)}"
+                        encode_wiim_command(
+                            "EQv2Delete", {"Name": _PROBE_PROFILE_NAME}, eq_level=2
+                        )
                     )
                 except Exception:
                     logger.debug(

@@ -314,13 +314,36 @@ class TestWizardControllerSummaries:
         assert ctrl.completed_steps[WizardStep.EQ_TYPE] == "PEQ selected"
 
     def test_step_summary_updated_signal(self, qtbot) -> None:
-        """advance() emits step_summary_updated with step and summary text."""
+        """advance() emits step_summary_updated with step, summary, and tooltip."""
         ctrl = WizardController()
 
         with qtbot.waitSignal(ctrl.step_summary_updated, timeout=1000) as blocker:
             ctrl.advance("Device found")
 
-        assert blocker.args == [WizardStep.CONNECT, "Device found"]
+        assert blocker.args == [WizardStep.CONNECT, "Device found", ""]
+
+    def test_step_summary_updated_signal_carries_tooltip(self, qtbot) -> None:
+        """advance(summary, tooltip) emits the tooltip alongside the summary."""
+        ctrl = WizardController()
+
+        with qtbot.waitSignal(ctrl.step_summary_updated, timeout=1000) as blocker:
+            ctrl.advance("3 sources", "wifi, optical, HDMI")
+
+        assert blocker.args == [WizardStep.CONNECT, "3 sources", "wifi, optical, HDMI"]
+        assert ctrl.state.completed_step_tooltips[WizardStep.CONNECT] == "wifi, optical, HDMI"
+
+    def test_set_step_summary_emits_without_transitioning(self, qtbot) -> None:
+        """set_step_summary() writes both dicts and emits, but doesn't move
+        current_step -- used for out-of-band single-step updates (e.g. PUSH)."""
+        ctrl = WizardController()
+        original_step = ctrl.current_step
+
+        with qtbot.waitSignal(ctrl.step_summary_updated, timeout=1000) as blocker:
+            ctrl.set_step_summary(WizardStep.PUSH, "Done")
+
+        assert blocker.args == [WizardStep.PUSH, "Done", ""]
+        assert ctrl.completed_steps[WizardStep.PUSH] == "Done"
+        assert ctrl.current_step == original_step
 
     def test_advance_empty_summary(self, qtbot) -> None:
         """advance() with no summary stores empty string."""

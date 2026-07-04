@@ -10,12 +10,11 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 5.3, 5.4, 17.3
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
-from urllib.parse import quote
 
+from src.adapters.wiim_commands import encode_wiim_command, expect_dict_response
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
@@ -29,9 +28,6 @@ if TYPE_CHECKING:
     from src.adapters.command_queue import WiiMCommandQueue
 
 logger = logging.getLogger("wiim_rew_sync.wiim_api")
-
-# LV2 plugin URI used by all WiiM PEQ commands
-_PLUGIN_URI = "http://moddevices.com/plugins/caps/EqNp"
 
 # Band letters a-l (up to 12 bands on newer firmware; older devices use a-j for 10)
 _BAND_LETTERS = "abcdefghijkl"
@@ -162,17 +158,12 @@ class WiiMAdapter:
             WiiMResponseError: Response missing required fields.
             WiiMConnectionError: Device unreachable (propagated from http_client).
         """
-        payload = json.dumps({"source_name": source_name, "pluginURI": _PLUGIN_URI})
-        command = f"EQGetLV2SourceBandEx:{quote(payload)}"
+        command = encode_wiim_command("EQGetLV2SourceBandEx", source_name=source_name)
 
         # WiiMHttpClient.command() raises WiiMConnectionError / WiiMTimeoutError
         # on network failure — let those propagate directly.
         response = await self._client.command(command)
-
-        if not isinstance(response, dict):
-            raise WiiMResponseError(
-                f"Expected JSON dict from EQGetLV2SourceBandEx, got: {type(response).__name__}"
-            )
+        response = expect_dict_response(response, "EQGetLV2SourceBandEx")
 
         return self._parse_peq_response(response, source_name)
 
@@ -263,10 +254,21 @@ class WiiMAdapter:
     # PEQ Enable/Disable
     # ------------------------------------------------------------------
 
+    async def _set_fx_state(self, command: str, source_name: str, eq_level: int) -> None:
+        """Shared EQChangeSourceFX/EQSourceOff issuer for enable_peq/disable_peq."""
+        response = await self._client.command(
+            encode_wiim_command(command, source_name=source_name, eq_level=eq_level)
+        )
+        # WiiM typically returns "OK" or a JSON dict on success.
+        # A WiiMResponseError from the HTTP layer (non-200) is raised automatically.
+        if isinstance(response, dict) and response.get("error"):
+            raise WiiMResponseError(f"{command} failed for source '{source_name}': {response}")
+
     async def enable_peq(self, source_name: str) -> None:
         """Enable PEQ on a specific source by switching to the LV2 EqNp plugin.
 
-        Issues ``EQChangeSourceFX`` with the source name and plugin URI.
+        Issues ``EQChangeSourceFX`` with the source name, plugin URI, and
+        ``EQLevel: 1`` (confirmed via real-app traffic).
 
         Args:
             source_name: The audio input source (e.g. "wifi", "bluetooth").
@@ -278,21 +280,13 @@ class WiiMAdapter:
             WiiMResponseError: Device returned an error response.
             WiiMConnectionError: Device unreachable (propagated from http_client).
         """
-        payload = json.dumps({"source_name": source_name, "pluginURI": _PLUGIN_URI})
-        command = f"EQChangeSourceFX:{quote(payload)}"
-        response = await self._client.command(command)
-
-        # WiiM typically returns "OK" or a JSON dict on success.
-        # A WiiMResponseError from the HTTP layer (non-200) is raised automatically.
-        if isinstance(response, dict) and response.get("error"):
-            raise WiiMResponseError(
-                f"EQChangeSourceFX failed for source '{source_name}': {response}"
-            )
+        await self._set_fx_state("EQChangeSourceFX", source_name, eq_level=1)
 
     async def disable_peq(self, source_name: str) -> None:
         """Disable PEQ on a specific source.
 
-        Issues ``EQSourceOff`` with the source name and plugin URI.
+        Issues ``EQSourceOff`` with the source name, plugin URI, and
+        ``EQLevel: 1`` (confirmed via real-app traffic).
 
         Args:
             source_name: The audio input source (e.g. "wifi", "bluetooth").
@@ -304,19 +298,20 @@ class WiiMAdapter:
             WiiMResponseError: Device returned an error response.
             WiiMConnectionError: Device unreachable (propagated from http_client).
         """
-        payload = json.dumps({"source_name": source_name, "pluginURI": _PLUGIN_URI})
-        command = f"EQSourceOff:{quote(payload)}"
-        response = await self._client.command(command)
+        await self._set_fx_state("EQSourceOff", source_name, eq_level=1)
 
-        if isinstance(response, dict) and response.get("error"):
-            raise WiiMResponseError(
-                f"EQSourceOff failed for source '{source_name}': {response}"
-            )
+    async def _read_fx_status(self, source_name: str, eq_level: int) -> dict[str, Any]:
+        """Shared EQGetLV2SourceBandEx issuer for get_peq_enabled/get_roomfit_status."""
+        response = await self._client.command(
+            encode_wiim_command("EQGetLV2SourceBandEx", source_name=source_name, eq_level=eq_level)
+        )
+        return expect_dict_response(response, "EQGetLV2SourceBandEx")
 
     async def get_peq_enabled(self, source_name: str) -> bool:
         """Check whether PEQ is enabled on a specific source.
 
-        Issues ``EQGetLV2SourceBandEx`` and reads the ``EQStat`` field.
+        Issues ``EQGetLV2SourceBandEx`` with ``EQLevel: 1`` and reads the
+        ``EQStat`` field.
 
         Args:
             source_name: The audio input source (e.g. "wifi", "bluetooth").
@@ -328,15 +323,7 @@ class WiiMAdapter:
             WiiMResponseError: Response missing required fields or non-dict.
             WiiMConnectionError: Device unreachable (propagated from http_client).
         """
-        payload = json.dumps({"source_name": source_name, "pluginURI": _PLUGIN_URI})
-        command = f"EQGetLV2SourceBandEx:{quote(payload)}"
-        response = await self._client.command(command)
-
-        if not isinstance(response, dict):
-            raise WiiMResponseError(
-                f"Expected JSON dict from EQGetLV2SourceBandEx, got: {type(response).__name__}"
-            )
-
+        response = await self._read_fx_status(source_name, eq_level=1)
         return bool(response.get("EQStat", "Off") == "On")
 
     # ------------------------------------------------------------------
@@ -444,14 +431,11 @@ class WiiMAdapter:
         eq_band_params = _flat_array_to_band_params(
             band_array, self._capabilities.max_filters
         )
-
-        payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "channelMode": channel_mode,
-            "EQBand": eq_band_params,
-        })
-        command = f"EQSetLV2SourceBand:{quote(payload)}"
+        command = encode_wiim_command(
+            "EQSetLV2SourceBand",
+            {"channelMode": channel_mode, "EQBand": eq_band_params},
+            source_name=source_name,
+        )
         await self._client.command(command)
 
     async def _write_peq_sequential(
@@ -467,14 +451,11 @@ class WiiMAdapter:
             band_params = _flat_array_to_band_params(
                 band_array[i * 4:(i + 1) * 4], 1, start_band=i
             )
-
-            payload = json.dumps({
-                "pluginURI": _PLUGIN_URI,
-                "source_name": source_name,
-                "channelMode": channel_mode,
-                "EQBand": band_params,
-            })
-            command = f"EQSetLV2SourceBand:{quote(payload)}"
+            command = encode_wiim_command(
+                "EQSetLV2SourceBand",
+                {"channelMode": channel_mode, "EQBand": band_params},
+                source_name=source_name,
+            )
 
             if queue is not None:
                 await queue.enqueue(command)
@@ -496,12 +477,11 @@ class WiiMAdapter:
             source_name: Audio input source.
             channel_mode: "Stereo" or "L/R" (wire format).
         """
-        payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "channelMode": channel_mode,
-        })
-        command = f"EQSetLV2ChannelMode:{quote(payload)}"
+        command = encode_wiim_command(
+            "EQSetLV2ChannelMode",
+            {"channelMode": channel_mode},
+            source_name=source_name,
+        )
         await self._client.command(command)
 
     async def _write_peq_batch_lr(
@@ -514,15 +494,11 @@ class WiiMAdapter:
         num_bands = self._capabilities.max_filters
         eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
         eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
-
-        payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "channelMode": "L/R",
-            "EQBandL": eq_band_l,
-            "EQBandR": eq_band_r,
-        })
-        command = f"EQSetLV2SourceBand:{quote(payload)}"
+        command = encode_wiim_command(
+            "EQSetLV2SourceBand",
+            {"channelMode": "L/R", "EQBandL": eq_band_l, "EQBandR": eq_band_r},
+            source_name=source_name,
+        )
         await self._client.command(command)
 
     async def _write_peq_sequential_lr(
@@ -544,15 +520,11 @@ class WiiMAdapter:
             band_r = _flat_array_to_band_params(
                 band_array_r[i * 4:(i + 1) * 4], 1, start_band=i
             )
-
-            payload = json.dumps({
-                "pluginURI": _PLUGIN_URI,
-                "source_name": source_name,
-                "channelMode": "L/R",
-                "EQBandL": band_l,
-                "EQBandR": band_r,
-            })
-            command = f"EQSetLV2SourceBand:{quote(payload)}"
+            command = encode_wiim_command(
+                "EQSetLV2SourceBand",
+                {"channelMode": "L/R", "EQBandL": band_l, "EQBandR": band_r},
+                source_name=source_name,
+            )
 
             if queue is not None:
                 await queue.enqueue(command)
@@ -565,6 +537,22 @@ class WiiMAdapter:
     # ------------------------------------------------------------------
     # PEQ Profile Management
     # ------------------------------------------------------------------
+
+    async def _fetch_profile_list(self, eq_level: int) -> list[dict[str, str]]:
+        """Shared EQv2GetNewList issuer + response parsing for
+        list_peq_profiles/list_roomfit_profiles."""
+        response = await self._client.command(
+            encode_wiim_command("EQv2GetNewList", eq_level=eq_level)
+        )
+        response = expect_dict_response(response, "EQv2GetNewList")
+        return [
+            {
+                "Name": str(entry.get("Name", "")),
+                "channelMode": str(entry.get("channelMode", "")),
+                "Type": str(entry.get("Type", "")),
+            }
+            for entry in response.get("custom", [])
+        ]
 
     async def list_peq_profiles(self, source_name: str) -> list[dict[str, str]]:
         """List PEQ profiles stored on the device.
@@ -588,26 +576,7 @@ class WiiMAdapter:
                 "Device does not support profile enumeration "
                 "(supports_profile_enumeration is False)"
             )
-
-        payload = json.dumps({"pluginURI": _PLUGIN_URI, "EQLevel": 1})
-        command = f"EQv2GetNewList:{quote(payload)}"
-
-        response = await self._client.command(command)
-
-        if not isinstance(response, dict):
-            raise WiiMResponseError(
-                f"Expected JSON dict from EQv2GetNewList, got: {type(response).__name__}"
-            )
-
-        custom_list: list[dict[str, str]] = []
-        for entry in response.get("custom", []):
-            custom_list.append({
-                "Name": str(entry.get("Name", "")),
-                "channelMode": str(entry.get("channelMode", "")),
-                "Type": str(entry.get("Type", "")),
-            })
-
-        return custom_list
+        return await self._fetch_profile_list(eq_level=1)
 
     async def save_peq_profile(self, source_name: str, profile_name: str) -> None:
         """Save the currently-active PEQ bands as a named device preset.
@@ -622,12 +591,9 @@ class WiiMAdapter:
             WiiMResponseError: Device returned an error response.
             WiiMConnectionError: Device unreachable.
         """
-        payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "Name": profile_name,
-        })
-        command = f"EQSourceSave:{quote(payload)}"
+        command = encode_wiim_command(
+            "EQSourceSave", {"Name": profile_name}, source_name=source_name
+        )
         await self._client.command(command)
 
     async def load_peq_profile(self, source_name: str, profile_name: str) -> None:
@@ -643,13 +609,52 @@ class WiiMAdapter:
             WiiMResponseError: Device returned an error response.
             WiiMConnectionError: Device unreachable.
         """
-        payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "Name": profile_name,
-        })
-        command = f"EQv2SourceLoad:{quote(payload)}"
+        command = encode_wiim_command(
+            "EQv2SourceLoad", {"Name": profile_name}, source_name=source_name
+        )
         await self._client.command(command)
+
+    async def read_peq_preset_preview(
+        self, source_name: str, preset_name: str
+    ) -> PEQSettings:
+        """Read a saved PEQ preset's bands, restoring the source's original active
+        profile afterward.
+
+        Does NOT make the load invisible -- the device's live audio genuinely
+        changes to the previewed preset for the duration of this call; callers
+        must get user consent before invoking this (see #166 in the fix plan).
+
+        If the source's original active state has no saved-preset name (e.g.
+        raw filters pushed via write_peq without ever being saved as a named
+        preset -- the common case for this app's primary push workflow), there
+        is no profile name to reload; the original bands are restored directly
+        via write_peq() instead so the "then restore what was playing" promise
+        in the confirmation dialog holds regardless of how the original state
+        got there.
+        """
+        original = await self.read_peq(source_name)
+        await self.load_peq_profile(source_name, preset_name)
+        preview = await self.read_peq(source_name)
+        if original.name != preset_name:
+            try:
+                if original.name:
+                    await self.load_peq_profile(source_name, original.name)
+                else:
+                    await self.write_peq(source_name, original)
+            except Exception:
+                logger.warning(
+                    "Failed to restore original PEQ profile '%s' on source '%s' "
+                    "after previewing '%s'", original.name or "(unnamed)",
+                    source_name, preset_name,
+                    exc_info=True,
+                )
+        return preview
+
+    async def _delete_profile(self, profile_name: str, eq_level: int | None = None) -> None:
+        """Shared EQv2Delete issuer for delete_peq_profile/delete_roomfit_profile."""
+        await self._client.command(
+            encode_wiim_command("EQv2Delete", {"Name": profile_name}, eq_level=eq_level)
+        )
 
     async def delete_peq_profile(self, profile_name: str) -> None:
         """Delete a saved PEQ preset from the device.
@@ -663,9 +668,7 @@ class WiiMAdapter:
             WiiMResponseError: Device returned an error response.
             WiiMConnectionError: Device unreachable.
         """
-        payload = json.dumps({"pluginURI": _PLUGIN_URI, "Name": profile_name})
-        command = f"EQv2Delete:{quote(payload)}"
-        await self._client.command(command)
+        await self._delete_profile(profile_name)
 
     async def delete_roomfit_profile(self, profile_name: str) -> None:
         """Delete a saved RoomFit profile from the device.
@@ -681,22 +684,42 @@ class WiiMAdapter:
             WiiMResponseError: Device returned an error response.
             WiiMConnectionError: Device unreachable.
         """
-        payload = json.dumps({
-            "pluginURI": _PLUGIN_URI, "Name": profile_name, "EQLevel": 2,
-        })
-        command = f"EQv2Delete:{quote(payload)}"
-        await self._client.command(command)
+        await self._delete_profile(profile_name, eq_level=2)
 
     # ------------------------------------------------------------------
     # RoomFit
     # ------------------------------------------------------------------
 
-    # TODO: RoomFit toggle — no HTTP API command found to enable/disable the
-    # RoomFit DSP-active state. Tested EQSourceOff+EQLevel:2, EQChangeSourceFX+
-    # EQLevel:2, setRoomCorrection, MCURoomCorrection, EQSetRoomFit, and
-    # EQSetLV2Stat — none affect the DSP. The WiiM app controls this internally.
-    # Revisit if future firmware or community research reveals a mechanism.
-    # See docs/corrections.md (2026-06-15) for full test results.
+    async def get_roomfit_status(self) -> tuple[bool, str]:
+        """Read RoomFit's global on/off state and the currently-active profile name.
+
+        Issues ``EQGetLV2SourceBandEx`` with ``EQLevel: 2`` and an explicit
+        empty ``source_name`` — this is RoomFit's *global* scope query,
+        distinct from ``read_roomfit()``'s per-source buffer read.
+
+        Requires ``roomfit_level >= 1`` in device capabilities.
+
+        Raises:
+            WiiMResponseError: RoomFit not supported (level < 1) or device
+                returned an unexpected response.
+        """
+        if self._capabilities.roomfit_level < 1:
+            raise WiiMResponseError(
+                f"RoomFit status requires roomfit_level >= 1, "
+                f"device has level {self._capabilities.roomfit_level}"
+            )
+        response = await self._read_fx_status("", eq_level=2)
+        return bool(response.get("EQStat", "Off") == "On"), str(response.get("Name", ""))
+
+    async def _load_roomfit_profile(self, profile_name: str) -> None:
+        """Load a named RoomFit profile into the API working buffer.
+
+        Shared by read_roomfit()'s own load step and
+        read_roomfit_preset_preview()'s restore-after step below.
+        """
+        await self._client.command(
+            encode_wiim_command("EQv2SourceLoad", {"Name": profile_name}, eq_level=2)
+        )
 
     async def read_roomfit(
         self, source_name: str, profile_name: str
@@ -709,7 +732,11 @@ class WiiMAdapter:
         We must first load the target profile into the buffer, then read bands.
 
         Args:
-            source_name: Audio input source (e.g. "wifi", "bluetooth").
+            source_name: Audio input source (e.g. "wifi", "bluetooth"). Not
+                included in the RoomFit payloads themselves (the WiiM app
+                never sends it there — confirmed via decompiled app +
+                hardware testing) but kept as the source the returned
+                ``PEQSettings`` is attributed to.
             profile_name: Name of the RoomFit profile to load and read.
 
         Returns:
@@ -726,32 +753,40 @@ class WiiMAdapter:
             )
 
         # Step 1: Load the target profile into the API working buffer
-        load_payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "Name": profile_name,
-            "EQLevel": 2,
-        })
-        await self._client.command(f"EQv2SourceLoad:{quote(load_payload)}")
+        await self._load_roomfit_profile(profile_name)
 
         # Step 2: Read bands from the buffer
-        read_payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "EQLevel": 2,
-        })
         response = await self._client.command(
-            f"EQGetLV2SourceBandEx:{quote(read_payload)}"
+            encode_wiim_command("EQGetLV2SourceBandEx", eq_level=2)
         )
-
-        if not isinstance(response, dict):
-            raise WiiMResponseError(
-                f"Expected JSON dict from EQGetLV2SourceBandEx (RoomFit), "
-                f"got: {type(response).__name__}"
-            )
+        response = expect_dict_response(response, "EQGetLV2SourceBandEx (RoomFit)")
 
         # Step 3: Parse response using the same logic as PEQ reads
         return self._parse_peq_response(response, source_name)
+
+    async def read_roomfit_preset_preview(
+        self, source_name: str, profile_name: str
+    ) -> PEQSettings:
+        """Read a saved RoomFit profile's bands, restoring the originally-selected
+        profile afterward.
+
+        Unlike read_peq_preset_preview, this has no live-audio consequence to
+        consent to (RoomFit's buffer is decoupled from its DSP on/off state,
+        per docs/wiim_api_notes.md) -- the restore is bookkeeping only, to
+        avoid leaving a different profile "selected" in the WiiM app.
+        """
+        _enabled, original_name = await self.get_roomfit_status()
+        preview = await self.read_roomfit(source_name, profile_name)
+        if original_name and original_name != profile_name:
+            try:
+                await self._load_roomfit_profile(original_name)
+            except Exception:
+                logger.warning(
+                    "Failed to restore original RoomFit profile '%s' after "
+                    "previewing '%s'", original_name, profile_name,
+                    exc_info=True,
+                )
+        return preview
 
     async def write_roomfit(
         self,
@@ -771,7 +806,8 @@ class WiiMAdapter:
         deactivate. Saving to a new name does not deactivate.
 
         Args:
-            source_name: Audio input source (e.g. "wifi", "bluetooth").
+            source_name: Audio input source (e.g. "wifi", "bluetooth"). Not
+                included in the RoomFit payloads themselves (see read_roomfit).
             profile_name: Name to save the RoomFit profile as.
             filters: List of CanonicalFilter objects (used for stereo mode).
             channel_mode: ChannelMode enum or string — determines write format.
@@ -803,39 +839,51 @@ class WiiMAdapter:
             eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
             eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
 
-            write_payload = json.dumps({
-                "pluginURI": _PLUGIN_URI,
-                "source_name": source_name,
-                "channelMode": "L/R",
-                "EQBandL": eq_band_l,
-                "EQBandR": eq_band_r,
-                "EQLevel": 2,
-            })
+            write_command = encode_wiim_command(
+                "EQSetLV2SourceBand",
+                {
+                    "channelMode": "L/R",
+                    "EQBandL": eq_band_l,
+                    "EQBandR": eq_band_r,
+                    # Matches the WiiM app's own write traffic; does NOT change
+                    # the saved profile's Type field (always "Custom" for
+                    # app-saved profiles regardless -- see the RoomFit "Quirk"
+                    # note in docs/wiim_api_notes.md and docs/corrections.md
+                    # 2026-07-04). Included for wire-format parity only.
+                    "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
+                },
+                eq_level=2,
+            )
         else:
             # Stereo mode: single EQBand array
             band_array, _warnings = generate_wiim_band_array(filters, max_bands=num_bands)
             eq_band_params = _flat_array_to_band_params(band_array, num_bands)
 
-            write_payload = json.dumps({
-                "pluginURI": _PLUGIN_URI,
-                "source_name": source_name,
-                "channelMode": "Stereo",
-                "EQBand": eq_band_params,
-                "EQLevel": 2,
-            })
+            write_command = encode_wiim_command(
+                "EQSetLV2SourceBand",
+                {
+                    "channelMode": "Stereo",
+                    "EQBand": eq_band_params,
+                    # Matches the WiiM app's own write traffic; does NOT change
+                    # the saved profile's Type field (always "Custom" for
+                    # app-saved profiles regardless -- see the RoomFit "Quirk"
+                    # note in docs/wiim_api_notes.md and docs/corrections.md
+                    # 2026-07-04). Included for wire-format parity only.
+                    "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
+                },
+                eq_level=2,
+            )
 
         # Write to buffer
-        await self._client.command(f"EQSetLV2SourceBand:{quote(write_payload)}")
+        await self._client.command(write_command)
 
         # Save buffer to profile
-        save_payload = json.dumps({
-            "pluginURI": _PLUGIN_URI,
-            "source_name": source_name,
-            "Name": profile_name,
-            "EQLevel": 2,
-            "UpdateAt": str(int(time.time() * 1000)),
-        })
-        await self._client.command(f"EQSourceSave:{quote(save_payload)}")
+        save_command = encode_wiim_command(
+            "EQSourceSave",
+            {"Name": profile_name, "UpdateAt": str(int(time.time() * 1000))},
+            eq_level=2,
+        )
+        await self._client.command(save_command)
 
     async def list_roomfit_profiles(
         self, source_name: str
@@ -860,22 +908,4 @@ class WiiMAdapter:
                 f"RoomFit profile listing requires roomfit_level >= 1, "
                 f"device has level {self._capabilities.roomfit_level}"
             )
-
-        payload = json.dumps({"pluginURI": _PLUGIN_URI, "EQLevel": 2})
-        response = await self._client.command(f"EQv2GetNewList:{quote(payload)}")
-
-        if not isinstance(response, dict):
-            raise WiiMResponseError(
-                f"Expected JSON dict from EQv2GetNewList (RoomFit), "
-                f"got: {type(response).__name__}"
-            )
-
-        custom_list: list[dict[str, str]] = []
-        for entry in response.get("custom", []):
-            custom_list.append({
-                "Name": str(entry.get("Name", "")),
-                "channelMode": str(entry.get("channelMode", "")),
-                "Type": str(entry.get("Type", "")),
-            })
-
-        return custom_list
+        return await self._fetch_profile_list(eq_level=2)

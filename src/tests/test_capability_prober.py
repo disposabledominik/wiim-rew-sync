@@ -14,7 +14,8 @@ from urllib.parse import quote
 
 import pytest
 
-from src.adapters.capability_prober import PLUGIN_URI, CapabilityProber
+from src.adapters.capability_prober import CapabilityProber
+from src.adapters.wiim_commands import PLUGIN_URI
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
 
@@ -72,6 +73,21 @@ MULTIROOM_SOLO = {"role": 0}
 MULTIROOM_MASTER = {"role": 1}
 MULTIROOM_SLAVE = {"role": 2}
 
+# getAudioInputEnable fixture, matching real hardware traffic
+# (docs/wiim_api_notes.md, WiiM Amp Ultra-style response) -- "udisk" (a hardware
+# capability, not a real PEQ source) never appears in this list at all, and
+# "bluetooth"/"optical" are present but disabled (enable: 0).
+AUDIO_INPUT_ENABLE_RESPONSE = {
+    "ver": "1.0",
+    "audioInput": [
+        {"mode": "wifi", "enable": 1},
+        {"mode": "bluetooth", "enable": 0},
+        {"mode": "line-in", "enable": 1},
+        {"mode": "optical", "enable": 0},
+        {"mode": "HDMI", "enable": 1},
+    ],
+}
+
 # 12-band fixture response (letters a through l) for dynamic max_filters detection
 EQ_GET_LV2_BAND_12_RESPONSE = {
     "EQStat": "On",
@@ -115,6 +131,8 @@ class TestWiiMDeviceDetection:
         async def mock_command(cmd: str) -> dict | str:
             if cmd == "getStatusEx":
                 return STATUS_EX_WIIM_PRO
+            if cmd == "getAudioInputEnable":
+                return AUDIO_INPUT_ENABLE_RESPONSE
             if cmd.startswith("EQGetLV2BandEx:"):
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
@@ -154,7 +172,9 @@ class TestWiiMDeviceDetection:
         assert caps.firmware == "6.0.1.20"
         assert caps.uuid == "FF31F09E-1234-5678-ABCD-000000000001"
         assert caps.mac_address == "AA:BB:CC:DD:EE:FF"
-        assert caps.source_names == ["wifi", "bluetooth", "line-in", "optical"]
+        # Only enable:1 entries surface as source_names -- "bluetooth"/"optical"
+        # are present but disabled in the fixture, matching real hardware traffic.
+        assert caps.source_names == ["wifi", "line-in", "HDMI"]
         assert caps.supports_lr_filters is True
         assert caps.supports_batch_write is True
         assert caps.supports_profile_enumeration is True
@@ -192,6 +212,40 @@ class TestWiiMDeviceDetection:
         assert caps.supports_roomfit is False
         assert caps.supports_roomfit_read is False
         assert caps.supports_roomfit_write is False
+        # Mini has no getAudioInputEnable ("unknown command" via the fallback
+        # branch above) -- source_names ends up whatever the bundled
+        # device_capabilities.json's WiiM_Mini entry provides via merge_into()
+        # (#167), not asserted here since that's this test's model's own data,
+        # not this probe step's behavior.
+
+    @pytest.mark.asyncio
+    async def test_get_audio_input_enable_malformed_response_degrades_gracefully(
+        self,
+    ) -> None:
+        """A non-dict, non-'unknown command' getAudioInputEnable response is
+        ignored, leaving source_names empty out of _probe_source_names itself
+        -- merge_into()'s DEFAULT_SOURCE_NAMES fallback (#167b) then fills it
+        in with the generic list, same as any other source-enumeration
+        failure, rather than raising."""
+        from src.models.constants import DEFAULT_SOURCE_NAMES
+
+        client = _make_mock_client()
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return STATUS_EX_WIIM_PRO
+            if cmd == "getAudioInputEnable":
+                return "not a dict or a recognised error string"
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.source_names == list(DEFAULT_SOURCE_NAMES)
 
 
 class TestGenericLinkPlayDefaults:
@@ -602,11 +656,14 @@ class TestDynamicMaxFilters:
         bundled file's actual shipped values, which may be tuned over time)
         to test the override mechanism itself in isolation.
         """
-        from src.models.device_capability_file import CapabilityFileEntry
+        from src.models.device_capability_file import CapabilityFileEntry, LoadedCapabilityFile
 
         monkeypatch.setattr(
-            "src.adapters.capability_prober.get_cached_entries",
-            lambda: {"WiiM_Amp_Ultra": CapabilityFileEntry(max_bands=12)},
+            "src.adapters.capability_prober.get_cached_capability_file",
+            lambda: LoadedCapabilityFile(
+                entries={"WiiM_Amp_Ultra": CapabilityFileEntry(max_bands=12)},
+                default_max_bands=10,
+            ),
         )
 
         client = _make_mock_client()

@@ -121,6 +121,9 @@ class TestProfileRecallWithFilters:
         state = window._wizard_controller.state
         assert state.current_filters == filters
 
+        # Verify filters_origin set for the Filters step tooltip (#162d)
+        assert state.filters_origin == "My Presets: Test Profile"
+
         # Verify navigated to Review page
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["review"]
 

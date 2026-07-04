@@ -99,18 +99,23 @@ class _StepWidget(QWidget):
         self._dimmed = dimmed
         self._apply_state()
 
-    def set_summary(self, text: str) -> None:
-        """Set the summary text shown below the label for completed steps."""
+    def set_summary(self, text: str, tooltip: str = "") -> None:
+        """Set the summary text shown below the label for completed steps,
+        and an optional tooltip (e.g. what the loaded filters came from, or
+        the full source list behind an "N sources" summary) shown on hover."""
         if text:
             self._summary.setText(text)
+            self._summary.setToolTip(tooltip)
             self._summary.show()
         else:
             self._summary.setText("")
+            self._summary.setToolTip("")
             self._summary.hide()
 
     def clear_summary(self) -> None:
-        """Remove summary text."""
+        """Remove summary text and tooltip."""
         self._summary.setText("")
+        self._summary.setToolTip("")
         self._summary.hide()
 
     def set_label(self, text: str) -> None:
@@ -280,19 +285,22 @@ class StepIndicator(QWidget):
         if 0 <= self._current_index < len(self._steps):
             self._steps[self._current_index].set_dimmed(dimmed)
 
-    def set_completed(self, index: int, summary: str = "") -> None:
+    def set_completed(self, index: int, summary: str = "", tooltip: str = "") -> None:
         """Mark a step as completed with optional summary text.
 
         Args:
             index: Zero-based index of the step to mark completed.
             summary: Short text shown below the step label (e.g. device name).
+            tooltip: Optional longer text shown on hover (e.g. the full
+                source list behind an "N sources" summary, or what the
+                loaded filters came from).
         """
         if not self._steps or index < 0 or index >= len(self._steps):
             return
 
         step = self._steps[index]
         step.set_state(_StepState.COMPLETED)
-        step.set_summary(summary)
+        step.set_summary(summary, tooltip)
 
         # Update connector line color to accent for completed connections
         if index < len(self._connectors):

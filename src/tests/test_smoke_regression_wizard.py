@@ -283,19 +283,28 @@ class TestIssue19EqTypeRoomfitMode:
 class TestIssue35AllCommonSources:
     """Smoke #35: After capabilities ready, source page gets all common sources."""
 
-    def test_empty_sources_provides_all_common_sources(self, window) -> None:
-        """Capabilities with empty source_names populates source page with all defaults."""
+    def test_empty_sources_passed_through_unchanged(self, window) -> None:
+        """#167b: the "fall back to the common set when the device reports no
+        sources" responsibility moved from _on_capabilities_ready to
+        merge_into() (single source of truth, DEFAULT_SOURCE_NAMES) --
+        _on_capabilities_ready now trusts caps.source_names completely and
+        passes it straight through, even when empty. The fallback itself is
+        covered directly at the merge_into() level in
+        test_device_capability_file.py::TestMergeInto::
+        test_empty_source_names_falls_back_to_default_list -- this test only
+        documents that this component no longer duplicates that logic.
+        """
         window._on_device_selected("192.168.1.100")
 
-        # Device reports no sources — should fall back to full common set
+        # Simulates capabilities that skipped merge_into() (which would
+        # normally have already applied the DEFAULT_SOURCE_NAMES fallback) --
+        # a real caller always goes through merge_into() first.
         caps = _make_caps(model="WiiM Sound", roomfit_level=0, source_names=[])
         with patch.object(window._source_page, "set_sources") as mock_set:
             window._on_capabilities_ready(caps)
             mock_set.assert_called_once()
             sources_arg = mock_set.call_args[0][0]
-            # All 6 common WiiM sources should be present
-            expected = {"wifi", "bluetooth", "line-in", "auxIn", "optical", "HDMI"}
-            assert set(sources_arg) == expected
+            assert sources_arg == []
 
     def test_reported_sources_passed_through(self, window) -> None:
         """Capabilities with reported source_names passes them through to SourcePage."""
@@ -540,3 +549,77 @@ class TestIssue95WizardStateSkipsDialog:
             result = window._ensure_wizard_state_for_load()
             assert result is True
             mock_dialog.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# #162: identical step summaries regardless of which entry point completes
+# a step (normal flow, sidebar jump, QuickSetupDialog) -- these three paths
+# used to reimplement the same wording independently and had drifted
+# (e.g. "ROOMFIT" vs "RoomFit", "N filters" vs "Loaded from preset").
+# ---------------------------------------------------------------------------
+
+
+class TestIssue162ConsistentStepSummaries:
+    """All three completion paths must agree on wording for the same input."""
+
+    def test_eq_type_summary_matches_normal_flow_and_sidebar_jump(self, window) -> None:
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))
+
+        # Path A: normal flow
+        window._on_eq_type_selected("roomfit")
+        normal_summary = window._wizard_controller.state.completed_steps[WizardStep.EQ_TYPE]
+
+        # Path B: sidebar jump -- reset EQ_TYPE and let _mark_prior_steps_completed
+        # (used by the sidebar-jump and QuickSetupDialog paths) fill it back in.
+        state = window._wizard_controller.state
+        state.completed_steps.pop(WizardStep.EQ_TYPE, None)
+        window._mark_prior_steps_completed(state)
+        sidebar_summary = state.completed_steps[WizardStep.EQ_TYPE]
+
+        assert normal_summary == sidebar_summary == "RoomFit"
+
+    def test_source_summary_and_tooltip_match_normal_flow_and_sidebar_jump(
+        self, window
+    ) -> None:
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(
+            _make_caps(roomfit_level=0, source_names=["wifi", "optical", "hdmi"])
+        )
+
+        # Path A: normal flow
+        window._on_source_selected("wifi,optical", "Stereo")
+        state = window._wizard_controller.state
+        normal_summary = state.completed_steps[WizardStep.SOURCE]
+        normal_tooltip = state.completed_step_tooltips[WizardStep.SOURCE]
+
+        # Path B: sidebar jump / QuickSetupDialog (both delegate to
+        # _mark_prior_steps_completed -> _apply_source_summary)
+        state.completed_steps.pop(WizardStep.SOURCE, None)
+        state.completed_step_tooltips.pop(WizardStep.SOURCE, None)
+        window._mark_prior_steps_completed(state)
+        sidebar_summary = state.completed_steps[WizardStep.SOURCE]
+        sidebar_tooltip = state.completed_step_tooltips[WizardStep.SOURCE]
+
+        assert normal_summary == sidebar_summary == "2 sources"
+        assert normal_tooltip == sidebar_tooltip == "wifi, optical"
+
+    def test_filters_summary_matches_normal_flow_and_sidebar_jump(self, window) -> None:
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))
+        window._on_source_selected("wifi", "Stereo")  # PEQ_ONLY: CONNECT->SOURCE->FILTERS
+        window._wizard_controller.state.current_filters = [
+            MagicMock(), MagicMock(), MagicMock(),
+        ]
+
+        # Path A: normal flow
+        window._on_filters_accepted()
+        state = window._wizard_controller.state
+        normal_summary = state.completed_steps[WizardStep.FILTERS]
+
+        # Path B: sidebar jump / QuickSetupDialog
+        state.completed_steps.pop(WizardStep.FILTERS, None)
+        window._mark_prior_steps_completed(state)
+        sidebar_summary = state.completed_steps[WizardStep.FILTERS]
+
+        assert normal_summary == sidebar_summary == "3 filters"

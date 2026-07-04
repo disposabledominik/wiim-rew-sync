@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -35,6 +36,7 @@ from src.gui.components.page_layout import (
     make_page_title,
 )
 from src.gui.constants import (
+    ACCENT_COLOR,
     LIST_ITEM_HEIGHT,
     SPACING_LG,
     SPACING_MD,
@@ -96,6 +98,8 @@ class PresetsDeviceView(QWidget):
 
         self._peq_items: list[PresetItem] = []
         self._roomfit_items: list[PresetItem] = []
+        self._active_peq_name: str = ""
+        self._active_roomfit_name: str = ""
 
         self._setup_ui()
         # Start in empty state
@@ -105,24 +109,37 @@ class PresetsDeviceView(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def set_peq_presets(self, presets: list[PresetItem]) -> None:
+    def set_peq_presets(self, presets: list[PresetItem], active_name: str = "") -> None:
         """Populate the PEQ Presets section.
 
         Args:
             presets: List of PresetItem objects for PEQ presets.
+            active_name: Name of the preset currently active on this source,
+                if any (#165c) -- highlighted distinctly from selection.
         """
         self._peq_items = list(presets)
+        self._active_peq_name = active_name
         self._show_content_state()
         self._populate_peq_list()
 
-    def set_roomfit_profiles(self, profiles: list[PresetItem]) -> None:
+    def set_roomfit_profiles(
+        self, profiles: list[PresetItem], active_name: str = ""
+    ) -> None:
         """Populate the RoomFit Profiles section.
 
         Args:
             profiles: List of PresetItem objects for RoomFit profiles.
+            active_name: Name of the profile currently active on the device,
+                if any (#165c) -- highlighted distinctly from selection.
         """
         self._roomfit_items = list(profiles)
+        self._active_roomfit_name = active_name
         self._show_content_state()
+        # Mirrors set_roomfit_hidden()'s setVisible(False) -- without this,
+        # the section stays hidden forever after the first non-RoomFit device
+        # connection in a session, even once a RoomFit-capable device connects
+        # afterward (#168).
+        self._roomfit_section.setVisible(True)
         self._populate_roomfit_list()
 
     def set_no_device(self) -> None:
@@ -366,12 +383,7 @@ class PresetsDeviceView(QWidget):
         for item in self._peq_items:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            list_item = QListWidgetItem()
-            list_item.setText(self._format_item_text(item))
-            list_item.setData(Qt.ItemDataRole.UserRole, item)
-            list_item.setSizeHint(list_item.sizeHint().expandedTo(
-                list_item.sizeHint().__class__(0, LIST_ITEM_HEIGHT)
-            ))
+            list_item = self._build_list_item(item, item.name == self._active_peq_name)
             self._peq_list.addItem(list_item)
 
         self._update_action_buttons()
@@ -390,15 +402,37 @@ class PresetsDeviceView(QWidget):
         for item in self._roomfit_items:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            list_item = QListWidgetItem()
-            list_item.setText(self._format_item_text(item))
-            list_item.setData(Qt.ItemDataRole.UserRole, item)
-            list_item.setSizeHint(list_item.sizeHint().expandedTo(
-                list_item.sizeHint().__class__(0, LIST_ITEM_HEIGHT)
-            ))
+            list_item = self._build_list_item(
+                item, item.name == self._active_roomfit_name
+            )
             self._roomfit_list.addItem(list_item)
 
         self._update_action_buttons()
+
+    def _build_list_item(self, item: PresetItem, is_active: bool) -> QListWidgetItem:
+        """Build a QListWidgetItem for a preset/profile, optionally marked as
+        currently-active on the device (#165c).
+
+        The "(active)" text label is the primary signal (self-explanatory,
+        doesn't rely on color perception); bold/accent styling is
+        reinforcement, not the only cue -- matching NameProfilePage's
+        equivalent convention (#165a). This is visually distinct from
+        QListWidget's own click-selection highlighting (background color),
+        which is untouched and orthogonal.
+        """
+        text = self._format_item_text(item)
+        list_item = QListWidgetItem(f"{text}  (active)" if is_active else text)
+        if is_active:
+            font = list_item.font()
+            font.setBold(True)
+            list_item.setFont(font)
+            list_item.setForeground(QColor(ACCENT_COLOR))
+            list_item.setToolTip("Currently active on this device")
+        list_item.setData(Qt.ItemDataRole.UserRole, item)
+        list_item.setSizeHint(list_item.sizeHint().expandedTo(
+            list_item.sizeHint().__class__(0, LIST_ITEM_HEIGHT)
+        ))
+        return list_item
 
     @staticmethod
     def _format_item_text(item: PresetItem) -> str:

@@ -1,5 +1,5 @@
 {
-  "_comment": "Default per-model WiiM device capability overrides. Edit the copy in the app data directory (next to settings.json) to change behaviour without code changes -- restart the app to pick up edits. Models not listed here keep the fully runtime-probed generic behaviour (per docs/wiim_api_notes.md: 'Capability detection must still probe at runtime... Never hard-code capabilities by model name alone'). Only documented exceptions to the generic probe are listed by default -- see docs/corrections.md and docs/wiim_api_notes.md Capability Nuances table.",
+  "_comment": "Default per-model WiiM device capability overrides. Edit the copy in the app data directory (next to settings.json) to change behaviour without code changes -- restart the app to pick up edits. Models not listed here keep the fully runtime-probed generic behaviour (per docs/wiim_api_notes.md: 'Capability detection must still probe at runtime... Never hard-code capabilities by model name alone'). Only documented exceptions to the generic probe are listed by default -- see docs/corrections.md and docs/wiim_api_notes.md Capability Nuances table. WiiM_Amp_Ultra/WiiM_Sound/WiiM_Sound_Lite previously needed a 'sources' override here because source enumeration wasn't possible; getAudioInputEnable now enumerates real sources at runtime for every model except WiiM_Mini, so only Mini (which supports neither that command nor RoomFit) still needs an entry. An optional top-level 'default_max_bands' key overrides the built-in 10-band fallback cap for every model without its own 'max_bands'.",
   "models": {
     "WiiM_Mini": {
       "aliases": ["Muzo_Mini"],
@@ -9,16 +9,6 @@
       "roomfit_level": 0,
       "supported_filter_types": ["PEAK", "LS", "HS"],
       "sources": ["wifi", "bluetooth", "line-in"]
-    },
-    "WiiM_Amp_Ultra": {
-      "sources": ["wifi", "HDMI", "bluetooth", "line-in", "optical"]
-    },
-    "WiiM_Sound": {
-      "sources": ["wifi", "bluetooth", "auxIn"]
-    },
-    "WiiM_Sound_Lite": {
-      "aliases": ["WiiM_Sound_Lite_V2"],
-      "sources": ["wifi", "bluetooth", "auxIn"]
     }
   }
 }

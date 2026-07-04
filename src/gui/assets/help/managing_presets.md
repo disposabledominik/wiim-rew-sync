@@ -74,7 +74,17 @@ profiles stored directly on your WiiM device. From here you can:
   devices on your network
 
 PEQ presets and RoomFit profiles appear in separate sections. Selecting an
-item in one section deselects any selection in the other.
+item in one section deselects any selection in the other. If a PEQ preset or
+RoomFit profile is currently active on the device, its entry is shown in
+bold accent text with an "(active)" label, so you can see at a glance what's
+actually playing before you export, load, or overwrite anything.
+
+Reading a **PEQ** preset's filters (for any of the four actions above)
+briefly switches your device's current input to that preset so its bands can
+be read, then restores what was playing before you started — a confirmation
+dialog appears first so you're not surprised by a brief change in what
+you're hearing. **RoomFit** profiles have no such prompt: reading a RoomFit
+profile's filters doesn't affect what's actually applied to your audio.
 
 ## Tips
 

@@ -80,18 +80,39 @@ def test_install_crash_handler_writes_log(tmp_path, monkeypatch):
 
 # Issue 94: _mark_prior_steps_completed must mark CONNECT/EQ_TYPE/SOURCE/FILTERS when appropriate
 def test_mark_prior_steps_completed_marks_connect_and_sources():
+    """#162: CONNECT's summary is now the resolved device name
+    (_resolve_connect_summary(), same wording used by every entry point)
+    instead of the literal "Connected" -- bind the real shared-summary
+    helper methods onto the SimpleNamespace stand-in so this test exercises
+    the actual current behavior rather than a stale hardcoded literal."""
     func = main_window.MainWindow._mark_prior_steps_completed
-
-    dummy_self = SimpleNamespace()
-    dummy_self._wizard_controller = SimpleNamespace(flow_type=FlowType.PEQ)
 
     state = WizardState()
     state.selected_device = "device-1"
 
+    dummy_self = SimpleNamespace()
+    dummy_self._wizard_controller = SimpleNamespace(flow_type=FlowType.PEQ, state=state)
+    dummy_self._device_caps = None
+    dummy_self._discovered_devices = []
+    dummy_self._resolve_connect_summary = (
+        main_window.MainWindow._resolve_connect_summary.__get__(dummy_self)
+    )
+    dummy_self._compute_source_summary = (
+        main_window.MainWindow._compute_source_summary.__get__(dummy_self)
+    )
+    dummy_self._apply_source_summary = (
+        main_window.MainWindow._apply_source_summary.__get__(dummy_self)
+    )
+    dummy_self._resolve_filters_summary = (
+        main_window.MainWindow._resolve_filters_summary.__get__(dummy_self)
+    )
+
     func(dummy_self, state)
 
     assert WizardStep.CONNECT in state.completed_steps
-    assert state.completed_steps[WizardStep.CONNECT] == "Connected"
+    # No discovered-device match and no caps -> _resolve_connect_summary()'s
+    # generic fallback name, not the device IP or the old "Connected" literal.
+    assert state.completed_steps[WizardStep.CONNECT] == "WiiM Device"
     assert WizardStep.EQ_TYPE in state.completed_steps
     assert WizardStep.SOURCE in state.completed_steps
     assert WizardStep.FILTERS in state.completed_steps
@@ -123,6 +144,10 @@ async def test_do_load_peq_preset_updates_channel_mode_and_emits():
                 bands_l=[CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)],
                 bands_r=[CanonicalFilter(type="PEAK", frequency_hz=200.0, gain_db=0.5, q=1.0)],
             )
+
+        async def read_peq_preset_preview(self, source_name, preset_name):
+            # _do_load_peq_preset now reads via read_peq_preset_preview (#166)
+            return await self.read_peq(source_name)
 
     dummy_self._wiim_adapter = DummyAdapter()
     dummy_self._wizard_controller = SimpleNamespace(state=WizardState())

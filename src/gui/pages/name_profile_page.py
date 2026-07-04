@@ -7,16 +7,19 @@ Shows existing profiles for reference and warns when overwriting the active prof
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QPushButton,
     QWidget,
 )
 
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
+    ACCENT_COLOR,
     SPACING_MD,
     SPACING_SM,
 )
@@ -94,10 +97,20 @@ class NameProfilePage(QWidget):
         # Stretch at bottom
         layout.addStretch()
 
+    @property
+    def active_profile(self) -> str:
+        """The currently-active RoomFit profile name, or "" if none/unknown."""
+        return self._active_profile
+
     def set_existing_profiles(
         self, profiles: list[str], active_profile: str = ""
     ) -> None:
         """Populate the existing profiles list and mark the active profile.
+
+        The active entry gets a "(active)" text suffix plus bold/accent
+        styling -- the text label is the primary signal (self-explanatory,
+        doesn't rely on color perception); styling is reinforcement, not the
+        only cue (#165).
 
         Args:
             profiles: List of existing RoomFit profile names on the device.
@@ -106,8 +119,15 @@ class NameProfilePage(QWidget):
         self._active_profile = active_profile
         self._profiles_list.clear()
         for name in profiles:
-            display = f"{name} (active)" if name == active_profile else name
-            self._profiles_list.addItem(display)
+            is_active = name == active_profile
+            item = QListWidgetItem(f"{name} (active)" if is_active else name)
+            if is_active:
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                item.setForeground(QColor(ACCENT_COLOR))
+                item.setToolTip("Currently active on this device")
+            self._profiles_list.addItem(item)
 
         # Re-evaluate warning in case input already has text
         self._on_text_changed(self._name_input.text())
