@@ -10,6 +10,7 @@ Requirements referenced: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6,
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
@@ -771,16 +772,15 @@ class MainWindow(QMainWindow):
         # _do_populate_name_profiles() re-fetches device B's real status.
         self._roomfit_enabled = False
         # Clear completed steps beyond CONNECT
-        state.completed_steps.pop(WizardStep.EQ_TYPE, None)
-        state.completed_steps.pop(WizardStep.SOURCE, None)
-        state.completed_steps.pop(WizardStep.FILTERS, None)
-        state.completed_steps.pop(WizardStep.REVIEW, None)
-        state.completed_steps.pop(WizardStep.PUSH, None)
-        state.completed_step_tooltips.pop(WizardStep.EQ_TYPE, None)
-        state.completed_step_tooltips.pop(WizardStep.SOURCE, None)
-        state.completed_step_tooltips.pop(WizardStep.FILTERS, None)
-        state.completed_step_tooltips.pop(WizardStep.REVIEW, None)
-        state.completed_step_tooltips.pop(WizardStep.PUSH, None)
+        for step in (
+            WizardStep.EQ_TYPE,
+            WizardStep.SOURCE,
+            WizardStep.FILTERS,
+            WizardStep.REVIEW,
+            WizardStep.PUSH,
+        ):
+            state.completed_steps.pop(step, None)
+            state.completed_step_tooltips.pop(step, None)
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
         self._wiim_http_client = WiiMHttpClient(device_ip)
@@ -818,16 +818,21 @@ class MainWindow(QMainWindow):
     # step always shows the same wording regardless of path (#162).
     # ------------------------------------------------------------------
 
+    def _lookup_device_name(self, ip: str | None, default: str) -> str:
+        """Friendly device name for `ip` from the current discovery list, or
+        `default` if not found -- shared by every call site that needs a
+        device name for display (step summaries, default export/preset
+        filenames), so they can't independently drift (#176)."""
+        for d in self._discovered_devices:
+            if d.ip == ip:
+                return d.name
+        return default
+
     def _resolve_connect_summary(self) -> str:
         """Friendly device name for the Connect step -- same on every entry point."""
         caps = self._device_caps
-        device_name = getattr(caps, "model", "") or "WiiM Device"
         selected_ip = self._wizard_controller.state.selected_device
-        for d in self._discovered_devices:
-            if d.ip == selected_ip:
-                device_name = d.name
-                break
-        return device_name
+        return self._lookup_device_name(selected_ip, getattr(caps, "model", "") or "WiiM Device")
 
     def _compute_source_summary(self, source_name: str) -> tuple[str, str]:
         """(summary, tooltip) for the Sources step -- same on every entry point.
@@ -886,7 +891,13 @@ class MainWindow(QMainWindow):
                 self._bridge_wrapper("list_roomfit", self._do_list_roomfit_profiles())
             )
 
-        self._wizard_controller.advance(summary=_EQ_TYPE_SUMMARY[eq_type])
+        # A stale "what current_filters came from" string from before this EQ
+        # type switch must not linger into the new flow (#162d/#173) -- mirrors
+        # the same clearing _on_device_selected already does on device switch.
+        self._wizard_controller.state.filters_origin = ""
+        self._wizard_controller.advance(
+            summary=_EQ_TYPE_SUMMARY.get(eq_type, eq_type.upper())
+        )
 
     @Slot(str, str)
     def _on_source_selected(self, source_name: str, channel_mode: str) -> None:
@@ -1611,11 +1622,7 @@ class MainWindow(QMainWindow):
             source = state.selected_source or "wifi"
 
             # Try to get friendly device name
-            device_name = device_ip
-            for d in self._discovered_devices:
-                if d.ip == device_ip:
-                    device_name = d.name
-                    break
+            device_name = self._lookup_device_name(device_ip, device_ip)
 
             validated_count = len(state.current_filters)
             active_bands = sum(
@@ -1627,21 +1634,7 @@ class MainWindow(QMainWindow):
             if getattr(self, "_sidebar_load_in_progress", False):
                 # Sidebar load: navigate directly to Review (smoke #87)
                 self._sidebar_load_in_progress = False
-                state = self._wizard_controller.state
-                state.current_step = WizardStep.REVIEW
-                # Mark all prior steps as completed for step indicator
-                self._mark_prior_steps_completed(state)
-                # Emit step summaries + tooltips for the step indicator
-                tooltips = state.completed_step_tooltips
-                for step, summary in state.completed_steps.items():
-                    self._wizard_controller.step_summary_updated.emit(
-                        step, summary, tooltips.get(step, "")
-                    )
-                # Switching the page fires currentChanged, which
-                # _sync_navigation_chrome handles centrally (step pill
-                # highlight + undim, sidebar reset to "home") — no manual
-                # sync needed here.
-                self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
+                self._jump_to_review()
             else:
                 self._wizard_controller.advance(
                     summary=self._resolve_filters_summary(validated_count),
@@ -2012,11 +2005,7 @@ class MainWindow(QMainWindow):
 
             # Build a default filename from device name + source
             state = self._wizard_controller.state
-            device_name = "WiiM"
-            for d in self._discovered_devices:
-                if d.ip == state.selected_device:
-                    device_name = d.name
-                    break
+            device_name = self._lookup_device_name(state.selected_device, "WiiM")
             source = state.selected_source or "wifi"
             default_name = f"{device_name} - {source}"
 
@@ -2286,32 +2275,25 @@ class MainWindow(QMainWindow):
         # Emit result signal
         self._bridge.peq_ready.emit(peq_settings)
 
-    async def _do_copy_preset_to_device(
-        self,
-        preset_name: str,
-        preset_type: str,
-        target_ip: str,
-        target_source: str,
-    ) -> None:
-        """Read a preset from current device and save it as a named preset on target.
+    async def _read_preset_to_copy(
+        self, preset_name: str, preset_type: str
+    ) -> tuple[list[CanonicalFilter], ChannelMode, PEQSettings] | None:
+        """Read+preview a preset from the currently connected (source) device.
 
-        1. Reads preset filters from the currently connected device
-        2. Connects to target device
-        3. Saves as a named preset (same name) on the target device
+        Shared by both copy flows so the read/preview -- which briefly loads
+        the preset onto the source device's live DSP and restores it after,
+        see #166 -- happens exactly once per preset, not once per target
+        device it's copied to (#171).
 
-        Args:
-            preset_name: Name of the preset/profile to copy.
-            preset_type: "PEQ" or "RoomFit".
-            target_ip: IP address of the target device.
-            target_source: Target source name on the remote device.
+        Returns None (after showing an error banner) if the preset has no
+        filters to copy.
         """
         assert self._wiim_adapter is not None
-
         source_name = self._wizard_controller.state.selected_source or "wifi"
 
-        # Step 1: Read filters from current device (previewing + restoring --
-        # the confirmation dialog in _on_copy_to_device_requested already
-        # warned the user this briefly changes what's playing, see #166)
+        # Reading (previewing + restoring) -- the confirmation dialog in
+        # _on_copy_to_device_requested already warned the user this briefly
+        # changes what's playing, see #166.
         if preset_type == "RoomFit":
             peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
                 source_name, preset_name
@@ -2326,9 +2308,41 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error(
                 f"Preset '{preset_name}' has no filters to copy"
             )
-            return
+            return None
 
-        # Step 2: Connect to target device and save as named preset
+        return filters, channel_mode, peq_settings
+
+    async def _do_copy_preset_to_device(
+        self,
+        preset_name: str,
+        preset_type: str,
+        target_ip: str,
+        target_source: str,
+        filters: list[CanonicalFilter],
+        channel_mode: ChannelMode,
+        peq_settings: PEQSettings,
+    ) -> None:
+        """Write an already-read preset to a target device, as a named preset.
+
+        1. Connects to target device
+        2. Writes + verifies (SafeWrite/RoomFitSafeWrite)
+        3. Saves as a named preset (same name) on the target device
+
+        The read/preview step happens once, earlier, via
+        _read_preset_to_copy() -- shared across every target device this
+        preset is being copied to (#171).
+
+        Args:
+            preset_name: Name of the preset/profile to copy.
+            preset_type: "PEQ" or "RoomFit".
+            target_ip: IP address of the target device.
+            target_source: Target source name on the remote device.
+            filters: Filters read from the source preset (see _read_preset_to_copy).
+            channel_mode: Channel mode of the source preset.
+            peq_settings: Full PEQSettings read from the source preset (carries
+                bands_l/bands_r for L/R mode).
+        """
+        # Connect to target device and save as named preset
         target_client = WiiMHttpClient(target_ip)
         try:
             target_caps = await CapabilityProber(target_client).probe()
@@ -2409,8 +2423,14 @@ class MainWindow(QMainWindow):
                 continue
 
             try:
+                read_result = await self._read_preset_to_copy(preset_name, preset_type)
+                if read_result is None:
+                    failed += 1
+                    continue
+                filters, channel_mode, peq_settings = read_result
                 await self._do_copy_preset_to_device(
-                    preset_name, preset_type, target_ip, target_source
+                    preset_name, preset_type, target_ip, target_source,
+                    filters, channel_mode, peq_settings,
                 )
                 succeeded += 1
             except Exception:
@@ -2438,7 +2458,12 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Copy presets to multiple target devices (smoke #73 fix).
 
-        Iterates over all target devices and copies all preset items to each.
+        Iterates over all presets, reading (and previewing) each once from the
+        source device, then writes that single read to every target device.
+        Presets are the outer loop and devices the inner loop specifically so
+        the read/preview step -- which briefly flips the source device's live
+        audio, see #166 -- happens once per preset rather than once per
+        (preset, device) pair (#171).
 
         Args:
             items: List of PresetItem objects to copy.
@@ -2449,21 +2474,36 @@ class MainWindow(QMainWindow):
         failed = 0
         total_ops = len(items) * len(target_devices)
 
-        for device in target_devices:
-            target_ip = device.ip
-            device_name = device.name
-            self._bridge.progress_update.emit(
-                f"Copying to {device_name}..."
-            )
-            for item in items:
-                preset_name = getattr(item, "name", "")
-                preset_type = getattr(item, "preset_type", "PEQ")
-                if not preset_name:
-                    continue
+        for item in items:
+            preset_name = getattr(item, "name", "")
+            preset_type = getattr(item, "preset_type", "PEQ")
+            if not preset_name:
+                continue
 
+            self._bridge.progress_update.emit(f"Reading '{preset_name}'...")
+            try:
+                read_result = await self._read_preset_to_copy(preset_name, preset_type)
+            except Exception:
+                logger.exception("Read preset '%s' for copy failed", preset_name)
+                self._bridge.progress_update.emit(
+                    f"Failed to read '{preset_name}' -- skipping"
+                )
+                failed += len(target_devices)
+                continue
+            if read_result is None:
+                failed += len(target_devices)
+                continue
+            filters, channel_mode, peq_settings = read_result
+
+            for device in target_devices:
+                target_ip = device.ip
+                self._bridge.progress_update.emit(
+                    f"Copying '{preset_name}' to {device.name}..."
+                )
                 try:
                     await self._do_copy_preset_to_device(
-                        preset_name, preset_type, target_ip, target_source
+                        preset_name, preset_type, target_ip, target_source,
+                        filters, channel_mode, peq_settings,
                     )
                     succeeded += 1
                 except Exception:
@@ -3007,65 +3047,92 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
             self._filters_page.set_roomfit_profiles([])
 
+    async def _read_active_name_or_default(
+        self, coro: Coroutine[Any, Any, Any], log_msg: str
+    ) -> str:
+        """Await a read whose only purpose is an active-item name for
+        highlighting (#165c) -- a failure here means no highlight, not a
+        failed view, so it degrades to "" rather than propagating."""
+        try:
+            return str(await coro)
+        except Exception:
+            logger.warning(log_msg, exc_info=True)
+            return ""
+
     async def _do_list_presets(self) -> None:
-        """Fetch device PEQ preset list and RoomFit profiles, populate PresetsDeviceView."""
+        """Fetch device PEQ preset list and RoomFit profiles, populate PresetsDeviceView.
+
+        The PEQ and RoomFit fetches are fully independent of each other, so
+        they run concurrently (#174) instead of one blocking the other.
+        """
         assert self._wiim_adapter is not None
+        wiim_adapter = self._wiim_adapter
 
         source_name = self._wizard_controller.state.selected_source or "wifi"
         from src.gui.views.presets_device_view import PresetItem
 
-        # Fetch PEQ presets
-        try:
-            if self._wiim_adapter.capabilities.supports_profile_enumeration:
-                peq_presets = await self._wiim_adapter.list_peq_profiles(source_name)
-                peq_items = [
-                    PresetItem(
-                        name=p.get("Name", "Unnamed"),
-                        preset_type="PEQ",
-                        channel_mode=p.get("channelMode", "Stereo"),
+        async def _fetch_peq() -> None:
+            try:
+                if wiim_adapter.capabilities.supports_profile_enumeration:
+                    peq_presets = await wiim_adapter.list_peq_profiles(source_name)
+                    peq_items = [
+                        PresetItem(
+                            name=p.get("Name", "Unnamed"),
+                            preset_type="PEQ",
+                            channel_mode=p.get("channelMode", "Stereo"),
+                        )
+                        for p in peq_presets
+                    ]
+                    # read_peq() is a plain, harmless read, unlike
+                    # load_peq_profile()/EQv2SourceLoad.
+                    active_peq_name = await self._read_active_name_or_default(
+                        self._peq_name_for_highlight(source_name),
+                        "Failed to read active PEQ preset name",
                     )
-                    for p in peq_presets
-                ]
-                # A failed active-name read just means no highlight, not a
-                # failed view (#165c) -- read_peq() is a plain, harmless read,
-                # unlike load_peq_profile()/EQv2SourceLoad.
-                active_peq_name = ""
-                try:
-                    active_peq_name = (await self._wiim_adapter.read_peq(source_name)).name
-                except Exception:
-                    logger.warning("Failed to read active PEQ preset name", exc_info=True)
-                self._presets_device_view.set_peq_presets(peq_items, active_peq_name)
-            else:
+                    self._presets_device_view.set_peq_presets(peq_items, active_peq_name)
+                else:
+                    self._presets_device_view.set_peq_unavailable()
+            except Exception:
+                logger.warning("Failed to list PEQ presets", exc_info=True)
                 self._presets_device_view.set_peq_unavailable()
-        except Exception:
-            logger.warning("Failed to list PEQ presets", exc_info=True)
-            self._presets_device_view.set_peq_unavailable()
 
-        # Fetch RoomFit profiles
-        try:
-            if self._wiim_adapter.capabilities.roomfit_level >= 1:
-                rf_profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
-                rf_items = [
-                    PresetItem(
-                        name=p.get("Name", "Unnamed"),
-                        preset_type="RoomFit",
-                        channel_mode=p.get("channelMode", "Stereo"),
+        async def _fetch_roomfit() -> None:
+            try:
+                if wiim_adapter.capabilities.roomfit_level >= 1:
+                    rf_profiles = await wiim_adapter.list_roomfit_profiles(source_name)
+                    rf_items = [
+                        PresetItem(
+                            name=p.get("Name", "Unnamed"),
+                            preset_type="RoomFit",
+                            channel_mode=p.get("channelMode", "Stereo"),
+                        )
+                        for p in rf_profiles
+                    ]
+                    active_roomfit_name = await self._read_active_name_or_default(
+                        self._roomfit_name_for_highlight(),
+                        "Failed to read active RoomFit profile name",
                     )
-                    for p in rf_profiles
-                ]
-                active_roomfit_name = ""
-                try:
-                    _enabled, active_roomfit_name = await self._wiim_adapter.get_roomfit_status()
-                except Exception:
-                    logger.warning(
-                        "Failed to read active RoomFit profile name", exc_info=True
+                    self._presets_device_view.set_roomfit_profiles(
+                        rf_items, active_roomfit_name
                     )
-                self._presets_device_view.set_roomfit_profiles(rf_items, active_roomfit_name)
-            else:
+                else:
+                    self._presets_device_view.set_roomfit_hidden()
+            except Exception:
+                logger.warning("Failed to list RoomFit profiles", exc_info=True)
                 self._presets_device_view.set_roomfit_hidden()
-        except Exception:
-            logger.warning("Failed to list RoomFit profiles", exc_info=True)
-            self._presets_device_view.set_roomfit_hidden()
+
+        await asyncio.gather(_fetch_peq(), _fetch_roomfit())
+
+    async def _peq_name_for_highlight(self, source_name: str) -> str:
+        """The active PEQ preset's name, for #165c highlighting."""
+        assert self._wiim_adapter is not None
+        return (await self._wiim_adapter.read_peq(source_name)).name
+
+    async def _roomfit_name_for_highlight(self) -> str:
+        """The active RoomFit profile's name, for #165c highlighting."""
+        assert self._wiim_adapter is not None
+        _enabled, active_roomfit_name = await self._wiim_adapter.get_roomfit_status()
+        return active_roomfit_name
 
     # ------------------------------------------------------------------
     # Navigation handlers
@@ -3749,11 +3816,7 @@ class MainWindow(QMainWindow):
             return
 
         # Generate a default preset name from device + source
-        device_name = "WiiM"
-        for d in self._discovered_devices:
-            if d.ip == state.selected_device:
-                device_name = d.name
-                break
+        device_name = self._lookup_device_name(state.selected_device, "WiiM")
         source = state.selected_source or "wifi"
         channel = state.channel_mode
         preset_name = f"{device_name} - {source} ({channel.display_value})"
@@ -4028,19 +4091,7 @@ class MainWindow(QMainWindow):
 
         # Navigate to Review step — update both wizard state and stacked widget
         # so that subsequent navigation/step_changed doesn't override (smoke #87)
-        self._mark_prior_steps_completed(state)
-        self._wizard_controller.state.current_step = WizardStep.REVIEW
-        # Switching the page fires currentChanged, which
-        # _sync_navigation_chrome handles centrally (step pill highlight +
-        # undim, sidebar reset to "home") — no manual sync needed here.
-        self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
-
-        # Emit step summaries + tooltips for the step indicator (smoke #87)
-        tooltips = state.completed_step_tooltips
-        for step, summary in state.completed_steps.items():
-            self._wizard_controller.step_summary_updated.emit(
-                step, summary, tooltips.get(step, "")
-            )
+        self._jump_to_review()
 
         self._status_banner.show_success(
             f"Profile loaded: {active_bands} bands ready for review"
@@ -4219,6 +4270,30 @@ class MainWindow(QMainWindow):
         n_filters = len(state.current_filters)
         state.completed_steps[WizardStep.FILTERS] = self._resolve_filters_summary(n_filters)
         state.completed_step_tooltips[WizardStep.FILTERS] = state.filters_origin
+
+    def _jump_to_review(self) -> None:
+        """Navigate straight to the Review step with indicators filled in.
+
+        Shared by the sidebar-load path (_on_peq_ready) and the profile-load
+        completion handler (_on_profile_recalled) -- both need to mark prior
+        steps completed, jump the wizard state and stacked widget straight to
+        Review, and replay every completed step's summary/tooltip through the
+        step indicator (smoke #87), rather than reimplementing that sequence
+        at each call site.
+
+        Switching the page fires currentChanged, which _sync_navigation_chrome
+        handles centrally (step pill highlight + undim, sidebar reset to
+        "home") -- no manual sync needed here.
+        """
+        state = self._wizard_controller.state
+        self._mark_prior_steps_completed(state)
+        state.current_step = WizardStep.REVIEW
+        self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
+        tooltips = state.completed_step_tooltips
+        for step, summary in state.completed_steps.items():
+            self._wizard_controller.step_summary_updated.emit(
+                step, summary, tooltips.get(step, "")
+            )
 
     # ------------------------------------------------------------------
     # Close Event

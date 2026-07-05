@@ -137,13 +137,15 @@ class TestWiiMDeviceDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
-                return {
-                    "custom": [{"Name": "RF1", "channelMode": "Stereo", "Type": "RC"}],
-                    "preset": [],
-                }
+                if '"EQLevel": 2' in cmd:
+                    # RoomFit profile list (EQLevel:2)
+                    return {
+                        "custom": [{"Name": "RF1", "channelMode": "Stereo", "Type": "RC"}],
+                        "preset": [],
+                    }
+                # PEQ profile enumeration probe (EQLevel:1)
+                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQGetLV2SourceBandEx:"):
                 return {"EQStat": "On", "channelMode": "Stereo", "EQBand": [
                     {"param_name": "a_mode", "value": 1.0},
@@ -181,6 +183,39 @@ class TestWiiMDeviceDetection:
         assert caps.role == "solo"
 
     @pytest.mark.asyncio
+    async def test_malformed_dict_response_not_treated_as_enumeration_support(
+        self,
+    ) -> None:
+        """#170: a dict response missing both 'status' AND the real success
+        shape's 'custom'/'preset' keys must not be treated as enumeration
+        support -- only rejecting a 'status' key (not requiring the real
+        shape) would silently re-admit this exact false-positive class."""
+        client = _make_mock_client()
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return STATUS_EX_WIIM_PRO
+            if cmd == "getAudioInputEnable":
+                return AUDIO_INPUT_ENABLE_RESPONSE
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return EQ_GET_LV2_BAND_RESPONSE
+            if cmd.startswith("EQSetLV2Band:"):
+                return "OK"
+            if cmd.startswith("EQv2GetNewList:"):
+                # Malformed dict: no "status" key, but also no "custom"/"preset"
+                return {"unexpected": "shape"}
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_profile_enumeration is False
+
+    @pytest.mark.asyncio
     async def test_wiim_mini_detected_correctly(self) -> None:
         """WiiM Mini should be detected as WiiM with PEQ but no RoomFit."""
         client = _make_mock_client()
@@ -192,8 +227,6 @@ class TestWiiMDeviceDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -354,15 +387,15 @@ class TestRoomFitLevelDetection:
                 return "OK"
             if cmd.startswith("EQSetLV2SourceBand:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
-                return {
-                    "custom": [
-                        {"Name": "My RoomFit", "channelMode": "Stereo", "Type": "RC"}
-                    ],
-                    "preset": [],
-                }
+                if '"EQLevel": 2' in cmd:
+                    return {
+                        "custom": [
+                            {"Name": "My RoomFit", "channelMode": "Stereo", "Type": "RC"}
+                        ],
+                        "preset": [],
+                    }
+                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQGetLV2SourceBandEx:"):
                 if "EQLevel" in cmd:
                     return roomfit_band_response
@@ -410,10 +443,10 @@ class TestRoomFitLevelDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
-                return {"custom": [], "preset": []}
+                if '"EQLevel": 2' in cmd:
+                    return {"custom": [], "preset": []}
+                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQGetLV2SourceBandEx:"):
                 if "EQLevel" in cmd:
                     return roomfit_band_response
@@ -452,10 +485,10 @@ class TestRoomFitLevelDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
-                return {"custom": [], "preset": []}
+                if '"EQLevel": 2' in cmd:
+                    return {"custom": [], "preset": []}
+                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQGetLV2SourceBandEx:"):
                 if "EQLevel" in cmd:
                     # Returns non-dict (level 2 fails)
@@ -487,8 +520,6 @@ class TestRoomFitLevelDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -519,8 +550,6 @@ class TestMultiroomRoleDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -545,8 +574,6 @@ class TestMultiroomRoleDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -571,8 +598,6 @@ class TestMultiroomRoleDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -597,8 +622,6 @@ class TestMultiroomRoleDetection:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -629,8 +652,6 @@ class TestDynamicMaxFilters:
                 return EQ_GET_LV2_BAND_12_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -676,8 +697,6 @@ class TestDynamicMaxFilters:
                 return EQ_GET_LV2_BAND_12_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -704,8 +723,6 @@ class TestDynamicMaxFilters:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -738,8 +755,6 @@ class TestDynamicMaxFilters:
                 return empty_band_response
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -821,8 +836,6 @@ class TestMuzoMiniRecognition:
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
             if cmd == "GetMultiroomInfo":
@@ -894,15 +907,15 @@ class TestRoomFitProbeNoSourceBandWrite:
                 return EQ_GET_LV2_BAND_12_RESPONSE
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
-            if cmd.startswith("EQGetLV2List:"):
-                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQv2GetNewList:"):
-                return {
-                    "custom": [
-                        {"Name": "RF1", "channelMode": "L/R", "Type": "RC"},
-                    ],
-                    "preset": [],
-                }
+                if '"EQLevel": 2' in cmd:
+                    return {
+                        "custom": [
+                            {"Name": "RF1", "channelMode": "L/R", "Type": "RC"},
+                        ],
+                        "preset": [],
+                    }
+                return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQGetLV2SourceBandEx:"):
                 if "EQLevel" in cmd:
                     return roomfit_lr_response

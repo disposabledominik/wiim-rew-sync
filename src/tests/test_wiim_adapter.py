@@ -8,7 +8,9 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock
+from urllib.parse import unquote
 
 import pytest
 
@@ -878,17 +880,23 @@ class TestReadRoomfit:
         # Verify the correct commands were issued
         calls = mock_client.command.call_args_list
         assert len(calls) == 2
-        # First: load command
+        # First: load command (EQv2SourceLoad is profile CRUD -- source_name
+        # omitted entirely, per docs/wiim_api_notes.md's source_name & EQLevel
+        # Reference).
         assert "EQv2SourceLoad:" in calls[0][0][0]
         assert "EQLevel" in calls[0][0][0]
         assert "My%20RoomFit" in calls[0][0][0]
-        # RoomFit payloads never include source_name -- the WiiM app doesn't
-        # send it, and the device ignores it (echoes back "default") (#164).
         assert "wifi" not in calls[0][0][0]
-        # Second: read command
+        first_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        assert "source_name" not in first_payload
+        # Second: read command (band read/write requires source_name="" --
+        # present but empty, not omitted; omitting it was the root cause of a
+        # RoomFit-detection regression, see docs/corrections.md 2026-07-04).
         assert "EQGetLV2SourceBandEx:" in calls[1][0][0]
         assert "EQLevel" in calls[1][0][0]
         assert "wifi" not in calls[1][0][0]
+        second_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
+        assert second_payload["source_name"] == ""
 
 
 # ---------------------------------------------------------------------------
@@ -981,20 +989,29 @@ class TestWriteRoomfit:
 
         calls = mock_client.command.call_args_list
         assert len(calls) == 2
-        # First: write to buffer with EQLevel: 2
+        # First: write to buffer with EQLevel: 2. Band read/write requires
+        # source_name="" -- present but empty, not omitted; omitting it was
+        # the root cause of a RoomFit-detection regression (docs/corrections.md
+        # 2026-07-04).
         assert "EQSetLV2SourceBand:" in calls[0][0][0]
         assert "EQLevel" in calls[0][0][0]
-        # RoomFit payloads never include source_name -- the WiiM app doesn't
-        # send it, and the device ignores it (echoes back "default") (#164).
         assert "wifi" not in calls[0][0][0]
-        # rc_output marks the profile as Type "RC" instead of "Custom" (#164).
+        write_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        assert write_payload["source_name"] == ""
+        # rc_output matches the WiiM app's own write traffic; it does NOT
+        # change the saved profile's Type field (always "Custom" for
+        # app-saved profiles -- see the RoomFit "Quirk" note in
+        # docs/wiim_api_notes.md and docs/corrections.md 2026-07-04).
         assert "rc_output" in calls[0][0][0]
         assert "AUDIO_OUTPUT_SPEAKER_MODE" in calls[0][0][0]
-        # Second: save to profile
+        # Second: save to profile (EQSourceSave is profile CRUD -- source_name
+        # omitted entirely).
         assert "EQSourceSave:" in calls[1][0][0]
         assert "EQLevel" in calls[1][0][0]
         assert "REW%20Export" in calls[1][0][0]
         assert "wifi" not in calls[1][0][0]
+        save_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
+        assert "source_name" not in save_payload
 
 
 # ---------------------------------------------------------------------------

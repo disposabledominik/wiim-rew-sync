@@ -269,27 +269,35 @@ class CapabilityProber:
             caps.supports_batch_write = False
 
     async def _probe_profile_enumeration(self, caps: DeviceCapabilities) -> None:
-        """Probe EQGetLV2List for profile enumeration support.
+        """Probe EQv2GetNewList for profile enumeration support.
 
         Requirement 2.5: determine supports_profile_enumeration by attempting
-        EQGetLV2List.
+        EQv2GetNewList -- the command list_peq_profiles() actually uses at
+        runtime. EQGetLV2List is confirmed non-functional on current firmware
+        (docs/wiim_api_notes.md, "Dead commands -- do not use") -- it always
+        returns {"status":"Failed"}, which is still a dict, so the old
+        isinstance(resp, dict) check reported success purely by coincidence.
         """
         try:
-            encoded_uri = quote(PLUGIN_URI)
-            resp = await self._client.command(f"EQGetLV2List:{encoded_uri}")
+            resp = await self._client.command(
+                encode_wiim_command("EQv2GetNewList", eq_level=1)
+            )
         except Exception:
             logger.warning(
-                "EQGetLV2List probe failed; profile enumeration assumed unsupported.",
+                "EQv2GetNewList probe failed; profile enumeration assumed unsupported.",
                 exc_info=True,
             )
             caps.supports_profile_enumeration = False
             return
 
-        if isinstance(resp, dict):
-            # Valid response — profile enumeration is supported
-            caps.supports_profile_enumeration = True
-        else:
-            caps.supports_profile_enumeration = False
+        # A real success response is {"custom": [...], "preset": [...]}, present
+        # even when empty. A confirmed-dead/unsupported command instead returns
+        # "unknown command" (a string) or {"status":"Failed"} (a dict) -- require
+        # both expected keys rather than just rejecting "status", so an
+        # unrelated/malformed dict shape (e.g. "{}") doesn't also read as success.
+        caps.supports_profile_enumeration = (
+            isinstance(resp, dict) and "custom" in resp and "preset" in resp
+        )
 
     async def _probe_roomfit(self, caps: DeviceCapabilities) -> None:
         """Probe RoomFit capability levels 0-4 sequentially.
@@ -329,12 +337,14 @@ class CapabilityProber:
             logger.info("RoomFit level 1 probe (EQv2GetNewList+EQLevel:2) failed.")
             return
 
-        # Level 2: EQGetLV2SourceBandEx with EQLevel: 2 (no source_name -- the
-        # WiiM app never sends it in RoomFit payloads; see #164 for the same
-        # fix in wiim_adapter.py's read_roomfit()/write_roomfit()).
+        # Level 2: EQGetLV2SourceBandEx with EQLevel: 2 and an explicit empty
+        # source_name -- RoomFit's band read/write requires source_name="" per
+        # docs/wiim_api_notes.md's "source_name & EQLevel Reference" (omitting
+        # the key entirely, as a prior pass mistakenly did, fails against real
+        # hardware and was the root cause of a RoomFit-detection regression).
         try:
             band_resp = await self._client.command(
-                encode_wiim_command("EQGetLV2SourceBandEx", eq_level=2)
+                encode_wiim_command("EQGetLV2SourceBandEx", source_name="", eq_level=2)
             )
             if not isinstance(band_resp, dict):
                 return

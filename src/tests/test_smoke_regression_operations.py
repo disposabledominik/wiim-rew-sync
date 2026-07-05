@@ -1862,14 +1862,25 @@ class TestSettingsUIState:
         items[0].name = "Preset1"
         items[1].name = "Preset2"
 
-        with patch.object(
-            window, "_do_copy_preset_to_device", new_callable=AsyncMock
-        ) as mock_copy:
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        with (
+            patch.object(
+                window, "_read_preset_to_copy", new_callable=AsyncMock,
+                return_value=read_result,
+            ) as mock_read,
+            patch.object(
+                window, "_do_copy_preset_to_device", new_callable=AsyncMock
+            ) as mock_copy,
+        ):
             import asyncio
 
             asyncio.run(
                 window._do_copy_presets_batch(items, "192.168.1.200", "wifi")
             )
+            assert mock_read.call_count == 2
             assert mock_copy.call_count == 2
             # Verify each preset was processed with correct parameters
             call_args_list = mock_copy.call_args_list
@@ -1877,6 +1888,7 @@ class TestSettingsUIState:
             assert call_args_list[0][0][1] == "PEQ"
             assert call_args_list[0][0][2] == "192.168.1.200"
             assert call_args_list[0][0][3] == "wifi"
+            assert call_args_list[0][0][4] == filters
             assert call_args_list[1][0][0] == "Preset2"
             assert call_args_list[1][0][1] == "PEQ"
             assert call_args_list[1][0][2] == "192.168.1.200"
@@ -1890,15 +1902,8 @@ class TestSettingsUIState:
         result at all, so save_peq_profile() ran and "saved" was reported
         unconditionally even after a failed/rolled-back write."""
         _setup_device(window)
-        source_adapter = window._wiim_adapter
-        source_adapter.load_peq_profile = AsyncMock()
-        source_adapter.read_peq = AsyncMock(
-            return_value=MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
-        )
-        # _do_copy_preset_to_device now reads via read_peq_preset_preview (#166)
-        source_adapter.read_peq_preset_preview = AsyncMock(
-            return_value=MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
-        )
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
 
         with (
             patch("src.gui.main_window.WiiMHttpClient"),
@@ -1933,7 +1938,8 @@ class TestSettingsUIState:
                 with pytest.raises(RuntimeError):
                     asyncio.run(
                         window._do_copy_preset_to_device(
-                            "Movie Night", "PEQ", "192.168.1.200", "wifi"
+                            "Movie Night", "PEQ", "192.168.1.200", "wifi",
+                            filters, ChannelMode.STEREO, peq_settings,
                         )
                     )
             # The failed write must not be saved as if it succeeded.
@@ -2011,14 +2017,8 @@ class TestSettingsUIState:
         to target, write+verify, persist as a named preset, report success.
         """
         _setup_device(window)
-        source_adapter = window._wiim_adapter
-        peq_settings = MagicMock(
-            channel_mode="stereo", bands=[_make_filter(100), _make_filter(200)]
-        )
-        source_adapter.load_peq_profile = AsyncMock()
-        source_adapter.read_peq = AsyncMock(return_value=peq_settings)
-        # _do_copy_preset_to_device now reads via read_peq_preset_preview (#166)
-        source_adapter.read_peq_preset_preview = AsyncMock(return_value=peq_settings)
+        filters = [_make_filter(100), _make_filter(200)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
 
         with (
             patch("src.gui.main_window.WiiMHttpClient") as mock_client_cls,
@@ -2047,7 +2047,8 @@ class TestSettingsUIState:
 
             asyncio.run(
                 window._do_copy_preset_to_device(
-                    "Movie Night", "PEQ", "192.168.1.200", "wifi"
+                    "Movie Night", "PEQ", "192.168.1.200", "wifi",
+                    filters, ChannelMode.STEREO, peq_settings,
                 )
             )
 
@@ -2078,20 +2079,10 @@ class TestSettingsUIState:
         this test targets that current path.
         """
         _setup_device(window)
-        source_adapter = window._wiim_adapter
         filters_l = [_make_filter(100)]
         filters_r = [_make_filter(200)]
-        source_adapter.load_peq_profile = AsyncMock()
-        source_adapter.read_peq = AsyncMock(
-            return_value=MagicMock(
-                channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
-            )
-        )
-        # _do_copy_preset_to_device now reads via read_peq_preset_preview (#166)
-        source_adapter.read_peq_preset_preview = AsyncMock(
-            return_value=MagicMock(
-                channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
-            )
+        peq_settings = MagicMock(
+            channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
         )
 
         with (
@@ -2120,7 +2111,8 @@ class TestSettingsUIState:
             with patch("src.gui.main_window.WiiMHttpClient", return_value=mock_target_client):
                 asyncio.run(
                     window._do_copy_preset_to_device(
-                        "LR Preset", "PEQ", "192.168.1.200", "wifi"
+                        "LR Preset", "PEQ", "192.168.1.200", "wifi",
+                        filters_l + filters_r, ChannelMode.LR, peq_settings,
                     )
                 )
 
@@ -2135,13 +2127,8 @@ class TestSettingsUIState:
     def test_issue34_copy_branches_on_preset_type(self, window) -> None:
         """#34: _do_copy_preset_to_device uses PEQ and RoomFit write paths correctly."""
         _setup_device(window)
-        source_adapter = window._wiim_adapter
 
         peq_settings = MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
-        source_adapter.load_peq_profile = AsyncMock()
-        source_adapter.read_peq = AsyncMock(return_value=peq_settings)
-        # _do_copy_preset_to_device now reads via the preview methods (#166)
-        source_adapter.read_peq_preset_preview = AsyncMock(return_value=peq_settings)
 
         roomfit_settings = MagicMock(
             channel_mode="lr",
@@ -2149,10 +2136,6 @@ class TestSettingsUIState:
             bands_l=[_make_filter(100)],
             bands_r=[_make_filter(200)],
         )
-        source_adapter.read_roomfit = AsyncMock(return_value=roomfit_settings)
-        source_adapter.read_roomfit_preset_preview = AsyncMock(return_value=roomfit_settings)
-        window._wizard_controller.state.filters_l = list(roomfit_settings.bands_l)
-        window._wizard_controller.state.filters_r = list(roomfit_settings.bands_r)
 
         with (
             patch("src.gui.main_window.WiiMHttpClient"),
@@ -2187,7 +2170,8 @@ class TestSettingsUIState:
             with patch("src.gui.main_window.WiiMHttpClient", mock_wiim_http):
                 asyncio.run(
                     window._do_copy_preset_to_device(
-                        "Movie Night", "PEQ", "192.168.1.200", "wifi"
+                        "Movie Night", "PEQ", "192.168.1.200", "wifi",
+                        peq_settings.bands, ChannelMode.STEREO, peq_settings,
                     )
                 )
                 safe_write.execute.assert_called_once()
@@ -2202,7 +2186,8 @@ class TestSettingsUIState:
 
                 asyncio.run(
                     window._do_copy_preset_to_device(
-                        "RoomFit A", "RoomFit", "192.168.1.200", "wifi"
+                        "RoomFit A", "RoomFit", "192.168.1.200", "wifi",
+                        roomfit_settings.bands, ChannelMode.LR, roomfit_settings,
                     )
                 )
                 # RoomFit copies now go through RoomFitSafeWrite (verified +
@@ -2513,16 +2498,26 @@ class TestSettingsUIState:
         device2 = MagicMock(ip="192.168.1.202", name="Device B")
         devices = [device1, device2]
 
-        with patch.object(
-            window, "_do_copy_preset_to_device", new_callable=AsyncMock
-        ) as mock_copy:
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        with (
+            patch.object(
+                window, "_read_preset_to_copy", new_callable=AsyncMock,
+                return_value=read_result,
+            ),
+            patch.object(
+                window, "_do_copy_preset_to_device", new_callable=AsyncMock
+            ) as mock_copy,
+        ):
             import asyncio
 
             asyncio.run(
                 window._do_copy_presets_batch_multi(items, devices, "wifi")
             )
             assert mock_copy.call_count == 2
-            # _do_copy_preset_to_device(preset_name, preset_type, target_ip, target_source)
+            # _do_copy_preset_to_device(preset_name, preset_type, target_ip, target_source, ...)
             ips_called = [c.args[2] for c in mock_copy.call_args_list]
             assert ips_called == ["192.168.1.201", "192.168.1.202"]
 
@@ -2541,7 +2536,15 @@ class TestSettingsUIState:
         device3 = MagicMock(ip="192.168.1.203", name="Device C")
         devices = [device1, device2, device3]
 
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
         with (
+            patch.object(
+                window, "_read_preset_to_copy", new_callable=AsyncMock,
+                return_value=read_result,
+            ),
             patch.object(
                 window, "_do_copy_preset_to_device", new_callable=AsyncMock
             ),
@@ -2562,16 +2565,12 @@ class TestSettingsUIState:
     def test_issue79_copy_lr_roomfit_preserves_channel(self, window) -> None:
         """#79: _do_copy_preset_to_device passes L/R for RoomFit copies."""
         _setup_device(window)
-        mock_adapter = window._wiim_adapter
-        # Simulate reading a RoomFit profile that is L/R
+        # Simulate a RoomFit profile that is L/R
         peq_settings = MagicMock()
         peq_settings.channel_mode = "lr"
         peq_settings.bands_l = [_make_filter(100)]
         peq_settings.bands_r = [_make_filter(200)]
         peq_settings.bands = []
-        mock_adapter.read_roomfit = AsyncMock(return_value=peq_settings)
-        # _do_copy_preset_to_device now reads via read_roomfit_preset_preview (#166)
-        mock_adapter.read_roomfit_preset_preview = AsyncMock(return_value=peq_settings)
 
         # Mock the target device connection
         with (
@@ -2596,7 +2595,9 @@ class TestSettingsUIState:
 
             asyncio.run(
                 window._do_copy_preset_to_device(
-                    "My RoomFit", "RoomFit", "192.168.1.200", "wifi"
+                    "My RoomFit", "RoomFit", "192.168.1.200", "wifi",
+                    peq_settings.bands_l + peq_settings.bands_r,
+                    ChannelMode.LR, peq_settings,
                 )
             )
             # RoomFit copy is verified via RoomFitSafeWrite (smoke #153),

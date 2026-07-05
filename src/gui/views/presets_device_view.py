@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.list_item_style import apply_active_item_style
 from src.gui.components.page_layout import (
     ICON_NO_CONNECTION,
     build_centered_content,
@@ -36,7 +36,6 @@ from src.gui.components.page_layout import (
     make_page_title,
 )
 from src.gui.constants import (
-    ACCENT_COLOR,
     LIST_ITEM_HEIGHT,
     SPACING_LG,
     SPACING_MD,
@@ -422,12 +421,7 @@ class PresetsDeviceView(QWidget):
         """
         text = self._format_item_text(item)
         list_item = QListWidgetItem(f"{text}  (active)" if is_active else text)
-        if is_active:
-            font = list_item.font()
-            font.setBold(True)
-            list_item.setFont(font)
-            list_item.setForeground(QColor(ACCENT_COLOR))
-            list_item.setToolTip("Currently active on this device")
+        apply_active_item_style(list_item, is_active)
         list_item.setData(Qt.ItemDataRole.UserRole, item)
         list_item.setSizeHint(list_item.sizeHint().expandedTo(
             list_item.sizeHint().__class__(0, LIST_ITEM_HEIGHT)

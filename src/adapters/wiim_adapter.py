@@ -301,7 +301,8 @@ class WiiMAdapter:
         await self._set_fx_state("EQSourceOff", source_name, eq_level=1)
 
     async def _read_fx_status(self, source_name: str, eq_level: int) -> dict[str, Any]:
-        """Shared EQGetLV2SourceBandEx issuer for get_peq_enabled/get_roomfit_status."""
+        """Shared EQGetLV2SourceBandEx issuer for get_peq_enabled/get_roomfit_status/
+        read_roomfit."""
         response = await self._client.command(
             encode_wiim_command("EQGetLV2SourceBandEx", source_name=source_name, eq_level=eq_level)
         )
@@ -726,10 +727,12 @@ class WiiMAdapter:
 
         Args:
             source_name: Audio input source (e.g. "wifi", "bluetooth"). Not
-                included in the RoomFit payloads themselves (the WiiM app
-                never sends it there — confirmed via decompiled app +
-                hardware testing) but kept as the source the returned
-                ``PEQSettings`` is attributed to.
+                included in the RoomFit payloads themselves -- the buffer read
+                uses an explicit empty source_name instead (RoomFit is a
+                single global buffer, not per-source; see
+                docs/wiim_api_notes.md's "source_name & EQLevel Reference") --
+                kept here as the source the returned ``PEQSettings`` is
+                attributed to.
             profile_name: Name of the RoomFit profile to load and read.
 
         Returns:
@@ -748,11 +751,9 @@ class WiiMAdapter:
         # Step 1: Load the target profile into the API working buffer
         await self._load_roomfit_profile(profile_name)
 
-        # Step 2: Read bands from the buffer
-        response = await self._client.command(
-            encode_wiim_command("EQGetLV2SourceBandEx", eq_level=2)
-        )
-        response = expect_dict_response(response, "EQGetLV2SourceBandEx (RoomFit)")
+        # Step 2: Read bands from the buffer -- the same empty-source_name
+        # EQGetLV2SourceBandEx+EQLevel:2 query get_roomfit_status() issues.
+        response = await self._read_fx_status("", eq_level=2)
 
         # Step 3: Parse response using the same logic as PEQ reads
         return self._parse_peq_response(response, source_name)
@@ -845,6 +846,7 @@ class WiiMAdapter:
                     # 2026-07-04). Included for wire-format parity only.
                     "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
                 },
+                source_name="",
                 eq_level=2,
             )
         else:
@@ -864,6 +866,7 @@ class WiiMAdapter:
                     # 2026-07-04). Included for wire-format parity only.
                     "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
                 },
+                source_name="",
                 eq_level=2,
             )
 

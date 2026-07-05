@@ -7,7 +7,6 @@ Shows existing profiles for reference and warns when overwriting the active prof
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
@@ -17,9 +16,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.list_item_style import apply_active_item_style
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    ACCENT_COLOR,
     SPACING_MD,
     SPACING_SM,
 )
@@ -121,12 +120,7 @@ class NameProfilePage(QWidget):
         for name in profiles:
             is_active = name == active_profile
             item = QListWidgetItem(f"{name} (active)" if is_active else name)
-            if is_active:
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-                item.setForeground(QColor(ACCENT_COLOR))
-                item.setToolTip("Currently active on this device")
+            apply_active_item_style(item, is_active)
             self._profiles_list.addItem(item)
 
         # Re-evaluate warning in case input already has text

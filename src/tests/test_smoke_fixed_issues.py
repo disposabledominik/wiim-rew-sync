@@ -94,6 +94,9 @@ def test_mark_prior_steps_completed_marks_connect_and_sources():
     dummy_self._wizard_controller = SimpleNamespace(flow_type=FlowType.PEQ, state=state)
     dummy_self._device_caps = None
     dummy_self._discovered_devices = []
+    dummy_self._lookup_device_name = (
+        main_window.MainWindow._lookup_device_name.__get__(dummy_self)
+    )
     dummy_self._resolve_connect_summary = (
         main_window.MainWindow._resolve_connect_summary.__get__(dummy_self)
     )

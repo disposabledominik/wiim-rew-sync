@@ -17,6 +17,31 @@ from src.models.errors import WiiMResponseError
 # LV2 plugin URI used by all WiiM PEQ/RoomFit commands.
 PLUGIN_URI = "http://moddevices.com/plugins/caps/EqNp"
 
+# RoomFit (EQLevel:2) commands, split by which source_name shape each requires
+# -- both sets are exhaustive transcriptions of docs/wiim_api_notes.md's
+# "source_name & EQLevel Reference" table, and every eq_level=2 call in this
+# codebase must appear in exactly one of them (enforced below). Band-buffer/
+# DSP-toggle commands need source_name="" (present, empty) -- omitting it was
+# the actual root cause of a past RoomFit-detection regression (docs/
+# corrections.md, 2026-07-04). Profile CRUD commands need source_name omitted
+# entirely. Neither set may be inferred from the other: this is a closed,
+# doc-driven classification, not an allowlist with an "anything else is fine"
+# fallback -- a new RoomFit command that isn't added to either set raises
+# immediately instead of silently defaulting to the wrong shape, which is
+# exactly how the omission mistake above went undetected.
+_ROOMFIT_REQUIRES_EMPTY_SOURCE_NAME = frozenset({
+    "EQGetLV2SourceBandEx",
+    "EQSetLV2SourceBand",
+    "EQChangeSourceFX",
+    "EQSourceOff",
+})
+_ROOMFIT_REQUIRES_OMITTED_SOURCE_NAME = frozenset({
+    "EQv2SourceLoad",
+    "EQv2Delete",
+    "EQv2GetNewList",
+    "EQSourceSave",
+})
+
 
 def encode_wiim_command(
     command: str,
@@ -29,12 +54,51 @@ def encode_wiim_command(
     pluginURI(+source_name)(+EQLevel) payload shape used by nearly every
     WiiM LV2 PEQ/RoomFit command.
 
-    source_name is included only when explicitly given -- RoomFit's
-    per-buffer commands omit it entirely (confirmed against the WiiM app);
-    its two device-global toggle commands pass "" explicitly, a distinct,
-    deliberate case from omitting the key altogether. eq_level is included
-    only when given (omission defaults to PEQ/EQLevel:1 on the device).
+    source_name is included only when explicitly given. For RoomFit
+    (eq_level=2): band read/write and the DSP on/off toggle require source_name=""
+    (present, empty -- confirmed against real hardware); profile CRUD commands
+    (EQv2SourceLoad/EQv2Delete/EQv2GetNewList/EQSourceSave) omit it entirely.
+    See docs/wiim_api_notes.md's "source_name & EQLevel Reference". eq_level is
+    included only when given (omission defaults to PEQ/EQLevel:1 on the device).
+
+    Raises:
+        ValueError: eq_level=2 (RoomFit) with a real (non-empty) source_name --
+            the device silently accepts this but targets an orphaned per-source
+            slot instead of the real RoomFit buffer. Also raised the other way:
+            a band-buffer/DSP-toggle command (see
+            _ROOMFIT_REQUIRES_EMPTY_SOURCE_NAME) with source_name omitted --
+            that's the actual mistake that caused a past regression, not the
+            real-value case. Also raised for any eq_level=2 command not
+            classified into either _ROOMFIT_REQUIRES_EMPTY_SOURCE_NAME or
+            _ROOMFIT_REQUIRES_OMITTED_SOURCE_NAME -- a new RoomFit command must
+            be classified there first, per docs/wiim_api_notes.md's "source_name
+            & EQLevel Reference", rather than silently defaulting to whichever
+            shape happens to not raise. There is no legitimate RoomFit call
+            shape any of these three branches would reject.
     """
+    if eq_level == 2 and source_name:
+        raise ValueError(
+            f"RoomFit (EQLevel:2) commands must omit source_name or pass \"\", "
+            f"never a real value -- got {source_name!r} for {command!r}. See "
+            f"docs/wiim_api_notes.md's source_name & EQLevel Reference."
+        )
+    if eq_level == 2 and source_name is None:
+        if command in _ROOMFIT_REQUIRES_EMPTY_SOURCE_NAME:
+            raise ValueError(
+                f"RoomFit (EQLevel:2) {command!r} requires source_name=\"\" "
+                f"(present, empty) -- omitting it entirely fails against real "
+                f"hardware and was the root cause of a past RoomFit-detection "
+                f"regression. See docs/wiim_api_notes.md's source_name & "
+                f"EQLevel Reference."
+            )
+        if command not in _ROOMFIT_REQUIRES_OMITTED_SOURCE_NAME:
+            raise ValueError(
+                f"RoomFit (EQLevel:2) command {command!r} is not classified in "
+                f"either _ROOMFIT_REQUIRES_EMPTY_SOURCE_NAME or "
+                f"_ROOMFIT_REQUIRES_OMITTED_SOURCE_NAME (wiim_commands.py) -- "
+                f"add it to whichever one matches docs/wiim_api_notes.md's "
+                f"source_name & EQLevel Reference before using it."
+            )
     payload: dict[str, Any] = {"pluginURI": PLUGIN_URI}
     if source_name is not None:
         payload["source_name"] = source_name
