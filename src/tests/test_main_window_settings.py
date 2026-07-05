@@ -136,13 +136,13 @@ class TestSettingsViewSignalWiring:
             window._settings_view.settings_changed.emit({
                 "log_directory": "/new/logs",
                 "presets_directory": "/new/presets",
-                "rew_export_folder": "/new/rew",
+                "rew_folder": "/new/rew",
                 "discovery_timeout": 15,
                 "dry_run_default": False,
             })
             assert window._settings.log_directory == "/new/logs"
             assert window._settings.presets_directory == "/new/presets"
-            assert window._settings.rew_export_folder == "/new/rew"
+            assert window._settings.rew_folder == "/new/rew"
             assert window._settings.discovery_timeout == 15
             assert window._settings.dry_run_default is False
             mock_save.assert_called()
@@ -197,3 +197,67 @@ class TestUserGuideAction:
         window._on_user_guide_triggered()
         assert window._help_dialog.isVisible()
         window._help_dialog.close()
+
+
+class TestDryRunDefaultPrompt:
+    """Toggling Dry Run off while it's still the global default offers to
+    disable that default too (smoke #182) -- non-technical users are
+    unlikely to find this setting in Settings on their own."""
+
+    def test_no_prompt_when_default_already_false(self, make_window) -> None:
+        """No prompt when dry_run_default is already off."""
+        settings = AppSettings(dry_run_default=False)
+        window = make_window(settings)
+
+        with patch("PySide6.QtWidgets.QMessageBox.question") as mock_question:
+            window._on_dry_run_toggled(False)
+
+        mock_question.assert_not_called()
+
+    def test_no_prompt_when_toggled_on(self, make_window) -> None:
+        """No prompt when the checkbox is turned on (only turning off matters)."""
+        settings = AppSettings(dry_run_default=True)
+        window = make_window(settings)
+
+        with patch("PySide6.QtWidgets.QMessageBox.question") as mock_question:
+            window._on_dry_run_toggled(True)
+
+        mock_question.assert_not_called()
+
+    def test_prompt_shown_when_toggled_off_while_default_true(self, make_window) -> None:
+        """Prompt appears the first time Dry Run is turned off while it's
+        still the global default."""
+        from PySide6.QtWidgets import QMessageBox
+
+        settings = AppSettings(dry_run_default=True)
+        window = make_window(settings)
+
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ) as mock_question:
+            window._on_dry_run_toggled(False)
+
+        mock_question.assert_called_once()
+        assert window._settings.dry_run_default is True
+
+    def test_answering_yes_disables_default_and_persists(self, make_window) -> None:
+        """Accepting the prompt disables the global default, persists it, and
+        refreshes SettingsView so it doesn't go stale."""
+        from PySide6.QtWidgets import QMessageBox
+
+        settings = AppSettings(dry_run_default=True)
+        window = make_window(settings)
+
+        with (
+            patch.object(window._settings, "save") as mock_save,
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+        ):
+            window._on_dry_run_toggled(False)
+
+        assert window._settings.dry_run_default is False
+        mock_save.assert_called_once()
+        assert window.settings_view.get_current_settings()["dry_run_default"] is False

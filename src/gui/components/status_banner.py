@@ -9,7 +9,8 @@ Requirements referenced: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QFontMetrics, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -42,14 +43,13 @@ class StatusBanner(QFrame):
         self.setObjectName("StatusBanner")
         self.setFixedHeight(STATUS_BANNER_HEIGHT)
         self.setProperty("status", "idle")
-
-        # Always visible to reserve layout space; content hidden when idle.
-        self.setVisible(True)
+        self._raw_message = ""
 
         # --- Layout -----------------------------------------------------------
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 0, 8, 0)
         layout.setSpacing(8)
+        self._layout = layout
 
         # Progress bar (indeterminate spinner, hidden by default)
         self._progress_bar = QProgressBar(self)
@@ -79,6 +79,12 @@ class StatusBanner(QFrame):
 
         # Start in idle (empty) state
         self._set_idle()
+
+        # Always visible to reserve layout space; content hidden when idle.
+        # Set after building the layout/child widgets, since showing the
+        # widget for the first time synchronously fires resizeEvent (which
+        # calls _update_display_text(), needing self._layout to exist).
+        self.setVisible(True)
 
         # --- Auto-dismiss timer -----------------------------------------------
         self._auto_dismiss_timer = QTimer(self)
@@ -178,10 +184,11 @@ class StatusBanner(QFrame):
         # Update dynamic property for QSS styling
         set_qss_property(self, "status", status)
 
-        self._message_label.setText(message)
+        self._raw_message = message
         self._message_label.setVisible(True)
         self._progress_bar.setVisible(show_progress)
         self._close_button.setVisible(dismissible)
+        self._update_display_text()
 
         if auto_dismiss_ms > 0:
             self._auto_dismiss_timer.start(auto_dismiss_ms)
@@ -189,10 +196,51 @@ class StatusBanner(QFrame):
     def _set_idle(self) -> None:
         """Reset banner to idle (reserved space, no content visible)."""
         set_qss_property(self, "status", "idle")
+        self._raw_message = ""
         self._message_label.setText("")
+        self._message_label.setToolTip("")
         self._message_label.setVisible(False)
         self._progress_bar.setVisible(False)
         self._close_button.setVisible(False)
+
+    def _available_message_width(self) -> int:
+        """Message label's available width, computed without depending on a
+        pending layout pass (avoids a stale-width race right after _show()
+        changes progress-bar/close-button visibility -- see smoke #181)."""
+        margins = self._layout.contentsMargins()
+        used = margins.left() + margins.right() + self._layout.spacing()
+        if self._progress_bar.isVisible():
+            used += self._progress_bar.width()
+        if self._close_button.isVisible():
+            used += self._close_button.sizeHint().width() + self._layout.spacing()
+        return max(0, self.width() - used)
+
+    def _update_display_text(self) -> None:
+        """Elide the message to fit the available width; keep the full text
+        accessible via tooltip (one line per " | "-delimited segment)."""
+        # A banner with no parent isn't embedded in MainWindow's real
+        # content layout yet (e.g. unit tests that construct StatusBanner()
+        # standalone) -- its top-level width is an arbitrary platform
+        # default, not a meaningful "available width" to elide against, so
+        # show the full text rather than eliding against a bogus size.
+        available = self._available_message_width() if self.parent() is not None else 0
+        if available <= 0:
+            self._message_label.setText(self._raw_message)
+            self._message_label.setToolTip("")
+            return
+        metrics = QFontMetrics(self._message_label.font())
+        elided = metrics.elidedText(
+            self._raw_message, Qt.TextElideMode.ElideRight, available
+        )
+        self._message_label.setText(elided)
+        self._message_label.setToolTip(
+            self._raw_message.replace(" | ", "\n") if elided != self._raw_message else ""
+        )
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Re-elide the displayed message when the banner is resized."""
+        super().resizeEvent(event)
+        self._update_display_text()
 
     def _on_close_clicked(self) -> None:
         """Handle close button click."""

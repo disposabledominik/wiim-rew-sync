@@ -3,7 +3,7 @@
 Covers smoke test issues: #7, #8, #10, #11, #12, #13, #20, #22, #23, #24, #25,
 #27, #28, #29, #30, #31, #32, #33, #34, #37, #38, #39, #42, #44, #48, #49, #50,
 #53, #54, #55, #58, #60, #61, #62, #63, #65, #69, #70, #74, #77, #78, #79, #80,
-#85, #2/#9, #156, #158.
+#85, #2/#9, #156, #158, #176, #183, #189.
 Each test validates the specific fix behavior to prevent regressions.
 """
 
@@ -274,10 +274,13 @@ class TestPushWriteOperations:
 
     # --- Issue #165: overwrite-active-profile confirmation ---
 
-    def test_165_name_confirmed_no_dialog_when_roomfit_disabled(self, window) -> None:
-        """No confirm dialog when RoomFit is off, even if the name matches
-        the page's active_profile (overwriting an inactive selection has no
-        live-audio consequence)."""
+    def test_191_name_confirmed_dialog_shown_even_when_roomfit_disabled(self, window) -> None:
+        """#191 redesign: a push now always activates the profile and turns
+        RoomFit on, regardless of its current state -- so the overwrite-
+        active-profile confirm dialog must fire even when RoomFit is
+        currently off (previously skipped in this case, since overwriting
+        an inactive selection had no live-audio consequence under the old
+        restore-previous-state design)."""
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
@@ -287,15 +290,17 @@ class TestPushWriteOperations:
         window._name_profile_page.set_existing_profiles(["Living Room"], "Living Room")
 
         with (
-            patch.object(window._wizard_controller, "advance"),
+            patch.object(window._wizard_controller, "advance") as mock_adv,
             patch(
-                "PySide6.QtWidgets.QMessageBox.question"
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
             ) as mock_question,
         ):
             window._on_name_confirmed("Living Room")
 
-        mock_question.assert_not_called()
+        mock_question.assert_called_once()
         assert state.roomfit_profile_name == "Living Room"
+        mock_adv.assert_called_once()
         window._bridge.run_async.assert_called_once()
 
     def test_165_name_confirmed_no_dialog_when_name_not_active(self, window) -> None:
@@ -366,6 +371,85 @@ class TestPushWriteOperations:
         assert state.roomfit_profile_name == "Living Room"
         window._bridge.run_async.assert_called_once()
 
+    # --- Issue #183: overwrite-existing-non-active-profile confirmation ---
+
+    def test_183_name_confirmed_dialog_shown_when_overwriting_non_active(
+        self, window
+    ) -> None:
+        """A distinct confirm dialog appears when the name matches a
+        different, non-active existing profile (data-loss risk only, no
+        RoomFit deactivation) -- previously this case had no warning at all."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+        window._roomfit_enabled = True
+        window._name_profile_page.set_existing_profiles(
+            ["Living Room", "Office"], "Living Room"
+        )
+
+        with (
+            patch.object(window._wizard_controller, "advance") as mock_adv,
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ) as mock_question,
+        ):
+            window._on_name_confirmed("Office")
+
+        mock_question.assert_called_once()
+        assert "already exists" in mock_question.call_args.args[2]
+        assert "deactivate" not in mock_question.call_args.args[2]
+        mock_adv.assert_not_called()
+        window._bridge.run_async.assert_not_called()
+
+    def test_183_name_confirmed_proceeds_on_yes_for_non_active(self, window) -> None:
+        """Accepting the overwrite-existing-profile confirmation proceeds."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+        window._roomfit_enabled = True
+        window._name_profile_page.set_existing_profiles(
+            ["Living Room", "Office"], "Living Room"
+        )
+
+        with (
+            patch.object(window._wizard_controller, "advance"),
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+        ):
+            window._on_name_confirmed("Office")
+
+        assert state.roomfit_profile_name == "Office"
+        window._bridge.run_async.assert_called_once()
+
+    def test_183_name_confirmed_no_dialog_for_brand_new_name(self, window) -> None:
+        """No confirm dialog when the name matches neither an existing nor
+        the active profile."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+        window._roomfit_enabled = True
+        window._name_profile_page.set_existing_profiles(
+            ["Living Room", "Office"], "Living Room"
+        )
+
+        with (
+            patch.object(window._wizard_controller, "advance"),
+            patch("PySide6.QtWidgets.QMessageBox.question") as mock_question,
+        ):
+            window._on_name_confirmed("Brand New Room")
+
+        mock_question.assert_not_called()
+        window._bridge.run_async.assert_called_once()
+
     def test_165_populate_name_profiles_sets_active_and_enabled(self, window) -> None:
         """_do_populate_name_profiles fetches roomfit status and applies it."""
         import asyncio
@@ -428,6 +512,23 @@ class TestPushWriteOperations:
         mock_adapter.read_roomfit = AsyncMock(
             return_value=MagicMock(channel_mode=ChannelMode.LR, bands=[], bands_l=[], bands_r=[])
         )
+        # RoomFitSafeWrite.execute() also calls get_roomfit_status() and, on
+        # success (#191), load_roomfit_profile()/enable_roomfit() to
+        # activate the pushed profile -- _setup_device()'s bare MagicMock()
+        # would otherwise raise TypeError on await, silently swallowed by
+        # execute()'s own best-effort error handling rather than exercised.
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, ""))
+        mock_adapter.restore_roomfit_active_profile = AsyncMock()
+        mock_adapter.load_roomfit_profile = AsyncMock()
+        mock_adapter.enable_roomfit = AsyncMock()
+        # RoomFitSafeWrite.execute() now always creates a backup, even for
+        # a new profile (#191, metadata-only carrier for Undo) -- the real
+        # BackupManager would otherwise try to build a filesystem path from
+        # _make_caps()'s MagicMock `.uuid`, which isn't a real string.
+        mock_backup = MagicMock()
+        mock_backup.create_backup = MagicMock(return_value="/tmp/backup.json")
+        window._backup_manager = mock_backup
+        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
 
         # _do_push is a coroutine; we verify write_roomfit gets channel_mode
         import asyncio
@@ -462,6 +563,69 @@ class TestPushWriteOperations:
         assert "wifi=" in call_args.backup_path
         assert "optical=" in call_args.backup_path
         assert ";" in call_args.backup_path
+
+    # --- Issue #189: Push stepper reflects real per-stage progress ---
+
+    def test_issue189_do_push_peq_passes_on_stage_to_safe_write(self, window) -> None:
+        """#189: _do_push() wires SafeWrite.execute()'s on_stage callback to
+        the bridge's stage_changed signal, so the Push page's stepper can
+        show live progress (and pinpoint the failing stage) instead of only
+        an all-pending/all-complete state.
+        """
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+
+        mock_safe_write = AsyncMock()
+        mock_safe_write.execute = AsyncMock(
+            return_value=MagicMock(success=True, backup_path="/tmp/backup.json")
+        )
+        window._safe_write = mock_safe_write
+
+        import asyncio
+
+        asyncio.run(window._do_push())
+
+        mock_safe_write.execute.assert_called_once()
+        call_kwargs = mock_safe_write.execute.call_args.kwargs
+        assert call_kwargs["on_stage"] == window._bridge.stage_changed.emit
+
+    def test_issue189_do_push_roomfit_passes_on_stage(self, window) -> None:
+        """#189: the RoomFit push flow also wires the on_stage callback."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = False
+        state.roomfit_profile_name = "TestProfile"
+        state.flow_type = FlowType.ROOMFIT
+
+        mock_roomfit_safe_write = AsyncMock()
+        mock_roomfit_safe_write.execute = AsyncMock(
+            return_value=MagicMock(success=True, backup_path=None)
+        )
+        window._roomfit_safe_write = mock_roomfit_safe_write
+
+        import asyncio
+
+        asyncio.run(window._do_push())
+
+        mock_roomfit_safe_write.execute.assert_called_once()
+        call_kwargs = mock_roomfit_safe_write.execute.call_args.kwargs
+        assert call_kwargs["on_stage"] == window._bridge.stage_changed.emit
+
+    def test_issue189_stage_changed_advances_push_page_stepper(self, window) -> None:
+        """#189: the stage_changed handler advances PushPage's stepper, marking
+        earlier stages complete and the reported stage active.
+        """
+        window._on_stage_changed("writing")
+
+        assert window.push_page._stage_rows["backing_up"].status == "complete"
+        assert window.push_page._stage_rows["writing"].status == "active"
+        assert window.push_page._stage_rows["verifying"].status == "pending"
+        assert window.push_page._stage_rows["done"].status == "pending"
 
     # --- Issue #80: Dry run shows preview without calling _do_push ---
 
@@ -605,6 +769,60 @@ class TestImportExport:
         # Each file must contain only its own channel's band, not both.
         assert "200.00 Hz" not in left_content
         assert "100.00 Hz" not in right_content
+
+    # --- Issue #176: L/R export ignored the configured default REW folder ---
+
+    def test_issue176_lr_export_uses_settings_default_folder(
+        self, window, tmp_path
+    ) -> None:
+        """#176: L/R export (ReviewPage) must pass the Settings "Default REW
+        import/export folder" through to ExportDialog as `default_dir`, not
+        silently fall back to the home directory -- unlike stereo export,
+        which already respected the setting.
+        """
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter(100, gain=-2.0)]
+        state.filters_l = [_make_filter(100, gain=-2.0)]
+        state.filters_r = [_make_filter(200, gain=-4.0)]
+        state.channel_mode = ChannelMode.LR
+        window._settings.rew_folder = str(tmp_path)
+
+        with (
+            patch(
+                "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
+                return_value=None,
+            ) as mock_dialog,
+            patch.object(window._bridge, "run_async"),
+        ):
+            window._export_filters_as_rew(state.current_filters, "L/R")
+
+        mock_dialog.assert_called_once()
+        assert mock_dialog.call_args.kwargs["default_dir"] == str(tmp_path)
+
+    def test_issue176_preset_lr_export_uses_settings_default_folder(
+        self, window, tmp_path
+    ) -> None:
+        """#176: L/R export from "Presets on Device" must also thread the
+        configured default REW folder through to ExportDialog.
+        """
+        item = PresetItem(name="Movie Night", channel_mode="L/R", preset_type="PEQ")
+        window._settings.rew_folder = str(tmp_path)
+
+        with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch(
+                "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
+                return_value=None,
+            ) as mock_dialog,
+        ):
+            window._presets_device_view.export_requested.emit([item])
+
+        mock_dialog.assert_called_once()
+        assert mock_dialog.call_args.kwargs["default_dir"] == str(tmp_path)
 
     # --- Issue #30: Stereo export appends .txt extension ---
 
@@ -1120,6 +1338,24 @@ class TestPresets:
 
         assert result is False
 
+    def test_166_confirm_preview_escapes_device_supplied_preset_name(self, window) -> None:
+        """A preset name containing HTML-significant characters must not be
+        interpreted as markup by Qt's rich-text auto-detection -- this
+        message already contains <br>/<b> tags, so the device-supplied name
+        must be escaped before being embedded in it."""
+        items = [PresetItem(name="A <b>Bold</b> & Loud", channel_mode="Stereo", preset_type="PEQ")]
+
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as mock_question:
+            window._confirm_preset_preview(items)
+
+        message = mock_question.call_args[0][2]
+        assert "<b>Bold</b>" not in message
+        assert "&lt;b&gt;Bold&lt;/b&gt;" in message
+        assert "&amp; Loud" in message
+
     def test_166_copy_to_device_declined_skips_device_picker(self, window) -> None:
         """Declining the preview confirmation aborts before the device picker
         or any run_async call for _on_copy_to_device_requested."""
@@ -1132,6 +1368,69 @@ class TestPresets:
                 "PySide6.QtWidgets.QMessageBox.question",
                 return_value=QMessageBox.StandardButton.No,
             ),
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices"
+            ) as mock_picker,
+            patch.object(window._bridge, "run_async") as mock_run,
+        ):
+            window._on_copy_to_device_requested(items)
+
+        mock_picker.assert_not_called()
+        mock_run.assert_not_called()
+
+    # --- #191: Copy-to-Device RoomFit target-activation warning ---
+
+    def test_191_confirm_roomfit_copy_activation_no_dialog_for_peq_only(self, window) -> None:
+        """A PEQ-only selection needs no target-activation warning -- PEQ
+        copies don't have RoomFit's global activate-on-write semantics."""
+        items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
+
+        with patch("PySide6.QtWidgets.QMessageBox.question") as mock_question:
+            result = window._confirm_roomfit_copy_activation(items)
+
+        mock_question.assert_not_called()
+        assert result is True
+
+    def test_191_confirm_roomfit_copy_activation_dialog_for_roomfit_item(self, window) -> None:
+        """Copying a RoomFit profile warns that it will become active and
+        enable RoomFit on the target device(s), naming the profile."""
+        items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
+
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as mock_question:
+            result = window._confirm_roomfit_copy_activation(items)
+
+        mock_question.assert_called_once()
+        message = mock_question.call_args[0][2]
+        assert "Living Room" in message
+        assert result is True
+
+    def test_191_confirm_roomfit_copy_activation_declined_returns_false(self, window) -> None:
+        items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
+
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            result = window._confirm_roomfit_copy_activation(items)
+
+        assert result is False
+
+    def test_191_copy_to_device_roomfit_declined_at_activation_dialog_skips_picker(
+        self, window
+    ) -> None:
+        """The RoomFit activation warning is a second, independent gate --
+        declining it (after accepting the first preview dialog) must also
+        abort before the device picker."""
+        _setup_device(window)
+        window._discovered_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
+        items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
+
+        with (
+            patch.object(window, "_confirm_preset_preview", return_value=True),
+            patch.object(window, "_confirm_roomfit_copy_activation", return_value=False),
             patch(
                 "src.gui.main_window.DevicePickerDialog.get_devices"
             ) as mock_picker,
@@ -1586,6 +1885,15 @@ class TestPresets:
             )
         )
         mock_adapter.write_roomfit = AsyncMock()
+        # RoomFitSafeWrite.execute() also calls get_roomfit_status() and, on
+        # success (#191), load_roomfit_profile()/enable_roomfit() to
+        # activate the pushed profile -- _setup_device()'s bare MagicMock()
+        # would otherwise raise TypeError on await, silently swallowed by
+        # execute()'s own best-effort error handling rather than exercised.
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, ""))
+        mock_adapter.restore_roomfit_active_profile = AsyncMock()
+        mock_adapter.load_roomfit_profile = AsyncMock()
+        mock_adapter.enable_roomfit = AsyncMock()
 
         mock_backup = MagicMock()
         mock_backup.create_backup = MagicMock(return_value="/tmp/backup.json")
@@ -1639,6 +1947,15 @@ class TestPresets:
             )
         )
         mock_adapter.write_roomfit = AsyncMock()
+        # RoomFitSafeWrite.execute() also calls get_roomfit_status() and, on
+        # success (#191), load_roomfit_profile()/enable_roomfit() to
+        # activate the pushed profile -- _setup_device()'s bare MagicMock()
+        # would otherwise raise TypeError on await, silently swallowed by
+        # execute()'s own best-effort error handling rather than exercised.
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, ""))
+        mock_adapter.restore_roomfit_active_profile = AsyncMock()
+        mock_adapter.load_roomfit_profile = AsyncMock()
+        mock_adapter.enable_roomfit = AsyncMock()
         # Stub out the real BackupManager -- it constructs a pydantic
         # BackupRecord from capabilities.uuid/firmware_version, which the
         # MagicMock capabilities from _make_caps() can't satisfy, and that
@@ -1659,17 +1976,25 @@ class TestPresets:
         mock_adapter.write_roomfit.assert_called_once()
         mock_success.assert_called_once()
 
-    def test_issue62_undo_button_hidden_for_new_roomfit_profile(self, window) -> None:
-        """#62: Undo must be hidden after pushing a brand-new RoomFit
-        profile (backup_path is None/empty -- nothing to restore), matching
-        the _on_write_complete special case for RoomFit."""
+    def test_191_undo_button_always_shown_for_roomfit_push(self, window) -> None:
+        """#191 redesign: RoomFitSafeWrite.execute() now always creates a
+        backup, even for a brand-new profile (purely to carry pre-push
+        selection/enable-state restore metadata for Undo) -- backup_path is
+        never empty on a successful RoomFit push, so Undo is always shown.
+        Previously this was hidden when backup_path was empty (new-profile
+        push, nothing to restore under the old design)."""
         _setup_device(window)
         window._wizard_controller.state.flow_type = FlowType.ROOMFIT
-        result = MagicMock(success=True, backup_path="")
+        result = MagicMock(success=True, backup_path="/tmp/new_profile_backup.json")
 
         window._on_write_complete(result)
 
-        assert window._push_page._undo_button.isVisible() is False
+        # isHidden() (not isVisible()) is the correct check here: the test
+        # window is never actually shown on screen, so isVisible() would be
+        # False regardless of setVisible(True/False) -- isHidden() tracks
+        # the widget's own explicit show/hide state independent of whether
+        # its ancestor chain is on-screen.
+        assert not window._push_page._undo_button.isHidden()
 
 
 # ===========================================================================
@@ -1948,7 +2273,11 @@ class TestSettingsUIState:
     def test_issue154_undo_roomfit_uses_safe_write(self, window, tmp_path) -> None:
         """#154: _do_undo_roomfit must go through RoomFitSafeWrite (verified,
         rolled back on mismatch) like every other RoomFit write path, not
-        call adapter.write_roomfit() directly with no verification at all."""
+        call adapter.write_roomfit() directly with no verification at all.
+
+        #191: _do_undo_roomfit is now a thin pass-through to
+        RoomFitSafeWrite.undo() (not .execute() directly -- undo() owns the
+        backup-parsing/new-vs-overwrite orchestration internally)."""
         _setup_device(window)
         backup_path = tmp_path / "roomfit_backup.json"
         backup_path.write_text(
@@ -1959,7 +2288,7 @@ class TestSettingsUIState:
 
         with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
             roomfit_safe_write = MagicMock()
-            roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
             mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
 
             import asyncio
@@ -1968,7 +2297,7 @@ class TestSettingsUIState:
                 window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
             )
 
-            roomfit_safe_write.execute.assert_called_once()
+            roomfit_safe_write.undo.assert_called_once()
             window._wiim_adapter.write_roomfit.assert_not_called()
 
     def test_issue154_undo_roomfit_surfaces_verification_failure(
@@ -1986,7 +2315,7 @@ class TestSettingsUIState:
 
         with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
             roomfit_safe_write = MagicMock()
-            roomfit_safe_write.execute = AsyncMock(
+            roomfit_safe_write.undo = AsyncMock(
                 return_value=WriteResult(
                     success=False,
                     rollback_success=True,

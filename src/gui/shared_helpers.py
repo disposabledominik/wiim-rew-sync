@@ -7,17 +7,19 @@ and Profile building.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-from typing import Any
-
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.constants import DEFAULT_MAX_BANDS, GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.models.peq import PEQSettings
 from src.models.profile import Profile
+from src.repository.backup_manager import load_backup_json, parse_backup_filters
 from src.translator._warnings import FilterRow, SkippedBand
 from src.utils.clamping import clamp_with_warning
+
+__all__ = [
+    "load_backup_json",
+    "parse_backup_filters",
+]
 
 
 def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], ChannelMode]:
@@ -166,55 +168,10 @@ def build_profile(
     )
 
 
-def load_backup_json(path: Path) -> dict[str, Any]:
-    """Read and parse a backup JSON file.
-
-    Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
-    (MainWindow) to avoid duplicating the file-read + json.loads call.
-
-    Raises:
-        ValueError: if the file does not contain a JSON object.
-    """
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"Backup file {path} does not contain a JSON object")
-    return data
-
-
-def parse_backup_filters(
-    backup_data: dict[str, Any],
-) -> tuple[
-    list[CanonicalFilter], ChannelMode, list[CanonicalFilter] | None, list[CanonicalFilter] | None
-]:
-    """Parse a backup JSON dict into filters, channel_mode, and per-channel lists.
-
-    Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
-    (MainWindow) to avoid duplicating backup parsing logic.
-
-    Args:
-        backup_data: Parsed JSON dict from a backup file.
-
-    Returns:
-        Tuple of (combined_filters, channel_mode, filters_l, filters_r).
-        filters_l/filters_r are None for stereo backups. For L/R backups,
-        callers must use filters_l/filters_r directly rather than
-        re-splitting combined_filters (the combined list is positional
-        concatenation and must not be treated as authoritative per-channel
-        data).
-    """
-    channel_mode_raw = backup_data.get("channel_mode", "stereo")
-    mode = ChannelMode.from_profile(str(channel_mode_raw))
-
-    if mode.is_lr:
-        filters_l_raw = backup_data.get("filters_l", [])
-        filters_r_raw = backup_data.get("filters_r", [])
-        filters_l = [CanonicalFilter(**f) for f in filters_l_raw]
-        filters_r = [CanonicalFilter(**f) for f in filters_r_raw]
-        filters = filters_l + filters_r
-        return filters, ChannelMode.LR, filters_l, filters_r
-
-    filters_raw = backup_data.get("filters", [])
-    return [CanonicalFilter(**f) for f in filters_raw], ChannelMode.STEREO, None, None
+# load_backup_json / parse_backup_filters live in src.repository.backup_manager
+# (RoomFitSafeWrite.undo(), in src/adapters/, needs them too, and adapters
+# must not import from gui) -- re-exported here so existing GUI call sites
+# (main_window.py, secondary_workflows.py) need no import-path changes.
 
 
 # ---------------------------------------------------------------------------

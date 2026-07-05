@@ -194,6 +194,20 @@ class ReviewPage(QWidget):
         toggles_layout.addStretch()
         content_layout.addLayout(toggles_layout)
 
+        # Always-visible plain-language explanation of Dry Run, so
+        # non-technical users don't assume a push silently failed when
+        # nothing changes on their device (smoke #182).
+        self._dry_run_hint = QLabel(
+            "When 'Dry Run' is checked, filters are previewed only"
+            " — nothing is written to your device until you turn"
+            " this off.",
+            content_wrapper,
+        )
+        self._dry_run_hint.setObjectName("ReviewPageDryRunHint")
+        self._dry_run_hint.setProperty("class", "caption")
+        self._dry_run_hint.setWordWrap(True)
+        content_layout.addWidget(self._dry_run_hint)
+
         # Primary action row
         action_layout = QHBoxLayout()
         action_layout.setContentsMargins(0, 0, 0, 0)

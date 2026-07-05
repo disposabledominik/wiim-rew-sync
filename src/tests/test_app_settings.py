@@ -27,9 +27,9 @@ class TestDefaults:
         settings = AppSettings()
         assert settings.presets_directory == ""
 
-    def test_rew_export_folder_defaults_to_empty(self) -> None:
+    def test_rew_folder_defaults_to_empty(self) -> None:
         settings = AppSettings()
-        assert settings.rew_export_folder == ""
+        assert settings.rew_folder == ""
 
     def test_discovery_timeout_defaults_to_5(self) -> None:
         settings = AppSettings()
@@ -152,6 +152,30 @@ class TestLoad:
 
         assert settings == AppSettings()
 
+    def test_migrates_pre_rename_rew_export_folder_key(self, tmp_path: Path) -> None:
+        """A settings.json saved before rew_export_folder was renamed to
+        rew_folder must not silently lose the user's configured folder."""
+        data = {"theme": "Dark", "rew_export_folder": "/home/user/rew-exports"}
+        (tmp_path / "settings.json").write_text(json.dumps(data), encoding="utf-8")
+
+        with patch("src.gui.app_settings.get_app_data_dir", return_value=tmp_path):
+            settings = AppSettings.load()
+
+        assert settings.rew_folder == "/home/user/rew-exports"
+
+    def test_new_rew_folder_key_takes_precedence_over_old(self, tmp_path: Path) -> None:
+        """If a settings.json somehow has both keys, the current one wins."""
+        data = {
+            "rew_export_folder": "/old/path",
+            "rew_folder": "/new/path",
+        }
+        (tmp_path / "settings.json").write_text(json.dumps(data), encoding="utf-8")
+
+        with patch("src.gui.app_settings.get_app_data_dir", return_value=tmp_path):
+            settings = AppSettings.load()
+
+        assert settings.rew_folder == "/new/path"
+
 
 class TestSave:
     """AppSettings.save() writes to disk correctly."""
@@ -194,7 +218,7 @@ class TestSaveLoadRoundtrip:
             theme="Dark",
             log_directory="/tmp/logs",
             presets_directory="/tmp/presets",
-            rew_export_folder="/tmp/rew",
+            rew_folder="/tmp/rew",
             discovery_timeout=10,
             dry_run_default=False,
             first_run_complete=True,

@@ -21,7 +21,11 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.device_card import DeviceCard
-from src.gui.components.page_layout import build_centered_content, make_page_title
+from src.gui.components.page_layout import (
+    build_centered_content,
+    center_column,
+    make_page_title,
+)
 from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
@@ -192,13 +196,12 @@ class ConnectPage(QWidget):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, SPACING_LG, 0, SPACING_LG)
         layout.setSpacing(SPACING_MD)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Scanning indicator (text-based, can be enhanced with animation later)
         spinner_label = QLabel("\u25CF \u25CF \u25CF", widget)
         spinner_label.setObjectName("ConnectPageSpinner")
         spinner_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(spinner_label)
+        layout.addWidget(spinner_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Scanning message (Req 2.2)
         message = QLabel("Searching for WiiM devices on your network...", widget)
@@ -207,6 +210,7 @@ class ConnectPage(QWidget):
         message.setWordWrap(True)
         layout.addWidget(message)
 
+        center_column(layout)
         return widget
 
     def _build_empty_widget(self, parent: QWidget) -> QWidget:
@@ -215,14 +219,13 @@ class ConnectPage(QWidget):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, SPACING_LG, 0, SPACING_LG)
         layout.setSpacing(SPACING_MD)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # No devices heading
         heading = QLabel("No devices found", widget)
         heading.setObjectName("ConnectPageEmptyHeading")
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         heading.setProperty("class", "heading")
-        layout.addWidget(heading)
+        layout.addWidget(heading, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Common causes explanation
         causes_label = QLabel(
@@ -246,7 +249,7 @@ class ConnectPage(QWidget):
         retry_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         retry_button.setMinimumWidth(120)
         retry_button.clicked.connect(self._on_retry_clicked)
-        layout.addWidget(retry_button, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(retry_button, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Troubleshooting link
         troubleshoot_label = QLabel(
@@ -257,8 +260,9 @@ class ConnectPage(QWidget):
         troubleshoot_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         troubleshoot_label.setProperty("class", "caption")
         troubleshoot_label.setOpenExternalLinks(False)
-        layout.addWidget(troubleshoot_label)
+        layout.addWidget(troubleshoot_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        center_column(layout)
         return widget
 
     def _clear_cards(self) -> None:

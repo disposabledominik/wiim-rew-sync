@@ -252,6 +252,16 @@ EQSetLV2SourceBand:{"source_name":"wifi","pluginURI":"...","channelMode":"Stereo
 `EQSetLV2Band` (no `source_name`) writes the current/live source instead. `channelMode` is set
 inline as part of this same write — the only reliable way to switch it (see "Dead commands" below).
 
+**A raw `EQSetLV2Band`/`EQSetLV2SourceBand` write drops the source's `Name` association even when
+the band values are byte-identical to what's already there** (confirmed on real hardware, `docs/
+corrections.md` 2026-07-05): reading a source's bands, then writing the exact same bands straight
+back, leaves `EQStat` and the actual filter values unchanged but `Name` comes back `""` on the next
+read. This is the write-side counterpart to the RoomFit save-then-delete orphaning documented in the
+RoomFit section below — any code that reads bands and writes them back (even unmodified, e.g. to
+probe write-capability or as part of a round-trip check) must capture the pre-write `Name` and
+`source_name` and restore it via `EQv2SourceLoad` afterward, or the device will silently show "no
+active preset" where a real one was selected moments before.
+
 **Switching a source's channel mode reveals separately-stored data for that mode — it is not reset
 to defaults.** Bands are stored keyed by `(source_name, channelMode)`, not just `source_name`:
 writing L/R data to a source previously in Stereo mode can surface a completely different,
@@ -338,10 +348,42 @@ separate `getRoomFitStatus`/`getRoomFitBands`/`setRoomFitBands` commands.
 |---|---|---|
 | Profile storage | `EQv2GetNewList` / `EQSourceSave` / `EQv2Delete` | Named-profile CRUD |
 | Working buffer | `EQv2SourceLoad` → `EQGetLV2SourceBandEx` / `EQSetLV2SourceBand` | Read/write bands of the loaded profile — device-global, persists across connections and reboots |
-| DSP-active state | `EQChangeSourceFX` / `EQSourceOff` (toggle) + `EQGetLV2SourceBandEx` → `EQStat` (read) | What's actually applied to audio |
+| DSP on/off toggle | `EQChangeSourceFX` / `EQSourceOff` (toggle) + `EQGetLV2SourceBandEx` → `EQStat` (read) | Whether the selected profile is actually applied to audio |
 
 Unlike PEQ, a RoomFit read requires a prior `EQv2SourceLoad` to select the intended profile — the
 buffer is global and reads whatever was loaded last, not "the" profile by default.
+
+### Operational rules
+
+1. **Any read of a named profile is a real write to the "selected" state, not a side-effect-free
+   peek.** `EQv2SourceLoad`-ing a profile to read its bands makes it the buffer's `Name` — and
+   therefore what `get_roomfit_status()` reports as selected. Code that reads purely to inspect a
+   profile (previews, verification reads) must capture the previously-selected `Name` first and
+   restore it afterward if it shouldn't change what's selected
+   (`WiiMAdapter.restore_roomfit_active_profile()`).
+2. **A profile stays "selected" even while `EQStat` is `"Off"`.** Disabling RoomFit doesn't deselect
+   the working buffer's `Name` — it just stops applying it. The instant `EQStat` flips back on,
+   whatever's selected is immediately applied to live audio. There is no "disabled and deselected"
+   state to fall back on.
+3. **Saving under a throwaway name and then deleting it orphans the buffer.** The buffer adopts
+   whichever name it was last saved under; deleting that same profile leaves `Name` pointing at
+   something that no longer exists (reads back `""`). Any such save-then-delete sequence must
+   capture the real pre-save `Name` and restore it via `EQv2SourceLoad` afterward.
+4. **`EQSourceSave` may also flip `EQStat` on as an undocumented side effect** (root cause
+   unconfirmed — `# ASSUMPTION:` in `capability_prober.py`, `docs/corrections.md` #190). Code
+   performing a save-then-something sequence must treat `EQStat` with the same care as rule 3, or
+   avoid the sequence entirely when `EQStat` is off and a real profile is selected
+   (`CapabilityProber._probe_roomfit()`'s level-4 guard is the reference implementation).
+5. **`source_name` must be `""` (present, empty) for band read/write and the DSP toggle**
+   (`EQGetLV2SourceBandEx`/`EQSetLV2SourceBand`/`EQChangeSourceFX`/`EQSourceOff`); profile-CRUD
+   commands (`EQv2SourceLoad`/`EQv2Delete`/`EQv2GetNewList`/`EQSourceSave`) omit it entirely instead.
+   Getting this wrong doesn't error — it silently targets an orphaned per-source slot instead of
+   RoomFit's real global state. `encode_wiim_command()` enforces this distinction.
+6. Saving to the currently-active profile's own name does not deactivate it — the profile stays
+   selected and active with its updated content.
+
+Discovery history and hardware-test detail for each rule above: `docs/corrections.md` (search
+RoomFit).
 
 ### Band read/write
 ```
@@ -353,32 +395,21 @@ Response format identical to PEQ (`channelMode`, `EQBandL`/`EQBandR` or `EQBand`
 
 ### Write workflow
 1. `EQv2SourceLoad` — load target profile into the working buffer
-2. `EQSetLV2SourceBand` (`EQLevel:2`, `source_name:""`) — modify bands
+2. `EQSetLV2SourceBand` (`EQLevel:2`, `source_name:""`) — modify bands (round every value to 3
+   decimal places first — see PEQ → Band model's write-rounding rule; `docs/smoke_test_issues.md`
+   #92/#93 is why this matters for RoomFit specifically)
 3. `EQSourceSave` (`EQLevel:2`, `Name:"<profile>"`) — persist
 
-**Step 2 is where the 3-decimal write-rounding rule (see PEQ → Band model above) bites hardest in
-practice** — the bug that rule documents was first found here: pushing REW-sourced L/R filters
-straight to a RoomFit profile produced empty/flat bands (`docs/smoke_test_issues.md` #92, same root
-cause as #93). Round every value to 3 decimal places before this step, regardless of channel mode.
-
-**Saving to the currently-active profile name deactivates RoomFit** (device deselects it, user must
-re-select in-app). Saving to a new/different name does not deactivate it, and deleting a
-*non-active* profile doesn't deactivate it either — only overwriting the active name via Save does.
-Recommended UX: save-as-new + tell the user to switch in-app, or save-to-active + warn about
-deactivation.
-
-The buffer keeps its data and adopts the saved name after a save — it's never cleared by deleting
-other profiles, toggling RoomFit on/off, or a reboot, and leftover buffer data has no observable
-effect on the WiiM app (which uses its own internal state for display, not the buffer). **The
-reverse isn't true, though:** running a calibration or editing a profile through the WiiM app itself
-can overwrite the buffer's contents — don't assume it's stable for an entire session if the user
-might also be using the WiiM app at the same time.
+`RoomFitSafeWrite` (`src/adapters/safe_write.py`) implements this workflow plus the mandatory
+backup/verify/rollback protocol and rules 1-4 above — use it, not `write_roomfit()` directly. On a
+successful push it makes the written profile active and turns RoomFit on if it was off (deliberate
+behavior, not suppressed); on failure it restores whatever was selected and enabled beforehand.
 
 ### Previewing a saved profile without disrupting the active one
-No stateless peek command exists. Read the active profile's `Name` first (via the empty-`source_name`
-status read below), `EQv2SourceLoad` the target profile, read its bands, then `EQv2SourceLoad` the
-original `Name` back to restore. This changes the working buffer and the app's "currently selected"
-state during the preview window — warn the user.
+No stateless peek command exists (rule 1). Read the active profile's `Name` first (via the
+empty-`source_name` status read below), `EQv2SourceLoad` the target profile, read its bands, then
+`EQv2SourceLoad` the original `Name` back to restore. This changes the working buffer and the app's
+"currently selected" state during the preview window.
 
 ### DSP on/off toggle
 ```
@@ -386,14 +417,10 @@ EQGetLV2SourceBandEx:{"EQLevel":2,"source_name":"","pluginURI":"..."}   # read: 
 EQChangeSourceFX:{"EQLevel":2,"source_name":"","pluginURI":"..."}       # enable
 EQSourceOff:{"EQLevel":2,"source_name":"","pluginURI":"..."}            # disable
 ```
-Confirmed round-trip against real hardware (`docs/corrections.md`, 2026-07-02): read → disable
-(`EQStat`→Off) → read → enable (`EQStat`→On) → read. `source_name` must be present as `""` — a
-populated value is silently accepted (`{"status":"OK"}`) but applies to the wrong (per-source) scope
-and has no effect on the global toggle; this is why the toggle was originally (wrongly) believed
-impossible (`docs/corrections.md`, 2026-06-15 → 2026-07-02).
-
-**Not implemented in `src/adapters/wiim_adapter.py`** — documented for API completeness; a GUI
-toggle is intentionally out of scope (product decision, 2026-07-02).
+Implemented as `WiiMAdapter.enable_roomfit()`/`disable_roomfit()`/`set_roomfit_enabled()`, used
+internally by `RoomFitSafeWrite`'s push/undo protocol (rule 2). There is no standalone, user-facing
+manual toggle in the GUI — these methods are never exposed as an independent user action (product
+decision, `docs/corrections.md` 2026-07-02).
 
 ### Profile CRUD
 

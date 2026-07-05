@@ -32,6 +32,7 @@ from src.gui.components.list_item_style import apply_active_item_style
 from src.gui.components.page_layout import (
     ICON_NO_CONNECTION,
     build_centered_content,
+    center_column,
     make_empty_state_icon,
     make_page_title,
 )
@@ -213,13 +214,12 @@ class PresetsDeviceView(QWidget):
         """Build the 'no device connected' empty state."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(SPACING_MD)
 
         icon_label = make_empty_state_icon(
             ICON_NO_CONNECTION, object_name="PresetsDeviceEmptyIcon"
         )
-        layout.addWidget(icon_label)
+        layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         message = QLabel("Connect a device to browse its presets and profiles")
         message.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -227,6 +227,7 @@ class PresetsDeviceView(QWidget):
         message.setWordWrap(True)
         layout.addWidget(message)
 
+        center_column(layout)
         return widget
 
     def _build_peq_section(self) -> QWidget:
@@ -247,6 +248,7 @@ class PresetsDeviceView(QWidget):
             "Device presets not available on this model"
         )
         self._peq_unavailable_label.setProperty("class", "warning")
+        self._peq_unavailable_label.setWordWrap(True)
         self._peq_unavailable_label.setVisible(False)
         layout.addWidget(self._peq_unavailable_label)
 

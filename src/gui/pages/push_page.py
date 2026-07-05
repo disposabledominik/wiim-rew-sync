@@ -11,9 +11,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -293,8 +295,14 @@ class PushPage(QWidget):
         dialog.exec()
 
     def _set_result_class(self, status: str) -> None:
-        """Set the result icon/message QSS class (success/error/warning/info)."""
-        for widget in (self._result_icon, self._result_message):
+        """Set the result frame/icon/message QSS class (success/error/warning/info).
+
+        The stepper's "complete" color already matches the generic "success"
+        label color in both themes (see fluent_dark/light.qss), so the big
+        result checkmark and the 4 completed stage checkmarks read as one
+        continuous story without needing a separate color mapping here.
+        """
+        for widget in (self._result_frame, self._result_icon, self._result_message):
             set_qss_property(widget, "class", status)
 
     def _show_progress_state(self) -> None:
@@ -317,26 +325,49 @@ class PushPage(QWidget):
         )
         content_layout.addWidget(title)
 
+        # Scrollable body -- the stepper + result card (especially a
+        # critical failure's full recovery text) can exceed the available
+        # window height, and MainWindow's central area has no scroll area
+        # of its own, so without this the bottom of the content silently
+        # gets clipped by the window edge rather than staying reachable
+        # (#179). Same setWidgetResizable/NoFrame/no-horizontal-scrollbar
+        # pattern ConnectPage already uses for its device list.
+        scroll_area = QScrollArea(content_wrapper)
+        scroll_area.setObjectName("PushPageScrollArea")
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(SPACING_MD)
+
         # Dry Run badge (hidden by default). Reserves its layout space even
         # while hidden so toggling it via set_dry_run_result()/reset() doesn't
         # shift the progress/result content below it (#109).
-        self._dry_run_badge = QLabel("DRY RUN", content_wrapper)
+        self._dry_run_badge = QLabel("DRY RUN", body)
         self._dry_run_badge.setObjectName("PushPageDryRunBadge")
         size_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         size_policy.setRetainSizeWhenHidden(True)
         self._dry_run_badge.setSizePolicy(size_policy)
         self._dry_run_badge.setVisible(False)
-        content_layout.addWidget(self._dry_run_badge)
+        body_layout.addWidget(self._dry_run_badge)
 
-        # Progress stepper container
-        self._progress_container = QWidget(content_wrapper)
+        # Progress stepper container. Rows fill the container's width so
+        # every row's icon sits at the same x position (a column of
+        # checkmarks, not one shifting per row with its label's text
+        # length) -- the container itself is then centered as a single
+        # block, so the whole page still shares one alignment scheme with
+        # the result section below. No page title is repeated here since
+        # the page-level title above already establishes context (#179).
+        self._progress_container = QWidget(body)
+        self._progress_container.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
+        )
         progress_layout = QVBoxLayout(self._progress_container)
         progress_layout.setContentsMargins(0, 0, 0, 0)
         progress_layout.setSpacing(4)
-
-        progress_title = QLabel("Push Progress", self._progress_container)
-        progress_title.setProperty("class", "sectionTitle")
-        progress_layout.addWidget(progress_title)
 
         self._stage_rows: dict[str, _StageRow] = {}
         for stage_key in _STAGES:
@@ -344,44 +375,64 @@ class PushPage(QWidget):
             self._stage_rows[stage_key] = row
             progress_layout.addWidget(row)
 
-        content_layout.addWidget(self._progress_container)
+        body_layout.addWidget(
+            self._progress_container, alignment=Qt.AlignmentFlag.AlignHCenter
+        )
 
         # Result container (success/failure/dry-run)
-        self._result_container = QWidget(content_wrapper)
+        self._result_container = QWidget(body)
         result_layout = QVBoxLayout(self._result_container)
-        result_layout.setContentsMargins(0, SPACING_LG, 0, 0)
+        result_layout.setContentsMargins(0, SPACING_MD, 0, 0)
         result_layout.setSpacing(SPACING_MD)
-        result_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # Large result icon
-        self._result_icon = QLabel("", self._result_container)
+        # Result card: icon + message + detail + backup path, framed in a
+        # state-colored card instead of floating labels (#179). Only
+        # _detail_label word-wraps, so it's added with a plain addWidget()
+        # (no item alignment) -- see center_column()'s docstring in
+        # page_layout.py for why item-aligning a wrapped label breaks its
+        # height-for-width sizing.
+        self._result_frame = QFrame(self._result_container)
+        self._result_frame.setObjectName("PushPageResultFrame")
+        frame_layout = QVBoxLayout(self._result_frame)
+        frame_layout.setContentsMargins(SPACING_LG, SPACING_MD, SPACING_LG, SPACING_MD)
+        frame_layout.setSpacing(SPACING_MD)
+
+        self._result_icon = QLabel("", self._result_frame)
         self._result_icon.setObjectName("PushPageResultIcon")
         self._result_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        result_layout.addWidget(self._result_icon)
+        frame_layout.addWidget(self._result_icon, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Result message
-        self._result_message = QLabel("", self._result_container)
+        self._result_message = QLabel("", self._result_frame)
         self._result_message.setObjectName("PushPageResultMessage")
         self._result_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        result_layout.addWidget(self._result_message)
+        frame_layout.addWidget(self._result_message, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Detail/recovery text (multi-line)
-        self._detail_label = QLabel("", self._result_container)
+        self._detail_label = QLabel("", self._result_frame)
         self._detail_label.setObjectName("PushPageDetailLabel")
         self._detail_label.setWordWrap(True)
         self._detail_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
         self._detail_label.setProperty("class", "caption")
         self._detail_label.setVisible(False)
-        result_layout.addWidget(self._detail_label)
+        frame_layout.addWidget(self._detail_label)
 
         # Backup path (copyable, selectable text)
-        self._backup_path_label = QLabel("", self._result_container)
+        self._backup_path_label = QLabel("", self._result_frame)
         self._backup_path_label.setObjectName("PushPageBackupPath")
         self._backup_path_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self._backup_path_label.setVisible(False)
-        result_layout.addWidget(self._backup_path_label)
+        frame_layout.addWidget(
+            self._backup_path_label, alignment=Qt.AlignmentFlag.AlignHCenter
+        )
+
+        # Plain addWidget (no item alignment) -- the frame spans the full
+        # content column width, like push_confirmation.py's info_frame/
+        # clamping_frame, so its own sizeHint() is never computed at an
+        # artificially centered/unconstrained width (the same bug class
+        # this whole page's redesign fixes for _detail_label).
+        result_layout.addWidget(self._result_frame)
 
         # Opens a dialog showing the read-back filters confirmed on the
         # device (success only; not shown on failure since the rolled-back
@@ -399,7 +450,9 @@ class PushPage(QWidget):
             self._on_show_pushed_filters_clicked
         )
         self._show_pushed_filters_button.setVisible(False)
-        result_layout.addWidget(self._show_pushed_filters_button)
+        result_layout.addWidget(
+            self._show_pushed_filters_button, alignment=Qt.AlignmentFlag.AlignHCenter
+        )
 
         # Primary action buttons row (OK + Undo)
         action_layout = QHBoxLayout()
@@ -464,6 +517,8 @@ class PushPage(QWidget):
         result_layout.addWidget(self._failure_row)
 
         self._result_container.setVisible(False)
-        content_layout.addWidget(self._result_container)
+        body_layout.addWidget(self._result_container)
 
-        content_layout.addStretch()
+        body_layout.addStretch()
+        scroll_area.setWidget(body)
+        content_layout.addWidget(scroll_area, 1)

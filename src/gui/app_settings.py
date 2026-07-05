@@ -33,7 +33,9 @@ class AppSettings:
     # Paths (empty string = use platform default)
     log_directory: str = ""
     presets_directory: str = ""
-    rew_export_folder: str = ""
+    # Default starting directory for both REW file import (Filters step) and
+    # REW file export dialogs.
+    rew_folder: str = ""
 
     # Behavior
     discovery_timeout: int = 5
@@ -76,6 +78,14 @@ class AppSettings:
         if not isinstance(data, dict):
             logger.warning("Settings file does not contain a JSON object; using defaults.")
             return cls()
+
+        # One-time migration: "rew_export_folder" was renamed to "rew_folder"
+        # (#176, it now drives both REW import and export dialogs) -- without
+        # this, an existing settings.json from before the rename would be
+        # silently dropped by the known_fields filter below, reverting a
+        # user's configured default folder back to "" on upgrade.
+        if "rew_export_folder" in data and "rew_folder" not in data:
+            data = {**data, "rew_folder": data["rew_export_folder"]}
 
         # Only pick known fields, ignoring unknown keys for forward compat
         known_fields = {f.name for f in cls.__dataclass_fields__.values()}

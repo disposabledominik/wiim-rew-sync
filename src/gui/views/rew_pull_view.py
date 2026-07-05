@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.components.page_layout import (
     build_centered_content,
+    center_column,
     make_empty_state_icon,
     make_page_title,
 )
@@ -173,12 +174,11 @@ class RewPullView(QWidget):
         """Build the connecting/info/error placeholder state."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(SPACING_MD)
 
         self._icon_label = make_empty_state_icon("", object_name="RewPullPlaceholderIcon")
         self._icon_label.setVisible(False)
-        layout.addWidget(self._icon_label)
+        layout.addWidget(self._icon_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self._message_label = QLabel("Connecting to REW...")
         self._message_label.setObjectName("rew_pull_message")
@@ -192,8 +192,9 @@ class RewPullView(QWidget):
         back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         back_btn.setProperty("class", "secondary")
         back_btn.clicked.connect(self.back_requested.emit)
-        layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        center_column(layout)
         return widget
 
     def _build_content(self) -> QWidget:

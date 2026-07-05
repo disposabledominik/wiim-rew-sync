@@ -81,6 +81,14 @@ changes to "Preview Only" and a "DRY RUN" badge appears.
 This is useful for verifying your filter file translates correctly before
 committing to a write.
 
+**Dry Run is on by default** the first time you use the app, so nothing is
+sent to your device until you explicitly turn it off. If you push and don't
+see any change on your device, check whether Dry Run is still checked.
+
+The first time you uncheck it, the app will offer to turn off this default
+for future sessions. You can also change it any time in
+**Settings > General > "Enable Dry Run by default for new sessions"**.
+
 ## Pushing to Device
 
 Click "Push to Device" to apply the filters. The app follows a safe

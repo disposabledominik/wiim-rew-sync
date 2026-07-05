@@ -99,6 +99,13 @@ def encode_wiim_command(
                 f"add it to whichever one matches docs/wiim_api_notes.md's "
                 f"source_name & EQLevel Reference before using it."
             )
+    if eq_level == 2 and source_name == "" and command in _ROOMFIT_REQUIRES_OMITTED_SOURCE_NAME:
+        raise ValueError(
+            f"RoomFit (EQLevel:2) {command!r} requires source_name to be "
+            f"omitted entirely, not passed as \"\" -- got source_name='' for "
+            f"{command!r}. See docs/wiim_api_notes.md's source_name & EQLevel "
+            f"Reference."
+        )
     payload: dict[str, Any] = {"pluginURI": PLUGIN_URI}
     if source_name is not None:
         payload["source_name"] = source_name

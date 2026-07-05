@@ -525,12 +525,20 @@ def cmd_list_roomfit_profiles(device: str, timeout: float) -> int:
 async def _get_roomfit_filters(
     device: str, source: str, profile_name: str, timeout: float
 ) -> PEQSettings:
-    """Probe capabilities, load a RoomFit profile, and read its bands."""
+    """Probe capabilities, load a RoomFit profile, and read its bands.
+
+    Uses read_roomfit_preset_preview(), not read_roomfit() directly --
+    reading a named profile requires EQv2SourceLoad-ing it into the buffer
+    first, which makes it the device's active/selected profile as a side
+    effect (#175/#178). The preview variant restores whatever was active
+    beforehand, so running this CLI command doesn't silently change what's
+    selected on the user's device.
+    """
     client = WiiMHttpClient(device, timeout=timeout)
     try:
         capabilities = await CapabilityProber(client).probe()
         adapter = WiiMAdapter(client, capabilities)
-        return await adapter.read_roomfit(source, profile_name)
+        return await adapter.read_roomfit_preset_preview(source, profile_name)
     finally:
         await client.close()
 
@@ -633,7 +641,12 @@ def cmd_set_roomfit_filters(
         )
     except (WiiMConnectionError, WiiMResponseError) as exc:
         error_msg = str(exc)
-        if "roomfit_level >= 4" in error_msg:
+        # write_roomfit()'s gate is roomfit_level >= 2 (relaxed from >= 4,
+        # #190/redesign 2026-07-05) -- a device that only ever confirms
+        # roomfit_level >= 2 gets a real write attempt as its own
+        # capability test, so this message now only fires for devices that
+        # never confirmed RoomFit *read* support at all.
+        if "roomfit_level >= 2" in error_msg:
             print(
                 "Dedicated RoomFit filters not available on this device "
                 "(room correction uses PEQ bands instead).",

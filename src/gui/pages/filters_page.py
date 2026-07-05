@@ -15,6 +15,8 @@ Requirements referenced: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 9.3, 5.2, 5.7.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -74,12 +76,28 @@ class FiltersPage(QWidget):
         self._stereo_path: str = ""
         self._left_path: str = ""
         self._right_path: str = ""
+        # Default REW folder from Settings; a directory the user browses to
+        # during this session overrides it for the rest of the session.
+        self._default_import_dir: str = ""
+        self._session_import_dir: str = ""
         self.rew_pull_view = RewPullView(show_title=False)
         self._setup_ui()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_default_import_folder(self, path: str) -> None:
+        """Set the Settings-configured default folder for the REW import dialogs.
+
+        Called on startup and whenever Settings changes. Does not override a
+        directory the user has already browsed to during this session — see
+        `_browse_start_dir`.
+
+        Args:
+            path: The user's configured default REW folder, or "" for none.
+        """
+        self._default_import_dir = path
 
     def set_rew_api_available(self, available: bool) -> None:
         """Enable/disable the "Pull from REW API" source option.
@@ -465,18 +483,27 @@ class FiltersPage(QWidget):
         """Handle Back from the embedded RewPullView — revert to File Import."""
         self._file_source_radio.setChecked(True)
 
+    def _browse_start_dir(self) -> str:
+        """Return the starting directory for the REW import file dialogs.
+
+        A directory the user has already browsed to this session takes
+        precedence over the Settings-configured default.
+        """
+        return self._session_import_dir or self._default_import_dir
+
     @Slot()
     def _on_stereo_browse(self) -> None:
         """Open file dialog for stereo file selection (does not trigger import)."""
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select REW Filter File",
-            "",
+            self._browse_start_dir(),
             "REW Text Files (*.txt);;All Files (*)",
         )
         if path:
             self._stereo_path = path
             self._stereo_file_label.setText(path.rsplit("/", 1)[-1])
+            self._session_import_dir = str(Path(path).parent)
             self._next_btn.setEnabled(True)
 
     @Slot()
@@ -485,12 +512,13 @@ class FiltersPage(QWidget):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Left Channel REW File",
-            "",
+            self._browse_start_dir(),
             "REW Text Files (*.txt);;All Files (*)",
         )
         if path:
             self._left_path = path
             self._left_file_label.setText(path.rsplit("/", 1)[-1])
+            self._session_import_dir = str(Path(path).parent)
             self._update_lr_import_button()
 
     @Slot()
@@ -499,12 +527,13 @@ class FiltersPage(QWidget):
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Right Channel REW File",
-            "",
+            self._browse_start_dir(),
             "REW Text Files (*.txt);;All Files (*)",
         )
         if path:
             self._right_path = path
             self._right_file_label.setText(path.rsplit("/", 1)[-1])
+            self._session_import_dir = str(Path(path).parent)
             self._update_lr_import_button()
 
     @Slot()

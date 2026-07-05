@@ -1531,11 +1531,35 @@ QLabel#PushPageDryRunBadge {
 }
 
 QLabel#PushPageResultIcon {
-    font-size: 48px;
+    font-size: 36px;
 }
 
 QLabel#PushPageResultMessage {
     font-size: 16px;
+}
+
+QFrame#PushPageResultFrame[class="success"] {
+    border-left: 4px solid #66BB6A;
+    border-radius: 6px;
+    background-color: rgba(102, 187, 106, 0.08);
+}
+
+QFrame#PushPageResultFrame[class="error"] {
+    border-left: 4px solid #EF5350;
+    border-radius: 6px;
+    background-color: rgba(239, 83, 80, 0.08);
+}
+
+QFrame#PushPageResultFrame[class="warning"] {
+    border-left: 4px solid #FFA726;
+    border-radius: 6px;
+    background-color: rgba(255, 167, 38, 0.08);
+}
+
+QFrame#PushPageResultFrame[class="info"] {
+    border-left: 4px solid #00B4D8;
+    border-radius: 6px;
+    background-color: rgba(0, 180, 216, 0.08);
 }
 
 QLabel#PushPageBackupPath {

@@ -10,6 +10,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 
 from src.adapters.rew_http_client import MeasurementSummary
+from src.gui.components.page_layout import ICON_NO_CONNECTION
 from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetItem, PresetsDeviceView
 from src.gui.views.rew_pull_view import RewPullView
@@ -582,14 +583,14 @@ class TestSettingsViewPopulation:
             "theme": "System",
             "log_directory": "/var/log/wiim",
             "presets_directory": "/home/user/presets",
-            "rew_export_folder": "/home/user/rew",
+            "rew_folder": "/home/user/rew",
             "discovery_timeout": 10,
             "dry_run_default": True,
         })
 
         assert view._log_dir_edit.text() == "/var/log/wiim"
         assert view._presets_dir_edit.text() == "/home/user/presets"
-        assert view._rew_export_edit.text() == "/home/user/rew"
+        assert view._rew_folder_edit.text() == "/home/user/rew"
 
     def test_set_settings_populates_behavior(self, qtbot) -> None:
         """set_settings() populates timeout and dry run."""
@@ -600,7 +601,7 @@ class TestSettingsViewPopulation:
             "theme": "Light",
             "log_directory": "",
             "presets_directory": "",
-            "rew_export_folder": "",
+            "rew_folder": "",
             "discovery_timeout": 15,
             "dry_run_default": True,
         })
@@ -698,7 +699,7 @@ class TestSettingsViewGetCurrentSettings:
             "theme": "Dark",
             "log_directory": "/tmp/logs",
             "presets_directory": "/tmp/presets",
-            "rew_export_folder": "/tmp/rew",
+            "rew_folder": "/tmp/rew",
             "discovery_timeout": 8,
             "dry_run_default": True,
         })
@@ -707,7 +708,7 @@ class TestSettingsViewGetCurrentSettings:
         assert settings["theme"] == "Dark"
         assert settings["log_directory"] == "/tmp/logs"
         assert settings["presets_directory"] == "/tmp/presets"
-        assert settings["rew_export_folder"] == "/tmp/rew"
+        assert settings["rew_folder"] == "/tmp/rew"
         assert settings["discovery_timeout"] == 8
         assert settings["dry_run_default"] is True
 
@@ -778,6 +779,26 @@ class TestRewPullView:
         assert view._placeholder_widget.isVisible()
         assert not view._content_widget.isVisible()
         assert view._message_label.text() == "No measurements found in REW."
+
+    def test_long_message_not_clipped_at_narrow_width(self, qtbot) -> None:
+        """A long "REW not connected" style message isn't squeezed to
+        near-zero height at a narrow window width (smoke #180 -- the
+        placeholder layout previously called setAlignment(AlignCenter),
+        which breaks word-wrap height-for-width sizing; see
+        page_layout.center_column()'s docstring)."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.resize(320, 400)
+        view.show()
+
+        long_message = (
+            "REW is not connected. Please ensure REW is running and its "
+            "HTTP API is enabled (localhost:4735)."
+        )
+        view.set_message(long_message, icon=ICON_NO_CONNECTION)
+
+        single_line_height = view._message_label.fontMetrics().height()
+        assert view._message_label.height() > single_line_height
 
     def test_set_measurements_shows_content_and_populates_lists(self, qtbot) -> None:
         """set_measurements() populates Stereo and L/R lists and shows content."""

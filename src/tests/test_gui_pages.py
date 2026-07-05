@@ -9,6 +9,7 @@ Requirements referenced: 2.1-2.9, 1.9, 3.1-3.6, 4.1-4.12, 5.1-5.7, 6.2-6.8.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
 
 from src.gui.pages.connect_page import ConnectPage
 from src.gui.pages.eq_type_page import EQTypePage
@@ -90,6 +91,24 @@ class TestConnectPage:
         with qtbot.waitSignal(page.refresh_requested, timeout=1000):
             page.show()
 
+    def test_empty_state_causes_text_not_clipped_at_narrow_width(self, qtbot) -> None:
+        """The "Common causes" bullet list isn't squeezed to near-zero height
+        at a narrow window width (smoke #180 -- _build_empty_widget's layout
+        previously called setAlignment(AlignCenter), which breaks word-wrap
+        height-for-width sizing; see page_layout.center_column()'s docstring).
+        """
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.resize(340, 500)
+        page.show()
+
+        page.set_devices([])
+
+        causes_label = page.findChild(QLabel, "ConnectPageEmptyCauses")
+        assert causes_label is not None
+        single_line_height = causes_label.fontMetrics().height()
+        assert causes_label.height() > single_line_height * 2
+
 
 # ---------------------------------------------------------------------------
 # TestEQTypePage
@@ -132,6 +151,22 @@ class TestEQTypePage:
         assert not page._peq_card.selected
         assert page._roomfit_card.selected
         assert page.selected_type == "roomfit"
+
+    def test_card_description_not_clipped_at_narrow_width(self, qtbot) -> None:
+        """A card's description text isn't squeezed to near-zero height when
+        the two side-by-side cards are narrowed (smoke #180 -- _EQCard's
+        layout previously called setAlignment(AlignCenter), which breaks
+        word-wrap height-for-width sizing; see
+        page_layout.center_column()'s docstring)."""
+        page = EQTypePage()
+        qtbot.addWidget(page)
+        page.resize(340, 500)
+        page.show()
+
+        desc_label = page._peq_card.findChild(QLabel, "cardDescription")
+        assert desc_label is not None
+        single_line_height = desc_label.fontMetrics().height()
+        assert desc_label.height() > single_line_height
 
 
 # ---------------------------------------------------------------------------
@@ -364,6 +399,17 @@ class TestReviewPage:
         with qtbot.waitSignal(page.push_requested, timeout=1000):
             qtbot.mouseClick(page._push_button, Qt.MouseButton.LeftButton)
 
+    def test_dry_run_hint_visible(self, qtbot) -> None:
+        """The always-visible Dry Run explanation is shown near the checkbox
+        (smoke #182) -- non-technical users shouldn't have to guess what the
+        checkbox does or wonder why nothing changed on their device."""
+        page = ReviewPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        assert page._dry_run_hint.isVisible()
+        assert "previewed only" in page._dry_run_hint.text()
+
 
 # ---------------------------------------------------------------------------
 # TestPushPage
@@ -433,6 +479,91 @@ class TestPushPage:
 
         assert page._dry_run_badge.isVisible()
         assert "Translation Preview" in page._result_message.text()
+
+    def test_failure_detail_not_clipped_at_min_window_height(self, qtbot) -> None:
+        """A long multi-line critical failure message isn't silently
+        squeezed to near-zero height at the app's minimum window size
+        (smoke #179/#180 -- see page_layout.center_column's docstring for
+        the layout.setAlignment()-breaks-word-wrap bug this guards against).
+        """
+        from src.gui.constants import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH
+
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+        page.show()
+
+        long_message = (
+            "Write verification failed because the device reported a checksum "
+            "mismatch after three retries, which usually indicates a flaky "
+            "network connection or the device rebooting mid-write."
+        )
+        page.set_failure(long_message, "/tmp/backup.json", critical=True)
+        page.resize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
+
+        # A correctly height-for-width-sized wrapped label is actually
+        # allocated several lines of height -- a clipped/mis-sized one would
+        # collapse back toward (or below) its single-line height.
+        single_line_height = page._detail_label.fontMetrics().height()
+        assert page._detail_label.height() > single_line_height * 2
+
+    def test_stage_icons_align_in_a_column_regardless_of_label_length(
+        self, qtbot
+    ) -> None:
+        """Stage row icons share the same x position even though the stage
+        labels ("Backing up" vs "Done") are different lengths (smoke #179 --
+        centering each row independently made the icon column zigzag)."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        icon_x_positions = {
+            key: row._icon_label.mapTo(page, row._icon_label.rect().topLeft()).x()
+            for key, row in page._stage_rows.items()
+        }
+        assert len(set(icon_x_positions.values())) == 1, icon_x_positions
+
+    def test_title_is_left_aligned_like_other_pages(self, qtbot) -> None:
+        """The page title sits flush left in the content column, matching
+        every other wizard page's make_page_title() convention -- not
+        centered (smoke #179)."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        title = page.findChild(QLabel, "PushPageTitle")
+        assert title is not None
+        # Flush left within its immediate parent (the content column) --
+        # the page-level x offset also includes the page's own outer
+        # margin, which isn't what's being asserted here.
+        assert title.mapTo(title.parentWidget(), title.rect().topLeft()).x() == 0
+
+    def test_content_scrolls_instead_of_clipping_when_too_tall(self, qtbot) -> None:
+        """When the page is embedded in a window shorter than the result
+        card's natural height, a scrollbar appears instead of the bottom
+        (e.g. the OK button) being silently cut off by the window edge --
+        MainWindow's central area has no scroll area of its own (smoke #179).
+        """
+        from PySide6.QtWidgets import QMainWindow, QScrollArea
+
+        window = QMainWindow()
+        page = PushPage()
+        window.setCentralWidget(page)
+        qtbot.addWidget(window)
+        window.resize(900, 350)
+        window.show()
+        qtbot.wait(10)
+
+        page.set_failure(
+            "Verification mismatch on band 3, checksum did not match after retry",
+            "/tmp/backup.json",
+            critical=True,
+        )
+        qtbot.wait(10)
+
+        scroll_area = page.findChild(QScrollArea, "PushPageScrollArea")
+        assert scroll_area is not None
+        assert scroll_area.verticalScrollBar().maximum() > 0
 
 
 # ---------------------------------------------------------------------------
@@ -526,3 +657,87 @@ class TestNameProfilePage:
             item = page._profiles_list.item(i)
             assert not item.text().endswith("(active)")
             assert not item.font().bold()
+
+    def test_activation_note_always_visible_and_unconditional(self, qtbot) -> None:
+        """#191: the always-visible caption states the now-unconditional
+        truth (every save activates the profile and enables RoomFit if
+        off) regardless of which name is typed -- unlike _warning_label,
+        it's never hidden/shown based on classify()."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+        page.show()
+
+        activation_notes = [
+            child
+            for child in page.findChildren(type(page._warning_label))
+            if "active on your device" in child.text()
+        ]
+        assert len(activation_notes) == 1
+        note = activation_notes[0]
+        assert "turning RoomFit on" in note.text()
+        assert note.isVisible()
+
+        page._name_input.setText("Brand New Name")
+        assert note.isVisible()
+
+    def test_classify(self, qtbot) -> None:
+        """classify() distinguishes empty/new, existing-non-active, and
+        active names -- the single source of truth shared by the inline
+        warning label and main_window's pre-save confirm dialog (#183)."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+        page.set_existing_profiles(["Default", "Night"], active_profile="Night")
+
+        assert page.classify("") == "none"
+        assert page.classify("Brand New Name") == "none"
+        assert page.classify("Default") == "existing"
+        assert page.classify("Night") == "active"
+
+    def test_warning_shown_for_existing_non_active_profile(self, qtbot) -> None:
+        """A different wording appears when the name matches an existing but
+        non-active profile, vs. the active one (smoke #183)."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_existing_profiles(["Default", "Night"], active_profile="Night")
+        page._name_input.setText("Default")
+
+        assert page._warning_label.isVisible()
+        assert "already exists" in page._warning_label.text()
+        assert "currently playing" not in page._warning_label.text()
+
+        page._name_input.setText("Night")
+        assert "currently playing" in page._warning_label.text()
+
+    def test_click_existing_profile_populates_name(self, qtbot) -> None:
+        """Clicking a non-active profile in the reference list populates the
+        name field with its raw name (no "(active)" suffix) -- purely local,
+        the names were already fetched once via set_existing_profiles()
+        (#183)."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_existing_profiles(["Default", "Night"], active_profile="Night")
+        item = page._profiles_list.item(0)
+        page._profiles_list.itemClicked.emit(item)
+
+        assert page._name_input.text() == "Default"
+
+    def test_click_active_profile_populates_name_without_suffix(self, qtbot) -> None:
+        """Clicking the active profile's item (labeled "Night (active)")
+        populates the field with just "Night", and shows the active-profile
+        warning (#183)."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_existing_profiles(["Default", "Night"], active_profile="Night")
+        item = page._profiles_list.item(1)
+        assert item.text() == "Night (active)"
+        page._profiles_list.itemClicked.emit(item)
+
+        assert page._name_input.text() == "Night"
+        assert page._warning_label.isVisible()
+        assert "currently playing" in page._warning_label.text()

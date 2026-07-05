@@ -800,6 +800,41 @@ def test_get_roomfit_filters_lr(
     assert "Right channel:" in out
 
 
+async def test_get_roomfit_filters_uses_preview_not_raw_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#178: get-roomfit-filters must go through read_roomfit_preset_preview(),
+    not read_roomfit() directly -- a raw read requires EQv2SourceLoad-ing the
+    named profile first, which makes it the device's active/selected profile
+    as a side effect. Running this read-only CLI command must not silently
+    change what's active on the user's device."""
+    client_instance = MagicMock()
+    client_instance.close = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
+
+    prober_instance = MagicMock()
+    prober_instance.probe = AsyncMock(return_value=DeviceCapabilities(roomfit_level=4))
+    monkeypatch.setattr(cli, "CapabilityProber", MagicMock(return_value=prober_instance))
+
+    adapter_instance = MagicMock()
+    adapter_instance.read_roomfit_preset_preview = AsyncMock(
+        return_value=_make_settings("stereo")
+    )
+    adapter_instance.read_roomfit = AsyncMock(
+        side_effect=AssertionError("read_roomfit() must not be called directly")
+    )
+    monkeypatch.setattr(cli, "WiiMAdapter", MagicMock(return_value=adapter_instance))
+
+    await cli._get_roomfit_filters(
+        device="192.168.1.50", source="wifi", profile_name="My RoomFit", timeout=5.0
+    )
+
+    adapter_instance.read_roomfit_preset_preview.assert_called_once_with(
+        "wifi", "My RoomFit"
+    )
+    adapter_instance.read_roomfit.assert_not_called()
+
+
 def test_set_roomfit_filters_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -872,7 +907,9 @@ def test_set_roomfit_filters_verification_failure_exits_nonzero(
 def test_set_roomfit_filters_level_too_low(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """set-roomfit-filters shows specific error when device lacks roomfit_level >= 4."""
+    """set-roomfit-filters shows specific error when device lacks roomfit_level
+    >= 2 (relaxed from >= 4, #191 -- a device at level 3 now gets a real write
+    attempt instead of being rejected outright; only < 2 is rejected)."""
     from src.models.errors import WiiMResponseError
 
     rew_file = tmp_path / "filters.txt"
@@ -884,7 +921,11 @@ def test_set_roomfit_filters_level_too_low(
     monkeypatch.setattr(
         cli,
         "_set_roomfit_filters",
-        AsyncMock(side_effect=WiiMResponseError("roomfit_level >= 4 required")),
+        AsyncMock(
+            side_effect=WiiMResponseError(
+                "RoomFit write requires roomfit_level >= 2, device has level 0"
+            )
+        ),
     )
 
     code = cli.cmd_set_roomfit_filters(
@@ -897,7 +938,7 @@ def test_set_roomfit_filters_level_too_low(
 
     captured = capsys.readouterr()
     assert code == 1
-    assert "not available" in captured.err or "roomfit_level >= 4" in captured.err
+    assert "not available" in captured.err
 
 
 # ---------------------------------------------------------------------------

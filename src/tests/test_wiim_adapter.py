@@ -924,7 +924,23 @@ class TestWriteRoomfit:
 
     @pytest.fixture
     def insufficient_write_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level < 4 (write NOT supported)."""
+        """Capabilities with roomfit_level < 2 (write genuinely not supported --
+        the device never even confirmed RoomFit read support)."""
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_roomfit=True,
+            roomfit_level=1,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+            role="solo",
+        )
+
+    @pytest.fixture
+    def unconfirmed_write_capabilities(self) -> DeviceCapabilities:
+        """Capabilities with roomfit_level == 3 (read confirmed, write-test
+        skipped for #190 safety -- now allowed to attempt a write, which
+        serves as its own capability confirmation)."""
         return DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
@@ -939,7 +955,7 @@ class TestWriteRoomfit:
     async def test_write_roomfit_insufficient_level_raises(
         self, mock_client: AsyncMock, insufficient_write_capabilities: DeviceCapabilities
     ) -> None:
-        """write_roomfit raises WiiMResponseError when roomfit_level < 4."""
+        """write_roomfit raises WiiMResponseError when roomfit_level < 2."""
         from src.models.canonical import CanonicalFilter
 
         adapter = WiiMAdapter(
@@ -947,7 +963,7 @@ class TestWriteRoomfit:
         )
         filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
 
-        with pytest.raises(WiiMResponseError, match="roomfit_level >= 4"):
+        with pytest.raises(WiiMResponseError, match="roomfit_level >= 2"):
             await adapter.write_roomfit("wifi", "My Profile", filters)
 
     async def test_write_roomfit_insufficient_level_no_commands(
@@ -965,6 +981,24 @@ class TestWriteRoomfit:
             await adapter.write_roomfit("wifi", "My Profile", filters)
 
         mock_client.command.assert_not_called()
+
+    async def test_write_roomfit_level_3_allowed(
+        self, mock_client: AsyncMock, unconfirmed_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """#190/#191: a device at roomfit_level == 3 (write-test skipped for
+        safety) is now allowed to attempt a real write -- the gate only
+        rejects level < 2."""
+        from src.models.canonical import CanonicalFilter
+
+        mock_client.command.return_value = "OK"
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=unconfirmed_write_capabilities
+        )
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
+
+        await adapter.write_roomfit("wifi", "My Profile", filters)
+
+        mock_client.command.assert_called()
 
     async def test_write_roomfit_success(
         self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
@@ -1012,6 +1046,36 @@ class TestWriteRoomfit:
         assert "wifi" not in calls[1][0][0]
         save_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
         assert "source_name" not in save_payload
+
+
+class TestRequireRoomfitLevel:
+    """Test the shared _require_roomfit_level() gate used by every RoomFit
+    method (get_roomfit_status >=1, read_roomfit >=2, write_roomfit >=2,
+    list_roomfit_profiles >=1) -- extracted to replace four hand-rolled
+    duplicates of the same check."""
+
+    def test_passes_when_level_meets_minimum(self, adapter: WiiMAdapter) -> None:
+        adapter.capabilities.roomfit_level = 2
+        adapter._require_roomfit_level(2, "read")  # does not raise
+
+    def test_passes_when_level_exceeds_minimum(self, adapter: WiiMAdapter) -> None:
+        adapter.capabilities.roomfit_level = 4
+        adapter._require_roomfit_level(2, "read")  # does not raise
+
+    def test_raises_when_level_below_minimum(self, adapter: WiiMAdapter) -> None:
+        adapter.capabilities.roomfit_level = 1
+        with pytest.raises(WiiMResponseError, match="read requires roomfit_level >= 2"):
+            adapter._require_roomfit_level(2, "read")
+
+    def test_error_message_includes_operation_and_actual_level(
+        self, adapter: WiiMAdapter
+    ) -> None:
+        adapter.capabilities.roomfit_level = 0
+        with pytest.raises(
+            WiiMResponseError,
+            match="RoomFit status requires roomfit_level >= 1, device has level 0",
+        ):
+            adapter._require_roomfit_level(1, "status")
 
 
 # ---------------------------------------------------------------------------
@@ -1408,6 +1472,91 @@ class TestDisablePeq:
             await adapter.disable_peq("wifi")
 
 
+class TestEnableRoomfit:
+    """Test enable_roomfit — enabling RoomFit's global toggle via EQChangeSourceFX."""
+
+    async def test_enable_roomfit_sends_correct_command(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """enable_roomfit issues EQChangeSourceFX with empty source_name and EQLevel:2."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.enable_roomfit()
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQChangeSourceFX:")
+        assert "EqNp" in call_args
+
+    async def test_enable_roomfit_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """WiiMConnectionError propagates from enable_roomfit."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.enable_roomfit()
+
+    async def test_enable_roomfit_response_error_on_failure(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """enable_roomfit raises WiiMResponseError when device returns error."""
+        mock_client.command.side_effect = WiiMResponseError("HTTP 500")
+
+        with pytest.raises(WiiMResponseError):
+            await adapter.enable_roomfit()
+
+
+class TestDisableRoomfit:
+    """Test disable_roomfit — disabling RoomFit's global toggle via EQSourceOff."""
+
+    async def test_disable_roomfit_sends_correct_command(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """disable_roomfit issues EQSourceOff with empty source_name and EQLevel:2."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.disable_roomfit()
+
+        mock_client.command.assert_called_once()
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQSourceOff:")
+        assert "EqNp" in call_args
+
+    async def test_disable_roomfit_connection_error_propagates(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """WiiMConnectionError propagates from disable_roomfit."""
+        mock_client.command.side_effect = WiiMConnectionError("timeout")
+
+        with pytest.raises(WiiMConnectionError, match="timeout"):
+            await adapter.disable_roomfit()
+
+
+class TestSetRoomfitEnabled:
+    """Test set_roomfit_enabled — the bool-driven enable/disable wrapper."""
+
+    async def test_set_roomfit_enabled_true_calls_enable(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.return_value = "OK"
+
+        await adapter.set_roomfit_enabled(True)
+
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQChangeSourceFX:")
+
+    async def test_set_roomfit_enabled_false_calls_disable(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.return_value = "OK"
+
+        await adapter.set_roomfit_enabled(False)
+
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQSourceOff:")
+
+
 class TestGetPeqEnabled:
     """Test get_peq_enabled — reading PEQ enabled state from EQStat field."""
 
@@ -1706,9 +1855,9 @@ class TestReadRoomfitPresetPreview:
         restore_response = "OK"
         mock_client.command.side_effect = [
             status_response,  # get_roomfit_status
-            load_target_response,  # _load_roomfit_profile (target, via read_roomfit)
+            load_target_response,  # load_roomfit_profile (target, via read_roomfit)
             band_response,  # EQGetLV2SourceBandEx (via read_roomfit)
-            restore_response,  # _load_roomfit_profile (restore original)
+            restore_response,  # load_roomfit_profile (restore original)
         ]
 
         result = await adapter.read_roomfit_preset_preview("wifi", "Preview")
@@ -1731,7 +1880,7 @@ class TestReadRoomfitPresetPreview:
         }
         mock_client.command.side_effect = [
             status_response,  # get_roomfit_status (already "Preview")
-            "OK",  # _load_roomfit_profile (target, via read_roomfit)
+            "OK",  # load_roomfit_profile (target, via read_roomfit)
             band_response,  # EQGetLV2SourceBandEx (via read_roomfit)
         ]
 
@@ -1777,4 +1926,81 @@ class TestReadRoomfitPresetPreview:
             logger.propagate = False
 
         assert result.name == "Preview"
+        assert any("Failed to restore" in rec.message for rec in caplog.records)
+
+
+class TestRestoreRoomfitActiveProfile:
+    """Direct unit coverage for restore_roomfit_active_profile() (#178) --
+    shared by read_roomfit_preset_preview() above and RoomFitSafeWrite.execute()
+    (safe_write.py). Its own tests only verify it's called with the right
+    arguments; the skip/call decision itself is tested here."""
+
+    @pytest.fixture
+    def adapter(
+        self, mock_client: AsyncMock, roomfit_preview_capabilities: DeviceCapabilities
+    ) -> WiiMAdapter:
+        return WiiMAdapter(http_client=mock_client, capabilities=roomfit_preview_capabilities)
+
+    @pytest.fixture
+    def roomfit_preview_capabilities(self) -> DeviceCapabilities:
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_roomfit=True,
+            supports_roomfit_read=True,
+            roomfit_level=3,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+        )
+
+    async def test_calls_load_when_names_differ(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.return_value = "OK"
+
+        await adapter.restore_roomfit_active_profile(
+            "Living Room", "Movie Night", context="writing 'Movie Night'"
+        )
+
+        mock_client.command.assert_called_once()
+        assert "Living%20Room" in mock_client.command.call_args[0][0]
+
+    async def test_skips_when_original_name_empty(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        await adapter.restore_roomfit_active_profile(
+            "", "Movie Night", context="writing 'Movie Night'"
+        )
+
+        mock_client.command.assert_not_called()
+
+    async def test_skips_when_names_match(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        await adapter.restore_roomfit_active_profile(
+            "Movie Night", "Movie Night", context="writing 'Movie Night'"
+        )
+
+        mock_client.command.assert_not_called()
+
+    async def test_swallows_and_logs_load_failure(
+        self,
+        adapter: WiiMAdapter,
+        mock_client: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        mock_client.command.side_effect = WiiMConnectionError("boom")
+
+        logger = logging.getLogger("wiim_rew_sync.wiim_api")
+        logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.wiim_api"):
+                await adapter.restore_roomfit_active_profile(
+                    "Living Room", "Movie Night", context="writing 'Movie Night'"
+                )
+        finally:
+            logger.propagate = False
+
         assert any("Failed to restore" in rec.message for rec in caplog.records)

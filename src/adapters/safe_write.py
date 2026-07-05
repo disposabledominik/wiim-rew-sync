@@ -13,7 +13,9 @@ Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +23,11 @@ from typing import TYPE_CHECKING
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
+from src.repository.backup_manager import (
+    load_backup_json,
+    parse_backup_filters,
+    parse_backup_restore_metadata,
+)
 from src.translator.wiim_generator import clamp_filters_for_verification
 from src.utils.fp_compare import band_matches
 
@@ -186,7 +193,12 @@ class SafeWrite:
         self._backup_manager = backup_manager
         self._queue = queue
 
-    async def execute(self, source_name: str, settings: PEQSettings) -> WriteResult:
+    async def execute(
+        self,
+        source_name: str,
+        settings: PEQSettings,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> WriteResult:
         """Execute the five-step safe write protocol.
 
         Steps:
@@ -200,6 +212,12 @@ class SafeWrite:
         Args:
             source_name: Audio input source (e.g. "wifi", "bluetooth").
             settings: PEQ settings to write to the device.
+            on_stage: Optional callback invoked with one of "backing_up",
+                "writing", "verifying", "done" as each step begins -- lets a
+                caller (e.g. the GUI's push stepper) reflect real progress
+                instead of only a start/end signal. Not called with "done"
+                on failure; the caller is expected to treat whichever stage
+                it last saw as the one that failed (see #189).
 
         Returns:
             WriteResult indicating success/failure and rollback status.
@@ -207,6 +225,8 @@ class SafeWrite:
         capabilities = self._adapter.capabilities
 
         # Step 1: Backup current device state
+        if on_stage is not None:
+            on_stage("backing_up")
         current_settings = await self._adapter.read_peq(source_name)
         backup_path = self._backup_manager.create_backup(
             current_settings, capabilities, "pre_write"
@@ -214,9 +234,13 @@ class SafeWrite:
 
         # Step 2: Write new settings. WiiMAdapter.write_peq() sets channelMode
         # inline as part of the same EQSetLV2SourceBand write.
+        if on_stage is not None:
+            on_stage("writing")
         await self._adapter.write_peq(source_name, settings, self._queue)
 
         # Step 3: Read-back (fresh call to device)
+        if on_stage is not None:
+            on_stage("verifying")
         read_back = await self._adapter.read_peq(source_name)
 
         # Step 4: Verify each band matches. Compare against what was
@@ -227,6 +251,8 @@ class SafeWrite:
         verify_settings = _clamped_for_verification(settings, capabilities.max_filters)
         if verify_bands(verify_settings, read_back):
             # Step 5a: Commit - verification passed
+            if on_stage is not None:
+                on_stage("done")
             return WriteResult(success=True, backup_path=backup_path, read_back=read_back)
 
         # Step 5b: Rollback - verification failed
@@ -314,15 +340,57 @@ class RoomFitSafeWrite:
       - Profile is brand-new: delete the profile we just created (DELETE_NEW),
         since there's no prior state to go back to.
 
+    Device-visible contract (redesigned 2026-07-05 -- see docs/corrections.md):
+      - Success: ``profile_name`` becomes the device's active/selected
+        profile and RoomFit is turned on if it was off, via deliberate,
+        confirmed commands (not left to an unconfirmed API side effect).
+        This is the intended behavior, not a suppressed side effect --
+        a user pushing a RoomFit profile through this app wants it applied.
+      - Failure (verification mismatch + rollback, or the critical
+        manual-recovery path): the profile that was active and RoomFit's
+        on/off state *before this call* are restored -- a failed push must
+        have no lasting device-visible effect.
+      - ``undo()`` (a separate, later user action) restores the *original
+        push's* full pre-state: previous bands (if an existing profile was
+        overwritten), previous selection, and previous on/off state. It
+        never deletes a profile created by a new-profile push (kept in
+        storage for the user to manage via "Presets on Device").
+
     Args:
         adapter: WiiMAdapter for device read/write operations.
         backup_manager: BackupManager for creating state snapshots of an
-            overwritten profile's previous bands.
+            overwritten profile's previous bands, and RoomFit's pre-write
+            selection/enable state (used by ``undo()``).
     """
 
     def __init__(self, adapter: WiiMAdapter, backup_manager: BackupManager) -> None:
         self._adapter = adapter
         self._backup_manager = backup_manager
+
+    async def _restore_selection_and_enable_state(
+        self, active_name: str, enabled: bool | None, current_name: str, context: str
+    ) -> None:
+        """Best-effort: re-select active_name and restore RoomFit's on/off
+        state to `enabled` if not None.
+
+        Shared by execute()'s failure paths (restores *this call's*
+        pre-write state) and undo() (restores the *original push's*
+        pre-write state, read back from the backup file) -- written once so
+        the two restore sites can't drift out of sync with each other.
+        """
+        await self._adapter.restore_roomfit_active_profile(
+            active_name, current_name, context=context
+        )
+        if enabled is not None:
+            try:
+                await self._adapter.set_roomfit_enabled(enabled)
+            except Exception:
+                logger.warning(
+                    "Failed to restore RoomFit enable-state to %s (%s).",
+                    "On" if enabled else "Off",
+                    context,
+                    exc_info=True,
+                )
 
     async def execute(
         self,
@@ -332,8 +400,12 @@ class RoomFitSafeWrite:
         channel_mode: ChannelMode,
         filters_l: list[CanonicalFilter] | None = None,
         filters_r: list[CanonicalFilter] | None = None,
+        on_stage: Callable[[str], None] | None = None,
     ) -> WriteResult:
         """Write a RoomFit profile, then verify and roll back on mismatch.
+
+        See the class docstring for the success/failure device-visible
+        contract.
 
         Args:
             source_name: Audio input source (e.g. "wifi").
@@ -342,24 +414,89 @@ class RoomFitSafeWrite:
             channel_mode: ChannelMode for the write.
             filters_l: Left channel filters (required when channel_mode is LR).
             filters_r: Right channel filters (required when channel_mode is LR).
+            on_stage: Optional callback invoked with one of "backing_up",
+                "writing", "verifying", "done" as each step begins (see
+                ``SafeWrite.execute``'s ``on_stage`` for the full contract;
+                not called with "done" on failure).
 
         Returns:
             WriteResult indicating success/failure and rollback status.
+            ``backup_path`` is always populated on success (including a
+            new-profile push, which backs up an empty-bands metadata-only
+            record purely so ``undo()`` can later restore selection/enable
+            state -- there's no prior content to restore for a new profile).
         """
-        existing_profiles = await self._adapter.list_roomfit_profiles(source_name)
+        # These two reads are independent (one inspects the active-profile
+        # buffer, the other lists saved profiles) -- run concurrently rather
+        # than paying two sequential round trips on every push/undo, matching
+        # the same asyncio.gather() pattern already used for independent
+        # device reads elsewhere (smoke #174, _do_list_presets()).
+        # return_exceptions=True so a get_roomfit_status() failure (handled
+        # below as best-effort/non-fatal) can't cancel the still-required
+        # list_roomfit_profiles() call, and vice versa.
+        if on_stage is not None:
+            on_stage("backing_up")
+        status_result, profiles_result = await asyncio.gather(
+            self._adapter.get_roomfit_status(),
+            self._adapter.list_roomfit_profiles(source_name),
+            return_exceptions=True,
+        )
+
+        if isinstance(status_result, BaseException):
+            original_active_name = ""
+            original_enabled = False
+            logger.warning(
+                "Failed to read RoomFit status before writing '%s'; "
+                "active-profile and enable-state restore will be skipped "
+                "if this write fails.",
+                profile_name,
+                exc_info=status_result,
+            )
+        else:
+            original_enabled, original_active_name = status_result
+
+        if isinstance(profiles_result, BaseException):
+            logger.warning(
+                "Failed to list RoomFit profiles before writing '%s'.",
+                profile_name,
+                exc_info=profiles_result,
+            )
+            return WriteResult(
+                success=False,
+                backup_path=None,
+                error_message=f"Could not list RoomFit profiles: {profiles_result}",
+            )
+
+        existing_profiles = profiles_result
         existing_names = {p.get("Name", "") for p in existing_profiles}
         is_new = profile_name not in existing_names
 
-        backup_path: Path | str | None = None
         existing_settings: PEQSettings | None = None
         if not is_new:
-            existing_settings = await self._adapter.read_roomfit(
-                source_name, profile_name
-            )
+            existing_settings = await self._adapter.read_roomfit(source_name, profile_name)
             backup_path = self._backup_manager.create_backup(
-                existing_settings, self._adapter.capabilities, "pre_write"
+                existing_settings,
+                self._adapter.capabilities,
+                "pre_write",
+                pre_write_active_profile=original_active_name,
+                pre_write_roomfit_enabled=original_enabled,
+                was_new_profile=False,
+            )
+        else:
+            # No prior bands to snapshot -- back up an empty stereo
+            # PEQSettings purely as a carrier for the three restore-metadata
+            # fields undo() needs; bands are meaningless here.
+            backup_path = self._backup_manager.create_backup(
+                PEQSettings(source_name=source_name, channel_mode=ChannelMode.STEREO, bands=[]),
+                self._adapter.capabilities,
+                "pre_write",
+                pre_write_active_profile=original_active_name,
+                pre_write_roomfit_enabled=original_enabled,
+                was_new_profile=True,
             )
 
+        if on_stage is not None:
+            on_stage("writing")
         await self._adapter.write_roomfit(
             source_name,
             profile_name,
@@ -390,8 +527,46 @@ class RoomFitSafeWrite:
             intended, self._adapter.capabilities.max_filters
         )
 
+        if on_stage is not None:
+            on_stage("verifying")
         read_back = await self._adapter.read_roomfit(source_name, profile_name)
         if verify_bands(verify_intended, read_back):
+            # Success: make the newly-written profile active and turn
+            # RoomFit on if it was off -- deliberate, confirmed commands,
+            # best-effort so a verified-correct write still reports success
+            # even if this polish step hiccups (matches the existing
+            # restore_roomfit_active_profile best-effort pattern).
+            try:
+                await self._adapter.load_roomfit_profile(profile_name)
+            except Exception:
+                logger.warning(
+                    "Failed to activate RoomFit profile '%s' after successful "
+                    "push; device may still show a different profile selected.",
+                    profile_name,
+                    exc_info=True,
+                )
+            try:
+                await self._adapter.enable_roomfit()
+            except Exception:
+                logger.warning(
+                    "Failed to enable RoomFit after successful push of '%s'; "
+                    "device may still show RoomFit off.",
+                    profile_name,
+                    exc_info=True,
+                )
+
+            if self._adapter.capabilities.roomfit_level < 4:
+                old_level = self._adapter.capabilities.roomfit_level
+                self._adapter.capabilities.roomfit_level = 4
+                self._adapter.capabilities.supports_roomfit_write = True
+                logger.info(
+                    "RoomFit write succeeded at previously-unconfirmed level %d; "
+                    "upgrading roomfit_level to 4 for this session.",
+                    old_level,
+                )
+
+            if on_stage is not None:
+                on_stage("done")
             return WriteResult(success=True, backup_path=backup_path, read_back=read_back)
 
         logger.warning(
@@ -403,6 +578,10 @@ class RoomFitSafeWrite:
 
         if is_new:
             await self._adapter.delete_roomfit_profile(profile_name)
+            await self._restore_selection_and_enable_state(
+                original_active_name, original_enabled, profile_name,
+                context=f"writing '{profile_name}'",
+            )
             return WriteResult(
                 success=False,
                 rollback_success=True,
@@ -428,6 +607,10 @@ class RoomFitSafeWrite:
         )
         rollback_ok = verify_bands(verify_existing, rollback_read_back)
         if rollback_ok:
+            await self._restore_selection_and_enable_state(
+                original_active_name, original_enabled, profile_name,
+                context=f"writing '{profile_name}'",
+            )
             return WriteResult(
                 success=False,
                 rollback_success=True,
@@ -444,6 +627,16 @@ class RoomFitSafeWrite:
             profile_name,
             backup_path,
         )
+        # Runs even on this critical-failure path -- at this point
+        # profile_name's on-device state is unverified/possibly-corrupt, so
+        # leaving the last-known-good original_active_name selected (and
+        # RoomFit's original enable state) is safer than leaving an
+        # unverified profile active, even though a technician diagnosing the
+        # failure won't see profile_name still "selected".
+        await self._restore_selection_and_enable_state(
+            original_active_name, original_enabled, profile_name,
+            context=f"writing '{profile_name}'",
+        )
         return WriteResult(
             success=False,
             rollback_success=False,
@@ -453,3 +646,84 @@ class RoomFitSafeWrite:
                 f"failed. Manual recovery required. Backup: {backup_path}"
             ),
         )
+
+    async def undo(
+        self,
+        backup_path: str | Path,
+        source_name: str,
+        profile_name: str,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> WriteResult:
+        """Undo a previously-successful RoomFit push using its backup file.
+
+        Restores:
+          - The profile's previous bands, if the original push overwrote an
+            existing profile (``was_new_profile`` False/None in the
+            backup). For a push that created a brand-new profile, this step
+            is skipped entirely -- undo is non-destructive and never
+            deletes a profile the user might want to keep (they can remove
+            it via "Presets on Device" if unwanted).
+          - Whatever profile was active before the ORIGINAL push
+            (``pre_write_active_profile``).
+          - RoomFit's on/off state as it was before the ORIGINAL push
+            (``pre_write_roomfit_enabled``).
+
+        The selection/enable-state restore always runs *last*, even after a
+        bands-restore: that inner restore is itself a full push through
+        ``execute()``, whose own success path activates `profile_name` --
+        correct only when `profile_name` was also the profile active before
+        the original push. When the original push overwrote a *different*,
+        non-active profile, the selection restore below corrects that.
+
+        Backward compatibility: a backup file written before this fields'
+        introduction has all three restore-metadata fields as `None` --
+        selection/enable-state restore is then skipped entirely (bands-only
+        restore, matching pre-redesign behavior) rather than guessing.
+
+        Args:
+            backup_path: Path to the backup JSON file the original push created.
+            source_name: Audio input source (only used for read_roomfit's
+                PEQSettings.source_name attribution -- RoomFit is global).
+            profile_name: Name of the profile to restore bands into (ignored
+                if the backup indicates a new-profile push).
+            on_stage: Optional callback forwarded to the bands-restore
+                ``execute()`` call (see its own ``on_stage`` for the
+                contract); not invoked at all for a new-profile-push undo,
+                which skips the bands-restore step entirely.
+
+        Returns:
+            WriteResult. For a new-profile-push undo: success with no bands
+            touched. For an overwrite-push undo: whatever `execute()`
+            returns for the bands-restore write.
+        """
+        path = Path(backup_path)
+        backup_data = load_backup_json(path)
+        pre_write_active_profile, pre_write_roomfit_enabled, was_new_profile = (
+            parse_backup_restore_metadata(backup_data)
+        )
+
+        result: WriteResult | None = None
+        if was_new_profile is not True:
+            # Covers False and None (old-format backups only ever existed
+            # for the overwrite case) -- restore bands via the normal
+            # execute() protocol.
+            bands, channel_mode, filters_l, filters_r = parse_backup_filters(backup_data)
+            if not bands:
+                return WriteResult(success=False, error_message="Backup contains no filters")
+            result = await self.execute(
+                source_name, profile_name, bands,
+                channel_mode=channel_mode,
+                filters_l=filters_l,
+                filters_r=filters_r,
+                on_stage=on_stage,
+            )
+            if not result.success:
+                return result
+
+        if pre_write_active_profile is not None:
+            await self._restore_selection_and_enable_state(
+                pre_write_active_profile, pre_write_roomfit_enabled, profile_name,
+                context=f"undoing push to '{profile_name}'",
+            )
+
+        return result if result is not None else WriteResult(success=True, backup_path=None)

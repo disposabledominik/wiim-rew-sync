@@ -33,6 +33,7 @@ class ExportDialog(QDialog):
         self,
         channel_mode: str = "stereo",
         default_name: str = "",
+        default_dir: str = "",
         parent: QWidget | None = None,
     ) -> None:
         """Initialize the export dialog.
@@ -40,11 +41,15 @@ class ExportDialog(QDialog):
         Args:
             channel_mode: Either "stereo" (single file) or "lr" (two files).
             default_name: Optional default filename (without extension/suffix).
+            default_dir: Starting directory for the file dialogs (the user's
+                configured default REW folder). Falls back to the home
+                directory when empty.
             parent: Optional parent widget.
         """
         super().__init__(parent)
         self._channel_mode = channel_mode
         self._default_name = default_name
+        self._default_dir = Path(default_dir) if default_dir else Path.home()
         self._export_path: Path | None = None
         self._export_path_l: Path | None = None
         self._export_path_r: Path | None = None
@@ -132,7 +137,7 @@ class ExportDialog(QDialog):
 
         # Pre-fill paths from default_name if provided
         if self._default_name:
-            default_dir = Path.home()
+            default_dir = self._default_dir
             left_path = default_dir / f"{self._default_name}_L.txt"
             right_path = default_dir / f"{self._default_name}_R.txt"
             self._left_path_edit.setText(str(left_path))
@@ -145,7 +150,7 @@ class ExportDialog(QDialog):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export REW EQ File",
-            "",
+            str(self._default_dir),
             "REW EQ Files (*.txt);;All Files (*)",
         )
         if file_path:
@@ -160,9 +165,9 @@ class ExportDialog(QDialog):
     def _browse_left(self) -> None:
         """Open a save file dialog for left channel."""
         # Use default name as initial suggestion in the native dialog
-        initial_path = ""
+        initial_path = str(self._default_dir)
         if self._default_name:
-            initial_path = str(Path.home() / f"{self._default_name}_L.txt")
+            initial_path = str(self._default_dir / f"{self._default_name}_L.txt")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Left Channel EQ File",
@@ -190,9 +195,9 @@ class ExportDialog(QDialog):
     def _browse_right(self) -> None:
         """Open a save file dialog for right channel."""
         # Use default name as initial suggestion in the native dialog
-        initial_path = ""
+        initial_path = str(self._default_dir)
         if self._default_name:
-            initial_path = str(Path.home() / f"{self._default_name}_R.txt")
+            initial_path = str(self._default_dir / f"{self._default_name}_R.txt")
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Right Channel EQ File",
@@ -246,6 +251,7 @@ class ExportDialog(QDialog):
     def get_paths(
         channel_mode: str = "stereo",
         default_name: str = "",
+        default_dir: str = "",
         parent: QWidget | None = None,
     ) -> Path | tuple[Path, Path] | None:
         """Show dialog and return export path(s), or None if cancelled.
@@ -255,13 +261,19 @@ class ExportDialog(QDialog):
         Args:
             channel_mode: Either "stereo" or "lr".
             default_name: Optional default filename (without extension/suffix).
+            default_dir: Starting directory for the file dialogs (the user's
+                configured default REW folder). Falls back to the home
+                directory when empty.
             parent: Optional parent widget.
 
         Returns:
             Path (stereo), tuple[Path, Path] (L/R), or None if cancelled.
         """
         dialog = ExportDialog(
-            channel_mode=channel_mode, default_name=default_name, parent=parent
+            channel_mode=channel_mode,
+            default_name=default_name,
+            default_dir=default_dir,
+            parent=parent,
         )
         dialog.exec()
         return dialog.get_export_paths()

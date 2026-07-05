@@ -11,6 +11,7 @@ Requirements referenced: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6,
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import sys
@@ -722,6 +723,7 @@ class MainWindow(QMainWindow):
         self._bridge.write_complete.connect(self._on_write_complete)
         self._bridge.operation_error.connect(self._on_operation_error)
         self._bridge.progress_update.connect(self._on_progress_update)
+        self._bridge.stage_changed.connect(self._on_stage_changed)
         self._bridge.rew_measurements_ready.connect(self._on_measurements_listed)
         self._bridge.rew_filters_ready.connect(self._on_rew_filters_ready)
 
@@ -1030,8 +1032,26 @@ class MainWindow(QMainWindow):
 
     @Slot(bool)
     def _on_dry_run_toggled(self, enabled: bool) -> None:
-        """Handle dry run toggle — update wizard state."""
+        """Handle dry run toggle — update wizard state.
+
+        The first time a user turns Dry Run off while it's still the global
+        default, offer to disable that default for future sessions too
+        (smoke #182) -- non-technical users are unlikely to find this in
+        Settings on their own. Only fires while the default is still on, so
+        it won't repeat once they've answered.
+        """
         self._wizard_controller.state.dry_run = enabled
+        if not enabled and self._settings.dry_run_default:
+            if self._confirm_action(
+                "Disable Dry Run by Default?",
+                "Dry Run is on by default for new sessions, so nothing is "
+                "pushed to your device unless you turn it off each time.\n\n"
+                "Turn off this default now? You can re-enable it later in "
+                "Settings.",
+            ):
+                self._settings.dry_run_default = False
+                self._settings.save()
+                self._populate_settings_view()
 
     @Slot()
     def _on_push_requested(self) -> None:
@@ -1100,25 +1120,39 @@ class MainWindow(QMainWindow):
     def _on_name_confirmed(self, name: str) -> None:
         """Handle RoomFit profile name confirmation — store, advance, and push.
 
-        Confirms with the user before overwriting the currently-active RoomFit
-        profile (#165) -- `Name` persists as "last selected" even when RoomFit
-        is off, so this only warns when overwriting would actually affect
-        live audio (RoomFit enabled AND the chosen name matches the active one).
+        Every push now unconditionally makes the pushed profile active and
+        turns RoomFit on if it was off (RoomFitSafeWrite.execute()) -- that
+        consequence applies regardless of which name is chosen, so it's
+        surfaced via NameProfilePage's always-visible caption, not this
+        dialog. What this dialog still confirms is purely the *data-loss*
+        risk of overwriting stored content:
+        - The active profile: overwriting it replaces its stored filters
+          with the ones just selected, which also updates what's currently
+          playing since it's already the active profile.
+        - A different, non-active existing profile: overwriting it loses
+          that profile's stored filters (no live-audio distinction from the
+          active case anymore -- both now activate on save).
 
         Args:
             name: The profile name chosen by the user.
         """
-        if (
-            self._roomfit_enabled
-            and name == self._name_profile_page.active_profile
-            and not self._confirm_action(
+        kind = self._name_profile_page.classify(name)
+        if kind == "active":
+            if not self._confirm_action(
                 "Overwrite Active Profile",
-                f"'{name}' is currently active on your device. Overwriting it will "
-                "deactivate RoomFit until you reselect a profile in the WiiM Home app. "
-                "Continue?",
-            )
-        ):
-            return
+                f"'{name}' is your currently active profile. Saving will overwrite "
+                "its stored filters with the ones you've selected, updating what's "
+                "playing right now. Continue?",
+            ):
+                return
+        elif kind == "existing":
+            if not self._confirm_action(
+                "Overwrite Existing Profile",
+                f"A profile named '{name}' already exists. Saving will overwrite "
+                "its stored filters and make it the active profile on your device, "
+                "turning RoomFit on if it's off. Continue?",
+            ):
+                return
         self._wizard_controller.state.roomfit_profile_name = name
         self._wizard_controller.advance(summary=name)
         # Now execute the actual push (deferred from _on_push_requested)
@@ -1169,16 +1203,13 @@ class MainWindow(QMainWindow):
     async def _do_undo_roomfit(
         self, backup_path: str, source_name: str, profile_name: str
     ) -> None:
-        """Restore a RoomFit profile from backup.
-
-        Reads the backup JSON via shared parse_backup_filters helper, then
-        writes the filters back to the same profile name via RoomFitSafeWrite
-        (verified and rolled back on mismatch, smoke #154 -- previously this
-        called write_roomfit() directly with no verification, the same gap
-        fixed elsewhere for the Push and Copy flows).
+        """Restore a RoomFit profile from backup — thin pass-through to
+        RoomFitSafeWrite.undo(), which owns all orchestration (backup
+        parsing, new-vs-overwrite branching, selection/enable-state
+        restore to the state before the *original* push). GUI layer
+        performs no data manipulation (CLAUDE.md).
         """
         assert self._wiim_adapter is not None
-        from src.gui.shared_helpers import load_backup_json, parse_backup_filters
 
         path = Path(backup_path) if backup_path else Path(".")
         if not path.exists() or not path.is_file():
@@ -1186,27 +1217,9 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            backup_data = load_backup_json(path)
-            bands, channel_mode, filters_l, filters_r = parse_backup_filters(backup_data)
-
-            if not bands:
-                self._status_banner.show_error("Backup contains no filters")
-                return
-
             self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
             roomfit_safe_write = RoomFitSafeWrite(self._wiim_adapter, self._backup_manager)
-            if is_lr_mode(channel_mode):
-                result = await roomfit_safe_write.execute(
-                    source_name, profile_name, bands,
-                    channel_mode=ChannelMode.LR,
-                    filters_l=filters_l,
-                    filters_r=filters_r,
-                )
-            else:
-                result = await roomfit_safe_write.execute(
-                    source_name, profile_name, bands,
-                    channel_mode=ChannelMode.STEREO,
-                )
+            result = await roomfit_safe_write.undo(path, source_name, profile_name)
             if not result.success:
                 self._status_banner.show_error(
                     result.error_message or "RoomFit undo verification failed"
@@ -1700,9 +1713,12 @@ class MainWindow(QMainWindow):
             )
             # Mark PUSH step as completed in the step indicator
             self._wizard_controller.set_step_summary(WizardStep.PUSH, "Done")
-            # Hide Undo for RoomFit when writing a NEW profile (no backup to restore)
-            if self._wizard_controller.flow_type == FlowType.ROOMFIT and not backup_path:
-                self._push_page._undo_button.setVisible(False)
+            # Undo is always shown for a successful RoomFit push now (not
+            # just overwrites) -- RoomFitSafeWrite.execute() always creates
+            # a backup, even for a brand-new profile, since there's always
+            # a selection/enable-state change to potentially undo even when
+            # there are no prior bands to restore. PushPage.set_success()
+            # already unconditionally shows the Undo button.
             self._status_banner.show_success("Filters pushed successfully")
             logger.info("Push succeeded. Backup: %s", backup_path or "(none)")
         else:
@@ -1762,6 +1778,16 @@ class MainWindow(QMainWindow):
             return
 
         self._status_banner.show_progress(message)
+
+    @Slot(str)
+    def _on_stage_changed(self, stage: str) -> None:
+        """Advance the Push page's stepper as SafeWrite reports real progress.
+
+        Args:
+            stage: One of "backing_up", "writing", "verifying", "done" (see
+                SafeWrite.execute's/RoomFitSafeWrite.execute's on_stage arg).
+        """
+        self._push_page.set_stage(stage)
 
     @Slot(list)
     def _on_measurements_listed(self, measurements: list[Any]) -> None:
@@ -2010,7 +2036,10 @@ class MainWindow(QMainWindow):
             default_name = f"{device_name} - {source}"
 
             paths = ExportDialog.get_paths(
-                channel_mode="lr", default_name=default_name, parent=self
+                channel_mode="lr",
+                default_name=default_name,
+                default_dir=self._settings.rew_folder,
+                parent=self,
             )
             if paths is None:
                 logger.debug("L/R export cancelled by user")
@@ -2031,7 +2060,7 @@ class MainWindow(QMainWindow):
             logger.info("Export L/R REW: %s, %s", path_l, path_r)
         else:
             # Stereo mode: single file dialog
-            default_dir = self._settings.rew_export_folder or str(Path.home())
+            default_dir = self._settings.rew_folder or str(Path.home())
             path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Export REW EQ File",
@@ -2819,7 +2848,7 @@ class MainWindow(QMainWindow):
         if not source_list:
             source_list = ["wifi"]
 
-        self._bridge.progress_update.emit("Backing up...")
+        on_stage = self._bridge.stage_changed.emit
 
         if flow_type == FlowType.ROOMFIT:
             # RoomFit: write as named profile via write_roomfit
@@ -2848,10 +2877,15 @@ class MainWindow(QMainWindow):
                         channel_mode=ChannelMode.LR,
                         filters_l=left,
                         filters_r=right,
+                        on_stage=on_stage,
                     )
                 else:
                     result = await self._roomfit_safe_write.execute(
-                        source_name, profile_name, filters, channel_mode=ChannelMode.STEREO
+                        source_name,
+                        profile_name,
+                        filters,
+                        channel_mode=ChannelMode.STEREO,
+                        on_stage=on_stage,
                     )
 
                 if result.success:
@@ -2879,7 +2913,7 @@ class MainWindow(QMainWindow):
                     filters_l=state.filters_l,
                     filters_r=state.filters_r,
                 )
-                result = await self._safe_write.execute(source_name, settings)
+                result = await self._safe_write.execute(source_name, settings, on_stage=on_stage)
                 last_result = result
 
                 # Collect backup path for undo (smoke #77)
@@ -2905,7 +2939,6 @@ class MainWindow(QMainWindow):
                     # representative of what's now on every one of them.
                     read_back=last_result.read_back,
                 )
-                self._bridge.progress_update.emit("Verifying...")
                 self._bridge.write_complete.emit(result)
 
     async def _do_export(self, filters: list[CanonicalFilter], path: str) -> None:
@@ -3323,6 +3356,7 @@ class MainWindow(QMainWindow):
         3. Dry Run default on ReviewPage
         4. Onboarding overlay when first_run_complete is False
         5. Populate SettingsView with current values
+        6. Seed FiltersPage's default REW import browse folder
         """
         # 1. Apply theme (Req 25.4)
         app = QApplication.instance()
@@ -3345,16 +3379,32 @@ class MainWindow(QMainWindow):
             self._onboarding_overlay.raise_()
 
         # 5. Populate SettingsView with current settings
+        self._populate_settings_view()
+
+        # 6. Seed the Filters step's REW import browse dialogs with the
+        # configured default folder (Req 24.11); the page remembers whatever
+        # the user navigates to for the rest of the session on top of this.
+        self._filters_page.set_default_import_folder(self._settings.rew_folder)
+
+    def _populate_settings_view(self) -> None:
+        """Push current AppSettings values into SettingsView's controls.
+
+        SettingsView.set_settings() repopulates every field from the dict
+        passed in (no "keep current value" fallback), so it can never be
+        called with a partial dict -- always route through this helper
+        (called from _apply_settings() at startup and again after any
+        settings change made outside the Settings view itself, e.g. the
+        Dry Run default toggle prompt) so all fields stay in sync.
+        """
         log_dir = self._settings.log_directory or str(get_log_dir())
         presets_dir = (
             self._settings.presets_directory or str(self._profile_repository.storage_root)
         )
-        rew_export = self._settings.rew_export_folder
         self._settings_view.set_settings({
             "theme": self._settings.theme,
             "log_directory": log_dir,
             "presets_directory": presets_dir,
-            "rew_export_folder": rew_export,
+            "rew_folder": self._settings.rew_folder,
             "discovery_timeout": self._settings.discovery_timeout,
             "dry_run_default": self._settings.dry_run_default,
         })
@@ -3412,8 +3462,8 @@ class MainWindow(QMainWindow):
         self._settings.presets_directory = settings_dict.get(
             "presets_directory", self._settings.presets_directory
         )
-        self._settings.rew_export_folder = settings_dict.get(
-            "rew_export_folder", self._settings.rew_export_folder
+        self._settings.rew_folder = settings_dict.get(
+            "rew_folder", self._settings.rew_folder
         )
         self._settings.discovery_timeout = settings_dict.get(
             "discovery_timeout", self._settings.discovery_timeout
@@ -3422,6 +3472,7 @@ class MainWindow(QMainWindow):
             "dry_run_default", self._settings.dry_run_default
         )
         self._settings.save()
+        self._filters_page.set_default_import_folder(self._settings.rew_folder)
 
     @Slot()
     def _on_show_onboarding_requested(self) -> None:
@@ -3738,6 +3789,8 @@ class MainWindow(QMainWindow):
 
         if not self._confirm_preset_preview(items):
             return
+        if not self._confirm_roomfit_copy_activation(items):
+            return
 
         # Get current device IP to exclude from picker
         state = self._wizard_controller.state
@@ -3880,7 +3933,10 @@ class MainWindow(QMainWindow):
             from src.gui.dialogs.export_dialog import ExportDialog
 
             paths = ExportDialog.get_paths(
-                channel_mode="lr", default_name=preset_name, parent=self
+                channel_mode="lr",
+                default_name=preset_name,
+                default_dir=self._settings.rew_folder,
+                parent=self,
             )
             if paths is None:
                 logger.debug("L/R preset export cancelled")
@@ -3891,7 +3947,7 @@ class MainWindow(QMainWindow):
             # Use the left path — _do_preset_export handles L/R splitting internally
             export_path = str(path_l.parent / path_l.stem.replace("_L", "")) + ".txt"
         else:
-            default_dir = self._settings.rew_export_folder or str(Path.home())
+            default_dir = self._settings.rew_folder or str(Path.home())
             path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Export Preset as REW File",
@@ -4006,17 +4062,53 @@ class MainWindow(QMainWindow):
     def _confirm_preset_preview(self, items: list[Any]) -> bool:
         """Warn that reading these PEQ presets' filters will briefly change what's
         playing on the device (#166). RoomFit items are excluded -- RoomFit's
-        API working buffer is decoupled from its DSP on/off state, per
-        docs/wiim_api_notes.md, so there's no audible effect to consent to.
+        API working buffer is claimed to be decoupled from its DSP on/off
+        state during a read-only preview (docs/wiim_api_notes.md), but this
+        specific claim, unlike the write-side behavior this app now builds
+        on, has not been independently re-verified on real hardware and
+        shares the same risk pattern as #190's confirmed-wrong assumption
+        (`# ASSUMPTION:`). Shared by every read-only preset action (copy,
+        export, save-to-My-Presets, load-into-editor) -- only about the
+        *source* device's brief read, not any device being written to (see
+        `_confirm_roomfit_copy_activation()` for Copy-to-Device's separate,
+        write-side concern).
         """
         peq_items = [i for i in items if getattr(i, "preset_type", "PEQ") != "RoomFit"]
         if not peq_items:
             return True
+        # Preset names come from the device, not a trusted local source --
+        # escape before embedding in this HTML-flavored message (Qt
+        # auto-detects rich text from the <br>/<b> tags below), and swap the
+        # shared \n-joined bullet list's separators for <br> since raw
+        # newlines aren't rendered as line breaks in HTML.
+        names_html = html.escape(self._format_preset_names(peq_items)).replace("\n", "<br>")
         return self._confirm_action(
             "Preset Will Briefly Activate on Device",
-            "Reading the filters for the following will temporarily switch your "
-            "device's current input to that preset, then restore what was "
-            f"playing:\n\n{self._format_preset_names(peq_items)}\n\nContinue?",
+            f"Reading the filters in: <br><b>{names_html}</b>"
+            "<br>preset will temporarily enable it on your device's current input. The "
+            "original filters will be restored after the read completes.<br><br>Continue?",
+        )
+
+    def _confirm_roomfit_copy_activation(self, items: list[Any]) -> bool:
+        """Warn that copying RoomFit profile(s) makes each one the active
+        profile on its target device(s), turning RoomFit on there if it's
+        off -- the same behavior as the main Push flow, applied here for
+        consistency since "Copy to Another Device" writes via the identical
+        RoomFitSafeWrite.execute() path. Distinct from
+        `_confirm_preset_preview()`, which only concerns the source-side
+        read; this concerns the target-side write and only applies to the
+        copy flow (the only one of the four `_confirm_preset_preview()`
+        callers that writes to any device).
+        """
+        roomfit_items = [i for i in items if getattr(i, "preset_type", "PEQ") == "RoomFit"]
+        if not roomfit_items:
+            return True
+        names_html = html.escape(self._format_preset_names(roomfit_items)).replace("\n", "<br>")
+        return self._confirm_action(
+            "Copy Will Change Target Device(s)",
+            f"Copying: <br><b>{names_html}</b>"
+            "<br>will make it the active RoomFit profile on the target device(s), "
+            "turning RoomFit on there if it's currently off.<br><br>Continue?",
         )
 
     @Slot(list)

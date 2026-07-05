@@ -60,26 +60,34 @@ and Q values as you would for PEQ.
 Before pushing, you must provide a profile name (up to 32 characters). This
 is the name that appears in the WiiM Home app.
 
-- If you enter the name of an existing profile, the app warns you that it
-  will be overwritten.
-- If the existing profile is currently active, an additional warning
-  explains that overwriting may temporarily deactivate RoomFit (you can
-  re-enable it from the WiiM Home app).
+- Whatever name you choose, saving will make that profile active on your
+  device and turn RoomFit on if it's currently off.
+- If you enter the name of an existing profile, the app additionally warns
+  you that its stored filters will be overwritten.
 
 ### 5. Push
 
 The app pushes the RoomFit profile to your device using the same safe write
-protocol: backup, write, verify, done.
+protocol: backup, write, verify, done. On success, the pushed profile
+becomes active and RoomFit turns on if it was off.
 
-After a successful push, Undo is available if you overwrote an existing
-profile (the previous version is restored). For new profiles, Undo is not
-shown since there was nothing to restore.
+Undo is always available after a successful push. It restores whatever
+profile was active, and RoomFit's on/off state, to what they were
+beforehand. If the push overwrote an existing profile, Undo also restores
+that profile's previous filters. If the push created a brand-new profile,
+Undo leaves that profile saved on the device (delete it via "Presets on
+Device" if you don't want to keep it) and only restores the previous
+selection and on/off state.
 
 If the post-write verification fails, the same overwrite-vs-new distinction
 applies to the automatic rollback: an overwritten profile's previous version
 is restored, while a brand-new profile that failed verification is deleted
-instead (there's no prior version to go back to). Either way you end up back
-where you started, and the failure is reported clearly.
+instead (there's no prior version to go back to). Either way, RoomFit's
+selection and on/off state are also restored to what they were before the
+push, so a failed push has no lasting effect on your device.
+
+"Copy to Another Device" (from "Presets on Device") behaves the same way on
+each target device you copy to.
 
 ## RoomFit Activation
 
@@ -87,11 +95,11 @@ This app doesn't include a manual RoomFit on/off switch — use the WiiM Home
 app for that. RoomFit does activate automatically as a side effect of some
 actions here, though:
 
-- **Pushing a profile** makes it the active one on your device.
+- **Pushing a profile** (or copying one to another device) makes it the
+  active one there and turns RoomFit on if it was off.
 - **Loading a profile** (via "Presets on Device" or the Filters page) briefly
   selects it on the device so its filters can be read, then restores whatever
-  was previously active — this has no audible effect, since RoomFit's
-  selected-but-not-applied state doesn't change what's playing.
+  was previously active.
 
 The "Name Your Profile" step and "Presets on Device" both mark the
 currently-active RoomFit profile (and PEQ preset) with a bold, colored

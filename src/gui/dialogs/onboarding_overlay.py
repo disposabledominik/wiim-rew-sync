@@ -23,8 +23,6 @@ from PySide6.QtWidgets import (
 
 from src.gui.constants import (
     FONT_SIZE_BODY,
-    FONT_SIZE_CAPTION,
-    FONT_SIZE_HEADING,
     FONT_SIZE_TITLE,
     SPACING_LG,
     SPACING_MD,
@@ -183,21 +181,19 @@ class OnboardingOverlay(QWidget):
         card.setProperty("class", "onboardingCapCard")
         layout = QVBoxLayout(card)
         layout.setSpacing(SPACING_SM)
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         layout.setContentsMargins(SPACING_SM, SPACING_MD, SPACING_SM, SPACING_MD)
 
         # Emoji icon
         icon_label = QLabel(emoji)
         icon_label.setObjectName("onboarding_cap_icon")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(icon_label)
+        layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Title
         title_label = QLabel(cap_title)
         title_label.setProperty("class", "onboardingCapTitle")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_label.setWordWrap(True)
-        title_label.setMinimumHeight(FONT_SIZE_HEADING + SPACING_SM)
         layout.addWidget(title_label)
 
         # Description
@@ -205,9 +201,13 @@ class OnboardingOverlay(QWidget):
         desc_label.setProperty("class", "onboardingCapDesc")
         desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_label.setWordWrap(True)
-        desc_label.setMinimumHeight(FONT_SIZE_CAPTION * 3 + SPACING_SM)
         layout.addWidget(desc_label)
 
+        # Anchors content to the top of the card (matches the previous
+        # AlignTop intent) without an item/layout alignment flag, which
+        # would otherwise break height-for-width sizing on the wrapped
+        # title/desc labels above (smoke #180).
+        layout.addStretch()
         return card
 
     def _on_get_started(self) -> None:

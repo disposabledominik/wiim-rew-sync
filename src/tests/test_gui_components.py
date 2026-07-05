@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from src.gui.components.device_card import DeviceCard
 from src.gui.components.filter_table import FilterTable
@@ -115,6 +116,52 @@ class TestStatusBanner:
         # Banner stays visible (reserves space) but enters idle state
         assert banner.property("status") == "idle"
         assert banner._message_label.text() == ""
+
+    def test_long_message_elides_with_full_text_in_tooltip(self, qtbot) -> None:
+        """A message too wide for the banner is elided (not overflowed
+        horizontally) and the full text -- with " | "-delimited segments on
+        separate lines -- remains available via tooltip (smoke #181).
+        Requires a real parent + constrained width: an unparented banner
+        skips eliding entirely (see _update_display_text's docstring), since
+        its top-level size is an arbitrary platform default, not meaningful.
+        """
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        banner = StatusBanner()
+        layout.addWidget(banner)
+        qtbot.addWidget(container)
+        container.resize(300, 100)
+        container.show()
+
+        long_message = (
+            "Left: Band 3 clamped to device limits | Right: Band 5 truncated "
+            "| Left: Band 7 clamped to device limits"
+        )
+        banner.show_info(long_message)
+
+        displayed = banner._message_label.text()
+        assert displayed != long_message
+        assert displayed.endswith("…")  # ellipsis
+        assert banner._message_label.toolTip() == (
+            "Left: Band 3 clamped to device limits\n"
+            "Right: Band 5 truncated\n"
+            "Left: Band 7 clamped to device limits"
+        )
+
+    def test_short_message_not_elided_no_tooltip(self, qtbot) -> None:
+        """A message that fits isn't elided and gets no tooltip clutter."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        banner = StatusBanner()
+        layout.addWidget(banner)
+        qtbot.addWidget(container)
+        container.resize(600, 100)
+        container.show()
+
+        banner.show_info("Device discovered")
+
+        assert banner._message_label.text() == "Device discovered"
+        assert banner._message_label.toolTip() == ""
 
 
 # ---------------------------------------------------------------------------

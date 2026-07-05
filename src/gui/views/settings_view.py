@@ -40,6 +40,7 @@ from src.gui.constants import (
     SPACING_MD,
     SPACING_SM,
 )
+from src.utils.app_dirs import to_display_path
 
 
 class SettingsView(QWidget):
@@ -76,7 +77,7 @@ class SettingsView(QWidget):
             theme: str ("Light", "Dark", "System")
             log_directory: str
             presets_directory: str
-            rew_export_folder: str
+            rew_folder: str
             discovery_timeout: int (seconds)
             dry_run_default: bool
         """
@@ -88,9 +89,11 @@ class SettingsView(QWidget):
             self._theme_combo.setCurrentIndex(idx)
         self._theme_combo.blockSignals(False)
 
-        self._log_dir_edit.setText(settings.get("log_directory", ""))
-        self._presets_dir_edit.setText(settings.get("presets_directory", ""))
-        self._rew_export_edit.setText(settings.get("rew_export_folder", ""))
+        self._log_dir_edit.setText(to_display_path(settings.get("log_directory", "")))
+        self._presets_dir_edit.setText(
+            to_display_path(settings.get("presets_directory", ""))
+        )
+        self._rew_folder_edit.setText(to_display_path(settings.get("rew_folder", "")))
 
         self._timeout_spin.blockSignals(True)
         self._timeout_spin.setValue(settings.get("discovery_timeout", 5))
@@ -138,7 +141,7 @@ class SettingsView(QWidget):
             "theme": self._theme_combo.currentText(),
             "log_directory": self._log_dir_edit.text(),
             "presets_directory": self._presets_dir_edit.text(),
-            "rew_export_folder": self._rew_export_edit.text(),
+            "rew_folder": self._rew_folder_edit.text(),
             "discovery_timeout": self._timeout_spin.value(),
             "dry_run_default": self._dry_run_check.isChecked(),
         }
@@ -245,9 +248,9 @@ class SettingsView(QWidget):
         )
         layout.addWidget(presets_row)
 
-        # Default REW export folder (Req 24.11)
-        self._rew_export_edit, rew_row = self._build_path_row(
-            group, "Default REW export folder:", "rew_export"
+        # Default REW import/export folder (Req 24.11)
+        self._rew_folder_edit, rew_row = self._build_path_row(
+            group, "Default REW import/export folder:", "rew_folder"
         )
         layout.addWidget(rew_row)
 
@@ -442,7 +445,7 @@ class SettingsView(QWidget):
             # Validate directory exists and is writable (Req 24.9)
             folder_path = Path(folder)
             if folder_path.is_dir() and os.access(folder, os.W_OK):
-                line_edit.setText(folder)
+                line_edit.setText(to_display_path(folder))
                 self._path_validation_label.setVisible(False)
                 self._emit_settings_changed()
             else:

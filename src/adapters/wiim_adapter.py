@@ -300,6 +300,54 @@ class WiiMAdapter:
         """
         await self._set_fx_state("EQSourceOff", source_name, eq_level=1)
 
+    # ------------------------------------------------------------------
+    # RoomFit Enable/Disable
+    # ------------------------------------------------------------------
+
+    async def enable_roomfit(self) -> None:
+        """Enable RoomFit's global DSP on/off toggle.
+
+        Issues ``EQChangeSourceFX`` with an explicit empty source name and
+        ``EQLevel: 2`` -- the same command pair as ``enable_peq()``, but
+        RoomFit's toggle is device-global rather than per-source (see
+        docs/wiim_api_notes.md's RoomFit "DSP on/off toggle" section).
+
+        Returns:
+            None on success.
+
+        Raises:
+            WiiMResponseError: Device returned an error response.
+            WiiMConnectionError: Device unreachable (propagated from http_client).
+        """
+        await self._set_fx_state("EQChangeSourceFX", "", eq_level=2)
+
+    async def disable_roomfit(self) -> None:
+        """Disable RoomFit's global DSP on/off toggle.
+
+        Issues ``EQSourceOff`` with an explicit empty source name and
+        ``EQLevel: 2`` -- see ``enable_roomfit()``.
+
+        Returns:
+            None on success.
+
+        Raises:
+            WiiMResponseError: Device returned an error response.
+            WiiMConnectionError: Device unreachable (propagated from http_client).
+        """
+        await self._set_fx_state("EQSourceOff", "", eq_level=2)
+
+    async def set_roomfit_enabled(self, enabled: bool) -> None:
+        """Enable or disable RoomFit based on a bool.
+
+        Shared by every RoomFitSafeWrite call site that needs to restore a
+        previously-captured on/off state (rather than unconditionally turn
+        it on), so that enable/disable branch isn't duplicated at each one.
+        """
+        if enabled:
+            await self.enable_roomfit()
+        else:
+            await self.disable_roomfit()
+
     async def _read_fx_status(self, source_name: str, eq_level: int) -> dict[str, Any]:
         """Shared EQGetLV2SourceBandEx issuer for get_peq_enabled/get_roomfit_status/
         read_roomfit."""
@@ -684,6 +732,18 @@ class WiiMAdapter:
     # RoomFit
     # ------------------------------------------------------------------
 
+    def _require_roomfit_level(self, min_level: int, operation: str) -> None:
+        """Raise WiiMResponseError if roomfit_level is below min_level.
+
+        Shared gate for every RoomFit method so the check and error-message
+        format live in one place instead of being hand-rolled per method.
+        """
+        if self._capabilities.roomfit_level < min_level:
+            raise WiiMResponseError(
+                f"RoomFit {operation} requires roomfit_level >= {min_level}, "
+                f"device has level {self._capabilities.roomfit_level}"
+            )
+
     async def get_roomfit_status(self) -> tuple[bool, str]:
         """Read RoomFit's global on/off state and the currently-active profile name.
 
@@ -697,19 +757,19 @@ class WiiMAdapter:
             WiiMResponseError: RoomFit not supported (level < 1) or device
                 returned an unexpected response.
         """
-        if self._capabilities.roomfit_level < 1:
-            raise WiiMResponseError(
-                f"RoomFit status requires roomfit_level >= 1, "
-                f"device has level {self._capabilities.roomfit_level}"
-            )
+        self._require_roomfit_level(1, "status")
         response = await self._read_fx_status("", eq_level=2)
         return bool(response.get("EQStat", "Off") == "On"), str(response.get("Name", ""))
 
-    async def _load_roomfit_profile(self, profile_name: str) -> None:
+    async def load_roomfit_profile(self, profile_name: str) -> None:
         """Load a named RoomFit profile into the API working buffer.
 
-        Shared by read_roomfit()'s own load step and
-        read_roomfit_preset_preview()'s restore-after step below.
+        This is a real, persisted action, not a preview: the buffer adopts
+        `profile_name` and any subsequent status read reports it as the
+        active/selected profile (docs/wiim_api_notes.md's RoomFit Write
+        workflow section). Shared by read_roomfit()'s own load step,
+        read_roomfit_preset_preview()'s restore-after step below, and
+        RoomFitSafeWrite's restore-previous-active-profile step (#178).
         """
         await self._client.command(
             encode_wiim_command("EQv2SourceLoad", {"Name": profile_name}, eq_level=2)
@@ -742,14 +802,10 @@ class WiiMAdapter:
             WiiMResponseError: RoomFit read not supported (level < 2) or
                 device returned an unexpected response.
         """
-        if self._capabilities.roomfit_level < 2:
-            raise WiiMResponseError(
-                f"RoomFit read requires roomfit_level >= 2, "
-                f"device has level {self._capabilities.roomfit_level}"
-            )
+        self._require_roomfit_level(2, "read")
 
         # Step 1: Load the target profile into the API working buffer
-        await self._load_roomfit_profile(profile_name)
+        await self.load_roomfit_profile(profile_name)
 
         # Step 2: Read bands from the buffer -- the same empty-source_name
         # EQGetLV2SourceBandEx+EQLevel:2 query get_roomfit_status() issues.
@@ -771,16 +827,39 @@ class WiiMAdapter:
         """
         _enabled, original_name = await self.get_roomfit_status()
         preview = await self.read_roomfit(source_name, profile_name)
-        if original_name and original_name != profile_name:
-            try:
-                await self._load_roomfit_profile(original_name)
-            except Exception:
-                logger.warning(
-                    "Failed to restore original RoomFit profile '%s' after "
-                    "previewing '%s'", original_name, profile_name,
-                    exc_info=True,
-                )
+        await self.restore_roomfit_active_profile(
+            original_name, profile_name, context=f"previewing '{profile_name}'"
+        )
         return preview
+
+    async def restore_roomfit_active_profile(
+        self, original_name: str, current_name: str, *, context: str
+    ) -> None:
+        """Re-select `original_name` as RoomFit's active profile if it
+        differs from `current_name`, via `EQv2SourceLoad`.
+
+        Shared by every caller that reads or writes a named RoomFit profile
+        and needs to undo the "whichever profile was last loaded/saved
+        becomes active" side effect documented in docs/wiim_api_notes.md's
+        RoomFit Write workflow section (#175/#178) -- currently
+        read_roomfit_preset_preview() above and RoomFitSafeWrite.execute()
+        (src/adapters/safe_write.py). Best-effort: logs and swallows a
+        failure here rather than raising, since this runs as cleanup after
+        the caller's primary operation has already completed.
+        """
+        if not original_name or original_name == current_name:
+            return
+        try:
+            await self.load_roomfit_profile(original_name)
+        except Exception:
+            logger.warning(
+                "Failed to restore RoomFit active profile '%s' after %s; "
+                "device may show '%s' as active instead.",
+                original_name,
+                context,
+                current_name,
+                exc_info=True,
+            )
 
     async def write_roomfit(
         self,
@@ -793,11 +872,23 @@ class WiiMAdapter:
     ) -> None:
         """Write RoomFit bands to a named profile.
 
-        Requires ``roomfit_level >= 4`` in device capabilities.
+        Requires ``roomfit_level >= 2`` in device capabilities (relaxed from
+        ``>= 4`` -- a device whose level-4 write-capability probe was
+        skipped for safety, #190, gets a real write attempt here as its own
+        capability confirmation instead; ``RoomFitSafeWrite.execute()``
+        upgrades ``roomfit_level`` to 4 in-session on a verified-successful
+        write).
 
-        Writes to the API buffer, then saves to the named profile.
-        WARNING: If profile_name is the currently-active profile, RoomFit will
-        deactivate. Saving to a new name does not deactivate.
+        Writes to the API buffer, then saves to the named profile. WARNING:
+        the buffer adopts ``profile_name`` as soon as the save succeeds, so a
+        bare call to this method always makes ``profile_name`` the
+        active/selected profile as reported by a subsequent status read --
+        regardless of whether it's new, a different existing profile, or the
+        one that was already active. This is no longer something callers
+        need to work around: ``RoomFitSafeWrite`` (``src/adapters/
+        safe_write.py``) now embraces it as the intended push behavior
+        (activate + enable RoomFit on success, restore prior state on
+        failure) rather than suppressing it -- see its own docstring.
 
         Args:
             source_name: Audio input source (e.g. "wifi", "bluetooth"). Not
@@ -809,14 +900,10 @@ class WiiMAdapter:
             filters_r: Right channel filters (required when channel_mode is LR).
 
         Raises:
-            WiiMResponseError: RoomFit write not supported (level < 4) or
+            WiiMResponseError: RoomFit write not supported (level < 2) or
                 device returned an error.
         """
-        if self._capabilities.roomfit_level < 4:
-            raise WiiMResponseError(
-                f"RoomFit write requires roomfit_level >= 4, "
-                f"device has level {self._capabilities.roomfit_level}"
-            )
+        self._require_roomfit_level(2, "write")
 
         num_bands = self._capabilities.max_filters
         mode = (
@@ -899,9 +986,5 @@ class WiiMAdapter:
             WiiMResponseError: RoomFit not supported (level < 1) or
                 device returned an unexpected response.
         """
-        if self._capabilities.roomfit_level < 1:
-            raise WiiMResponseError(
-                f"RoomFit profile listing requires roomfit_level >= 1, "
-                f"device has level {self._capabilities.roomfit_level}"
-            )
+        self._require_roomfit_level(1, "profile listing")
         return await self._fetch_profile_list(eq_level=2)

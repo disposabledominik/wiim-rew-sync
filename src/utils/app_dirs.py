@@ -61,6 +61,26 @@ def get_app_data_dir() -> Path:
     return Path.home() / ".local" / "share" / APP_NAME
 
 
+def to_display_path(path: str) -> str:
+    """Return ``path`` normalized to forward slashes for display.
+
+    ``str(Path(...))`` renders native backslash separators on Windows, while
+    ``QFileDialog`` always returns "/"-separated paths — showing both forms
+    in the same UI (e.g. Settings paths) looks inconsistent. Forward slashes
+    are valid on Windows for all downstream ``pathlib``/Win32 consumers, so
+    normalizing to "/" everywhere is safe.
+
+    Args:
+        path: A path string, or "" (returned unchanged).
+
+    Returns:
+        The path with "/" separators, or "" if ``path`` is empty.
+    """
+    if not path:
+        return ""
+    return Path(path).as_posix()
+
+
 def ensure_app_directories() -> Path:
     """Create the application data directory and required subdirectories.
 

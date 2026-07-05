@@ -35,6 +35,7 @@ class AsyncBridge(QObject):
 
     # --- Signals for progress indication ---
     progress_update = Signal(str)          # Status message for progress indicator
+    stage_changed = Signal(str)            # Safe-write stage key (see push_page._STAGES)
     operation_started = Signal()           # Triggers progress spinner
     operation_finished = Signal()          # Hides progress spinner
 

@@ -57,3 +57,10 @@ class BackupRecord(Profile):
     firmware_version: str
     trigger: Literal["pre_write", "pre_rollback"]
     profile_type: Literal["backup"] = "backup"
+
+    # RoomFit-only restore metadata (Optional; None for PEQ backups and any
+    # backup file created before this field's introduction -- old-format
+    # files degrade gracefully rather than failing validation).
+    pre_write_active_profile: str | None = None
+    pre_write_roomfit_enabled: bool | None = None
+    was_new_profile: bool | None = None

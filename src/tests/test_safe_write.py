@@ -13,11 +13,16 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
-from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, _describe_first_mismatch
+from src.adapters.safe_write import (
+    RoomFitSafeWrite,
+    SafeWrite,
+    _describe_first_mismatch,
+    verify_bands,
+)
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
@@ -195,6 +200,55 @@ class TestSuccessPath:
         readback = _make_settings(bands=readback_bands)
 
         mock_adapter.read_peq.side_effect = [intended, readback]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# Tests: on_stage callback (#189)
+# ---------------------------------------------------------------------------
+
+
+class TestOnStageCallback:
+    """SafeWrite.execute() reports real progress via the optional on_stage callback."""
+
+    async def test_success_calls_stages_in_order(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """Success path calls on_stage for all four stages, in order."""
+        intended = _make_settings()
+        mock_adapter.read_peq.side_effect = [intended, intended]
+        seen: list[str] = []
+
+        await safe_write.execute("wifi", intended, on_stage=seen.append)
+
+        assert seen == ["backing_up", "writing", "verifying", "done"]
+
+    async def test_failure_does_not_call_done(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """Verification failure stops after 'verifying' -- 'done' is never reported."""
+        intended = _make_settings(bands=_make_bands(freq=100.0, gain=-2.0, q=1.0))
+        original = _make_settings(bands=_make_bands(freq=200.0, gain=0.0, q=1.5))
+        bad_readback = _make_settings(bands=_make_bands(freq=500.0, gain=-2.0, q=1.0))
+        mock_adapter.read_peq.side_effect = [
+            original, bad_readback, bad_readback, original
+        ]
+        seen: list[str] = []
+
+        result = await safe_write.execute("wifi", intended, on_stage=seen.append)
+
+        assert result.success is False
+        assert seen == ["backing_up", "writing", "verifying"]
+
+    async def test_on_stage_none_is_a_no_op(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """Omitting on_stage (the default) does not raise."""
+        intended = _make_settings()
+        mock_adapter.read_peq.side_effect = [intended, intended]
 
         result = await safe_write.execute("wifi", intended)
 
@@ -711,13 +765,24 @@ class TestEmptyBands:
 
 @pytest.fixture
 def mock_roomfit_adapter() -> AsyncMock:
-    """Mocked WiiMAdapter for RoomFit operations."""
+    """Mocked WiiMAdapter for RoomFit operations.
+
+    get_roomfit_status defaults to "" (no active profile known) so the
+    #178 restore-previous-active-profile step is a no-op for tests that
+    don't care about it -- tests that do (TestRoomFitActiveProfileRestore
+    below) override the return value explicitly.
+    """
     adapter = AsyncMock(spec=WiiMAdapter)
     adapter.capabilities = _solo_capabilities()
     adapter.list_roomfit_profiles = AsyncMock()
     adapter.read_roomfit = AsyncMock()
     adapter.write_roomfit = AsyncMock()
     adapter.delete_roomfit_profile = AsyncMock()
+    adapter.get_roomfit_status = AsyncMock(return_value=(True, ""))
+    # restore_roomfit_active_profile is auto-provided as an AsyncMock by
+    # spec=WiiMAdapter -- execute() calls it unconditionally in a finally
+    # block (#178); its own skip-if-empty/skip-if-same-name decision is
+    # WiiMAdapter's responsibility, tested directly in test_wiim_adapter.py.
     return adapter
 
 
@@ -731,13 +796,52 @@ def roomfit_safe_write(
     )
 
 
+class TestRoomFitOnStageCallback:
+    """RoomFitSafeWrite.execute() reports real progress via on_stage (#189)."""
+
+    async def test_success_calls_stages_in_order(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """Success path calls on_stage for all four stages, in order."""
+        bands = _make_bands()
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
+        seen: list[str] = []
+
+        await roomfit_safe_write.execute(
+            "wifi", "New Profile", bands, ChannelMode.STEREO, on_stage=seen.append
+        )
+
+        assert seen == ["backing_up", "writing", "verifying", "done"]
+
+    async def test_failure_does_not_call_done(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """Verification failure stops after 'verifying' -- 'done' is never reported."""
+        intended_bands = _make_bands(freq=100.0)
+        bad_readback = _make_settings(bands=_make_bands(freq=999.0))
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = bad_readback
+        seen: list[str] = []
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", intended_bands, ChannelMode.STEREO, on_stage=seen.append
+        )
+
+        assert result.success is False
+        assert seen == ["backing_up", "writing", "verifying"]
+
+
 class TestRoomFitNewProfile:
     """Profile didn't exist before this write -> rollback shape is DELETE_NEW."""
 
     async def test_new_profile_success(
         self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
     ) -> None:
-        """New profile, verification passes -> success, no backup, no delete."""
+        """New profile, verification passes -> success, no delete. backup_path
+        IS populated even for a new profile (#191) -- a metadata-only backup
+        carrying the pre-push selection/enable state, so Undo can later
+        restore it even though there are no prior bands to restore."""
         bands = _make_bands()
         mock_roomfit_adapter.list_roomfit_profiles.return_value = []
         mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
@@ -747,7 +851,7 @@ class TestRoomFitNewProfile:
         )
 
         assert result.success is True
-        assert result.backup_path is None
+        assert result.backup_path is not None
         mock_roomfit_adapter.delete_roomfit_profile.assert_not_called()
 
     async def test_new_profile_mismatch_deletes_profile(
@@ -879,9 +983,405 @@ class TestRoomFitOverwriteProfile:
             app_logger.propagate = False
 
 
+class TestRoomFitActiveProfileRestore:
+    """#191 (redesign): a SUCCESSFUL push now deliberately activates the
+    written profile and enables RoomFit, via load_roomfit_profile()/
+    enable_roomfit() -- it must NOT call restore_roomfit_active_profile()
+    at all (that would undo the activation). A FAILED push restores the
+    original pre-write selection/enable-state instead, via
+    restore_roomfit_active_profile()/set_roomfit_enabled()."""
+
+    async def test_new_profile_success_activates_and_enables(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """Pushing a brand-new profile activates it and enables RoomFit;
+        the previously-active profile is NOT restored."""
+        bands = _make_bands()
+        mock_roomfit_adapter.get_roomfit_status.return_value = (True, "Living Room")
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("New Profile")
+        mock_roomfit_adapter.enable_roomfit.assert_called_once()
+        mock_roomfit_adapter.restore_roomfit_active_profile.assert_not_called()
+
+    async def test_overwrite_non_active_profile_success_activates_it(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """Overwriting a different, non-active profile activates THAT
+        profile (not the one that was previously active)."""
+        new_bands = _make_bands(freq=100.0)
+        existing = _make_settings(bands=_make_bands(freq=200.0))
+        mock_roomfit_adapter.get_roomfit_status.return_value = (True, "Living Room")
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = [{"Name": "Existing"}]
+        mock_roomfit_adapter.read_roomfit.side_effect = [
+            existing,
+            _make_settings(bands=new_bands),
+        ]
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "Existing", new_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("Existing")
+        mock_roomfit_adapter.enable_roomfit.assert_called_once()
+        mock_roomfit_adapter.restore_roomfit_active_profile.assert_not_called()
+
+    async def test_overwrite_active_profile_success_stays_active(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """Overwriting the profile that's already active keeps it active
+        (and enabled) -- same activate-on-success path as any other push."""
+        new_bands = _make_bands(freq=100.0)
+        existing = _make_settings(bands=_make_bands(freq=200.0))
+        mock_roomfit_adapter.get_roomfit_status.return_value = (True, "Existing")
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = [{"Name": "Existing"}]
+        mock_roomfit_adapter.read_roomfit.side_effect = [
+            existing,
+            _make_settings(bands=new_bands),
+        ]
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "Existing", new_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("Existing")
+        mock_roomfit_adapter.enable_roomfit.assert_called_once()
+
+    async def test_no_prior_active_profile_success_still_activates(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """No profile was active before the write -> the new push still
+        activates and enables RoomFit; nothing to restore either way."""
+        bands = _make_bands()
+        mock_roomfit_adapter.get_roomfit_status.return_value = (False, "")
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("New Profile")
+        mock_roomfit_adapter.enable_roomfit.assert_called_once()
+        mock_roomfit_adapter.restore_roomfit_active_profile.assert_not_called()
+
+    async def test_restore_runs_after_failed_verification_and_rollback(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """A failed push restores the original pre-write selection AND
+        enable-state -- a failure must have no lasting device-visible effect."""
+        new_bands = _make_bands(freq=100.0)
+        existing = _make_settings(bands=_make_bands(freq=200.0))
+        bad_readback = _make_settings(bands=_make_bands(freq=999.0))
+        mock_roomfit_adapter.get_roomfit_status.return_value = (True, "Living Room")
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = [{"Name": "Existing"}]
+        mock_roomfit_adapter.read_roomfit.side_effect = [
+            existing,
+            bad_readback,
+            existing,
+        ]
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "Existing", new_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is False
+        assert result.rollback_success is True
+        mock_roomfit_adapter.restore_roomfit_active_profile.assert_called_once_with(
+            "Living Room", "Existing", context=ANY
+        )
+        mock_roomfit_adapter.set_roomfit_enabled.assert_called_once_with(True)
+        # Success-path activation must NOT also have fired.
+        mock_roomfit_adapter.load_roomfit_profile.assert_not_called()
+        mock_roomfit_adapter.enable_roomfit.assert_not_called()
+
+    async def test_get_status_failure_degrades_without_raising(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """A transient failure reading the pre-write status must not abort
+        the write -- and since the write succeeds, the profile is still
+        activated and enabled regardless of the earlier read failure."""
+        bands = _make_bands()
+        mock_roomfit_adapter.get_roomfit_status.side_effect = RuntimeError("boom")
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("New Profile")
+        mock_roomfit_adapter.enable_roomfit.assert_called_once()
+        mock_roomfit_adapter.restore_roomfit_active_profile.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Structural regression guard (smoke #154)
 # ---------------------------------------------------------------------------
+# Integration-style test: push-then-undo must leave the *original* active
+# profile active throughout, not just restore content (#178).
+# ---------------------------------------------------------------------------
+
+
+class _FakeRoomFitDevice:
+    """Minimal stateful RoomFit device model: a profile store plus one
+    global "active" name and on/off state, mirroring the real single-buffer
+    semantics documented in docs/wiim_api_notes.md (the buffer adopts
+    whatever name was last loaded or saved). Used instead of a plain
+    AsyncMock here because this test asserts on state *across two separate
+    calls* (a push followed by an undo), which a stateless mock can't model.
+
+    `capabilities` is an instance attribute (not class-level) deliberately:
+    RoomFitSafeWrite.execute() now mutates `roomfit_level` in place on a
+    successful push at a previously-unconfirmed level (#191) -- a
+    class-level attribute would leak that mutation across every test that
+    instantiates this fake, since they'd all share the same object.
+    """
+
+    def __init__(self, active_name: str = "", enabled: bool = True) -> None:
+        self.capabilities = _solo_capabilities()
+        self.profiles: dict[str, PEQSettings] = {}
+        self.active_name = active_name
+        self.enabled = enabled
+
+    async def list_roomfit_profiles(self, source_name: str) -> list[dict[str, str]]:
+        return [{"Name": name} for name in self.profiles]
+
+    async def read_roomfit(self, source_name: str, profile_name: str) -> PEQSettings:
+        self.active_name = profile_name
+        return self.profiles[profile_name]
+
+    async def write_roomfit(
+        self,
+        source_name: str,
+        profile_name: str,
+        filters: list[CanonicalFilter],
+        channel_mode: ChannelMode = ChannelMode.STEREO,
+        filters_l: list[CanonicalFilter] | None = None,
+        filters_r: list[CanonicalFilter] | None = None,
+    ) -> None:
+        if channel_mode.is_lr:
+            settings = PEQSettings(
+                source_name=source_name,
+                channel_mode=ChannelMode.LR,
+                bands_l=filters_l or [],
+                bands_r=filters_r or [],
+            )
+        else:
+            settings = PEQSettings(
+                source_name=source_name, channel_mode=ChannelMode.STEREO, bands=filters
+            )
+        self.profiles[profile_name] = settings
+        self.active_name = profile_name
+
+    async def delete_roomfit_profile(self, profile_name: str) -> None:
+        self.profiles.pop(profile_name, None)
+
+    async def get_roomfit_status(self) -> tuple[bool, str]:
+        return self.enabled, self.active_name
+
+    async def load_roomfit_profile(self, profile_name: str) -> None:
+        self.active_name = profile_name
+
+    async def restore_roomfit_active_profile(
+        self, original_name: str, current_name: str, *, context: str
+    ) -> None:
+        if not original_name or original_name == current_name:
+            return
+        await self.load_roomfit_profile(original_name)
+
+    async def enable_roomfit(self) -> None:
+        self.enabled = True
+
+    async def disable_roomfit(self) -> None:
+        self.enabled = False
+
+    async def set_roomfit_enabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+
+class TestRoomFitPushThenUndoPreservesActiveProfile:
+    async def test_push_then_undo_leaves_original_active_profile_and_state(
+        self, tmp_path: Path
+    ) -> None:
+        """Reproduces the reported bug: overwriting a non-active profile
+        ('Movie Night') while RoomFit is off must activate+enable it
+        (#191's new push contract) without disturbing 'Movie Night' vs.
+        'Living Room' bands -- and undoing that push must restore 'Living
+        Room' as active AND put RoomFit back to its pre-push (off) state,
+        not just restore Movie Night's old content.
+
+        Uses a real BackupManager (not a mock) since undo() needs to read
+        back the restore-metadata create_backup() actually wrote.
+        """
+        device = _FakeRoomFitDevice(active_name="Living Room", enabled=False)
+        old_bands = _make_bands(freq=200.0)
+        device.profiles["Living Room"] = _make_settings(bands=_make_bands(freq=50.0))
+        device.profiles["Movie Night"] = _make_settings(bands=old_bands)
+
+        backup_manager = BackupManager(tmp_path)
+        safe_write = RoomFitSafeWrite(adapter=device, backup_manager=backup_manager)
+
+        new_bands = _make_bands(freq=100.0)
+        push_result = await safe_write.execute(
+            "wifi", "Movie Night", new_bands, ChannelMode.STEREO
+        )
+        assert push_result.success is True
+        assert device.active_name == "Movie Night"
+        assert device.enabled is True
+        assert push_result.backup_path is not None
+
+        undo_result = await safe_write.undo(
+            push_result.backup_path, "wifi", "Movie Night"
+        )
+        assert undo_result.success is True
+        assert device.active_name == "Living Room"
+        assert device.enabled is False
+        assert verify_bands(_make_settings(bands=old_bands), device.profiles["Movie Night"])
+
+    async def test_push_then_undo_new_profile_keeps_it_but_restores_state(
+        self, tmp_path: Path
+    ) -> None:
+        """Undoing a push that created a brand-new profile does NOT delete
+        it (non-destructive, product decision) -- only selection/enable
+        state is restored."""
+        device = _FakeRoomFitDevice(active_name="Living Room", enabled=False)
+        device.profiles["Living Room"] = _make_settings(bands=_make_bands(freq=50.0))
+
+        backup_manager = BackupManager(tmp_path)
+        safe_write = RoomFitSafeWrite(adapter=device, backup_manager=backup_manager)
+
+        new_bands = _make_bands(freq=100.0)
+        push_result = await safe_write.execute(
+            "wifi", "Movie Night", new_bands, ChannelMode.STEREO
+        )
+        assert push_result.success is True
+        assert device.active_name == "Movie Night"
+        assert device.enabled is True
+        assert push_result.backup_path is not None
+
+        undo_result = await safe_write.undo(
+            push_result.backup_path, "wifi", "Movie Night"
+        )
+        assert undo_result.success is True
+        assert "Movie Night" in device.profiles  # not deleted
+        assert device.active_name == "Living Room"
+        assert device.enabled is False
+
+
+class TestRoomFitLevelUpgrade:
+    """#191: a verified-successful push at a previously-unconfirmed
+    roomfit_level (e.g. 3, write-test skipped for #190 safety) upgrades
+    the adapter's in-memory capabilities to level 4 -- it serves as its own
+    write-capability confirmation. A failed push must NOT upgrade the
+    level, since an unverified write proves nothing."""
+
+    async def test_successful_push_upgrades_level_3_to_4(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        bands = _make_bands()
+        mock_roomfit_adapter.capabilities.roomfit_level = 3
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        assert mock_roomfit_adapter.capabilities.roomfit_level == 4
+        assert mock_roomfit_adapter.capabilities.supports_roomfit_write is True
+
+    async def test_failed_push_does_not_upgrade_level(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        intended_bands = _make_bands(freq=100.0)
+        bad_readback = _make_settings(bands=_make_bands(freq=999.0))
+        mock_roomfit_adapter.capabilities.roomfit_level = 3
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = bad_readback
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", intended_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is False
+        assert mock_roomfit_adapter.capabilities.roomfit_level == 3
+
+    async def test_successful_push_at_level_4_does_not_change_it(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """Already at 4 -- no-op, not re-logged as an "upgrade"."""
+        bands = _make_bands()
+        mock_roomfit_adapter.capabilities.roomfit_level = 4
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", bands, ChannelMode.STEREO
+        )
+
+        assert result.success is True
+        assert mock_roomfit_adapter.capabilities.roomfit_level == 4
+
+
+class TestRoomFitUndoOldFormatBackup:
+    """#191: a backup file written before pre_write_active_profile/
+    pre_write_roomfit_enabled/was_new_profile existed has all three as
+    absent -- undo() must degrade to bands-only restore (today's
+    pre-redesign behavior) rather than raise or guess."""
+
+    async def test_old_format_backup_restores_bands_only(
+        self, tmp_path: Path
+    ) -> None:
+        import json as json_module
+
+        device = _FakeRoomFitDevice(active_name="Existing", enabled=True)
+        old_bands = _make_bands(freq=200.0)
+        device.profiles["Existing"] = _make_settings(bands=_make_bands(freq=999.0))
+
+        # Hand-construct an old-format backup: no restore-metadata keys.
+        backup_path = tmp_path / "old_backup.json"
+        backup_path.write_text(
+            json_module.dumps(
+                {
+                    "schema_version": 1,
+                    "name": "backup_old",
+                    "channel_mode": "stereo",
+                    "filters": [f.model_dump() for f in old_bands],
+                    "tags": [],
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                    "device_uuid": "test-uuid-1234",
+                    "firmware_version": "6.0.1.20",
+                    "trigger": "pre_write",
+                    "profile_type": "backup",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        backup_manager = BackupManager(tmp_path)
+        safe_write = RoomFitSafeWrite(adapter=device, backup_manager=backup_manager)
+
+        result = await safe_write.undo(backup_path, "wifi", "Existing")
+
+        assert result.success is True
+        assert verify_bands(_make_settings(bands=old_bands), device.profiles["Existing"])
+        # No selection/enable-state restore attempted -- degrades to
+        # bands-only, matching pre-redesign behavior exactly.
+        assert device.active_name == "Existing"
+        assert device.enabled is True
+
 
 # Files allowed to call adapter.write_peq()/write_roomfit() directly: the
 # safe-write module itself (the only legitimate caller), the adapter module

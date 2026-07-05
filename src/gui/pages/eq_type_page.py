@@ -17,7 +17,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.components.page_layout import build_centered_content, make_page_title
+from src.gui.components.page_layout import (
+    build_centered_content,
+    center_column,
+    make_page_title,
+)
 from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
@@ -43,14 +47,13 @@ class _EQCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
         layout.setSpacing(SPACING_MD)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Heading
         heading_label = QLabel(heading)
         heading_label.setObjectName("cardHeading")
         heading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         heading_label.setProperty("class", "sectionTitle")
-        layout.addWidget(heading_label)
+        layout.addWidget(heading_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Description
         desc_label = QLabel(description)
@@ -60,6 +63,7 @@ class _EQCard(QFrame):
         desc_label.setProperty("class", "secondary")
         layout.addWidget(desc_label)
 
+        center_column(layout)
         self._apply_style()
 
     @property

@@ -5,13 +5,83 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import ChannelMode
 from src.models.errors import BackupError
 from src.models.peq import PEQSettings
 from src.models.profile import BackupRecord
+
+
+def load_backup_json(path: Path) -> dict[str, Any]:
+    """Read and parse a backup JSON file.
+
+    Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
+    (RoomFitSafeWrite.undo()) to avoid duplicating the file-read + json.loads
+    call.
+
+    Raises:
+        ValueError: if the file does not contain a JSON object.
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Backup file {path} does not contain a JSON object")
+    return data
+
+
+def parse_backup_filters(
+    backup_data: dict[str, Any],
+) -> tuple[
+    list[CanonicalFilter], ChannelMode, list[CanonicalFilter] | None, list[CanonicalFilter] | None
+]:
+    """Parse a backup JSON dict into filters, channel_mode, and per-channel lists.
+
+    Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
+    (RoomFitSafeWrite.undo()) to avoid duplicating backup parsing logic.
+
+    Args:
+        backup_data: Parsed JSON dict from a backup file.
+
+    Returns:
+        Tuple of (combined_filters, channel_mode, filters_l, filters_r).
+        filters_l/filters_r are None for stereo backups. For L/R backups,
+        callers must use filters_l/filters_r directly rather than
+        re-splitting combined_filters (the combined list is positional
+        concatenation and must not be treated as authoritative per-channel
+        data).
+    """
+    channel_mode_raw = backup_data.get("channel_mode", "stereo")
+    mode = ChannelMode.from_profile(str(channel_mode_raw))
+
+    if mode.is_lr:
+        filters_l_raw = backup_data.get("filters_l", [])
+        filters_r_raw = backup_data.get("filters_r", [])
+        filters_l = [CanonicalFilter(**f) for f in filters_l_raw]
+        filters_r = [CanonicalFilter(**f) for f in filters_r_raw]
+        filters = filters_l + filters_r
+        return filters, ChannelMode.LR, filters_l, filters_r
+
+    filters_raw = backup_data.get("filters", [])
+    return [CanonicalFilter(**f) for f in filters_raw], ChannelMode.STEREO, None, None
+
+
+def parse_backup_restore_metadata(
+    backup_data: dict[str, Any],
+) -> tuple[str | None, bool | None, bool | None]:
+    """Extract RoomFit's pre-push selection/enable-state restore metadata.
+
+    Returns (pre_write_active_profile, pre_write_roomfit_enabled,
+    was_new_profile), each None if absent -- true for PEQ backups (which
+    never set these) and for RoomFit backups created before these fields
+    existed, so an old-format file degrades gracefully instead of raising.
+    """
+    return (
+        backup_data.get("pre_write_active_profile"),
+        backup_data.get("pre_write_roomfit_enabled"),
+        backup_data.get("was_new_profile"),
+    )
 
 
 class BackupManager:
@@ -32,6 +102,10 @@ class BackupManager:
         settings: PEQSettings,
         capabilities: DeviceCapabilities,
         trigger: Literal["pre_write", "pre_rollback"],
+        *,
+        pre_write_active_profile: str | None = None,
+        pre_write_roomfit_enabled: bool | None = None,
+        was_new_profile: bool | None = None,
     ) -> Path:
         """Write a BackupRecord JSON file and enforce retention.
 
@@ -39,6 +113,13 @@ class BackupManager:
         the device UUID, the oldest backup is deleted first. If deletion
         of the oldest backup fails, BackupError is raised and the entire
         operation is aborted.
+
+        The three keyword-only params are RoomFit-only restore metadata
+        (see BackupRecord) -- PEQ callers omit them. When ``was_new_profile``
+        is True, ``settings`` is expected to carry no real bands (an empty
+        stereo PEQSettings used purely as a metadata carrier, since there's
+        no prior content to snapshot for a brand-new profile) -- only the
+        three restore-metadata fields matter for that backup.
 
         Returns the path to the newly created backup file.
 
@@ -63,9 +144,14 @@ class BackupManager:
         # Build the BackupRecord
         timestamp = datetime.now(UTC).isoformat()
 
-        # Map PEQSettings bands to BackupRecord filter fields
+        # Map PEQSettings bands to BackupRecord filter fields. Identity
+        # check, not truthiness: settings.bands is typed as always-a-list
+        # (never None), so `if settings.bands else None` would coalesce a
+        # genuinely-empty-but-intentional bands=[] (the new-profile RoomFit
+        # metadata-only backup case) into None, which the Profile validator
+        # then rejects for stereo mode ("must have 'filters' key").
         if settings.channel_mode == ChannelMode.STEREO:
-            filters = settings.bands if settings.bands else None
+            filters = settings.bands if settings.bands is not None else None
             filters_l = None
             filters_r = None
         else:
@@ -101,6 +187,9 @@ class BackupManager:
             firmware_version=capabilities.firmware,
             trigger=trigger,
             profile_type="backup",
+            pre_write_active_profile=pre_write_active_profile,
+            pre_write_roomfit_enabled=pre_write_roomfit_enabled,
+            was_new_profile=was_new_profile,
         )
 
         # Write to disk with filesystem-safe filename
