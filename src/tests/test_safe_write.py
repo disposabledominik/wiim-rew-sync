@@ -766,7 +766,13 @@ class TestEmptyBands:
 
 class TestPeqEnableOnSuccess:
     """A successful push turns PEQ on for the source -- deliberate, best-effort,
-    mirrors RoomFitSafeWrite's success-path enable_roomfit() call."""
+    mirrors RoomFitSafeWrite's success-path enable_roomfit() call.
+
+    set_peq_enabled_best_effort() is auto-provided as an AsyncMock by
+    spec=WiiMAdapter -- its own try/except/log best-effort behavior is
+    WiiMAdapter's responsibility, tested directly in test_wiim_adapter.py
+    (TestSetPeqEnabledBestEffort), mirroring how RoomFit's equivalent
+    restore_roomfit_selection_and_enable_state() is tested (#192)."""
 
     async def test_success_enables_peq_when_it_was_off(
         self, safe_write: SafeWrite, mock_adapter: AsyncMock
@@ -781,44 +787,25 @@ class TestPeqEnableOnSuccess:
         result = await safe_write.execute("wifi", intended)
 
         assert result.success is True
-        mock_adapter.enable_peq.assert_called_once_with("wifi")
+        mock_adapter.set_peq_enabled_best_effort.assert_called_once_with(
+            "wifi", True, context=ANY
+        )
 
     async def test_success_enables_peq_even_when_already_on(
         self, safe_write: SafeWrite, mock_adapter: AsyncMock
     ) -> None:
-        """enable_peq() is called unconditionally on success, not only when
-        there's a before/after diff -- confirms deliberate behavior, not a
-        guarded no-op."""
+        """set_peq_enabled_best_effort(..., True, ...) is called
+        unconditionally on success, not only when there's a before/after
+        diff -- confirms deliberate behavior, not a guarded no-op."""
         intended = _make_settings()  # enabled=True
         mock_adapter.read_peq.side_effect = [intended, intended]
 
         result = await safe_write.execute("wifi", intended)
 
         assert result.success is True
-        mock_adapter.enable_peq.assert_called_once_with("wifi")
-
-    async def test_enable_peq_failure_does_not_fail_the_push(
-        self, safe_write: SafeWrite, mock_adapter: AsyncMock,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """A verified-correct write still reports success even if the
-        follow-up enable_peq() call raises (best-effort, logged)."""
-        intended = _make_settings()
-        mock_adapter.read_peq.side_effect = [intended, intended]
-        mock_adapter.enable_peq.side_effect = Exception("network blip")
-
-        app_logger = logging.getLogger("wiim_rew_sync.app")
-        app_logger.propagate = True
-        try:
-            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.app"):
-                result = await safe_write.execute("wifi", intended)
-            assert any(
-                "enable PEQ" in r.message for r in caplog.records
-            )
-        finally:
-            app_logger.propagate = False
-
-        assert result.success is True
+        mock_adapter.set_peq_enabled_best_effort.assert_called_once_with(
+            "wifi", True, context=ANY
+        )
 
 
 class TestPeqEnableRestoreOnFailure:
@@ -843,8 +830,9 @@ class TestPeqEnableRestoreOnFailure:
         result = await safe_write.execute("wifi", intended)
 
         assert result.success is False
-        mock_adapter.set_peq_enabled.assert_called_once_with("wifi", True)
-        mock_adapter.enable_peq.assert_not_called()
+        mock_adapter.set_peq_enabled_best_effort.assert_called_once_with(
+            "wifi", True, context=ANY
+        )
 
     async def test_rollback_restores_original_disabled_state(
         self, safe_write: SafeWrite, mock_adapter: AsyncMock
@@ -865,8 +853,9 @@ class TestPeqEnableRestoreOnFailure:
         result = await safe_write.execute("wifi", intended)
 
         assert result.success is False
-        mock_adapter.set_peq_enabled.assert_called_once_with("wifi", False)
-        mock_adapter.enable_peq.assert_not_called()
+        mock_adapter.set_peq_enabled_best_effort.assert_called_once_with(
+            "wifi", False, context=ANY
+        )
 
 
 class TestPeqBackupCarriesEnabledState:
@@ -931,9 +920,13 @@ class TestPeqUndoRestoresEnabledState:
         undo_result = await sw.undo(push_result.backup_path, "wifi")
 
         assert undo_result.success is True
-        # Two set_peq_enabled calls total: none from the push (it succeeded,
-        # only enable_peq fires), one from undo's post-execute() correction.
-        mock_adapter.set_peq_enabled.assert_called_once_with("wifi", False)
+        # Two set_peq_enabled_best_effort calls total: one from the push's
+        # own success path (True, "after successful push"), one from undo's
+        # post-execute() correction (False, "after undo") -- assert on the
+        # latter specifically since that's what this test is about.
+        mock_adapter.set_peq_enabled_best_effort.assert_any_call(
+            "wifi", False, context=ANY
+        )
 
     async def test_undo_after_push_while_on_leaves_it_on(
         self, mock_adapter: AsyncMock, tmp_path: Path
@@ -957,7 +950,9 @@ class TestPeqUndoRestoresEnabledState:
         undo_result = await sw.undo(push_result.backup_path, "wifi")
 
         assert undo_result.success is True
-        mock_adapter.set_peq_enabled.assert_called_once_with("wifi", True)
+        mock_adapter.set_peq_enabled_best_effort.assert_any_call(
+            "wifi", True, context=ANY
+        )
 
 
 class TestPeqUndoOldFormatBackup:
@@ -984,8 +979,12 @@ class TestPeqUndoOldFormatBackup:
         result = await safe_write.undo(backup_file, "wifi")
 
         assert result.success is True
-        mock_adapter.enable_peq.assert_called_once_with("wifi")
-        mock_adapter.set_peq_enabled.assert_not_called()
+        # Only one call, from execute()'s own success path -- undo's own
+        # correction step is skipped entirely (pre_write_peq_enabled is
+        # None for this old-format backup), not called with a guessed value.
+        mock_adapter.set_peq_enabled_best_effort.assert_called_once_with(
+            "wifi", True, context=ANY
+        )
 
 
 class TestPeqUndoEmptyBandsBackup:

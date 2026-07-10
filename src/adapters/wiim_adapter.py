@@ -312,6 +312,29 @@ class WiiMAdapter:
         else:
             await self.disable_peq(source_name)
 
+    async def set_peq_enabled_best_effort(
+        self, source_name: str, enabled: bool, *, context: str
+    ) -> None:
+        """Best-effort ``set_peq_enabled()``: logs and swallows a failure
+        instead of raising.
+
+        Shared by SafeWrite's success/rollback/undo paths (safe_write.py)
+        and read_peq_preset_preview() below, so this try/except/log pattern
+        can't independently drift out of sync across call sites the way
+        RoomFit's equivalent did before being consolidated into
+        restore_roomfit_selection_and_enable_state() (#192).
+        """
+        try:
+            await self.set_peq_enabled(source_name, enabled)
+        except Exception:
+            logger.warning(
+                "Failed to %s PEQ on source '%s' (%s).",
+                "enable" if enabled else "disable",
+                source_name,
+                context,
+                exc_info=True,
+            )
+
     # ------------------------------------------------------------------
     # RoomFit Enable/Disable
     # ------------------------------------------------------------------
@@ -709,16 +732,10 @@ class WiiMAdapter:
                     source_name, preset_name,
                     exc_info=True,
                 )
-        try:
-            await self.set_peq_enabled(source_name, original.enabled)
-        except Exception:
-            logger.warning(
-                "Failed to restore PEQ enable-state to %s on source '%s' "
-                "after previewing '%s'",
-                "On" if original.enabled else "Off",
-                source_name, preset_name,
-                exc_info=True,
-            )
+        await self.set_peq_enabled_best_effort(
+            source_name, original.enabled,
+            context=f"after previewing '{preset_name}'",
+        )
         return preview
 
     async def _delete_profile(self, profile_name: str, eq_level: int | None = None) -> None:

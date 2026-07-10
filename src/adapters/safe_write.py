@@ -273,15 +273,9 @@ class SafeWrite:
             # verified-correct write still reports success even if this
             # polish step hiccups (mirrors RoomFitSafeWrite's success-path
             # enable_roomfit() call).
-            try:
-                await self._adapter.enable_peq(source_name)
-            except Exception:
-                logger.warning(
-                    "Failed to enable PEQ on source '%s' after successful "
-                    "push; device may still show PEQ off.",
-                    source_name,
-                    exc_info=True,
-                )
+            await self._adapter.set_peq_enabled_best_effort(
+                source_name, True, context="after successful push"
+            )
             if on_stage is not None:
                 on_stage("done")
             return WriteResult(success=True, backup_path=backup_path, read_back=read_back)
@@ -334,16 +328,9 @@ class SafeWrite:
         # have no lasting device-visible effect, regardless of whether the
         # band rollback below verifies successfully. Best-effort, mirrors
         # RoomFitSafeWrite's failure-path enable-state restore.
-        try:
-            await self._adapter.set_peq_enabled(source_name, original_settings.enabled)
-        except Exception:
-            logger.warning(
-                "Failed to restore PEQ enable-state to %s on source '%s' "
-                "after rollback.",
-                "On" if original_settings.enabled else "Off",
-                source_name,
-                exc_info=True,
-            )
+        await self._adapter.set_peq_enabled_best_effort(
+            source_name, original_settings.enabled, context="after rollback"
+        )
 
         # Verify rollback succeeded. Same reasoning as the primary write
         # verify above: original_settings may carry more bands than
@@ -435,16 +422,9 @@ class SafeWrite:
             return result
 
         if pre_write_peq_enabled is not None:
-            try:
-                await self._adapter.set_peq_enabled(source_name, pre_write_peq_enabled)
-            except Exception:
-                logger.warning(
-                    "Failed to restore PEQ enable-state to %s on source "
-                    "'%s' after undo.",
-                    "On" if pre_write_peq_enabled else "Off",
-                    source_name,
-                    exc_info=True,
-                )
+            await self._adapter.set_peq_enabled_best_effort(
+                source_name, pre_write_peq_enabled, context="after undo"
+            )
 
         return result
 

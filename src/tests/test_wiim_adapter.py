@@ -1584,6 +1584,49 @@ class TestSetPeqEnabled:
         assert "wifi" in call_args
 
 
+class TestSetPeqEnabledBestEffort:
+    """Test set_peq_enabled_best_effort — the try/except/log wrapper shared
+    by SafeWrite's success/rollback/undo paths (safe_write.py) and
+    read_peq_preset_preview() (this file), consolidated so the pattern can't
+    independently drift the way RoomFit's equivalent did before being
+    consolidated into restore_roomfit_selection_and_enable_state() (#192)."""
+
+    async def test_delegates_to_set_peq_enabled(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.return_value = "OK"
+
+        await adapter.set_peq_enabled_best_effort("wifi", True, context="test")
+
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQChangeSourceFX:")
+
+    async def test_swallows_and_logs_failure(
+        self,
+        adapter: WiiMAdapter,
+        mock_client: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        mock_client.command.side_effect = WiiMConnectionError("boom")
+
+        logger = logging.getLogger("wiim_rew_sync.wiim_api")
+        logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.wiim_api"):
+                await adapter.set_peq_enabled_best_effort(
+                    "wifi", False, context="after rollback"
+                )
+        finally:
+            logger.propagate = False
+
+        assert any(
+            "Failed to disable PEQ" in rec.message and "after rollback" in rec.message
+            for rec in caplog.records
+        )
+
+
 class TestGetPeqEnabled:
     """Test get_peq_enabled — reading PEQ enabled state from EQStat field."""
 
