@@ -123,6 +123,14 @@ code, actively guard against both:
   same commit — never one without the other.
 - **Every network call needs an explicit timeout (default 5s).** Never let a WiiM or REW HTTP call
   block indefinitely — see the existing pattern in `src/adapters/`.
+- **Never reference WiiM/LinkPlay app internals in checked-in docs, comments, commits, or scripts** —
+  no decompiled class/method names, smali paths, APK contents, or app UI/architecture. Findings go in
+  as observed API behavior confirmed via hardware testing (`docs/corrections.md`), not as "found by
+  decompiling X."
+- **`docs/wiim_api_notes.md` is a spec, not a lab notebook.** State the current command/rule only —
+  no test-campaign narrative, per-device iteration, or "previously believed X, revised to Y" framing.
+  Investigation history, hypotheses, and hardware-test trails belong in `docs/corrections.md`;
+  `wiim_api_notes.md` should only ever point at it (`docs/corrections.md`, `<date>`), never restate it.
 
 ## Common pitfalls
 

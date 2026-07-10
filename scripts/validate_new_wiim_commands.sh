@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# validate_new_wiim_commands.sh — hardware validation for the WiiM commands surfaced by
-# decompiling the WiiM Home Android app, not yet confirmed against real hardware:
-#   RoomCorrGet, RoomCorrSet, RoomCorrSetLR, RoomCorrSetMode, setRoomCorrection,
+# validate_new_wiim_commands.sh — hardware validation for WiiM commands that surfaced during
+# API research but weren't yet confirmed against real hardware:
+#   RoomCorrGet, RoomCorrGetMode, RoomCorrSet, RoomCorrSetLR, RoomCorrSetMode, setRoomCorrection,
 #   EQv2Rename, EQSetChannelMode, EQGetLV2Band/EQGetLV2SourceBand (non-Ex), EQv2Load.
 #
 # Manual tool, not part of the pytest suite. Findings should feed docs/corrections.md and
@@ -10,7 +10,8 @@
 # Requires: curl, jq. Run from WSL2 bash (or Git Bash) against a real device on the LAN.
 #
 # Usage: ./validate_new_wiim_commands.sh <device-ip> [--writes] [--yes] [--source=NAME]
-#                                         [--rename-target=NAME]
+#                                         [--rename-target=NAME] [--results-file=PATH]
+#        ./validate_new_wiim_commands.sh --summarize [results-file]
 #   (no flags)      Section 1 only — read-only existence/shape checks. Always safe.
 #   --writes        Also run Section 2 — write tests. Each backs up state first and
 #                   restores it afterward, verifying the restore succeeded. The two
@@ -22,12 +23,96 @@
 #                   Test EQv2Rename against this existing RoomFit profile name instead of
 #                   requiring an "Auto"/"Auto_LR" auto-calibration profile — use this to
 #                   test rename generality without redoing an on-device room calibration.
+#   --results-file=PATH
+#                   CSV file the per-device "theory check" row is appended to (default
+#                   ./roomcorr_theory_results.csv). Run this script with --writes against
+#                   every device using the SAME file (the default already does, as long as
+#                   you run from the same directory each time), then run:
+#                     ./validate_new_wiim_commands.sh --summarize
+#                   to get the aggregate verdict on the "RoomCorrGetMode's response shape
+#                   predicts whether RoomCorrSet actually mutates the buffer" theory
+#                   (docs/corrections.md, 2026-07-10). Section 1 alone is enough to log the
+#                   GetMode side; --writes is required for the Set-mutation side.
 
 set -uo pipefail
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "ERROR: this script requires 'jq'. Install: sudo apt-get install -y jq" >&2
   exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# --summarize mode: aggregate every logged device's theory-check row and print
+# a verdict. Bypasses the entire device-connection flow below.
+# ---------------------------------------------------------------------------
+summarize_theory_results() {
+  local file="$1"
+  if [[ ! -f "$file" ]]; then
+    echo "No results file at '$file' yet — run this script with --writes against each" >&2
+    echo "device first (each run appends one row to this file)." >&2
+    exit 1
+  fi
+  echo "==================== THEORY SUMMARY: RoomCorrGetMode <-> RoomCorrSet ===================="
+  printf '%-16s %-18s %-14s %-14s %-12s %s\n' "Device" "Model" "GetModeClass" "SetResult" "RC.Version" "Consistent?"
+  local total=0 informative=0 consistent=0
+  local rc_total=0 rc_consistent=0
+  while IFS=',' read -r ip model getmode setres rcver; do
+    [[ -z "$ip" || "$ip" == "device_ip" ]] && continue
+    total=$((total + 1))
+    rcver="${rcver:-n/a}"
+    local mark="n/a ($setres)"
+    if [[ "$setres" == "MUTATED" || "$setres" == "NOT_MUTATED" ]]; then
+      informative=$((informative + 1))
+      if { [[ "$getmode" == "REAL" && "$setres" == "MUTATED" ]] || [[ "$getmode" == "ALIASED" && "$setres" == "NOT_MUTATED" ]]; }; then
+        mark="YES"
+        consistent=$((consistent + 1))
+      else
+        mark="NO (breaks theory)"
+      fi
+      # Secondary theory: RC.Version:"1.1" predicts REAL/MUTATED; anything else (1.0,
+      # ABSENT, FAILED, or any other value) predicts ALIASED/NOT_MUTATED. Only two
+      # RC.Version values have been observed so far (docs/corrections.md, 2026-07-10) —
+      # this checks whether that pattern keeps holding as more devices are added.
+      if [[ "$rcver" != "n/a" && "$rcver" != "NOT_RUN" ]]; then
+        rc_total=$((rc_total + 1))
+        if { [[ "$rcver" == "1.1" && "$setres" == "MUTATED" ]] || { [[ "$rcver" != "1.1" ]] && [[ "$setres" == "NOT_MUTATED" ]]; }; }; then
+          rc_consistent=$((rc_consistent + 1))
+        fi
+      fi
+    fi
+    printf '%-16s %-18s %-14s %-14s %-12s %s\n' "$ip" "$model" "$getmode" "$setres" "$rcver" "$mark"
+  done <"$file"
+
+  echo
+  if [[ "$informative" -lt 2 ]]; then
+    echo "VERDICT: INCONCLUSIVE — need at least 2 devices with an actual MUTATED/NOT_MUTATED"
+    echo "Set-result (got $informative of $total logged). Re-run with --writes against more devices."
+  elif [[ "$consistent" -eq "$informative" ]]; then
+    echo "VERDICT: THEORY CONFIRMED across all $informative testable device(s) — RoomCorrGetMode's"
+    echo "response shape (REAL vs ALIASED) perfectly predicted whether RoomCorrSet actually"
+    echo "mutated the buffer."
+  else
+    echo "VERDICT: THEORY REFUTED — $((informative - consistent))/$informative testable device(s)"
+    echo "broke the predicted correlation. See table above for which one(s)."
+  fi
+
+  if [[ "$rc_total" -ge 2 ]]; then
+    echo
+    if [[ "$rc_consistent" -eq "$rc_total" ]]; then
+      echo "RC.VERSION SIGNAL: consistent across all $rc_total device(s) with a known RC.Version —"
+      echo "\"RC.Version:1.1\" predicted MUTATED and anything else predicted NOT_MUTATED every time."
+      echo "Still only a working assumption if all observed values are just \"1.0\"/\"1.1\" — a device"
+      echo "reporting a different RC.Version would be a real test of the >=1.1 framing."
+    else
+      echo "RC.VERSION SIGNAL: broke on $((rc_total - rc_consistent))/$rc_total device(s) — RC.Version"
+      echo "alone does NOT reliably predict RoomCorrSet's behavior. See table above."
+    fi
+  fi
+}
+
+if [[ "${1:-}" == "--summarize" ]]; then
+  summarize_theory_results "${2:-./roomcorr_theory_results.csv}"
+  exit 0
 fi
 
 WIIM_IP="${1:-}"
@@ -41,18 +126,27 @@ RUN_WRITES=0
 AUTO_YES=0
 TEST_SOURCE=""
 RENAME_TARGET=""
+RESULTS_FILE="./roomcorr_theory_results.csv"
 for arg in "$@"; do
   case "$arg" in
     --writes) RUN_WRITES=1 ;;
     --yes) AUTO_YES=1 ;;
     --source=*) TEST_SOURCE="${arg#--source=}" ;;
     --rename-target=*) RENAME_TARGET="${arg#--rename-target=}" ;;
+    --results-file=*) RESULTS_FILE="${arg#--results-file=}" ;;
     *) echo "Unknown flag: $arg" >&2; exit 1 ;;
   esac
 done
 
 BASE="https://${WIIM_IP}/httpapi.asp"
 PLUGIN_URI="http://moddevices.com/plugins/caps/EqNp"
+
+# Theory-check state, populated by section1 (GETMODE_CLASS, RC_VERSION) and
+# section2_roomfit (SET_MUTATION_RESULT), printed and logged to $RESULTS_FILE at the
+# end of the run.
+GETMODE_CLASS="NOT_RUN"
+SET_MUTATION_RESULT="NOT_RUN"
+RC_VERSION="NOT_RUN"
 
 log_pass() { printf '[PASS] %s\n' "$1"; }
 log_fail() { printf '[FAIL] %s\n' "$1"; }
@@ -112,7 +206,7 @@ section1() {
   local r
   r=$(call "RoomCorrGet")
   if is_recognized "$r"; then
-    log_warn "RoomCorrGet: device RECOGNIZES this command (unexpected — decompile found no trace of it). Raw: $r"
+    log_warn "RoomCorrGet: device RECOGNIZES this command (unexpected — prior research found no trace of it). Raw: $r"
   else
     log_pass "RoomCorrGet: confirmed NOT a real command. Raw: $r"
   fi
@@ -122,6 +216,40 @@ section1() {
     log_warn "EQGetSourceModes: device RECOGNIZES this command (unexpected). Raw: $r"
   else
     log_pass "EQGetSourceModes: confirmed NOT a real command. Raw: $r"
+  fi
+
+  # Classify RoomCorrGetMode's response shape — this is the read-only half of the
+  # "GetMode shape predicts RoomCorrSet mutation" theory (docs/corrections.md, 2026-07-10).
+  # Confirmed split so far: WiiM Sound/Sound Lite return a real {"Mode":"Playback"} body;
+  # WiiM Amp Ultra/Mini instead return the same profile-dump shape as RoomCorrGet (no "Mode"
+  # key at all) — i.e. it isn't implemented as its own command on those two.
+  r=$(call "RoomCorrGetMode")
+  if ! is_recognized "$r"; then
+    GETMODE_CLASS="NOT_RECOGNIZED"
+    log_warn "RoomCorrGetMode: NOT recognized on this device/firmware. Raw: $r"
+  elif jq -e 'has("Mode")' <<<"$r" >/dev/null 2>&1; then
+    GETMODE_CLASS="REAL"
+    log_pass "RoomCorrGetMode: returns a real {\"Mode\":...} response (distinct handler). Raw: $r"
+  elif jq -e '(has("EQBand") or has("EQBandL"))' <<<"$r" >/dev/null 2>&1; then
+    GETMODE_CLASS="ALIASED"
+    log_warn "RoomCorrGetMode: falls through to the same profile-dump shape as RoomCorrGet — not a distinct command on this device. Raw: $r"
+  else
+    GETMODE_CLASS="OTHER"
+    log_warn "RoomCorrGetMode: recognized but matches neither the Mode-shape nor the RoomCorrGet-shape. Raw: $r"
+  fi
+
+  # GetAcousticCapability: general subsystem-version report, not itself part of the
+  # RoomCorr* family. Its RC.Version field is confirmed to track RoomCorrGetMode's shape
+  # and RoomCorrSet's mutation result (docs/corrections.md, 2026-07-10): "1.1" (WiiM Sound,
+  # WiiM Sound Lite) is where the family is genuinely implemented; "1.0" (WiiM Amp Ultra) is
+  # where it's aliased/inert. WiiM Mini has no RC capability at all (command fails outright).
+  r=$(call "GetAcousticCapability")
+  if is_recognized "$r" && [[ "$(jq -r '.status // empty' <<<"$r")" != "Failed" ]]; then
+    RC_VERSION=$(jq -r '.RC.Version // "MISSING"' <<<"$r")
+    log_info "GetAcousticCapability: RC.Version=$RC_VERSION. Raw: $r"
+  else
+    RC_VERSION="ABSENT"
+    log_warn "GetAcousticCapability: not supported on this device (status Failed or unrecognized) — likely no RC subsystem at all. Raw: $r"
   fi
 
   local ex nonex
@@ -156,6 +284,7 @@ section2_roomfit() {
   log_warn "RISK: writes to the device's live RoomFit buffer. If the selected profile has Type=\"RC\" (device calibration), this may overwrite its Type/UpdateAt metadata with no API-level way to restore \"RC\" status — only re-running full calibration can. Bands/Name/EQStat ARE backed up and restored by this script; the Type flag is not."
   if ! confirm "Proceed with RoomFit push-command test on $WIIM_IP?"; then
     log_skip "RoomFit push test skipped by operator."
+    SET_MUTATION_RESULT="SKIPPED_BY_OPERATOR"
     return
   fi
 
@@ -174,7 +303,9 @@ section2_roomfit() {
   rf_list=$(call "EQv2GetNewList:{\"pluginURI\":\"${PLUGIN_URI}\",\"EQLevel\":2}")
   rf_custom_count=$(jq -r '(.custom // []) | length' <<<"$rf_list" 2>/dev/null || echo 0)
   if [[ "$rf_custom_count" == "0" ]]; then
-    log_skip "No RoomFit profiles exist on this device (empty custom list) — treating as no real RoomFit hardware. Skipping EQLevel:2 write tests entirely: on a device tested this way, EQLevel:2 calls were observed to alter the real EQLevel:1 '${TEST_SOURCE}' source's channelMode/Name instead of a genuinely isolated buffer. See docs/corrections.md follow-up."
+    log_skip "No RoomFit profiles exist on this device (empty custom list) — treating as no real RoomFit hardware. Skipping the reverse-engineered RoomCorr*/RoomCorrSetMode/setRoomCorrection write tests (previously observed to alter the real EQLevel:1 '${TEST_SOURCE}' source's channelMode/Name here)."
+    SET_MUTATION_RESULT="SKIPPED_NO_ROOMFIT"
+    section2_isolation_check
     return
   fi
 
@@ -182,6 +313,7 @@ section2_roomfit() {
   buf=$(call "EQGetLV2SourceBandEx:{\"EQLevel\":2,\"source_name\":\"\",\"pluginURI\":\"${PLUGIN_URI}\"}")
   if ! is_recognized "$buf"; then
     log_skip "Device does not respond to RoomFit band read (EQLevel:2) — likely no RoomFit hardware. Skipping."
+    SET_MUTATION_RESULT="SKIPPED_NO_ROOMFIT"
     return
   fi
   orig_name=$(jq -r '.Name // empty' <<<"$buf")
@@ -256,7 +388,7 @@ section2_roomfit() {
     if is_recognized "$resp"; then
       log_pass "Command ($variant) was RECOGNIZED by the device. Raw: $resp"
     else
-      log_warn "Command ($variant) NOT recognized — decompile evidence may not apply to this firmware/model. Raw: $resp"
+      log_warn "Command ($variant) NOT recognized — prior findings may not apply to this firmware/model. Raw: $resp"
     fi
 
     after=$(call "EQGetLV2SourceBandEx:{\"EQLevel\":2,\"source_name\":\"\",\"pluginURI\":\"${PLUGIN_URI}\"}")
@@ -274,6 +406,9 @@ section2_roomfit() {
   done
   if [[ "$mutation_confirmed" == "0" ]]; then
     log_warn "Neither payload variant produced a detectable change — RoomCorrSet/RoomCorrSetLR remain UNCONFIRMED as real writes on this device/firmware despite returning {\"status\":\"OK\"}."
+    SET_MUTATION_RESULT="NOT_MUTATED"
+  else
+    SET_MUTATION_RESULT="MUTATED"
   fi
 
   if [[ -n "$orig_name" ]]; then
@@ -330,9 +465,9 @@ section2_roomfit() {
     fi
   fi
 
-  # RoomCorrSetMode takes the DynamicEQStatus enum's `code` field, confirmed from its
-  # smali <clinit> to be the exhaustive, exact-case pair "Measure"/"Playback" (NOT
-  # "MEASURE"/"PLAYBACK" — the earlier all-caps guess is why it returned {"status":"Failed"}).
+  # RoomCorrSetMode's valid values are confirmed via hardware testing to be the exhaustive,
+  # exact-case pair "Measure"/"Playback" (NOT "MEASURE"/"PLAYBACK" — the earlier all-caps
+  # guess is why it returned {"status":"Failed"}).
   # "Playback" is the normal/idle state so it's safe to round-trip; "Measure" is the
   # in-progress-calibration state and may affect live DSP/audio behavior, so it gets its
   # own confirmation on top of this section's overall one.
@@ -368,13 +503,84 @@ section2_roomfit() {
 }
 
 # ---------------------------------------------------------------------------
+# Section 2.1b — EQLevel isolation check (production-command safety)
+#
+# Runs only when section2_roomfit found no RoomFit profiles (i.e. skipped its own
+# tests). A prior run on a RoomFit-less device left the real EQLevel:1 "wifi"
+# source's channelMode/Name altered after a sequence that included several
+# reverse-engineered-only commands (RoomCorrSetMode, setRoomCorrection) alongside
+# EQChangeSourceFX/EQSourceOff at EQLevel:2 — the latter two are NOT reverse-engineered,
+# they're this project's own shipped commands, used by capability_prober.py during
+# normal RoomFit capability probing. This test isolates each one alone to find out
+# whether a real, already-shipped code path can corrupt EQLevel:1 state on this class
+# of device, as opposed to it only being an artifact of this script's own exploratory
+# commands.
+# ---------------------------------------------------------------------------
+section2_isolation_check() {
+  echo
+  echo "==================== SECTION 2.1b: EQLevel isolation check (production-command safety) ===================="
+  log_warn "This device has no RoomFit profiles. Testing whether this app's OWN production commands (EQChangeSourceFX/EQSourceOff at EQLevel:2 — used by capability_prober.py) bleed into the real EQLevel:1 '${TEST_SOURCE}' source here. Each command is tested alone and restored immediately."
+  if ! confirm "Proceed with the EQLevel isolation check on '${TEST_SOURCE}'?"; then
+    log_skip "Isolation check skipped by operator."
+    return
+  fi
+
+  local before b_name b_mode b_stat
+  before=$(call "EQGetLV2SourceBandEx:{\"source_name\":\"${TEST_SOURCE}\",\"pluginURI\":\"${PLUGIN_URI}\"}")
+  if ! is_recognized "$before"; then
+    log_skip "Could not read '${TEST_SOURCE}' state — skipping isolation check."
+    return
+  fi
+  b_name=$(jq -r '.Name // empty' <<<"$before")
+  b_mode=$(jq -r '.channelMode // empty' <<<"$before")
+  b_stat=$(jq -r '.EQStat // empty' <<<"$before")
+  log_info "Baseline '${TEST_SOURCE}': Name='$b_name' channelMode='$b_mode' EQStat='$b_stat'"
+
+  local cmd
+  for cmd in EQChangeSourceFX EQSourceOff; do
+    call "${cmd}:{\"EQLevel\":2,\"source_name\":\"\",\"pluginURI\":\"${PLUGIN_URI}\"}" >/dev/null
+    local after a_name a_mode a_stat
+    after=$(call "EQGetLV2SourceBandEx:{\"source_name\":\"${TEST_SOURCE}\",\"pluginURI\":\"${PLUGIN_URI}\"}")
+    a_name=$(jq -r '.Name // empty' <<<"$after")
+    a_mode=$(jq -r '.channelMode // empty' <<<"$after")
+    a_stat=$(jq -r '.EQStat // empty' <<<"$after")
+    if [[ "$a_name" != "$b_name" || "$a_mode" != "$b_mode" ]]; then
+      log_fail "PRODUCTION-COMMAND BLEED CONFIRMED: bare '${cmd}:{\"EQLevel\":2,...}' ALONE changed '${TEST_SOURCE}' from Name='$b_name'/channelMode='$b_mode' to Name='$a_name'/channelMode='$a_mode'. This exact command is used by capability_prober.py in normal operation on real devices — flag for investigation there, not just this script."
+      if [[ -n "$b_name" ]]; then
+        call "EQv2SourceLoad:{\"source_name\":\"${TEST_SOURCE}\",\"pluginURI\":\"${PLUGIN_URI}\",\"Name\":\"${b_name}\"}" >/dev/null
+      fi
+    else
+      log_pass "'${cmd}' alone did NOT change '${TEST_SOURCE}' Name/channelMode."
+    fi
+    if [[ "$a_stat" != "$b_stat" ]]; then
+      if [[ "$b_stat" == "Off" ]]; then
+        call "EQSourceOff:{\"source_name\":\"${TEST_SOURCE}\",\"pluginURI\":\"${PLUGIN_URI}\"}" >/dev/null
+      else
+        call "EQChangeSourceFX:{\"source_name\":\"${TEST_SOURCE}\",\"pluginURI\":\"${PLUGIN_URI}\"}" >/dev/null
+      fi
+    fi
+  done
+
+  local final final_name final_mode final_stat
+  final=$(call "EQGetLV2SourceBandEx:{\"source_name\":\"${TEST_SOURCE}\",\"pluginURI\":\"${PLUGIN_URI}\"}")
+  final_name=$(jq -r '.Name // empty' <<<"$final")
+  final_mode=$(jq -r '.channelMode // empty' <<<"$final")
+  final_stat=$(jq -r '.EQStat // empty' <<<"$final")
+  if [[ "$final_name" == "$b_name" && "$final_mode" == "$b_mode" && "$final_stat" == "$b_stat" ]]; then
+    log_pass "Final restore verified: '${TEST_SOURCE}' matches baseline (Name='$b_name' channelMode='$b_mode' EQStat='$b_stat')."
+  else
+    log_fail "RESTORE MISMATCH after isolation check — expected Name='$b_name' channelMode='$b_mode' EQStat='$b_stat', got Name='$final_name' channelMode='$final_mode' EQStat='$final_stat'. CHECK THE DEVICE/APP MANUALLY NOW."
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Section 2.2 — EQv2Rename
 # ---------------------------------------------------------------------------
 section2_rename() {
   echo
   echo "==================== SECTION 2.2: EQv2Rename ===================="
   # --rename-target may name either a RoomFit (EQLevel:2) profile or a plain PEQ
-  # (EQLevel:1) preset — the decompile only traced this command's use to RoomFit's
+  # (EQLevel:1) preset — this command was first confirmed only against RoomFit's
   # Auto/Auto_LR profile, so which EQLevel(s) it actually works on is itself an open
   # question. Search both lists rather than assuming.
   local rf_list peq_list orig_name found_level
@@ -398,14 +604,14 @@ section2_rename() {
       log_skip "--rename-target='$RENAME_TARGET' not found in either RoomFit (EQLevel:2) or PEQ (EQLevel:1) profile lists."
       return
     fi
-    log_info "Using explicit --rename-target='$orig_name' at EQLevel:$found_level (not the Auto/Auto_LR-only decompiled path — this tests whether EQv2Rename is general-purpose)."
+    log_info "Using explicit --rename-target='$orig_name' at EQLevel:$found_level (not the Auto/Auto_LR-only case — this tests whether EQv2Rename is general-purpose)."
   else
     if is_recognized "$rf_list"; then
       orig_name=$(jq -r '[.custom[]? | select(.Name=="Auto" or .Name=="Auto_LR") | .Name][0] // empty' <<<"$rf_list")
       [[ -n "$orig_name" ]] && found_level=2
     fi
     if [[ -z "$orig_name" ]]; then
-      log_skip "No 'Auto'/'Auto_LR' RoomFit profile found — per decompile, EQv2Rename was only traced to that specific auto-calibration profile. Run an on-device RoomFit calibration first, or pass --rename-target=NAME to test against an existing PEQ/RoomFit preset instead."
+      log_skip "No 'Auto'/'Auto_LR' RoomFit profile found — EQv2Rename was only confirmed against that specific auto-calibration profile so far. Run an on-device RoomFit calibration first, or pass --rename-target=NAME to test against an existing PEQ/RoomFit preset instead."
       return
     fi
   fi
@@ -595,6 +801,29 @@ else
   echo
   log_info "Write-tests (RoomFit push family, EQv2Rename, EQSetChannelMode, EQv2Load) were SKIPPED. Re-run with --writes (and optionally --yes) to run them — each backs up and restores state, with confirmation prompts for the higher-risk ones."
 fi
+
+echo
+echo "==================== THEORY CHECK (this device): RoomCorrGetMode <-> RoomCorrSet ===================="
+echo "RoomCorrGetMode classification: $GETMODE_CLASS"
+echo "GetAcousticCapability RC.Version: $RC_VERSION"
+echo "RoomCorrSet mutation result:    $SET_MUTATION_RESULT"
+if [[ "$SET_MUTATION_RESULT" == "MUTATED" || "$SET_MUTATION_RESULT" == "NOT_MUTATED" ]]; then
+  if { [[ "$GETMODE_CLASS" == "REAL" && "$SET_MUTATION_RESULT" == "MUTATED" ]] || [[ "$GETMODE_CLASS" == "ALIASED" && "$SET_MUTATION_RESULT" == "NOT_MUTATED" ]]; }; then
+    log_pass "This device is CONSISTENT with the theory."
+  else
+    log_fail "This device CONTRADICTS the theory (GetMode='$GETMODE_CLASS', Set='$SET_MUTATION_RESULT')."
+  fi
+else
+  log_info "Set-mutation result ('$SET_MUTATION_RESULT') isn't a MUTATED/NOT_MUTATED data point — this device alone can't confirm/refute the theory. Run with --writes to get one (Mini is intentionally exempt — no real RoomFit storage to safely test)."
+fi
+
+if [[ ! -f "$RESULTS_FILE" ]]; then
+  echo "device_ip,model,getmode_class,set_mutation_result,rc_version" >"$RESULTS_FILE"
+fi
+echo "${WIIM_IP},${MODEL},${GETMODE_CLASS},${SET_MUTATION_RESULT},${RC_VERSION}" >>"$RESULTS_FILE"
+log_info "Row appended to $RESULTS_FILE. Once every device has been run (Section 1 alone logs the GetMode/RC.Version side; --writes is needed for the Set side), run:"
+log_info "  $0 --summarize $([[ "$RESULTS_FILE" != "./roomcorr_theory_results.csv" ]] && echo "$RESULTS_FILE")"
+log_info "to get the aggregate CONFIRMED/REFUTED verdict."
 
 echo
 echo "==================== DONE ===================="

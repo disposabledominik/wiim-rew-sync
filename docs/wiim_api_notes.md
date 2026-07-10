@@ -121,7 +121,12 @@ Other models: not yet owned/confirmed, keep generic runtime probing rather than 
 - Source names are **case-sensitive**: `HDMI` (uppercase) → Stereo slot; `hdmi` (lowercase) → L/R
   slot. Same physical input, different data.
 - The API accepts *any* source name string and returns a valid-looking default L/R template for
-  nonexistent ones — it never errors on an unrecognized source at the PEQ layer.
+  nonexistent ones — it never errors on an unrecognized source at the PEQ layer. This includes
+  garbage strings (a stray test value, or a comma-joined string like `"wifi,bluetooth,auxIn"`) —
+  the device stores a slot for whatever was written and will report it back later (e.g. via
+  `EQGetSourceModes`, below). **This is not a multi-source or list-of-sources feature** — every
+  PEQ/RoomFit command still only ever addresses one literal `source_name` string at a time. Never
+  pass a comma-joined or otherwise multi-value string as `source_name`.
 - `udisk` is not a real PEQ source, despite being listed by `getAudioInputCapbility`: reading it
   returns the same all-default template as a nonexistent source, and writing to it
   (`EQv2SourceLoad`) returns `{"status":"Failed"}`. USB playback on Amp Ultra is implemented as a
@@ -245,12 +250,36 @@ For `"L/R"` channel mode, the response contains `EQBandL`/`EQBandR` instead of `
 `EQGetLV2BandEx` (bare pluginURI, no `source_name`) reads the current/live source instead of a
 named one.
 
+**Non-`Ex` forms** (`EQGetLV2Band`, `EQGetLV2SourceBand`) return responses identical to their `Ex`
+counterparts (including `channelMode`) on every firmware tested so far (`docs/corrections.md`,
+2026-07-10). This app uses the `Ex` forms exclusively.
+
+**`EQGetSourceModes`** (bare, no payload) — not in the official API docs, confirmed real on hardware
+(`docs/corrections.md`, 2026-07-10): returns every source's PEQ status in one call instead of one
+`EQGetLV2SourceBandEx` round-trip per source:
+```json
+[{"source_name": "wifi", "Name": "M16", "NameL": "M16", "NameR": "M16", "NameLR": "", "NameMulti": "", "channelMode": "Stereo", "EQStat": "On", "pluginURI": "http://moddevices.com/plugins/caps/EqNp"}]
+```
+`Name` reports the Stereo-mode name, `NameLR` the L/R-mode name — both present simultaneously since
+bands are stored keyed by `(source_name, channelMode)` (see Write below); only the slot matching the
+source's *current* `channelMode` is live. Can also include rows for the legacy `Eq10HP` graphic-EQ
+plugin instead of `EqNp`, and — since the device accepts and stores *any* `source_name` string ever
+written, not just real inputs (see "Key rules" in Source Discovery above) — rows for arbitrary
+garbage strings a client has written in the past, including comma-joined ones (e.g.
+`"wifi,bluetooth,auxIn"`); **these are leftover junk slots, not evidence of a real multi-source
+feature.** Filter for `pluginURI == EqNp` and a known real `source_name` if using this. Not used by
+this app — equivalent per-source data is already available via `EQGetLV2SourceBandEx` — documented
+for completeness only.
+
 ### Write
 ```
 EQSetLV2SourceBand:{"source_name":"wifi","pluginURI":"...","channelMode":"Stereo","EQBand":[...]}
 ```
 `EQSetLV2Band` (no `source_name`) writes the current/live source instead. `channelMode` is set
-inline as part of this same write — the only reliable way to switch it (see "Dead commands" below).
+inline as part of this same write — this app's own write path relies on this, and it works reliably
+on its own. A separate standalone command, `EQSetChannelMode` (see "Dead commands" below), is also
+confirmed to switch mode without touching bands, but isn't used here since the inline form already
+covers it in one call.
 
 **A raw `EQSetLV2Band`/`EQSetLV2SourceBand` write drops the source's `Name` association even when
 the band values are byte-identical to what's already there** (confirmed on real hardware, `docs/
@@ -320,6 +349,7 @@ below — see the `source_name` reference above for what distinguishes them.
 | Save | `EQSourceSave:{"pluginURI":"...","source_name":"wifi","Name":"..."}` | `source_name` **required, real value** |
 | Load | `EQv2SourceLoad:{"source_name":"wifi","pluginURI":"...","Name":"..."}` | `source_name` **required, real value — never omit**; `EQLevel` omitted (device defaults to 1) |
 | Delete | `EQv2Delete:{"pluginURI":"...","Name":"..."}` | — |
+| Rename | `EQv2Rename:{"pluginURI":"...","Name":"<old>","newName":"<new>"}` | Confirmed working via direct hardware round-trip on ordinary PEQ presets on two device models (`docs/corrections.md`, 2026-07-10) — see "Dead commands" below for the superseded "no rename works" claim. |
 
 Once saved, a PEQ preset is a portable, source-independent named object — loadable onto any source
 via Load above. The `source_name` requirement is about *which source's current buffer* gets
@@ -339,12 +369,14 @@ restores the source's original `EQStat` afterward, since `EQv2SourceLoad` turns 
 `EQRenameLV2Preset` — every variant tested returns `{"status":"Failed"}`
 (`docs/corrections.md`, 2026-07-03). Use the `EQv2*` family (Profile CRUD above) instead.
 
-**Capability gap:** no known command renames a saved profile (`EQRenameLV2Preset` fails; nothing in
-`EQv2*` does it either). Workaround: save-as-new-name + delete-old (loses `UpdateAt` metadata).
-
 **`EQSetLV2ChannelMode`** — every tested source (`bluetooth`, `wifi`, `HDMI`) returns
-`{"status":"Failed"}` (`docs/corrections.md`, 2026-07-04). No functional impact: `EQSetLV2SourceBand`'s
-inline `channelMode` (see Write above) reliably switches mode on its own.
+`{"status":"Failed"}` (`docs/corrections.md`, 2026-07-04). Use `EQSetChannelMode` instead (below), or
+the inline `channelMode` field on `EQSetLV2SourceBand` (see Write above), which this app uses.
+
+**`EQSetChannelMode:{"EQLevel":<1|2>,"source_name":"...","pluginURI":"...","channelMode":"Stereo"|"L/R"}`**
+— confirmed working via hardware round-trip on two device models (`docs/corrections.md`, 2026-07-10):
+switches mode standalone, without an accompanying band write. Not used by this app (the inline form
+on `EQSetLV2SourceBand` already covers the same need in one call).
 
 ---
 
@@ -444,6 +476,7 @@ decision, `docs/corrections.md` 2026-07-02).
 | Save | `EQSourceSave:{"pluginURI":"...","Name":"...","EQLevel":2}` | `source_name` **omitted entirely** |
 | Load | `EQv2SourceLoad:{"EQLevel":2,"pluginURI":"...","Name":"..."}` | `source_name` **omitted entirely** |
 | Delete | `EQv2Delete:{"pluginURI":"...","Name":"...","EQLevel":2}` | — |
+| Rename | `EQv2Rename:{"pluginURI":"...","Name":"<old>","newName":"<new>","EQLevel":2}` | Confirmed working via hardware round-trip, both on the auto-calibration profile and on ordinary saved RoomFit profiles (`docs/corrections.md`, 2026-07-10) |
 
 Older list variant: `EQv2GetList:<pluginURI>` (plain URI, PEQ profiles only, names without
 metadata).
@@ -469,12 +502,46 @@ otherwise.
 | `EQv2GetNewList` + `EQLevel:2` returns non-empty `custom` | Device has RoomFit profiles |
 | `EQGetLV2SourceBandEx` + `EQLevel:2` returns band data | RoomFit readable |
 | `EQSourceSave`/`EQv2Delete` + `EQLevel:2` succeed | Save/delete work |
-| Empty `custom` list AND `EQStat:Off` on band read | No RoomFit (e.g. WiiM Mini) |
+| Empty `custom` list on `EQv2GetNewList` + `EQLevel:2` | No RoomFit (e.g. WiiM Mini) |
 
 WiiM Mini silently accepts all RoomFit commands (HTTP 200, valid-looking responses) despite having
 no RoomFit hardware — there's no API-level distinction between "RoomFit off" and "RoomFit doesn't
-exist." Treat the empty-list + `EQStat:Off` combination above as the signal, not the raw response
-status (`docs/corrections.md`, 2026-06-14).
+exist," and `EQStat` on a RoomFit-less device is not reliably `Off` at rest. Treat the empty-`custom`
+-list condition above as the sole signal, not `EQStat` or the raw response status (`docs/
+corrections.md`, 2026-06-14, 2026-07-10).
+
+### Calibration-result push commands — out of scope, not used by this app
+
+A second, separate command family exists alongside the `EQLevel:2` LV2 commands above, confirmed
+real against hardware across three device models (`docs/corrections.md`, 2026-07-10), but not used
+anywhere in this app:
+
+| Command | Payload | Behavior |
+|---|---|---|
+| `RoomCorrGet` | bare, no payload | Reads "whatever's currently relevant" rather than a fixed RoomFit buffer: `EQLevel:2`/`source_name:"default"` data on a device with real RoomFit profiles, but `EQLevel:1`/live-PEQ-source data on a device with none. |
+| `RoomCorrSet:{"EQLevel":2,"pluginURI":"...","EQBand":[...],"UpdateAt":<ms>,"rc_output":"AUDIO_OUTPUT_SPEAKER_MODE"}` | mono | Pushes a calibration result into the RoomFit buffer. Where the write took visible effect, the buffer's `Name` was unconditionally overwritten to `"Auto"` regardless of what was requested — consistent with this being the calibration-completion push, where a fresh profile defaults to `Auto`/`Auto_LR` unless the user renames it. |
+| `RoomCorrSetLR:{...,"EQBandL":[...],"EQBandR":[...],...}` | stereo/LR | Same, L/R variant. |
+| `RoomCorrSetMode:Measure` / `RoomCorrSetMode:Playback` | bare enum value, exact case confirmed against hardware | Recognized (not "unknown command") but returned `{"status":"Failed"}` on every device model tested. |
+| `setRoomCorrection:<RC_Version>` | bare version string | Recognized, returns a plain `"OK"` string (not JSON). Confirmed on two devices **not** to control `EQStat`; accepts an obviously-invalid string identically to a real one — no input validation observed. Effect unconfirmed. |
+| `RoomCorrGetMode` | bare, no payload | Recognized on all 4 devices tested, but its response shape is inconsistent: on WiiM Sound and WiiM Sound Lite it returns the expected `{"Mode":"Playback"}` (mirroring `RoomCorrSetMode`'s enum); on WiiM Amp Ultra and WiiM Mini it instead returns the same full profile-dump shape as `RoomCorrGet` (`EQLevel`/`source_name`/`Name`/`EQBand`/`EQStat`, no `Mode` field at all) — i.e. it's not implemented as a distinct command on those two, it just falls through to the `RoomCorrGet` handler. |
+
+**`GetAcousticCapability`** (bare, no payload; not itself part of the `RoomCorr*` family) — a general
+subsystem-version report (`PEQ`/`GEQ`/`RC`/`HeadphoneEQ`/`SubLPF`/etc., each with its own `Version`
+field). Returns `{"status":"Failed"}` on devices with no acoustic-capability subsystem at all (WiiM
+Mini). Its `RC.Version` field turns out to be the real explanation for this family's behavior below.
+
+**Do not use this family.** It duplicates functionality already covered by the confirmed `EQLevel:2`
+LV2 commands above, and on RoomFit-less devices it has been observed to corrupt a real `EQLevel:1`
+source's `channelMode`/`Name` — this app's own confirmed `EQChangeSourceFX`/`EQSourceOff` calls do
+not have this effect. **Confirmed (`docs/corrections.md`, 2026-07-10):** this family's inconsistent
+write behavior tracks `GetAcousticCapability`'s `RC.Version` field, not a calibration-session gate:
+`RC.Version:"1.1"` (WiiM Sound, WiiM Sound Lite) is exactly where `RoomCorrGetMode` returns a real
+`{"Mode":...}` response and `RoomCorrSet` actually mutates the buffer; `RC.Version:"1.0"` (WiiM Amp
+Ultra) is exactly where both are aliased/inert. WiiM Mini has no `RC` capability at all
+(`GetAcousticCapability` itself fails), consistent with having no RoomFit hardware. Only two
+`RC.Version` values have been observed so far — treat "`RC.Version >= 1.1`" as the working
+assumption, not a confirmed threshold; a device reporting some other version is untested. Full
+investigation trail: `docs/corrections.md`, 2026-07-10.
 
 ### Notes
 - Same `param_name`/band-letter/`channelMode`/`EQStat` format as PEQ — `wiim_parser.py` and

@@ -67,3 +67,9 @@ desktop.ini
 
 # Kiro IDE internal (keep steering.md and specs, exclude generated cache)
 .kiro/settings/
+
+# Example files
+docs/device_capability_examples
+
+# Local hardware-validation script output (device IPs, per-machine test results)
+roomcorr_theory_results.csv
