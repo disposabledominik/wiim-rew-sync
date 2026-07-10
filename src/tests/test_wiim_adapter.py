@@ -1557,6 +1557,33 @@ class TestSetRoomfitEnabled:
         assert call_args.startswith("EQSourceOff:")
 
 
+class TestSetPeqEnabled:
+    """Test set_peq_enabled — the bool-driven per-source PEQ enable/disable
+    wrapper (#192), mirroring set_roomfit_enabled()."""
+
+    async def test_set_peq_enabled_true_calls_enable(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.return_value = "OK"
+
+        await adapter.set_peq_enabled("wifi", True)
+
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQChangeSourceFX:")
+        assert "wifi" in call_args
+
+    async def test_set_peq_enabled_false_calls_disable(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.return_value = "OK"
+
+        await adapter.set_peq_enabled("wifi", False)
+
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args.startswith("EQSourceOff:")
+        assert "wifi" in call_args
+
+
 class TestGetPeqEnabled:
     """Test get_peq_enabled — reading PEQ enabled state from EQStat field."""
 
@@ -1707,7 +1734,8 @@ class TestReadPeqPresetPreview:
     async def test_loads_then_restores_original(
         self, adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """Loads the target preset, reads it, then restores the original."""
+        """Loads the target preset, reads it, then restores the original
+        (both name and enable-state, #192)."""
         original_response = {
             "EQStat": "On", "channelMode": "Stereo", "Name": "Original", "EQBand": [],
         }
@@ -1719,24 +1747,54 @@ class TestReadPeqPresetPreview:
             "OK",  # load_peq_profile (target)
             preview_response,  # read_peq (preview)
             "OK",  # load_peq_profile (restore original)
+            "OK",  # set_peq_enabled(True) (restore original enable-state)
         ]
 
         result = await adapter.read_peq_preset_preview("wifi", "Preview")
 
         assert result.name == "Preview"
         calls = mock_client.command.call_args_list
-        assert len(calls) == 4
+        assert len(calls) == 5
         assert "EQGetLV2SourceBandEx:" in calls[0][0][0]
         assert "EQv2SourceLoad:" in calls[1][0][0]
         assert "Preview" in calls[1][0][0]
         assert "EQGetLV2SourceBandEx:" in calls[2][0][0]
         assert "EQv2SourceLoad:" in calls[3][0][0]
         assert "Original" in calls[3][0][0]
+        assert "EQChangeSourceFX" in calls[4][0][0]
+
+    async def test_restores_enable_state_when_it_had_been_disabled(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """#192: previewing on a source where PEQ was OFF must leave it OFF
+        afterward -- defensive fix mirroring the hardware-confirmed RoomFit
+        finding, since load_peq_profile() wraps the same EQv2SourceLoad
+        command family."""
+        original_response = {
+            "EQStat": "Off", "channelMode": "Stereo", "Name": "Original", "EQBand": [],
+        }
+        preview_response = {
+            "EQStat": "On", "channelMode": "Stereo", "Name": "Preview", "EQBand": [],
+        }
+        mock_client.command.side_effect = [
+            original_response,
+            "OK",
+            preview_response,
+            "OK",
+            "OK",  # set_peq_enabled(False)
+        ]
+
+        await adapter.read_peq_preset_preview("wifi", "Preview")
+
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 5
+        assert "EQSourceOff" in calls[4][0][0]
 
     async def test_skips_restore_when_same_preset(
         self, adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """No restore call when the target preset is already active."""
+        """No name-restore call when the target preset is already active,
+        but enable-state is still unconditionally restored."""
         same_response = {
             "EQStat": "On", "channelMode": "Stereo", "Name": "Preview", "EQBand": [],
         }
@@ -1744,11 +1802,12 @@ class TestReadPeqPresetPreview:
             same_response,  # read_peq (original == target)
             "OK",  # load_peq_profile (target)
             same_response,  # read_peq (preview)
+            "OK",  # set_peq_enabled(True)
         ]
 
         await adapter.read_peq_preset_preview("wifi", "Preview")
 
-        assert mock_client.command.call_count == 3
+        assert mock_client.command.call_count == 4
 
     async def test_restores_via_write_peq_when_original_unnamed(
         self, mock_client: AsyncMock
@@ -1778,12 +1837,13 @@ class TestReadPeqPresetPreview:
             "OK",  # load_peq_profile (target)
             preview_response,  # read_peq (preview)
             "OK",  # _write_peq_batch (restore via write_peq)
+            "OK",  # set_peq_enabled(True)
         ]
 
         await adapter.read_peq_preset_preview("wifi", "Preview")
 
         calls = mock_client.command.call_args_list
-        assert len(calls) == 4
+        assert len(calls) == 5
         assert "EQSetLV2SourceBand:" in calls[3][0][0]
 
     async def test_restore_failure_is_logged_not_raised(
@@ -1840,10 +1900,12 @@ class TestReadRoomfitPresetPreview:
             firmware="6.0.1.20",
         )
 
-    async def test_loads_then_restores_original(
+    async def test_loads_then_restores_original_selection_and_enable_state(
         self, mock_client: AsyncMock, roomfit_preview_capabilities: DeviceCapabilities
     ) -> None:
-        """Loads the target profile, reads it, then restores the original."""
+        """Loads the target profile, reads it, then restores the original
+        selection AND on/off state (#192 -- previously only selection was
+        restored, leaving RoomFit enabled if it had been off)."""
         adapter = WiiMAdapter(
             http_client=mock_client, capabilities=roomfit_preview_capabilities
         )
@@ -1853,24 +1915,28 @@ class TestReadRoomfitPresetPreview:
             "EQStat": "Off", "channelMode": "Stereo", "Name": "Preview", "EQBand": [],
         }
         restore_response = "OK"
+        disable_response = "OK"
         mock_client.command.side_effect = [
             status_response,  # get_roomfit_status
             load_target_response,  # load_roomfit_profile (target, via read_roomfit)
             band_response,  # EQGetLV2SourceBandEx (via read_roomfit)
-            restore_response,  # load_roomfit_profile (restore original)
+            restore_response,  # load_roomfit_profile (restore original selection)
+            disable_response,  # set_roomfit_enabled(False) (restore original Off state)
         ]
 
         result = await adapter.read_roomfit_preset_preview("wifi", "Preview")
 
         assert result.name == "Preview"
         calls = mock_client.command.call_args_list
-        assert len(calls) == 4
+        assert len(calls) == 5
         assert "Original" in calls[3][0][0]
+        assert "EQSourceOff" in calls[4][0][0]
 
-    async def test_skips_restore_when_same_profile(
+    async def test_skips_selection_restore_but_still_restores_enable_state(
         self, mock_client: AsyncMock, roomfit_preview_capabilities: DeviceCapabilities
     ) -> None:
-        """No restore call when the target profile is already selected."""
+        """No selection-restore call when the target profile is already
+        selected, but enable-state is still unconditionally restored."""
         adapter = WiiMAdapter(
             http_client=mock_client, capabilities=roomfit_preview_capabilities
         )
@@ -1882,11 +1948,14 @@ class TestReadRoomfitPresetPreview:
             status_response,  # get_roomfit_status (already "Preview")
             "OK",  # load_roomfit_profile (target, via read_roomfit)
             band_response,  # EQGetLV2SourceBandEx (via read_roomfit)
+            "OK",  # set_roomfit_enabled(False)
         ]
 
         await adapter.read_roomfit_preset_preview("wifi", "Preview")
 
-        assert mock_client.command.call_count == 3
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 4
+        assert "EQSourceOff" in calls[3][0][0]
 
     async def test_restore_failure_is_logged_not_raised(
         self,
@@ -1894,7 +1963,8 @@ class TestReadRoomfitPresetPreview:
         roomfit_preview_capabilities: DeviceCapabilities,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """A failed restore attempt is logged as a warning, not propagated."""
+        """A failed restore attempt (selection or enable-state) is logged as
+        a warning, not propagated."""
         import logging
 
         adapter = WiiMAdapter(
@@ -2004,3 +2074,102 @@ class TestRestoreRoomfitActiveProfile:
             logger.propagate = False
 
         assert any("Failed to restore" in rec.message for rec in caplog.records)
+
+
+class TestRestoreRoomfitSelectionAndEnableState:
+    """Direct unit coverage for restore_roomfit_selection_and_enable_state()
+    (#192) -- shared by read_roomfit_preset_preview() and RoomFitSafeWrite's
+    failure/undo paths (safe_write.py). Introduced when a hardware report
+    showed the preview path was restoring selection but silently dropping
+    the captured enable/disable state, leaving RoomFit on after a read-only
+    preview if it had been off."""
+
+    @pytest.fixture
+    def adapter(
+        self, mock_client: AsyncMock, roomfit_preview_capabilities: DeviceCapabilities
+    ) -> WiiMAdapter:
+        return WiiMAdapter(http_client=mock_client, capabilities=roomfit_preview_capabilities)
+
+    @pytest.fixture
+    def roomfit_preview_capabilities(self) -> DeviceCapabilities:
+        return DeviceCapabilities(
+            supports_peq=True,
+            supports_roomfit=True,
+            supports_roomfit_read=True,
+            roomfit_level=3,
+            max_filters=10,
+            model="WiiM_Ultra",
+            firmware="6.0.1.20",
+        )
+
+    async def test_restores_both_selection_and_enable_state(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.return_value = "OK"
+
+        await adapter.restore_roomfit_selection_and_enable_state(
+            "Living Room", False, "Movie Night", context="previewing 'Movie Night'"
+        )
+
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 2
+        assert "Living%20Room" in calls[0][0][0]
+        assert "EQSourceOff" in calls[1][0][0]
+
+    async def test_skips_enable_restore_when_enabled_is_none(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.return_value = "OK"
+
+        await adapter.restore_roomfit_selection_and_enable_state(
+            "Living Room", None, "Movie Night", context="previewing 'Movie Night'"
+        )
+
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 1
+        assert "Living%20Room" in calls[0][0][0]
+
+    async def test_still_restores_enable_state_when_selection_unchanged(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """Selection restore is skipped (same name), but enable-state restore
+        is unconditional -- the exact gap #192 fixed."""
+        mock_client.command.return_value = "OK"
+
+        await adapter.restore_roomfit_selection_and_enable_state(
+            "Movie Night", True, "Movie Night", context="previewing 'Movie Night'"
+        )
+
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 1
+        assert "EQChangeSourceFX" in calls[0][0][0]
+
+    async def test_swallows_and_logs_enable_restore_failure(
+        self,
+        adapter: WiiMAdapter,
+        mock_client: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        async def side_effect(_command: str) -> str:
+            if mock_client.command.call_count == 1:
+                return "OK"
+            raise WiiMConnectionError("boom")
+
+        mock_client.command.side_effect = side_effect
+
+        logger = logging.getLogger("wiim_rew_sync.wiim_api")
+        logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.wiim_api"):
+                await adapter.restore_roomfit_selection_and_enable_state(
+                    "Living Room", True, "Movie Night", context="previewing 'Movie Night'"
+                )
+        finally:
+            logger.propagate = False
+
+        assert any(
+            "Failed to restore RoomFit enable-state" in rec.message
+            for rec in caplog.records
+        )

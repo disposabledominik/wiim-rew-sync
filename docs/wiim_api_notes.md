@@ -293,6 +293,15 @@ Not queued for a code fix; see `docs/corrections.md`, 2026-07-04, for the full a
 possible mitigations (batch-attempt-first override, `EQSourceOff` muting bracket) if this is ever
 prioritized.
 
+### Write workflow
+`SafeWrite` (`src/adapters/safe_write.py`) implements the mandatory backup/write/read-back/
+verify/rollback protocol above plus the `EQv2SourceLoad` unconditional-enable rule (RoomFit section,
+rule 4 below — confirmed for PEQ too, `docs/corrections.md` #192). On a successful write it turns
+PEQ on for the source if it was off (deliberate behavior, not suppressed); on failure it restores
+the source's original enable-state. `SafeWrite.undo()` restores a previous push's bands and
+enable-state together. See `docs/corrections.md` for the redesign rationale (mirrors RoomFit's
+push/undo behavior below).
+
 ### Enable / disable
 ```
 EQChangeSourceFX:{"EQLevel":1,"source_name":"wifi","pluginURI":"..."}   # enable
@@ -309,7 +318,7 @@ below — see the `source_name` reference above for what distinguishes them.
 |---|---|---|
 | List | `EQv2GetNewList:{"pluginURI":"...","EQLevel":1}` | — |
 | Save | `EQSourceSave:{"pluginURI":"...","source_name":"wifi","Name":"..."}` | `source_name` **required, real value** |
-| Load | `EQv2SourceLoad:{"EQLevel":1,"source_name":"wifi","pluginURI":"...","Name":"..."}` | `source_name` **required, real value — never omit** |
+| Load | `EQv2SourceLoad:{"source_name":"wifi","pluginURI":"...","Name":"..."}` | `source_name` **required, real value — never omit**; `EQLevel` omitted (device defaults to 1) |
 | Delete | `EQv2Delete:{"pluginURI":"...","Name":"..."}` | — |
 
 Once saved, a PEQ preset is a portable, source-independent named object — loadable onto any source
@@ -319,7 +328,9 @@ captured/targeted by Save/Load — a separate concern from the saved object's po
 **No stateless "peek" command exists** for inspecting a saved preset's bands without disturbing a
 real source. Read the target source's current `Name` first, `EQv2SourceLoad` the preset onto it,
 read its bands, then `EQv2SourceLoad` the original `Name` back to restore — slower, but the only
-confirmed-safe pattern (`docs/corrections.md`, 2026-07-03).
+confirmed-safe pattern (`docs/corrections.md`, 2026-07-03). `read_peq_preset_preview()` also
+restores the source's original `EQStat` afterward, since `EQv2SourceLoad` turns it on unconditionally
+(RoomFit section rule 4 below — confirmed for PEQ too, `docs/corrections.md` #192).
 
 ### Dead commands — do not use
 
@@ -355,12 +366,13 @@ buffer is global and reads whatever was loaded last, not "the" profile by defaul
 
 ### Operational rules
 
-1. **Any read of a named profile is a real write to the "selected" state, not a side-effect-free
-   peek.** `EQv2SourceLoad`-ing a profile to read its bands makes it the buffer's `Name` — and
-   therefore what `get_roomfit_status()` reports as selected. Code that reads purely to inspect a
-   profile (previews, verification reads) must capture the previously-selected `Name` first and
-   restore it afterward if it shouldn't change what's selected
-   (`WiiMAdapter.restore_roomfit_active_profile()`).
+1. **Any read of a named profile is a real write to the "selected" state -- and to `EQStat` --
+   not a side-effect-free peek.** `EQv2SourceLoad`-ing a profile to read its bands makes it the
+   buffer's `Name` (and therefore what `get_roomfit_status()` reports as selected), and, per rule 4
+   below, unconditionally turns `EQStat` on if it was off. Code that reads purely to inspect a
+   profile (previews, verification reads) must capture the previously-selected `Name` **and**
+   `EQStat` first and restore both afterward if they shouldn't change
+   (`WiiMAdapter.restore_roomfit_selection_and_enable_state()`).
 2. **A profile stays "selected" even while `EQStat` is `"Off"`.** Disabling RoomFit doesn't deselect
    the working buffer's `Name` — it just stops applying it. The instant `EQStat` flips back on,
    whatever's selected is immediately applied to live audio. There is no "disabled and deselected"
@@ -369,11 +381,13 @@ buffer is global and reads whatever was loaded last, not "the" profile by defaul
    whichever name it was last saved under; deleting that same profile leaves `Name` pointing at
    something that no longer exists (reads back `""`). Any such save-then-delete sequence must
    capture the real pre-save `Name` and restore it via `EQv2SourceLoad` afterward.
-4. **`EQSourceSave` may also flip `EQStat` on as an undocumented side effect** (root cause
-   unconfirmed — `# ASSUMPTION:` in `capability_prober.py`, `docs/corrections.md` #190). Code
-   performing a save-then-something sequence must treat `EQStat` with the same care as rule 3, or
-   avoid the sequence entirely when `EQStat` is off and a real profile is selected
-   (`CapabilityProber._probe_roomfit()`'s level-4 guard is the reference implementation).
+4. **`EQv2SourceLoad` unconditionally turns `EQStat` on as a side effect of loading a profile.**
+   Confirmed for both RoomFit's global buffer and PEQ's per-source form (`docs/corrections.md`
+   #192). `EQSourceSave` does not. Code performing a load-then-something sequence must treat
+   `EQStat` with the same care as rule 3, or avoid the sequence entirely when `EQStat` is off and a
+   real profile is selected. Reference implementations: `CapabilityProber._probe_roomfit()`'s
+   level-4 guard, `WiiMAdapter.restore_roomfit_selection_and_enable_state()` (RoomFit),
+   `read_peq_preset_preview()` (PEQ).
 5. **`source_name` must be `""` (present, empty) for band read/write and the DSP toggle**
    (`EQGetLV2SourceBandEx`/`EQSetLV2SourceBand`/`EQChangeSourceFX`/`EQSourceOff`); profile-CRUD
    commands (`EQv2SourceLoad`/`EQv2Delete`/`EQv2GetNewList`/`EQSourceSave`) omit it entirely instead.

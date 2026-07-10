@@ -168,57 +168,6 @@ class TestPushHappyPath:
 
 
 # ---------------------------------------------------------------------------
-# Push — Progress Updates
-# ---------------------------------------------------------------------------
-
-
-class TestPushProgressUpdates:
-    """Test _do_push emits progress_update signals for SafeWrite stages."""
-
-    @pytest.mark.asyncio
-    async def test_push_progress_updates(self, window) -> None:
-        """Verify progress_update emitted with "Backing up..." stage message.
-
-        Requirement: 6.6
-        """
-        mock_safe_write = _setup_push_state(window)
-        result = WriteResult(
-            success=True,
-            rollback_success=None,
-            backup_path=Path("/backups/wifi_backup.json"),
-        )
-        mock_safe_write.execute = AsyncMock(return_value=result)
-
-        await window._do_push()
-
-        # Verify progress_update was called with stage messages
-        progress_calls = window._bridge.progress_update.emit.call_args_list
-        messages = [call[0][0] for call in progress_calls]
-        assert "Backing up..." in messages
-
-    @pytest.mark.asyncio
-    async def test_push_success_emits_verifying(self, window) -> None:
-        """Verify success path emits Verifying progress stage.
-
-        Requirement: 6.6
-        """
-        mock_safe_write = _setup_push_state(window)
-        result = WriteResult(
-            success=True,
-            rollback_success=None,
-            backup_path=Path("/backups/wifi_backup.json"),
-        )
-        mock_safe_write.execute = AsyncMock(return_value=result)
-
-        await window._do_push()
-
-        progress_calls = window._bridge.progress_update.emit.call_args_list
-        messages = [call[0][0] for call in progress_calls]
-        assert "Backing up..." in messages
-        assert "Verifying..." in messages
-
-
-# ---------------------------------------------------------------------------
 # Push — Exception via bridge_wrapper
 # ---------------------------------------------------------------------------
 

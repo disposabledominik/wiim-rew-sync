@@ -64,3 +64,9 @@ class BackupRecord(Profile):
     pre_write_active_profile: str | None = None
     pre_write_roomfit_enabled: bool | None = None
     was_new_profile: bool | None = None
+
+    # PEQ's independent analog of pre_write_roomfit_enabled -- kept separate
+    # (not reused) since a backup record must unambiguously identify which
+    # subsystem's enable-state it carries. None for RoomFit backups and any
+    # backup file created before this field's introduction.
+    pre_write_peq_enabled: bool | None = None

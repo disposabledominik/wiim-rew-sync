@@ -759,6 +759,330 @@ class TestEmptyBands:
 
 
 # ---------------------------------------------------------------------------
+# Tests: SafeWrite enable-state (PEQ redesign, mirrors #191 -- see
+# docs/corrections.md)
+# ---------------------------------------------------------------------------
+
+
+class TestPeqEnableOnSuccess:
+    """A successful push turns PEQ on for the source -- deliberate, best-effort,
+    mirrors RoomFitSafeWrite's success-path enable_roomfit() call."""
+
+    async def test_success_enables_peq_when_it_was_off(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        original = PEQSettings(
+            source_name="wifi", enabled=False,
+            channel_mode=ChannelMode.STEREO, bands=_make_bands(),
+        )
+        intended = _make_settings()
+        mock_adapter.read_peq.side_effect = [original, intended]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is True
+        mock_adapter.enable_peq.assert_called_once_with("wifi")
+
+    async def test_success_enables_peq_even_when_already_on(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """enable_peq() is called unconditionally on success, not only when
+        there's a before/after diff -- confirms deliberate behavior, not a
+        guarded no-op."""
+        intended = _make_settings()  # enabled=True
+        mock_adapter.read_peq.side_effect = [intended, intended]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is True
+        mock_adapter.enable_peq.assert_called_once_with("wifi")
+
+    async def test_enable_peq_failure_does_not_fail_the_push(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A verified-correct write still reports success even if the
+        follow-up enable_peq() call raises (best-effort, logged)."""
+        intended = _make_settings()
+        mock_adapter.read_peq.side_effect = [intended, intended]
+        mock_adapter.enable_peq.side_effect = Exception("network blip")
+
+        app_logger = logging.getLogger("wiim_rew_sync.app")
+        app_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.app"):
+                result = await safe_write.execute("wifi", intended)
+            assert any(
+                "enable PEQ" in r.message for r in caplog.records
+            )
+        finally:
+            app_logger.propagate = False
+
+        assert result.success is True
+
+
+class TestPeqEnableRestoreOnFailure:
+    """A failed push (verification mismatch + rollback) restores the
+    source's original enable-state -- mirrors RoomFitSafeWrite's
+    failure-path enable-state restore."""
+
+    async def test_rollback_restores_original_enabled_state(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        original = PEQSettings(
+            source_name="wifi", enabled=True,
+            channel_mode=ChannelMode.STEREO, bands=_make_bands(freq=200.0),
+        )
+        intended = _make_settings(bands=_make_bands(freq=100.0))
+        bad_readback = _make_settings(bands=_make_bands(freq=500.0))
+
+        mock_adapter.read_peq.side_effect = [
+            original, bad_readback, bad_readback, original,
+        ]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is False
+        mock_adapter.set_peq_enabled.assert_called_once_with("wifi", True)
+        mock_adapter.enable_peq.assert_not_called()
+
+    async def test_rollback_restores_original_disabled_state(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """Original state was 'off' -- rollback must restore 'off'
+        specifically, not a hardcoded True."""
+        original = PEQSettings(
+            source_name="wifi", enabled=False,
+            channel_mode=ChannelMode.STEREO, bands=_make_bands(freq=200.0),
+        )
+        intended = _make_settings(bands=_make_bands(freq=100.0))
+        bad_readback = _make_settings(bands=_make_bands(freq=500.0))
+
+        mock_adapter.read_peq.side_effect = [
+            original, bad_readback, bad_readback, original,
+        ]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is False
+        mock_adapter.set_peq_enabled.assert_called_once_with("wifi", False)
+        mock_adapter.enable_peq.assert_not_called()
+
+
+class TestPeqBackupCarriesEnabledState:
+    """create_backup() must carry the source's pre-write enable-state so
+    undo() can later restore it."""
+
+    async def test_backup_carries_enabled_true(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock,
+        mock_backup_manager: MagicMock,
+    ) -> None:
+        intended = _make_settings()
+        mock_adapter.read_peq.side_effect = [intended, intended]
+
+        await safe_write.execute("wifi", intended)
+
+        call_kwargs = mock_backup_manager.create_backup.call_args.kwargs
+        assert call_kwargs["pre_write_peq_enabled"] is True
+
+    async def test_backup_carries_enabled_false(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock,
+        mock_backup_manager: MagicMock,
+    ) -> None:
+        original = PEQSettings(
+            source_name="wifi", enabled=False,
+            channel_mode=ChannelMode.STEREO, bands=_make_bands(),
+        )
+        intended = _make_settings()
+        mock_adapter.read_peq.side_effect = [original, intended]
+
+        await safe_write.execute("wifi", intended)
+
+        call_kwargs = mock_backup_manager.create_backup.call_args.kwargs
+        assert call_kwargs["pre_write_peq_enabled"] is False
+
+
+class TestPeqUndoRestoresEnabledState:
+    """SafeWrite.undo() restores both bands and the true original
+    enable-state -- using a real BackupManager since undo() reads back what
+    create_backup() actually wrote (mirrors
+    TestRoomFitPushThenUndoPreservesActiveProfile's fixture reasoning)."""
+
+    async def test_undo_after_push_while_off_restores_off(
+        self, mock_adapter: AsyncMock, tmp_path: Path
+    ) -> None:
+        real_backup_manager = BackupManager(tmp_path)
+        sw = SafeWrite(adapter=mock_adapter, backup_manager=real_backup_manager)
+
+        original = PEQSettings(
+            source_name="wifi", enabled=False,
+            channel_mode=ChannelMode.STEREO, bands=_make_bands(freq=200.0),
+        )
+        intended = _make_settings(bands=_make_bands(freq=100.0))
+        mock_adapter.read_peq.side_effect = [original, intended]
+
+        push_result = await sw.execute("wifi", intended)
+        assert push_result.success is True
+        assert push_result.backup_path is not None
+
+        # Undo: bands-restore write/read-back matches the original bands.
+        mock_adapter.read_peq.side_effect = [intended, original]
+
+        undo_result = await sw.undo(push_result.backup_path, "wifi")
+
+        assert undo_result.success is True
+        # Two set_peq_enabled calls total: none from the push (it succeeded,
+        # only enable_peq fires), one from undo's post-execute() correction.
+        mock_adapter.set_peq_enabled.assert_called_once_with("wifi", False)
+
+    async def test_undo_after_push_while_on_leaves_it_on(
+        self, mock_adapter: AsyncMock, tmp_path: Path
+    ) -> None:
+        """No-op restore: pushing while already on, undo must not flip it off."""
+        real_backup_manager = BackupManager(tmp_path)
+        sw = SafeWrite(adapter=mock_adapter, backup_manager=real_backup_manager)
+
+        original = PEQSettings(
+            source_name="wifi", enabled=True,
+            channel_mode=ChannelMode.STEREO, bands=_make_bands(freq=200.0),
+        )
+        intended = _make_settings(bands=_make_bands(freq=100.0))
+        mock_adapter.read_peq.side_effect = [original, intended]
+
+        push_result = await sw.execute("wifi", intended)
+        assert push_result.success is True
+
+        mock_adapter.read_peq.side_effect = [intended, original]
+
+        undo_result = await sw.undo(push_result.backup_path, "wifi")
+
+        assert undo_result.success is True
+        mock_adapter.set_peq_enabled.assert_called_once_with("wifi", True)
+
+
+class TestPeqUndoOldFormatBackup:
+    """A backup file written before pre_write_peq_enabled existed must
+    degrade gracefully: bands restored, enable-state left untouched by
+    undo's own correction step (only execute()'s own enable-on-success
+    applies)."""
+
+    async def test_undo_old_format_backup_skips_enable_restore(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, tmp_path: Path
+    ) -> None:
+        backup_file = tmp_path / "old_backup.json"
+        backup_file.write_text(
+            '{"channel_mode": "stereo", "filters": ['
+            '{"type": "PEAK", "frequency_hz": 100.0, "gain_db": -2.0, "q": 1.0}'
+            ']}',
+            encoding="utf-8",
+        )
+        intended_readback = _make_settings(
+            bands=[CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
+        )
+        mock_adapter.read_peq.side_effect = [intended_readback, intended_readback]
+
+        result = await safe_write.undo(backup_file, "wifi")
+
+        assert result.success is True
+        mock_adapter.enable_peq.assert_called_once_with("wifi")
+        mock_adapter.set_peq_enabled.assert_not_called()
+
+
+class TestPeqUndoEmptyBandsBackup:
+    """A backup capturing zero bands (the source legitimately had no PEQ
+    filters applied before the original push -- a valid "flat EQ" state, not
+    malformed data) must still be restorable by undo(). Regression: undo()
+    used to refuse any backup with `not filters` ("Backup contains no
+    filters"), but parse_backup_filters() can't distinguish a legitimately-
+    empty capture from a missing/corrupt one -- both parse to []."""
+
+    async def test_undo_restores_source_to_zero_bands(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, tmp_path: Path
+    ) -> None:
+        backup_file = tmp_path / "empty_bands_backup.json"
+        backup_file.write_text(
+            '{"channel_mode": "stereo", "filters": [], '
+            '"pre_write_peq_enabled": true}',
+            encoding="utf-8",
+        )
+        empty_readback = _make_settings(bands=[])
+        mock_adapter.read_peq.side_effect = [empty_readback, empty_readback]
+
+        result = await safe_write.undo(backup_file, "wifi")
+
+        assert result.success is True
+        mock_adapter.write_peq.assert_called_once()
+        settings = mock_adapter.write_peq.call_args[0][1]
+        assert settings.bands == []
+
+
+class TestPeqUndoLRUnequalLengthsNotNaivelySplit:
+    """Regression, relocated from test_gui_integration_secondary.py: undo
+    must rebuild bands_l/bands_r from the backup's explicit per-channel
+    data, never by positionally re-splitting the combined filter list
+    50/50 (only "accidentally" correct when both channels happen to have
+    equal length). Now exercises the real SafeWrite.undo() (the
+    settings-reconstruction logic moved here from
+    SecondaryWorkflowManager._do_undo() as part of the PEQ redesign).
+    """
+
+    async def test_undo_lr_unequal_lengths_preserves_channel_split(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock, tmp_path: Path
+    ) -> None:
+        backup_data = (
+            '{"channel_mode": "left", '
+            '"filters_l": ['
+            '{"type": "PEAK", "frequency_hz": 100.0, "gain_db": -2.0, "q": 1.0}, '
+            '{"type": "PEAK", "frequency_hz": 110.0, "gain_db": -2.0, "q": 1.0}, '
+            '{"type": "PEAK", "frequency_hz": 120.0, "gain_db": -2.0, "q": 1.0}'
+            '], "filters_r": ['
+            '{"type": "PEAK", "frequency_hz": 200.0, "gain_db": -4.0, "q": 1.5}, '
+            '{"type": "PEAK", "frequency_hz": 210.0, "gain_db": -4.0, "q": 1.5}, '
+            '{"type": "PEAK", "frequency_hz": 220.0, "gain_db": -4.0, "q": 1.5}, '
+            '{"type": "PEAK", "frequency_hz": 230.0, "gain_db": -4.0, "q": 1.5}, '
+            '{"type": "PEAK", "frequency_hz": 240.0, "gain_db": -4.0, "q": 1.5}'
+            ']}'
+        )
+        backup_file = tmp_path / "backup_lr_unequal.json"
+        backup_file.write_text(backup_data, encoding="utf-8")
+
+        # read-back must match the split bands exactly, or verify_bands()
+        # would fail and execute() would fall through to rollback -- which
+        # would exhaust this side_effect list and raise, instead of letting
+        # this test observe the single write_peq() call it cares about.
+        matching_readback = PEQSettings(
+            source_name="wifi",
+            channel_mode=ChannelMode.LR,
+            bands_l=[
+                CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0),
+                CanonicalFilter(type="PEAK", frequency_hz=110.0, gain_db=-2.0, q=1.0),
+                CanonicalFilter(type="PEAK", frequency_hz=120.0, gain_db=-2.0, q=1.0),
+            ],
+            bands_r=[
+                CanonicalFilter(type="PEAK", frequency_hz=200.0, gain_db=-4.0, q=1.5),
+                CanonicalFilter(type="PEAK", frequency_hz=210.0, gain_db=-4.0, q=1.5),
+                CanonicalFilter(type="PEAK", frequency_hz=220.0, gain_db=-4.0, q=1.5),
+                CanonicalFilter(type="PEAK", frequency_hz=230.0, gain_db=-4.0, q=1.5),
+                CanonicalFilter(type="PEAK", frequency_hz=240.0, gain_db=-4.0, q=1.5),
+            ],
+        )
+        mock_adapter.read_peq.side_effect = [matching_readback, matching_readback]
+
+        await safe_write.undo(backup_file, "wifi")
+
+        mock_adapter.write_peq.assert_called_once()
+        call_args = mock_adapter.write_peq.call_args
+        settings = call_args[0][1]
+
+        assert settings.bands_l is not None and len(settings.bands_l) == 3
+        assert settings.bands_r is not None and len(settings.bands_r) == 5
+        assert [f.frequency_hz for f in settings.bands_l] == [100.0, 110.0, 120.0]
+        assert [f.frequency_hz for f in settings.bands_r] == [
+            200.0, 210.0, 220.0, 230.0, 240.0,
+        ]
+
+
+# ---------------------------------------------------------------------------
 # Tests: RoomFitSafeWrite — named-profile verify and two rollback shapes
 # ---------------------------------------------------------------------------
 
@@ -779,9 +1103,10 @@ def mock_roomfit_adapter() -> AsyncMock:
     adapter.write_roomfit = AsyncMock()
     adapter.delete_roomfit_profile = AsyncMock()
     adapter.get_roomfit_status = AsyncMock(return_value=(True, ""))
-    # restore_roomfit_active_profile is auto-provided as an AsyncMock by
-    # spec=WiiMAdapter -- execute() calls it unconditionally in a finally
-    # block (#178); its own skip-if-empty/skip-if-same-name decision is
+    # restore_roomfit_selection_and_enable_state is auto-provided as an
+    # AsyncMock by spec=WiiMAdapter -- execute()'s failure paths and undo()
+    # call it to restore pre-write selection/enable-state (#191/#192); its
+    # own skip-if-empty/skip-if-same-name/skip-if-None decisions are
     # WiiMAdapter's responsibility, tested directly in test_wiim_adapter.py.
     return adapter
 
@@ -986,10 +1311,10 @@ class TestRoomFitOverwriteProfile:
 class TestRoomFitActiveProfileRestore:
     """#191 (redesign): a SUCCESSFUL push now deliberately activates the
     written profile and enables RoomFit, via load_roomfit_profile()/
-    enable_roomfit() -- it must NOT call restore_roomfit_active_profile()
-    at all (that would undo the activation). A FAILED push restores the
-    original pre-write selection/enable-state instead, via
-    restore_roomfit_active_profile()/set_roomfit_enabled()."""
+    enable_roomfit() -- it must NOT call
+    restore_roomfit_selection_and_enable_state() at all (that would undo the
+    activation). A FAILED push restores the original pre-write
+    selection/enable-state instead, via that same method (#192)."""
 
     async def test_new_profile_success_activates_and_enables(
         self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
@@ -1008,7 +1333,7 @@ class TestRoomFitActiveProfileRestore:
         assert result.success is True
         mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("New Profile")
         mock_roomfit_adapter.enable_roomfit.assert_called_once()
-        mock_roomfit_adapter.restore_roomfit_active_profile.assert_not_called()
+        mock_roomfit_adapter.restore_roomfit_selection_and_enable_state.assert_not_called()
 
     async def test_overwrite_non_active_profile_success_activates_it(
         self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
@@ -1031,7 +1356,7 @@ class TestRoomFitActiveProfileRestore:
         assert result.success is True
         mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("Existing")
         mock_roomfit_adapter.enable_roomfit.assert_called_once()
-        mock_roomfit_adapter.restore_roomfit_active_profile.assert_not_called()
+        mock_roomfit_adapter.restore_roomfit_selection_and_enable_state.assert_not_called()
 
     async def test_overwrite_active_profile_success_stays_active(
         self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
@@ -1072,7 +1397,7 @@ class TestRoomFitActiveProfileRestore:
         assert result.success is True
         mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("New Profile")
         mock_roomfit_adapter.enable_roomfit.assert_called_once()
-        mock_roomfit_adapter.restore_roomfit_active_profile.assert_not_called()
+        mock_roomfit_adapter.restore_roomfit_selection_and_enable_state.assert_not_called()
 
     async def test_restore_runs_after_failed_verification_and_rollback(
         self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
@@ -1096,10 +1421,9 @@ class TestRoomFitActiveProfileRestore:
 
         assert result.success is False
         assert result.rollback_success is True
-        mock_roomfit_adapter.restore_roomfit_active_profile.assert_called_once_with(
-            "Living Room", "Existing", context=ANY
+        mock_roomfit_adapter.restore_roomfit_selection_and_enable_state.assert_called_once_with(
+            "Living Room", True, "Existing", context=ANY
         )
-        mock_roomfit_adapter.set_roomfit_enabled.assert_called_once_with(True)
         # Success-path activation must NOT also have fired.
         mock_roomfit_adapter.load_roomfit_profile.assert_not_called()
         mock_roomfit_adapter.enable_roomfit.assert_not_called()
@@ -1122,7 +1446,7 @@ class TestRoomFitActiveProfileRestore:
         assert result.success is True
         mock_roomfit_adapter.load_roomfit_profile.assert_called_once_with("New Profile")
         mock_roomfit_adapter.enable_roomfit.assert_called_once()
-        mock_roomfit_adapter.restore_roomfit_active_profile.assert_not_called()
+        mock_roomfit_adapter.restore_roomfit_selection_and_enable_state.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1208,6 +1532,13 @@ class _FakeRoomFitDevice:
 
     async def set_roomfit_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
+
+    async def restore_roomfit_selection_and_enable_state(
+        self, active_name: str, enabled: bool | None, current_name: str, *, context: str
+    ) -> None:
+        await self.restore_roomfit_active_profile(active_name, current_name, context=context)
+        if enabled is not None:
+            await self.set_roomfit_enabled(enabled)
 
 
 class TestRoomFitPushThenUndoPreservesActiveProfile:

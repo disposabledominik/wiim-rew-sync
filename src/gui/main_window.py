@@ -3789,7 +3789,7 @@ class MainWindow(QMainWindow):
 
         if not self._confirm_preset_preview(items):
             return
-        if not self._confirm_roomfit_copy_activation(items):
+        if not self._confirm_copy_activation(items):
             return
 
         # Get current device IP to exclude from picker
@@ -4048,6 +4048,17 @@ class MainWindow(QMainWindow):
             for i in items
         )
 
+    def _html_bullet_list(self, items: list[Any]) -> str:
+        """HTML-safe bullet list for a confirmation dialog body.
+
+        Preset names come from the device, not a trusted local source --
+        escape before embedding in an HTML-flavored message (Qt auto-detects
+        rich text from <br>/<b> tags), and swap _format_preset_names()'s
+        \\n-joined separators for <br> since raw newlines aren't rendered as
+        line breaks in HTML.
+        """
+        return html.escape(self._format_preset_names(items)).replace("\n", "<br>")
+
     def _confirm_action(self, title: str, message: str) -> bool:
         """Shared Yes/No confirmation dialog, default button No."""
         from PySide6.QtWidgets import QMessageBox
@@ -4070,18 +4081,13 @@ class MainWindow(QMainWindow):
         (`# ASSUMPTION:`). Shared by every read-only preset action (copy,
         export, save-to-My-Presets, load-into-editor) -- only about the
         *source* device's brief read, not any device being written to (see
-        `_confirm_roomfit_copy_activation()` for Copy-to-Device's separate,
+        `_confirm_copy_activation()` for Copy-to-Device's separate,
         write-side concern).
         """
         peq_items = [i for i in items if getattr(i, "preset_type", "PEQ") != "RoomFit"]
         if not peq_items:
             return True
-        # Preset names come from the device, not a trusted local source --
-        # escape before embedding in this HTML-flavored message (Qt
-        # auto-detects rich text from the <br>/<b> tags below), and swap the
-        # shared \n-joined bullet list's separators for <br> since raw
-        # newlines aren't rendered as line breaks in HTML.
-        names_html = html.escape(self._format_preset_names(peq_items)).replace("\n", "<br>")
+        names_html = self._html_bullet_list(peq_items)
         return self._confirm_action(
             "Preset Will Briefly Activate on Device",
             f"Reading the filters in: <br><b>{names_html}</b>"
@@ -4089,26 +4095,49 @@ class MainWindow(QMainWindow):
             "original filters will be restored after the read completes.<br><br>Continue?",
         )
 
-    def _confirm_roomfit_copy_activation(self, items: list[Any]) -> bool:
-        """Warn that copying RoomFit profile(s) makes each one the active
-        profile on its target device(s), turning RoomFit on there if it's
-        off -- the same behavior as the main Push flow, applied here for
-        consistency since "Copy to Another Device" writes via the identical
-        RoomFitSafeWrite.execute() path. Distinct from
+    def _confirm_copy_activation(self, items: list[Any]) -> bool:
+        """Warn that copying preset(s) makes each one active on its target
+        device(s), turning PEQ/RoomFit on there if it's off -- the same
+        behavior as the main Push flow, applied here for consistency since
+        "Copy to Another Device" writes via the identical
+        SafeWrite.execute()/RoomFitSafeWrite.execute() paths. Distinct from
         `_confirm_preset_preview()`, which only concerns the source-side
         read; this concerns the target-side write and only applies to the
         copy flow (the only one of the four `_confirm_preset_preview()`
         callers that writes to any device).
+
+        Covers both preset types in one dialog rather than a separate method
+        per type: PresetsDeviceView enforces mutual exclusion between its PEQ
+        and RoomFit lists (selecting in one clears the other), so `items`
+        today only ever contains one type -- but a single shared,
+        type-generic method avoids the "second near-identical dialog method"
+        drift a bolted-on PEQ-only sibling would repeat, and is already
+        correct if that mutual-exclusion constraint is ever relaxed.
         """
         roomfit_items = [i for i in items if getattr(i, "preset_type", "PEQ") == "RoomFit"]
-        if not roomfit_items:
+        peq_items = [i for i in items if getattr(i, "preset_type", "PEQ") != "RoomFit"]
+        if not roomfit_items and not peq_items:
             return True
-        names_html = html.escape(self._format_preset_names(roomfit_items)).replace("\n", "<br>")
+
+        paragraphs = []
+        if roomfit_items:
+            names_html = self._html_bullet_list(roomfit_items)
+            paragraphs.append(
+                f"Copying: <br><b>{names_html}</b>"
+                "<br>will make it the active RoomFit profile on the target device(s), "
+                "turning RoomFit on there if it's currently off."
+            )
+        if peq_items:
+            names_html = self._html_bullet_list(peq_items)
+            paragraphs.append(
+                f"Copying: <br><b>{names_html}</b>"
+                "<br>will make it the active PEQ preset on the target device(s), "
+                "turning PEQ on there if it's currently off."
+            )
+
         return self._confirm_action(
             "Copy Will Change Target Device(s)",
-            f"Copying: <br><b>{names_html}</b>"
-            "<br>will make it the active RoomFit profile on the target device(s), "
-            "turning RoomFit on there if it's currently off.<br><br>Continue?",
+            "<br><br>".join(paragraphs) + "<br><br>Continue?",
         )
 
     @Slot(list)

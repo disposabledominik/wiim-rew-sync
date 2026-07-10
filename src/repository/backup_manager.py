@@ -69,18 +69,23 @@ def parse_backup_filters(
 
 def parse_backup_restore_metadata(
     backup_data: dict[str, Any],
-) -> tuple[str | None, bool | None, bool | None]:
-    """Extract RoomFit's pre-push selection/enable-state restore metadata.
+) -> tuple[str | None, bool | None, bool | None, bool | None]:
+    """Extract both subsystems' pre-push selection/enable-state restore metadata.
 
     Returns (pre_write_active_profile, pre_write_roomfit_enabled,
-    was_new_profile), each None if absent -- true for PEQ backups (which
-    never set these) and for RoomFit backups created before these fields
-    existed, so an old-format file degrades gracefully instead of raising.
+    was_new_profile, pre_write_peq_enabled). The first three are RoomFit-only
+    (read by RoomFitSafeWrite.undo()); the fourth is PEQ-only (read by
+    SafeWrite.undo()) -- each caller unpacks all four and uses only the
+    fields relevant to its own subsystem. Each value is None if absent --
+    true for the other subsystem's backups (which never set it) and for any
+    backup file created before these fields existed, so an old-format file
+    degrades gracefully instead of raising.
     """
     return (
         backup_data.get("pre_write_active_profile"),
         backup_data.get("pre_write_roomfit_enabled"),
         backup_data.get("was_new_profile"),
+        backup_data.get("pre_write_peq_enabled"),
     )
 
 
@@ -106,6 +111,7 @@ class BackupManager:
         pre_write_active_profile: str | None = None,
         pre_write_roomfit_enabled: bool | None = None,
         was_new_profile: bool | None = None,
+        pre_write_peq_enabled: bool | None = None,
     ) -> Path:
         """Write a BackupRecord JSON file and enforce retention.
 
@@ -114,12 +120,14 @@ class BackupManager:
         of the oldest backup fails, BackupError is raised and the entire
         operation is aborted.
 
-        The three keyword-only params are RoomFit-only restore metadata
-        (see BackupRecord) -- PEQ callers omit them. When ``was_new_profile``
-        is True, ``settings`` is expected to carry no real bands (an empty
-        stereo PEQSettings used purely as a metadata carrier, since there's
-        no prior content to snapshot for a brand-new profile) -- only the
-        three restore-metadata fields matter for that backup.
+        Four keyword-only params carry restore metadata (see BackupRecord):
+        the first three are RoomFit-only (PEQ callers omit them); the fourth,
+        ``pre_write_peq_enabled``, is PEQ-only (RoomFit callers omit it).
+        When ``was_new_profile`` is True, ``settings`` is expected to carry no
+        real bands (an empty stereo PEQSettings used purely as a metadata
+        carrier, since there's no prior content to snapshot for a brand-new
+        profile) -- only the three RoomFit restore-metadata fields matter for
+        that backup.
 
         Returns the path to the newly created backup file.
 
@@ -190,6 +198,7 @@ class BackupManager:
             pre_write_active_profile=pre_write_active_profile,
             pre_write_roomfit_enabled=pre_write_roomfit_enabled,
             was_new_profile=was_new_profile,
+            pre_write_peq_enabled=pre_write_peq_enabled,
         )
 
         # Write to disk with filesystem-safe filename

@@ -717,6 +717,12 @@ async def _load_preset(
     Does NOT use Safe_Write_Protocol — loading a preset is a single atomic API
     call (EQv2SourceLoad), not a raw band write.
 
+    EQv2SourceLoad turns PEQ on for the source if it was off (docs/wiim_api_notes.md
+    RoomFit rule 4 -- confirmed for PEQ too, docs/corrections.md #192). This command's
+    purpose is to make the preset active, so that is the intended effect here, not a
+    side effect to guard against -- unlike read_peq_preset_preview()'s preview/restore
+    use of the same underlying command.
+
     Domain rule: PEQ presets are global and loadable onto any source (rules.md rule 7).
     """
     client = WiiMHttpClient(device, timeout=timeout)
@@ -738,7 +744,7 @@ async def _load_preset(
 
 
 def cmd_load_preset(device: str, preset: str, sources: list[str], timeout: float) -> int:
-    """Load a PEQ preset onto one or more sources.
+    """Load a PEQ preset onto one or more sources, enabling PEQ on each if it was off.
 
     Exit code 0 if all sources succeed, 1 if any fail (but all are attempted).
     """
@@ -925,7 +931,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     load_preset = subparsers.add_parser(
         "load-preset",
-        help="Load a PEQ preset onto one or more sources.",
+        help="Load a PEQ preset onto one or more sources (enables PEQ on each if it was off).",
     )
     load_preset.add_argument("--device", required=True, help="Device IP address.")
     load_preset.add_argument(

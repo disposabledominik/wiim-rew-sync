@@ -300,6 +300,18 @@ class WiiMAdapter:
         """
         await self._set_fx_state("EQSourceOff", source_name, eq_level=1)
 
+    async def set_peq_enabled(self, source_name: str, enabled: bool) -> None:
+        """Enable or disable PEQ on a source based on a bool.
+
+        Mirrors ``set_roomfit_enabled()``'s shared branch, for callers
+        restoring a captured enable/disable state rather than
+        unconditionally turning PEQ on or off.
+        """
+        if enabled:
+            await self.enable_peq(source_name)
+        else:
+            await self.disable_peq(source_name)
+
     # ------------------------------------------------------------------
     # RoomFit Enable/Disable
     # ------------------------------------------------------------------
@@ -673,6 +685,13 @@ class WiiMAdapter:
         via write_peq() instead so the "then restore what was playing" promise
         in the confirmation dialog holds regardless of how the original state
         got there.
+
+        # ASSUMPTION (#192): load_peq_profile() wraps the same EQv2SourceLoad
+        # command RoomFit's equivalent load was hardware-confirmed to
+        # sometimes flip EQStat on for (docs/wiim_api_notes.md rule 4). Not
+        # independently re-confirmed for PEQ's per-source EQStat -- restoring
+        # original.enabled below is a defensive, symmetric precaution, not a
+        # hardware-confirmed fix like the RoomFit one.
         """
         original = await self.read_peq(source_name)
         await self.load_peq_profile(source_name, preset_name)
@@ -690,6 +709,16 @@ class WiiMAdapter:
                     source_name, preset_name,
                     exc_info=True,
                 )
+        try:
+            await self.set_peq_enabled(source_name, original.enabled)
+        except Exception:
+            logger.warning(
+                "Failed to restore PEQ enable-state to %s on source '%s' "
+                "after previewing '%s'",
+                "On" if original.enabled else "Off",
+                source_name, preset_name,
+                exc_info=True,
+            )
         return preview
 
     async def _delete_profile(self, profile_name: str, eq_level: int | None = None) -> None:
@@ -818,17 +847,24 @@ class WiiMAdapter:
         self, source_name: str, profile_name: str
     ) -> PEQSettings:
         """Read a saved RoomFit profile's bands, restoring the originally-selected
-        profile afterward.
+        profile and on/off state afterward.
 
-        Unlike read_peq_preset_preview, this has no live-audio consequence to
-        consent to (RoomFit's buffer is decoupled from its DSP on/off state,
-        per docs/wiim_api_notes.md) -- the restore is bookkeeping only, to
-        avoid leaving a different profile "selected" in the WiiM app.
+        # ASSUMPTION (was wrong, now fixed -- #192): this docstring previously
+        # claimed reading a profile has no live-audio consequence, since
+        # RoomFit's buffer is decoupled from its DSP on/off state. Hardware
+        # report confirmed otherwise: EQv2SourceLoad (via load_roomfit_profile,
+        # used by read_roomfit() below) can flip EQStat on as an undocumented
+        # side effect, same family as #190's EQSourceSave finding. Restoring
+        # is not just selection bookkeeping -- it can be a real live-audio
+        # safety action, per docs/wiim_api_notes.md rule 4.
         """
-        _enabled, original_name = await self.get_roomfit_status()
+        original_enabled, original_name = await self.get_roomfit_status()
         preview = await self.read_roomfit(source_name, profile_name)
-        await self.restore_roomfit_active_profile(
-            original_name, profile_name, context=f"previewing '{profile_name}'"
+        await self.restore_roomfit_selection_and_enable_state(
+            original_name,
+            original_enabled,
+            profile_name,
+            context=f"previewing '{profile_name}'",
         )
         return preview
 
@@ -842,10 +878,11 @@ class WiiMAdapter:
         and needs to undo the "whichever profile was last loaded/saved
         becomes active" side effect documented in docs/wiim_api_notes.md's
         RoomFit Write workflow section (#175/#178) -- currently
-        read_roomfit_preset_preview() above and RoomFitSafeWrite.execute()
-        (src/adapters/safe_write.py). Best-effort: logs and swallows a
-        failure here rather than raising, since this runs as cleanup after
-        the caller's primary operation has already completed.
+        restore_roomfit_selection_and_enable_state() below and
+        RoomFitSafeWrite (src/adapters/safe_write.py), both of which also
+        need the on/off-state restore that method adds. Best-effort: logs
+        and swallows a failure here rather than raising, since this runs as
+        cleanup after the caller's primary operation has already completed.
         """
         if not original_name or original_name == current_name:
             return
@@ -860,6 +897,39 @@ class WiiMAdapter:
                 current_name,
                 exc_info=True,
             )
+
+    async def restore_roomfit_selection_and_enable_state(
+        self,
+        active_name: str,
+        enabled: bool | None,
+        current_name: str,
+        *,
+        context: str,
+    ) -> None:
+        """Best-effort: re-select `active_name` (via restore_roomfit_active_profile,
+        already a no-op if empty/unchanged) and restore RoomFit's on/off state
+        to `enabled` if not None.
+
+        Shared by read_roomfit_preset_preview() above and RoomFitSafeWrite's
+        failure/undo paths (safe_write.py) -- written once, here, so the two
+        restore sites can't drift out of sync with each other the way
+        read_roomfit_preset_preview() and safe_write.py's own copy of this
+        logic just did (#192: the preview path restored selection but not
+        enable-state).
+        """
+        await self.restore_roomfit_active_profile(
+            active_name, current_name, context=context
+        )
+        if enabled is not None:
+            try:
+                await self.set_roomfit_enabled(enabled)
+            except Exception:
+                logger.warning(
+                    "Failed to restore RoomFit enable-state to %s (%s).",
+                    "On" if enabled else "Off",
+                    context,
+                    exc_info=True,
+                )
 
     async def write_roomfit(
         self,

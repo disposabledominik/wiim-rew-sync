@@ -1380,18 +1380,24 @@ class TestPresets:
 
     # --- #191: Copy-to-Device RoomFit target-activation warning ---
 
-    def test_191_confirm_roomfit_copy_activation_no_dialog_for_peq_only(self, window) -> None:
-        """A PEQ-only selection needs no target-activation warning -- PEQ
-        copies don't have RoomFit's global activate-on-write semantics."""
+    def test_191_confirm_copy_activation_dialog_for_peq_item(self, window) -> None:
+        """Copying a PEQ preset warns that it will become active and enable
+        PEQ on the target device(s), naming the preset -- PEQ redesign
+        mirrors RoomFit's #191 warning (docs/corrections.md)."""
         items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
 
-        with patch("PySide6.QtWidgets.QMessageBox.question") as mock_question:
-            result = window._confirm_roomfit_copy_activation(items)
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as mock_question:
+            result = window._confirm_copy_activation(items)
 
-        mock_question.assert_not_called()
+        mock_question.assert_called_once()
+        message = mock_question.call_args[0][2]
+        assert "Movie Night" in message
         assert result is True
 
-    def test_191_confirm_roomfit_copy_activation_dialog_for_roomfit_item(self, window) -> None:
+    def test_191_confirm_copy_activation_dialog_for_roomfit_item(self, window) -> None:
         """Copying a RoomFit profile warns that it will become active and
         enable RoomFit on the target device(s), naming the profile."""
         items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
@@ -1400,21 +1406,42 @@ class TestPresets:
             "PySide6.QtWidgets.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,
         ) as mock_question:
-            result = window._confirm_roomfit_copy_activation(items)
+            result = window._confirm_copy_activation(items)
 
         mock_question.assert_called_once()
         message = mock_question.call_args[0][2]
         assert "Living Room" in message
         assert result is True
 
-    def test_191_confirm_roomfit_copy_activation_declined_returns_false(self, window) -> None:
+    def test_191_confirm_copy_activation_mixed_selection_shows_one_dialog(self, window) -> None:
+        """A selection containing both types (not reachable via the current
+        UI's mutual-exclusion behavior, but the method must not assume it)
+        shows exactly one combined dialog, not two sequential popups."""
+        items = [
+            PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit"),
+        ]
+
+        with patch(
+            "PySide6.QtWidgets.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ) as mock_question:
+            result = window._confirm_copy_activation(items)
+
+        mock_question.assert_called_once()
+        message = mock_question.call_args[0][2]
+        assert "Movie Night" in message
+        assert "Living Room" in message
+        assert result is True
+
+    def test_191_confirm_copy_activation_declined_returns_false(self, window) -> None:
         items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
 
         with patch(
             "PySide6.QtWidgets.QMessageBox.question",
             return_value=QMessageBox.StandardButton.No,
         ):
-            result = window._confirm_roomfit_copy_activation(items)
+            result = window._confirm_copy_activation(items)
 
         assert result is False
 
@@ -1430,7 +1457,7 @@ class TestPresets:
 
         with (
             patch.object(window, "_confirm_preset_preview", return_value=True),
-            patch.object(window, "_confirm_roomfit_copy_activation", return_value=False),
+            patch.object(window, "_confirm_copy_activation", return_value=False),
             patch(
                 "src.gui.main_window.DevicePickerDialog.get_devices"
             ) as mock_picker,
@@ -2982,9 +3009,9 @@ class TestSharedHelpers:
 
     def test_issue64_shared_helpers_created(self) -> None:
         """#64: src/gui/shared_helpers.py exports the documented shared
-        functions, and the two GUI modules that need channel-mode/profile
-        logic (main_window.py, secondary_workflows.py) import from it rather
-        than reimplementing it locally.
+        functions, and main_window.py (which still needs channel-mode/
+        profile logic directly) imports from it rather than reimplementing
+        it locally.
 
         Behavior-level coverage of each individual function already exists
         elsewhere in this file (is_lr_mode, build_profile, build_peq_settings,
@@ -3014,12 +3041,25 @@ class TestSharedHelpers:
             assert hasattr(shared_helpers, name), f"shared_helpers missing {name}"
             assert callable(getattr(shared_helpers, name))
 
-        # Call-sites import from shared_helpers rather than defining their
+        # main_window.py imports from shared_helpers rather than defining its
         # own local copies of the same logic.
         main_window_source = inspect.getsource(main_window)
-        secondary_workflows_source = inspect.getsource(secondary_workflows)
         assert "from src.gui.shared_helpers import" in main_window_source
-        assert "from src.gui.shared_helpers import" in secondary_workflows_source
+
+        # secondary_workflows.py legitimately has no shared_helpers import
+        # now (PEQ redesign, mirrors #191): _do_undo() delegates backup
+        # parsing and PEQSettings reconstruction entirely to
+        # SafeWrite.undo() rather than calling build_peq_settings()/
+        # parse_backup_filters() locally -- zero shared_helpers usage here
+        # is the correct outcome of that delegation, not reimplementation.
+        # Assert the delegation instead: no local re-parsing logic
+        # duplicating what SafeWrite.undo() now owns.
+        secondary_workflows_source = inspect.getsource(secondary_workflows)
+        for reimplemented_name in (
+            "build_peq_settings", "parse_backup_filters", "load_backup_json",
+        ):
+            assert f"def {reimplemented_name}(" not in secondary_workflows_source
+        assert "safe_write.undo(" in secondary_workflows_source
 
         # Spot-check: no duplicate local reimplementation of is_lr_mode's
         # channel-string matching (the specific bug pattern smoke #55/#69

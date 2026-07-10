@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from src.gui.shared_helpers import build_peq_settings
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 
@@ -218,10 +217,10 @@ class SecondaryWorkflowManager(QObject):
         self._bridge.run_async(self._do_undo(source_name, backup_path))
 
     async def _do_undo(self, source_name: str, backup_path: str | Path) -> None:
-        """Execute undo via SafeWrite with backup data.
-
-        Reads the backup file, reconstructs PEQSettings, and writes them
-        back to the device using the Safe_Write_Protocol.
+        """Execute undo via SafeWrite.undo(), which restores both the
+        source's previous bands and its previous enable-state (backup
+        parsing and PEQSettings reconstruction live inside SafeWrite.undo()
+        now, not here -- see its docstring).
         """
         assert self._safe_write_factory is not None
         assert self._current_adapter is not None
@@ -229,32 +228,22 @@ class SecondaryWorkflowManager(QObject):
         path = Path(backup_path) if isinstance(backup_path, str) else backup_path
 
         # Check if backup file exists (Req 8.5)
-        if not path or not path.exists():
+        if not path or not path.is_file():
             logger.error("Undo requested but backup file not found: %s", path)
             self.undo_complete.emit(False, "No backup available")
             return
 
         try:
-            # Read and parse backup using shared helpers
-            from src.gui.shared_helpers import load_backup_json, parse_backup_filters
-
-            backup_data = load_backup_json(path)
-            filters, channel_mode, filters_l, filters_r = parse_backup_filters(backup_data)
-
-            # Build PEQSettings from parsed filters — pass filters_l/filters_r
-            # explicitly so L/R mode never reconstructs the channel split
-            # positionally from the combined list.
-            settings = build_peq_settings(
-                source_name, filters, channel_mode,
-                filters_l=filters_l, filters_r=filters_r,
-            )
-
-            # Execute SafeWrite with the restored settings
             safe_write = self._safe_write_factory(self._current_adapter)
-            await safe_write.execute(source_name, settings)
+            result = await safe_write.undo(path, source_name)
 
-            self.undo_complete.emit(True, "Previous filters restored")
-            logger.info("Undo last push: completed successfully")
+            if result.success:
+                self.undo_complete.emit(True, "Previous filters restored")
+                logger.info("Undo last push: completed successfully")
+            else:
+                error_msg = result.error_message or "Unknown error"
+                self.undo_complete.emit(False, error_msg)
+                logger.error("Undo last push failed: %s", error_msg)
         except Exception as exc:
             logger.exception("Undo last push failed")
             self.undo_complete.emit(False, str(exc))

@@ -177,6 +177,19 @@ class SafeWrite:
 
     Ensures every write is backed up, verified, and rolled back on failure.
 
+    Device-visible contract (redesigned 2026-07-06 -- mirrors
+    RoomFitSafeWrite, see docs/corrections.md):
+      - Success: PEQ is turned on for ``source_name`` if it was off, via a
+        deliberate, confirmed command (``enable_peq()``) -- not left to an
+        unconfirmed API side effect. This is the intended behavior: a user
+        pushing PEQ filters through this app wants them audible.
+      - Failure (verification mismatch + rollback, or the critical
+        manual-recovery path): the source's enable-state *before this call*
+        is restored -- a failed push must have no lasting device-visible
+        effect.
+      - ``undo()`` (a separate, later user action) restores the *original
+        push's* full pre-state: previous bands and previous enable-state.
+
     Args:
         adapter: WiiMAdapter for device read/write operations.
         backup_manager: BackupManager for creating state snapshots.
@@ -209,6 +222,10 @@ class SafeWrite:
             5a. Commit (return success) OR
             5b. Rollback (restore backup state, verify rollback)
 
+        See the class docstring for the enable-state device-visible
+        contract: success turns PEQ on for ``source_name`` if it was off;
+        failure restores the source's original enable-state.
+
         Args:
             source_name: Audio input source (e.g. "wifi", "bluetooth").
             settings: PEQ settings to write to the device.
@@ -229,7 +246,8 @@ class SafeWrite:
             on_stage("backing_up")
         current_settings = await self._adapter.read_peq(source_name)
         backup_path = self._backup_manager.create_backup(
-            current_settings, capabilities, "pre_write"
+            current_settings, capabilities, "pre_write",
+            pre_write_peq_enabled=current_settings.enabled,
         )
 
         # Step 2: Write new settings. WiiMAdapter.write_peq() sets channelMode
@@ -250,7 +268,20 @@ class SafeWrite:
         # fail verification spuriously.
         verify_settings = _clamped_for_verification(settings, capabilities.max_filters)
         if verify_bands(verify_settings, read_back):
-            # Step 5a: Commit - verification passed
+            # Step 5a: Commit - verification passed. Turn PEQ on if it was
+            # off -- deliberate, confirmed command, best-effort so a
+            # verified-correct write still reports success even if this
+            # polish step hiccups (mirrors RoomFitSafeWrite's success-path
+            # enable_roomfit() call).
+            try:
+                await self._adapter.enable_peq(source_name)
+            except Exception:
+                logger.warning(
+                    "Failed to enable PEQ on source '%s' after successful "
+                    "push; device may still show PEQ off.",
+                    source_name,
+                    exc_info=True,
+                )
             if on_stage is not None:
                 on_stage("done")
             return WriteResult(success=True, backup_path=backup_path, read_back=read_back)
@@ -299,6 +330,21 @@ class SafeWrite:
         # Write backup state back via queue
         await self._adapter.write_peq(source_name, original_settings, self._queue)
 
+        # Restore the source's original enable-state -- a failed push must
+        # have no lasting device-visible effect, regardless of whether the
+        # band rollback below verifies successfully. Best-effort, mirrors
+        # RoomFitSafeWrite's failure-path enable-state restore.
+        try:
+            await self._adapter.set_peq_enabled(source_name, original_settings.enabled)
+        except Exception:
+            logger.warning(
+                "Failed to restore PEQ enable-state to %s on source '%s' "
+                "after rollback.",
+                "On" if original_settings.enabled else "Off",
+                source_name,
+                exc_info=True,
+            )
+
         # Verify rollback succeeded. Same reasoning as the primary write
         # verify above: original_settings may carry more bands than
         # max_filters (the device can report more bands than this app
@@ -328,6 +374,79 @@ class SafeWrite:
                 f"Manual recovery required. Backup: {backup_path}"
             ),
         )
+
+    async def undo(
+        self,
+        backup_path: str | Path,
+        source_name: str,
+        on_stage: Callable[[str], None] | None = None,
+    ) -> WriteResult:
+        """Undo a previously-successful PEQ push using its backup file.
+
+        Restores the source's previous bands (via ``execute()``, the normal
+        write/verify/rollback protocol) and its previous enable-state
+        together.
+
+        This can't just delegate to ``execute()`` alone: ``execute()``'s own
+        success path always turns PEQ on (a direct push implies consent to
+        hear it), but undo is restoring a *previous* state that might have
+        been disabled -- trusting ``execute()`` alone here would incorrectly
+        force PEQ on during every undo. So the enable-state captured in the
+        backup is applied as a correction *after* ``execute()`` returns,
+        mirroring ``RoomFitSafeWrite.undo()``'s equivalent correction of its
+        own ``execute()``'s always-activate success path.
+
+        Args:
+            backup_path: Path to the backup JSON file the original push created.
+            source_name: Audio input source to restore.
+            on_stage: Optional callback forwarded to the bands-restore
+                ``execute()`` call (see its own ``on_stage`` for the contract).
+
+        Returns:
+            WriteResult from the bands-restore ``execute()`` call.
+        """
+        path = Path(backup_path)
+        backup_data = load_backup_json(path)
+        filters, channel_mode, filters_l, filters_r = parse_backup_filters(backup_data)
+        # No "empty backup" guard here (unlike RoomFitSafeWrite.undo()): a PEQ
+        # source with zero bands is a legitimate state (flat EQ, no filters
+        # applied), and parse_backup_filters() can't distinguish "backup
+        # legitimately captured zero bands" from "backup is malformed" --
+        # both parse to an empty list. Rejecting the former would make undo
+        # impossible for a push that happened while a source had no filters.
+        _, _, _, pre_write_peq_enabled = parse_backup_restore_metadata(backup_data)
+
+        if channel_mode.is_lr:
+            settings = PEQSettings(
+                source_name=source_name,
+                channel_mode=ChannelMode.LR,
+                bands_l=filters_l or [],
+                bands_r=filters_r or [],
+            )
+        else:
+            settings = PEQSettings(
+                source_name=source_name,
+                channel_mode=ChannelMode.STEREO,
+                bands=filters,
+            )
+
+        result = await self.execute(source_name, settings, on_stage=on_stage)
+        if not result.success:
+            return result
+
+        if pre_write_peq_enabled is not None:
+            try:
+                await self._adapter.set_peq_enabled(source_name, pre_write_peq_enabled)
+            except Exception:
+                logger.warning(
+                    "Failed to restore PEQ enable-state to %s on source "
+                    "'%s' after undo.",
+                    "On" if pre_write_peq_enabled else "Off",
+                    source_name,
+                    exc_info=True,
+                )
+
+        return result
 
 
 class RoomFitSafeWrite:
@@ -366,31 +485,6 @@ class RoomFitSafeWrite:
     def __init__(self, adapter: WiiMAdapter, backup_manager: BackupManager) -> None:
         self._adapter = adapter
         self._backup_manager = backup_manager
-
-    async def _restore_selection_and_enable_state(
-        self, active_name: str, enabled: bool | None, current_name: str, context: str
-    ) -> None:
-        """Best-effort: re-select active_name and restore RoomFit's on/off
-        state to `enabled` if not None.
-
-        Shared by execute()'s failure paths (restores *this call's*
-        pre-write state) and undo() (restores the *original push's*
-        pre-write state, read back from the backup file) -- written once so
-        the two restore sites can't drift out of sync with each other.
-        """
-        await self._adapter.restore_roomfit_active_profile(
-            active_name, current_name, context=context
-        )
-        if enabled is not None:
-            try:
-                await self._adapter.set_roomfit_enabled(enabled)
-            except Exception:
-                logger.warning(
-                    "Failed to restore RoomFit enable-state to %s (%s).",
-                    "On" if enabled else "Off",
-                    context,
-                    exc_info=True,
-                )
 
     async def execute(
         self,
@@ -578,7 +672,7 @@ class RoomFitSafeWrite:
 
         if is_new:
             await self._adapter.delete_roomfit_profile(profile_name)
-            await self._restore_selection_and_enable_state(
+            await self._adapter.restore_roomfit_selection_and_enable_state(
                 original_active_name, original_enabled, profile_name,
                 context=f"writing '{profile_name}'",
             )
@@ -607,7 +701,7 @@ class RoomFitSafeWrite:
         )
         rollback_ok = verify_bands(verify_existing, rollback_read_back)
         if rollback_ok:
-            await self._restore_selection_and_enable_state(
+            await self._adapter.restore_roomfit_selection_and_enable_state(
                 original_active_name, original_enabled, profile_name,
                 context=f"writing '{profile_name}'",
             )
@@ -633,7 +727,7 @@ class RoomFitSafeWrite:
         # RoomFit's original enable state) is safer than leaving an
         # unverified profile active, even though a technician diagnosing the
         # failure won't see profile_name still "selected".
-        await self._restore_selection_and_enable_state(
+        await self._adapter.restore_roomfit_selection_and_enable_state(
             original_active_name, original_enabled, profile_name,
             context=f"writing '{profile_name}'",
         )
@@ -698,7 +792,7 @@ class RoomFitSafeWrite:
         """
         path = Path(backup_path)
         backup_data = load_backup_json(path)
-        pre_write_active_profile, pre_write_roomfit_enabled, was_new_profile = (
+        pre_write_active_profile, pre_write_roomfit_enabled, was_new_profile, _ = (
             parse_backup_restore_metadata(backup_data)
         )
 
@@ -721,7 +815,7 @@ class RoomFitSafeWrite:
                 return result
 
         if pre_write_active_profile is not None:
-            await self._restore_selection_and_enable_state(
+            await self._adapter.restore_roomfit_selection_and_enable_state(
                 pre_write_active_profile, pre_write_roomfit_enabled, profile_name,
                 context=f"undoing push to '{profile_name}'",
             )

@@ -464,19 +464,23 @@ class CapabilityProber:
         # (docs/wiim_api_notes.md's DSP on/off toggle section), so a device
         # can have RoomFit disabled while a named profile with completely
         # unknown -- possibly extreme -- filter values sits selected
-        # underneath. `EQSourceSave` below is implicated (unconfirmed
-        # mechanism, `# ASSUMPTION:`/`# TODO:` below) in flipping EQStat from
-        # "Off" to "On" as an undocumented side effect of persisting a
-        # profile. If that happens while a real profile is selected, its
-        # actual filter values become audible -- a genuine hearing/
-        # speaker-damage risk at loud volume, not a cosmetic one. There is no
-        # way to test write capability here without risking exactly that, so
-        # when EQStat is "Off" *and* a real profile is selected, skip the
-        # live write test entirely rather than try to race an unconfirmed
-        # side effect after the fact. `roomfit_level` stays at 3 (write
-        # unconfirmed) until the device is probed again with RoomFit already
-        # enabled (e.g. after the user enables it in the WiiM Home app,
-        # which is the only supported way to toggle it -- see "Not
+        # underneath. Something in this test's sequence (`EQSourceSave`
+        # below, or the `EQv2SourceLoad` name-restore in the `finally` block)
+        # can flip EQStat from "Off" to "On" as an undocumented side effect
+        # -- curl reproduction (docs/corrections.md, 2026-07-06) confirmed
+        # `EQv2SourceLoad` alone does this and `EQSourceSave` alone does not,
+        # making the `finally` block's own restore call the more likely
+        # culprit than the `EQSourceSave` call this comment originally named.
+        # Exact mechanism aside, if EQStat flips while a real profile is
+        # selected, its actual filter values become audible -- a genuine
+        # hearing/speaker-damage risk at loud volume, not a cosmetic one.
+        # There is no way to test write capability here without risking
+        # exactly that, so when EQStat is "Off" *and* a real profile is
+        # selected, skip the live write test entirely rather than try to
+        # race the side effect after the fact. `roomfit_level` stays at 3
+        # (write unconfirmed) until the device is probed again with RoomFit
+        # already enabled (e.g. after the user enables it in the WiiM Home
+        # app, which is the only supported way to toggle it -- see "Not
         # implemented" above) -- "safety before convenience" (CLAUDE.md).
         #
         # Safe to proceed when EQStat is already "On" (whatever's selected is
@@ -491,7 +495,8 @@ class CapabilityProber:
                 "Skipping RoomFit level 4 write-capability test: EQStat is "
                 "Off but profile %r is still selected -- testing write here "
                 "risks briefly applying its real filter values to live "
-                "audio if EQSourceSave re-enables it as a side effect.",
+                "audio if this test's sequence re-enables it as a side "
+                "effect.",
                 original_active_name,
             )
             return
@@ -524,10 +529,11 @@ class CapabilityProber:
             # values (Off-with-something-selected) -- so this restore is
             # defense-in-depth, not the primary safeguard: it holds even if
             # the guard's reasoning about which states are "safe" turns out
-            # to be incomplete (the exact EQSourceSave side effect is still
-            # unconfirmed -- `# ASSUMPTION:`/`# TODO:` above). Every extra
-            # round-trip before correcting EQStat (delete, then load) widens
-            # whatever window remains for no benefit, so this call goes out
+            # to be incomplete. Every extra round-trip before correcting
+            # EQStat (delete, then load) widens whatever window remains for
+            # no benefit -- especially the `EQv2SourceLoad` name-restore that
+            # follows, confirmed (docs/corrections.md, 2026-07-06) to
+            # unconditionally turn EQStat back on -- so this call goes out
             # immediately, before either of them. Unconditional (not gated on
             # save_issued): the property must hold even if the read that
             # populated original_eqstat_on was somehow stale, and the command
