@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.warning_box import add_optional_warning_box
 from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
@@ -53,6 +54,7 @@ class QuickSetupDialog(QDialog):
         current_eq_type: str = "peq",
         current_sources: list[str] | None = None,
         supports_roomfit: bool = True,
+        warning: tuple[str, str] | None = None,
     ) -> None:
         """Initialize the dialog.
 
@@ -75,16 +77,21 @@ class QuickSetupDialog(QDialog):
             supports_roomfit: Whether the connected device supports RoomFit
                 at all. When False, the RoomFit option is disabled with an
                 explanatory tooltip regardless of `need_eq_type`.
+            warning: Optional (header, body_html) shown under the
+                instruction label -- lets a caller fold a preceding
+                confirmation dialog into this one instead of showing it as a
+                separate step.
         """
         super().__init__(parent)
         self.setWindowTitle("Complete Setup")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(420 if warning else 360)
         self.setModal(True)
 
         self._need_eq_type = need_eq_type
         self._need_source = need_source
         self._available_sources = available_sources or []
         self._supports_roomfit = supports_roomfit
+        self._warning = warning
 
         self._eq_type: str = current_eq_type if current_eq_type == "roomfit" else "peq"
         self._selected_sources: list[str] = list(current_sources or [])
@@ -118,6 +125,7 @@ class QuickSetupDialog(QDialog):
         current_eq_type: str = "peq",
         current_sources: list[str] | None = None,
         supports_roomfit: bool = True,
+        warning: tuple[str, str] | None = None,
     ) -> tuple[str, list[str]] | None:
         """Show dialog and return (eq_type, sources) or None if cancelled.
 
@@ -131,6 +139,8 @@ class QuickSetupDialog(QDialog):
             current_sources: Already-fixed sources, shown disabled when
                 `need_source` is False.
             supports_roomfit: Whether the connected device supports RoomFit.
+            warning: Optional (header, body_html) shown under the
+                instruction label.
 
         Returns:
             Tuple of (eq_type, selected_sources) or None if cancelled.
@@ -143,6 +153,7 @@ class QuickSetupDialog(QDialog):
             current_eq_type,
             current_sources,
             supports_roomfit,
+            warning,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.eq_type, dialog.selected_sources
@@ -161,6 +172,13 @@ class QuickSetupDialog(QDialog):
         instruction = QLabel("Before loading, please confirm the following:")
         instruction.setWordWrap(True)
         layout.addWidget(instruction)
+
+        add_optional_warning_box(
+            layout,
+            self._warning,
+            frame_object_name="quick_setup_warning_frame",
+            body_object_name="quick_setup_warning_body",
+        )
 
         # --- EQ Type section (always present) ---
         self._eq_section = eq_section = QWidget()

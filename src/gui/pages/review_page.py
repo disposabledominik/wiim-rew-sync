@@ -23,6 +23,7 @@ from src.gui.components.action_button import make_action_button
 from src.gui.components.filter_table import FilterTable
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
+    FILTER_TABLE_MAX_WIDTH,
     SPACING_MD,
 )
 from src.gui.style_utils import set_qss_property
@@ -150,9 +151,24 @@ class ReviewPage(QWidget):
         self._dry_run_badge.setProperty("active", False)
         content_layout.addWidget(self._dry_run_badge)
 
-        # FilterTable (centered, ~400px max)
+        # FilterTable (centered, capped so its 5 short columns don't stretch
+        # across the full content column -- see FilterTable's own docstring).
+        # Centered via a stretch-widget-stretch sandwich, NOT
+        # addWidget(..., alignment=...) -- an alignment flag on addWidget
+        # sizes the widget to its sizeHint() instead of letting its Expanding
+        # size policy fill up to setMaximumWidth(), and FilterTable's
+        # Stretch-mode columns don't contribute meaningfully to sizeHint, so
+        # the table collapsed to a tiny sliver instead of the intended
+        # 600px-wide, stretch-filled table (same root cause page_layout.py's
+        # build_centered_content docstring already documents for smoke #179).
         self._filter_table = FilterTable(content_wrapper)
-        content_layout.addWidget(self._filter_table, 1)
+        self._filter_table.setMaximumWidth(FILTER_TABLE_MAX_WIDTH)
+        filter_table_row = QHBoxLayout()
+        filter_table_row.setContentsMargins(0, 0, 0, 0)
+        filter_table_row.addStretch()
+        filter_table_row.addWidget(self._filter_table, 1)
+        filter_table_row.addStretch()
+        content_layout.addLayout(filter_table_row)
 
         # Toggles row
         toggles_layout = QHBoxLayout()

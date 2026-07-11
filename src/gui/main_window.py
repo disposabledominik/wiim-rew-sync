@@ -731,6 +731,7 @@ class MainWindow(QMainWindow):
         self._bridge.operation_error.connect(self._on_operation_error)
         self._bridge.progress_update.connect(self._on_progress_update)
         self._bridge.stage_changed.connect(self._on_stage_changed)
+        self._bridge.push_round_changed.connect(self._on_push_round_changed)
         self._bridge.rew_measurements_ready.connect(self._on_measurements_listed)
         self._bridge.rew_filters_ready.connect(self._on_rew_filters_ready)
 
@@ -1806,6 +1807,17 @@ class MainWindow(QMainWindow):
                 SafeWrite.execute's/RoomFitSafeWrite.execute's on_stage arg).
         """
         self._push_page.set_stage(stage)
+
+    @Slot(str, int, int)
+    def _on_push_round_changed(self, source_name: str, index: int, total: int) -> None:
+        """Show which source/round a multi-source push is currently on.
+
+        Args:
+            source_name: The source currently being written to.
+            index: 1-based index of this source among the selected sources.
+            total: Total number of sources being pushed to.
+        """
+        self._push_page.set_push_round(source_name, index, total)
 
     @Slot(list)
     def _on_measurements_listed(self, measurements: list[Any]) -> None:
@@ -2954,6 +2966,9 @@ class MainWindow(QMainWindow):
                     self._bridge.progress_update.emit(
                         f"Pushing to {source_name} ({i + 1}/{len(source_list)})..."
                     )
+                    self._bridge.push_round_changed.emit(
+                        source_name, i + 1, len(source_list)
+                    )
 
                 settings = build_peq_settings(
                     source_name, filters, channel_mode,
@@ -3838,8 +3853,11 @@ class MainWindow(QMainWindow):
     def _on_copy_to_device_requested(self, items: list[Any]) -> None:
         """Handle PresetsDeviceView "Copy to Another Device" action.
 
-        Opens a device picker for the target device selection, then
-        executes _do_copy_presets_batch_multi for each selected item.
+        Opens a device picker (with the source-read and target-write
+        warnings folded into it as a single combined dialog, instead of two
+        separate confirmations shown beforehand) for the target device
+        selection, then executes _do_copy_presets_batch_multi for each
+        selected item.
 
         Requirement 15.1: User selects target device from discovered list.
         Requirement 15.2: Copy preset filters to the selected target device.
@@ -3848,11 +3866,6 @@ class MainWindow(QMainWindow):
             items: List of PresetItem objects selected for copying.
         """
         if not items:
-            return
-
-        if not self._confirm_preset_preview(items):
-            return
-        if not self._confirm_copy_activation(items):
             return
 
         # Get current device IP to exclude from picker
@@ -3864,9 +3877,19 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error("No other devices discovered")
             return
 
-        # Open device picker dialog for single target device selection
+        preview_body = self._preset_preview_warning_html(items)
+        activation_body = self._copy_activation_warning_html(items)
+        bodies = [b for b in (preview_body, activation_body) if b]
+        warning = (
+            ("This Will Change Device State", "<br><br>".join(bodies))
+            if bodies
+            else None
+        )
+
+        # Open device picker dialog for target device selection, with the
+        # combined warning embedded above the list
         selected_devices = DevicePickerDialog.get_devices(
-            self, self._discovered_devices, current_ip
+            self, self._discovered_devices, current_ip, warning
         )
 
         # User cancelled the dialog
@@ -3903,10 +3926,10 @@ class MainWindow(QMainWindow):
         Profile in src/models/profile.py), so unlike the device-to-device
         copy flow, this asks the user which target write-mode to use before
         picking devices. There's also no live source device to read from
-        here -- the filters are already in hand -- so this skips
-        _confirm_preset_preview (source-side read warning) but still shows
-        _confirm_copy_activation (target-side write warning), since writing
-        to the target device(s) is identical to the device-to-device flow.
+        here -- the filters are already in hand -- so there's no source-read
+        warning to show; the target-write warning (identical concern to the
+        device-to-device flow) is folded into the device picker dialog once
+        the type is known, instead of shown as a separate confirmation step.
 
         Args:
             profile: Profile object selected in My Saved Presets.
@@ -3932,11 +3955,15 @@ class MainWindow(QMainWindow):
             channel_mode=channel_mode_value.display_value,
             preset_type=preset_type,
         )
-        if not self._confirm_copy_activation([preview_item]):
-            return
+        activation_body = self._copy_activation_warning_html([preview_item])
+        warning = (
+            ("Copy Will Change Target Device(s)", activation_body)
+            if activation_body
+            else None
+        )
 
         selected_devices = DevicePickerDialog.get_devices(
-            self, self._discovered_devices, ""
+            self, self._discovered_devices, "", warning
         )
         if selected_devices is None:
             return
@@ -4037,7 +4064,18 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _on_profile_delete_requested(self, name: str) -> None:
-        """Handle MyPresetsView delete action."""
+        """Handle MyPresetsView delete action.
+
+        Confirms before deleting, matching the equivalent safety check on
+        the device-side preset delete (`_on_preset_delete_requested`) --
+        this one is a local, in-app-storage deletion, not a device write.
+        """
+        if not self._confirm_action(
+            "Delete Preset?",
+            f"Permanently delete '{name}' from My Presets?\n\nThis cannot be undone.",
+        ):
+            return
+
         try:
             self._profile_repository.delete(name)
             self._refresh_presets_view()
@@ -4162,15 +4200,16 @@ class MainWindow(QMainWindow):
         if not name:
             return
 
-        if not self._confirm_preset_preview([item]):
-            return
-
         if self._wiim_adapter is None:
             self._status_banner.show_error("No device connected")
             return
 
-        # Check if wizard state is complete enough to load
-        if not self._ensure_wizard_state_for_load():
+        # Check if wizard state is complete enough to load. The read-preview
+        # warning is passed through so it's folded into QuickSetupDialog when
+        # that dialog is about to show, instead of confirmed as a separate
+        # step beforehand (only shown standalone when nothing else is
+        # missing, matching today's single-dialog behavior for that case).
+        if not self._ensure_wizard_state_for_load(preview_items=[item]):
             return
 
         # Set flag so _on_peq_ready navigates directly to Review (smoke #87)
@@ -4217,6 +4256,23 @@ class MainWindow(QMainWindow):
         )
         return reply == QMessageBox.StandardButton.Yes
 
+    def _preset_preview_warning_html(self, items: list[Any]) -> str | None:
+        """Build the warning body for `_confirm_preset_preview()` (below), and
+        for `DevicePickerDialog`'s embedded warning in the copy-to-device
+        flow. Returns None when there's nothing to warn about (all-RoomFit
+        selection) -- see `_confirm_preset_preview()`'s docstring for why
+        RoomFit is excluded.
+        """
+        peq_items = [i for i in items if getattr(i, "preset_type", "PEQ") != "RoomFit"]
+        if not peq_items:
+            return None
+        names_html = self._html_bullet_list(peq_items)
+        return (
+            f"Reading the filters in: <br><b>{names_html}</b>"
+            "<br>preset will temporarily enable it on your device's current input. The "
+            "original filters will be restored after the read completes."
+        )
+
     def _confirm_preset_preview(self, items: list[Any]) -> bool:
         """Warn that reading these PEQ presets' filters will briefly change what's
         playing on the device (#166). RoomFit items are excluded -- RoomFit's
@@ -4228,43 +4284,40 @@ class MainWindow(QMainWindow):
         (`# ASSUMPTION:`). Shared by every read-only preset action (copy,
         export, save-to-My-Presets, load-into-editor) -- only about the
         *source* device's brief read, not any device being written to (see
-        `_confirm_copy_activation()` for Copy-to-Device's separate,
-        write-side concern).
+        `_copy_activation_warning_html()` for Copy-to-Device's separate,
+        write-side concern, folded directly into `DevicePickerDialog`
+        rather than shown as its own standalone confirm).
         """
-        peq_items = [i for i in items if getattr(i, "preset_type", "PEQ") != "RoomFit"]
-        if not peq_items:
+        body = self._preset_preview_warning_html(items)
+        if body is None:
             return True
-        names_html = self._html_bullet_list(peq_items)
         return self._confirm_action(
-            "Preset Will Briefly Activate on Device",
-            f"Reading the filters in: <br><b>{names_html}</b>"
-            "<br>preset will temporarily enable it on your device's current input. The "
-            "original filters will be restored after the read completes.<br><br>Continue?",
+            "Preset Will Briefly Activate on Device", f"{body}<br><br>Continue?"
         )
 
-    def _confirm_copy_activation(self, items: list[Any]) -> bool:
-        """Warn that copying preset(s) makes each one active on its target
-        device(s), turning PEQ/RoomFit on there if it's off -- the same
-        behavior as the main Push flow, applied here for consistency since
-        "Copy to Another Device" writes via the identical
-        SafeWrite.execute()/RoomFitSafeWrite.execute() paths. Distinct from
-        `_confirm_preset_preview()`, which only concerns the source-side
-        read; this concerns the target-side write and only applies to the
-        copy flow (the only one of the four `_confirm_preset_preview()`
-        callers that writes to any device).
+    def _copy_activation_warning_html(self, items: list[Any]) -> str | None:
+        """Build the warning body for `DevicePickerDialog`'s embedded warning
+        in both copy-to-device flows -- copying preset(s) makes each one
+        active on its target device(s), turning PEQ/RoomFit on there if it's
+        off (the same behavior as the main Push flow, applied here for
+        consistency since "Copy to Another Device" writes via the identical
+        SafeWrite.execute()/RoomFitSafeWrite.execute() paths). Distinct from
+        `_preset_preview_warning_html()`, which only concerns the
+        source-side read; this concerns the target-side write. Returns None
+        when there's nothing to warn about (empty list).
 
-        Covers both preset types in one dialog rather than a separate method
+        Covers both preset types in one body rather than a separate builder
         per type: PresetsDeviceView enforces mutual exclusion between its PEQ
         and RoomFit lists (selecting in one clears the other), so `items`
         today only ever contains one type -- but a single shared,
-        type-generic method avoids the "second near-identical dialog method"
+        type-generic builder avoids the "second near-identical text builder"
         drift a bolted-on PEQ-only sibling would repeat, and is already
         correct if that mutual-exclusion constraint is ever relaxed.
         """
         roomfit_items = [i for i in items if getattr(i, "preset_type", "PEQ") == "RoomFit"]
         peq_items = [i for i in items if getattr(i, "preset_type", "PEQ") != "RoomFit"]
         if not roomfit_items and not peq_items:
-            return True
+            return None
 
         paragraphs = []
         if roomfit_items:
@@ -4282,10 +4335,7 @@ class MainWindow(QMainWindow):
                 "turning PEQ on there if it's currently off."
             )
 
-        return self._confirm_action(
-            "Copy Will Change Target Device(s)",
-            "<br><br>".join(paragraphs) + "<br><br>Continue?",
-        )
+        return "<br><br>".join(paragraphs)
 
     @Slot(list)
     def _on_preset_delete_requested(self, items: list[Any]) -> None:
@@ -4381,13 +4431,24 @@ class MainWindow(QMainWindow):
     # Quick Setup helper (smoke #87)
     # ------------------------------------------------------------------
 
-    def _ensure_wizard_state_for_load(self) -> bool:
+    def _ensure_wizard_state_for_load(
+        self, preview_items: list[Any] | None = None
+    ) -> bool:
         """Check wizard state is complete for loading filters; show dialog if not.
 
         If no device is connected, shows error and returns False.
         If EQ type or source is missing, shows QuickSetupDialog.
         On cancel, returns False. On confirm, updates wizard state, marks
         EQ_TYPE/SOURCE/FILTERS steps completed, and returns True.
+
+        Args:
+            preview_items: Optional preset items to show the read-preview
+                warning for (see `_confirm_preset_preview`). When
+                QuickSetupDialog is about to be shown, the warning is folded
+                into it instead of shown as a separate step beforehand; when
+                nothing is missing, it's shown standalone exactly as before
+                (only `_on_preset_load_into_editor` passes this -- the other
+                two callers have no source-read to warn about).
 
         Returns:
             True if state is ready for loading, False if cancelled or blocked.
@@ -4412,7 +4473,11 @@ class MainWindow(QMainWindow):
                 else -1
             )
             if filters_idx >= 0 and current_idx >= filters_idx:
-                # Already at or past Filters — all state is populated
+                # Already at or past Filters -- all state is populated
+                if preview_items is not None and not self._confirm_preset_preview(
+                    preview_items
+                ):
+                    return False
                 self._mark_prior_steps_completed(state)
                 return True
 
@@ -4437,6 +4502,10 @@ class MainWindow(QMainWindow):
 
         # Nothing missing — proceed
         if not need_eq_type and not need_source:
+            if preview_items is not None and not self._confirm_preset_preview(
+                preview_items
+            ):
+                return False
             # All prior steps should be marked completed
             self._mark_prior_steps_completed(state)
             return True
@@ -4455,6 +4524,12 @@ class MainWindow(QMainWindow):
         current_eq_type = "roomfit" if flow_type == FlowType.ROOMFIT else "peq"
         current_sources = state.selected_sources or None
 
+        warning = None
+        if preview_items is not None:
+            body = self._preset_preview_warning_html(preview_items)
+            if body is not None:
+                warning = ("Preset Will Briefly Activate on Device", body)
+
         result = QuickSetupDialog.get_setup(
             self,
             need_eq_type=need_eq_type,
@@ -4463,6 +4538,7 @@ class MainWindow(QMainWindow):
             current_eq_type=current_eq_type,
             current_sources=current_sources,
             supports_roomfit=supports_roomfit,
+            warning=warning,
         )
 
         if result is None:

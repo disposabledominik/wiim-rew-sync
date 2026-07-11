@@ -725,3 +725,23 @@ class TestQuickSetupDialog:
 
         ok_btn = dialog._button_box.button(QDialogButtonBox.StandardButton.Ok)
         assert not ok_btn.isEnabled()
+
+    def test_no_warning_arg_shows_no_warning_box(self, qtbot) -> None:
+        """Without a `warning` arg, no warning box is rendered."""
+        dialog = QuickSetupDialog(None, need_eq_type=True, need_source=True)
+        qtbot.addWidget(dialog)
+
+        assert dialog.findChild(QWidget, "quick_setup_warning_frame") is None
+
+    def test_warning_arg_renders_warning_box(self, qtbot) -> None:
+        """A `warning` arg renders a warning box under the instruction label."""
+        dialog = QuickSetupDialog(
+            None, need_eq_type=True, need_source=True,
+            warning=("Heads Up", "This preset will briefly activate."),
+        )
+        qtbot.addWidget(dialog)
+
+        assert dialog.findChild(QWidget, "quick_setup_warning_frame") is not None
+        body_label = dialog.findChild(QLabel, "quick_setup_warning_body")
+        assert body_label is not None
+        assert "This preset will briefly activate." in body_label.text()

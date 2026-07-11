@@ -190,7 +190,37 @@ that takes no `source_name`). Wire a rename action into `PresetsDeviceView`'s pe
 
 ---
 
-## 9. Packaged `.exe` Shows a Brief Window Flash on Launch (Known Issue)
+## 9. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)
+
+**Originally:** Surfaced via `/code-review ultra` during the 2026-07-12 dialog-consolidation session (`docs/smoke_test_issues.md` `#200`/`#201`).
+
+**What:** `DevicePickerDialog` and `QuickSetupDialog` each independently gained an optional
+`warning: tuple[str, str] | None` constructor param (folding a preceding standalone confirmation
+into the dialog itself — see `docs/smoke_test_issues.md` for the workflow-consolidation this
+enabled). The review found the two dialogs' `_setup_ui()` bodies had copy-pasted the same
+"unpack tuple, build a warning box, add it to the layout" block; this was fixed in the same
+session by extracting a shared `add_optional_warning_box(layout, warning, ...)` helper
+(`src/gui/components/warning_box.py`). What's *not* fixed: the `warning` param, its docstring,
+and the `setMinimumWidth(420 if warning else ...)` width-bump convention are still hand-duplicated
+in each dialog's `__init__`/static factory method rather than coming from a shared base class or
+mixin — `PushConfirmation` (a third dialog using the underlying `make_warning_box()` directly,
+without the optional-param wrapper) makes it a third slightly-different convention already.
+
+**Why deferred:** Only two dialogs currently need the optional-warning constructor pattern; a
+third would justify extracting a shared base (`WarningDialogBase`/`OptionalWarningMixin`) with
+real confidence about the right shape. Doing it now for two call sites risks guessing the wrong
+abstraction (per `.kiro/steering` — don't design for hypothetical future requirements).
+
+**Status:** Not started. Low priority, low risk if left alone (the duplication remaining after the
+2026-07-12 partial fix is just `__init__`/docstring boilerplate, not behavior).
+
+**To reactivate:** If a third dialog needs an embedded optional warning, extract a shared
+`__init__`-level mixin/base class covering the `warning` param, docstring, and width-bump logic,
+and migrate `DevicePickerDialog`/`QuickSetupDialog` onto it at the same time.
+
+---
+
+## 10. Packaged `.exe` Shows a Brief Window Flash on Launch (Known Issue)
 
 **Originally:** Reported by the device owner, 2026-07-11.
 

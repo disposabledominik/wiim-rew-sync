@@ -11,7 +11,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QListWidget
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QListWidget, QWidget
 
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.dialogs.device_picker import DevicePickerDialog
@@ -197,6 +197,33 @@ class TestDevicePickerDialog:
             dialog.accept()
 
         assert dialog.result() != QDialog.DialogCode.Accepted
+
+    def test_device_picker_without_warning_has_no_warning_box(self, qtbot) -> None:
+        """No `warning` arg -- no warning box, default Ok label."""
+        devices = [_make_device("Living Room", "192.168.1.10")]
+        dialog = DevicePickerDialog(None, devices, exclude_ip="")
+        qtbot.addWidget(dialog)
+
+        assert dialog.findChild(QWidget, "device_picker_warning_frame") is None
+        ok_button = dialog._button_box.button(QDialogButtonBox.StandardButton.Ok)
+        assert ok_button is not None
+        assert ok_button.text() == "OK"
+
+    def test_device_picker_with_warning_shows_box_and_relabels_ok(self, qtbot) -> None:
+        """A `warning` arg renders a warning box above the list and relabels Ok to Copy."""
+        devices = [_make_device("Living Room", "192.168.1.10")]
+        dialog = DevicePickerDialog(
+            None, devices, exclude_ip="", warning=("Heads Up", "This will do a thing.")
+        )
+        qtbot.addWidget(dialog)
+
+        assert dialog.findChild(QWidget, "device_picker_warning_frame") is not None
+        body_label = dialog.findChild(QLabel, "device_picker_warning_body")
+        assert body_label is not None
+        assert "This will do a thing." in body_label.text()
+        ok_button = dialog._button_box.button(QDialogButtonBox.StandardButton.Ok)
+        assert ok_button is not None
+        assert ok_button.text() == "Copy"
 
 
 # ---------------------------------------------------------------------------

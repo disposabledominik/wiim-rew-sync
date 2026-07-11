@@ -168,6 +168,40 @@ class TestPushHappyPath:
 
 
 # ---------------------------------------------------------------------------
+# Push -- Multi-source round indicator
+# ---------------------------------------------------------------------------
+
+
+class TestPushMultiSourceRound:
+    """Test push_round_changed emission for multi-source pushes."""
+
+    @pytest.mark.asyncio
+    async def test_single_source_does_not_emit_push_round_changed(self, window) -> None:
+        """A single-source push (the common case) never emits push_round_changed."""
+        mock_safe_write = _setup_push_state(window)
+        result = WriteResult(success=True, rollback_success=None, backup_path=None)
+        mock_safe_write.execute = AsyncMock(return_value=result)
+
+        await window._do_push()
+
+        window._bridge.push_round_changed.emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_multi_source_emits_push_round_changed_per_source(self, window) -> None:
+        """Each selected source emits push_round_changed with its 1-based
+        index and the total count, in order."""
+        mock_safe_write = _setup_push_state(window)
+        window._wizard_controller.state.selected_sources = ["wifi", "optical"]
+        result = WriteResult(success=True, rollback_success=None, backup_path=None)
+        mock_safe_write.execute = AsyncMock(return_value=result)
+
+        await window._do_push()
+
+        calls = [c.args for c in window._bridge.push_round_changed.emit.call_args_list]
+        assert calls == [("wifi", 1, 2), ("optical", 2, 2)]
+
+
+# ---------------------------------------------------------------------------
 # Push — Exception via bridge_wrapper
 # ---------------------------------------------------------------------------
 

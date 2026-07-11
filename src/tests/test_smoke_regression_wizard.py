@@ -591,6 +591,54 @@ class TestIssue87SidebarPresetLoadChecks:
         result = window._ensure_wizard_state_for_load()
         assert result is True
 
+    def test_preview_items_merged_into_quick_setup_warning(self, window) -> None:
+        """When QuickSetupDialog is about to show, a preview-warning body is
+        passed into it as `warning=`, folding what used to be a separate
+        standalone confirmation into the same dialog."""
+        window._on_device_selected("192.168.1.100")
+        state = window._wizard_controller.state
+        state.completed_steps = {WizardStep.CONNECT: "Connected"}
+
+        item = MagicMock(name="Movie Night", preset_type="PEQ")
+        item.name = "Movie Night"
+
+        with patch(
+            "src.gui.dialogs.quick_setup_dialog.QuickSetupDialog.get_setup",
+            return_value=("peq", ["wifi"]),
+        ) as mock_get_setup:
+            result = window._ensure_wizard_state_for_load(preview_items=[item])
+
+        assert result is True
+        mock_get_setup.assert_called_once()
+        warning = mock_get_setup.call_args.kwargs["warning"]
+        assert warning is not None
+        assert "Movie Night" in warning[1]
+
+    def test_preview_items_confirmed_standalone_when_nothing_missing(self, window) -> None:
+        """When wizard state is already complete, the preview warning is
+        shown as its own standalone confirmation (QuickSetupDialog never
+        shows), matching the pre-existing single-dialog behavior."""
+        window._on_device_selected("192.168.1.100")
+        state = window._wizard_controller.state
+        state.completed_steps = {
+            WizardStep.CONNECT: "Connected",
+            WizardStep.EQ_TYPE: "PEQ",
+            WizardStep.SOURCE: "wifi",
+            WizardStep.FILTERS: "Loaded",
+        }
+        state.selected_source = "wifi"
+
+        item = MagicMock(name="Movie Night", preset_type="PEQ")
+        item.name = "Movie Night"
+
+        with patch.object(
+            window, "_confirm_preset_preview", return_value=False
+        ) as mock_confirm:
+            result = window._ensure_wizard_state_for_load(preview_items=[item])
+
+        mock_confirm.assert_called_once_with([item])
+        assert result is False
+
 # ---------------------------------------------------------------------------
 # Issue #95: Wizard state skips QuickSetupDialog if current step is FILTERS or beyond
 # ---------------------------------------------------------------------------
@@ -610,6 +658,44 @@ class TestIssue95WizardStateSkipsDialog:
             result = window._ensure_wizard_state_for_load()
             assert result is True
             mock_dialog.assert_not_called()
+
+    def test_ensure_wizard_state_at_filters_step_confirms_preview_items(
+        self, window
+    ) -> None:
+        """#200: the "already at/past FILTERS" early-return must still honor
+        `preview_items` -- it used to skip the "Preset Will Briefly Activate
+        on Device" warning entirely whenever the wizard was already on the
+        Review/Push step, unlike the "nothing missing" branch which always
+        checked it."""
+        window._on_device_selected("192.168.1.100")
+        window._wizard_controller.state.current_step = WizardStep.FILTERS
+
+        item = MagicMock(name="Movie Night", preset_type="PEQ")
+        item.name = "Movie Night"
+
+        with patch.object(
+            window, "_confirm_preset_preview", return_value=True
+        ) as mock_confirm:
+            result = window._ensure_wizard_state_for_load(preview_items=[item])
+
+        mock_confirm.assert_called_once_with([item])
+        assert result is True
+
+    def test_ensure_wizard_state_at_filters_step_declined_preview_returns_false(
+        self, window
+    ) -> None:
+        """#200: declining the folded-in preview warning at the FILTERS-step
+        early return must block the load, not silently proceed."""
+        window._on_device_selected("192.168.1.100")
+        window._wizard_controller.state.current_step = WizardStep.FILTERS
+
+        item = MagicMock(name="Movie Night", preset_type="PEQ")
+        item.name = "Movie Night"
+
+        with patch.object(window, "_confirm_preset_preview", return_value=False):
+            result = window._ensure_wizard_state_for_load(preview_items=[item])
+
+        assert result is False
 
 
 # ---------------------------------------------------------------------------

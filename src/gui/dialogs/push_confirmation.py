@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.warning_box import make_warning_box
 from src.gui.constants import (
     SPACING_MD,
     SPACING_SM,
@@ -121,45 +122,27 @@ class PushConfirmation(QDialog):
 
         # --- Clamping summary (orange warning) ---
         if clamping_summary:
-            clamping_frame = QFrame()
-            clamping_frame.setObjectName("clamping_warning_frame")
-            clamping_frame.setProperty("class", "warningBox")
-            clamping_layout = QVBoxLayout(clamping_frame)
-            clamping_layout.setSpacing(SPACING_SM)
-
-            clamping_header = QLabel("<b>⚠ Values clamped to device limits</b>")
-            clamping_header.setTextFormat(Qt.TextFormat.RichText)
-            clamping_header.setProperty("class", "warning")
-            clamping_layout.addWidget(clamping_header)
-
-            clamping_body = QLabel(clamping_summary)
-            clamping_body.setObjectName("clamping_summary_label")
-            clamping_body.setWordWrap(True)
-            clamping_body.setTextFormat(Qt.TextFormat.PlainText)
-            clamping_layout.addWidget(clamping_body)
-
-            layout.addWidget(clamping_frame)
+            layout.addWidget(
+                make_warning_box(
+                    "Values clamped to device limits",
+                    clamping_summary,
+                    frame_object_name="clamping_warning_frame",
+                    body_object_name="clamping_summary_label",
+                    body_rich_text=False,
+                )
+            )
 
         # --- Mode mismatch warning ---
         if mode_mismatch:
-            mismatch_frame = QFrame()
-            mismatch_frame.setObjectName("mode_mismatch_frame")
-            mismatch_frame.setProperty("class", "warningBox")
-            mismatch_layout = QVBoxLayout(mismatch_frame)
-            mismatch_layout.setSpacing(SPACING_SM)
-
-            mismatch_header = QLabel("<b>⚠ Channel mode mismatch</b>")
-            mismatch_header.setTextFormat(Qt.TextFormat.RichText)
-            mismatch_header.setProperty("class", "warning")
-            mismatch_layout.addWidget(mismatch_header)
-
-            mismatch_body = QLabel(mode_mismatch)
-            mismatch_body.setObjectName("mode_mismatch_label")
-            mismatch_body.setWordWrap(True)
-            mismatch_body.setTextFormat(Qt.TextFormat.PlainText)
-            mismatch_layout.addWidget(mismatch_body)
-
-            layout.addWidget(mismatch_frame)
+            layout.addWidget(
+                make_warning_box(
+                    "Channel mode mismatch",
+                    mode_mismatch,
+                    frame_object_name="mode_mismatch_frame",
+                    body_object_name="mode_mismatch_label",
+                    body_rich_text=False,
+                )
+            )
 
         # --- Button box (Ok / Cancel) ---
         layout.addSpacing(SPACING_SM)

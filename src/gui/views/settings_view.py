@@ -33,9 +33,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
-from src.gui.components.page_layout import make_page_title
+from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    MAX_CONTENT_WIDTH,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
@@ -151,46 +150,43 @@ class SettingsView(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        """Build the settings page layout."""
-        page_layout = QVBoxLayout(self)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.setSpacing(0)
+        """Build the settings page layout.
 
-        # Scrollable area for all content
-        scroll = QScrollArea(self)
+        Uses the shared `build_centered_content` column (matching every
+        other page/view) instead of hand-rolling an equivalent
+        QHBoxLayout+AlignHCenter+maximumWidth centering block -- this view
+        used to be the only one with its own duplicate of that pattern.
+        """
+        content_layout, content_wrapper = build_centered_content(self)
+
+        title = make_page_title(
+            "Settings", content_wrapper, object_name="SettingsViewTitle"
+        )
+        content_layout.addWidget(title)
+
+        # Scrollable area for the sections below the title
+        scroll = QScrollArea(content_wrapper)
         scroll.setObjectName("SettingsViewScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        scroll_content = QWidget()
-        scroll_content_layout = QHBoxLayout(scroll_content)
-        scroll_content_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_content_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-
-        # Content wrapper with max width
-        content = QWidget(scroll_content)
-        content.setMaximumWidth(MAX_CONTENT_WIDTH)
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG)
-        content_layout.setSpacing(SPACING_LG)
-
-        # Page title
-        title = make_page_title("Settings", content, object_name="SettingsViewTitle")
-        content_layout.addWidget(title)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(SPACING_LG)
 
         # Build sections
-        content_layout.addWidget(self._build_appearance_section(content))
-        content_layout.addWidget(self._build_paths_section(content))
-        content_layout.addWidget(self._build_behavior_section(content))
-        content_layout.addWidget(self._build_logs_section(content))
-        content_layout.addWidget(self._build_support_section(content))
+        body_layout.addWidget(self._build_appearance_section(body))
+        body_layout.addWidget(self._build_paths_section(body))
+        body_layout.addWidget(self._build_behavior_section(body))
+        body_layout.addWidget(self._build_logs_section(body))
+        body_layout.addWidget(self._build_support_section(body))
 
-        content_layout.addStretch()
+        body_layout.addStretch()
 
-        scroll_content_layout.addWidget(content)
-        scroll.setWidget(scroll_content)
-        page_layout.addWidget(scroll)
+        scroll.setWidget(body)
+        content_layout.addWidget(scroll, 1)
 
     def _build_appearance_section(self, parent: QWidget) -> QGroupBox:
         """Build the Appearance section with theme toggle (Req 25.4)."""

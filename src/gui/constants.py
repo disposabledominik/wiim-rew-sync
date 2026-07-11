@@ -118,8 +118,15 @@ INPUT_RADIUS: int = 4
 # Sizing
 # ---------------------------------------------------------------------------
 
-MAX_CONTENT_WIDTH: int = 1200
-"""Maximum content area width in pixels (prevents overly stretched layouts)."""
+MAX_CONTENT_WIDTH: int = 760
+"""Maximum content area width in pixels (prevents overly stretched layouts).
+
+Most pages are single-column forms/lists that looked sparse and over-spread
+at the old 1200px cap; 760 comfortably fits that content without feeling
+cramped, and is close enough to what's actually available at the app's
+default 1000x700 window size (minus sidebar/margins) that the app's visual
+width stays consistent whether or not the user resizes.
+"""
 
 SIDEBAR_EXPANDED: int = 200
 """Sidebar width in pixels when fully expanded (icons + labels)."""

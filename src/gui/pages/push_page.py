@@ -140,6 +140,23 @@ class PushPage(QWidget):
             else:
                 row.set_status("pending")
 
+    def set_push_round(self, source_name: str, index: int, total: int) -> None:
+        """Show which source/round a multi-source push is currently on.
+
+        Hidden entirely for a single-source push (`total <= 1`), since
+        there's nothing to disambiguate in that case.
+
+        Args:
+            source_name: The source currently being written to.
+            index: 1-based index of this source among the selected sources.
+            total: Total number of sources being pushed to.
+        """
+        if total <= 1:
+            self._round_label.setVisible(False)
+            return
+        self._round_label.setText(f"Pushing to {source_name} ({index} of {total})")
+        self._round_label.setVisible(True)
+
     def set_success(
         self,
         backup_path: str = "",
@@ -164,6 +181,14 @@ class PushPage(QWidget):
         for row in self._stage_rows.values():
             row.set_status("complete")
 
+        # Hide the stepper on success -- once every stage reads "complete"
+        # it's fully redundant with the result checkmark/message directly
+        # below it, so collapsing it here reclaims real vertical space in
+        # the most common outcome. Failure keeps the stepper visible (see
+        # set_failure()) since it's the only place showing *which* stage
+        # failed.
+        self._progress_container.setVisible(False)
+
         self._show_result_state()
         self._result_icon.setText("\u2713")
         self._set_result_class("success")
@@ -180,7 +205,6 @@ class PushPage(QWidget):
         self._ok_button.setVisible(True)
         self._undo_button.setVisible(True)
         self._secondary_row.setVisible(True)
-        self._failure_row.setVisible(False)
 
     def set_failure(self, message: str, backup_path: str, critical: bool = False) -> None:
         """Transition to failure state.
@@ -235,7 +259,6 @@ class PushPage(QWidget):
         self._ok_button.setVisible(True)
         self._undo_button.setVisible(False)
         self._secondary_row.setVisible(False)
-        self._failure_row.setVisible(True)
 
     def set_dry_run_result(self, summary: str) -> None:
         """Show dry run translation result (no network operations).
@@ -261,13 +284,13 @@ class PushPage(QWidget):
         self._ok_button.setVisible(True)
         self._undo_button.setVisible(False)
         self._secondary_row.setVisible(False)
-        self._failure_row.setVisible(False)
 
     def reset(self) -> None:
         """Reset to initial state (all stages pending, no result)."""
         self._progress_container.setVisible(True)
         self._result_container.setVisible(False)
         self._dry_run_badge.setVisible(False)
+        self._round_label.setVisible(False)
         self._backup_path_label.setVisible(False)
         self._clear_success_filters()
         for row in self._stage_rows.values():
@@ -312,8 +335,14 @@ class PushPage(QWidget):
         self._dry_run_badge.setVisible(False)
 
     def _show_result_state(self) -> None:
-        """Show the result area (keeps stepper visible for context)."""
+        """Show the result area (keeps stepper visible for context).
+
+        Also hides the multi-source round label -- once a terminal result
+        is reached there's no "currently pushing to X" round left to show,
+        so leaving it visible would contradict the result message.
+        """
         self._result_container.setVisible(True)
+        self._round_label.setVisible(False)
 
     def _setup_ui(self) -> None:
         """Build the page layout."""
@@ -353,6 +382,17 @@ class PushPage(QWidget):
         self._dry_run_badge.setSizePolicy(size_policy)
         self._dry_run_badge.setVisible(False)
         body_layout.addWidget(self._dry_run_badge)
+
+        # Multi-source round indicator (hidden for a single-source push).
+        # Shows which source is currently being written and how many rounds
+        # remain, since the Safe Write Protocol repeats once per selected
+        # source but nothing on this page previously said so.
+        self._round_label = QLabel("", body)
+        self._round_label.setObjectName("PushPageRoundLabel")
+        self._round_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._round_label.setProperty("class", "secondary")
+        self._round_label.setVisible(False)
+        body_layout.addWidget(self._round_label)
 
         # Progress stepper container. Rows fill the container's width so
         # every row's icon sits at the same x position (a column of
@@ -507,16 +547,6 @@ class PushPage(QWidget):
 
         self._secondary_row.setVisible(False)
         result_layout.addWidget(self._secondary_row)
-
-        # Failure-specific row (OK returns to wizard)
-        self._failure_row = QWidget(self._result_container)
-        failure_layout = QHBoxLayout(self._failure_row)
-        failure_layout.setContentsMargins(0, 0, 0, 0)
-        failure_layout.setSpacing(SPACING_MD)
-        failure_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self._failure_row.setVisible(False)
-        result_layout.addWidget(self._failure_row)
 
         self._result_container.setVisible(False)
         body_layout.addWidget(self._result_container)

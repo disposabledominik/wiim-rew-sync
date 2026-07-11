@@ -11,6 +11,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel
 
+from src.gui.constants import FILTER_TABLE_MAX_WIDTH
 from src.gui.pages.connect_page import ConnectPage
 from src.gui.pages.eq_type_page import EQTypePage
 from src.gui.pages.filters_page import FiltersPage
@@ -18,6 +19,7 @@ from src.gui.pages.name_profile_page import NameProfilePage
 from src.gui.pages.push_page import PushPage
 from src.gui.pages.review_page import ReviewPage
 from src.gui.pages.source_page import SourcePage
+from src.models.canonical import CanonicalFilter
 
 # ---------------------------------------------------------------------------
 # TestConnectPage
@@ -412,6 +414,31 @@ class TestReviewPage:
         assert page._dry_run_hint.isVisible()
         assert "previewed only" in page._dry_run_hint.text()
 
+    def test_filter_table_stretches_to_max_width_not_collapsed(self, qtbot) -> None:
+        """#202: the FilterTable must actually fill its FILTER_TABLE_MAX_WIDTH
+        cap, not collapse to a tiny sliver.
+
+        `content_layout.addWidget(widget, stretch, alignment=...)` sizes the
+        widget to its sizeHint() instead of letting an Expanding size policy
+        fill up to setMaximumWidth() -- and FilterTable's Stretch-mode
+        columns don't contribute meaningfully to sizeHint(), so using the
+        addWidget alignment param (instead of a stretch-widget-stretch
+        sandwich) silently collapsed the whole table to a sliver even though
+        setMaximumWidth(FILTER_TABLE_MAX_WIDTH) was set. The page must be
+        wide enough that FILTER_TABLE_MAX_WIDTH is the binding constraint,
+        not the window itself, or this assertion would pass trivially."""
+        page = ReviewPage()
+        qtbot.addWidget(page)
+        page.resize(1000, 700)
+        page.show()
+
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)
+        ]
+        page.set_filters(filters)
+
+        assert page._filter_table.width() == FILTER_TABLE_MAX_WIDTH
+
 
 # ---------------------------------------------------------------------------
 # TestPushPage
@@ -445,6 +472,18 @@ class TestPushPage:
         assert page._undo_button.isVisible()
         assert page._result_container.isVisible()
 
+    def test_set_success_hides_redundant_stepper(self, qtbot) -> None:
+        """set_success hides the stepper -- once every stage reads "complete"
+        it's fully redundant with the result checkmark/message, and hiding
+        it reclaims vertical space in the most common outcome."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_success()
+
+        assert not page._progress_container.isVisible()
+
     def test_set_failure_shows_message(self, qtbot) -> None:
         """set_failure displays error message and shows OK but not Undo."""
         page = PushPage()
@@ -459,6 +498,86 @@ class TestPushPage:
         assert "failed" in msg or "recovery" in msg
         assert page._ok_button.isVisible()
         assert not page._undo_button.isVisible()
+
+    def test_set_push_round_hidden_for_single_source(self, qtbot) -> None:
+        """total<=1 keeps the round label hidden -- nothing to disambiguate."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_push_round("wifi", 1, 1)
+
+        assert not page._round_label.isVisible()
+
+    def test_set_push_round_shows_source_and_count(self, qtbot) -> None:
+        """total>1 shows the round label with source name and round count."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_push_round("optical", 2, 3)
+
+        assert page._round_label.isVisible()
+        assert page._round_label.text() == "Pushing to optical (2 of 3)"
+
+    def test_reset_hides_round_label(self, qtbot) -> None:
+        """reset() clears a stale round label from a previous multi-source push."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_push_round("optical", 2, 3)
+
+        page.reset()
+
+        assert not page._round_label.isVisible()
+
+    def test_set_success_hides_stale_round_label(self, qtbot) -> None:
+        """#201: a multi-source push's round label ("Pushing to X (2 of 2)")
+        must not remain visible once a terminal result is reached -- it used
+        to only be cleared by reset(), so it lingered alongside the success
+        message until the page was reset for a new push."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_push_round("optical", 2, 2)
+
+        page.set_success()
+
+        assert not page._round_label.isVisible()
+
+    def test_set_failure_hides_stale_round_label(self, qtbot) -> None:
+        """#201: same as success -- failure is also a terminal result."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_push_round("optical", 2, 2)
+
+        page.set_failure("Verification mismatch", "/tmp/backup.json")
+
+        assert not page._round_label.isVisible()
+
+    def test_set_dry_run_result_hides_stale_round_label(self, qtbot) -> None:
+        """#201: same as success/failure -- dry run is also a terminal result."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_push_round("optical", 2, 2)
+
+        page.set_dry_run_result("2 filters would be written.")
+
+        assert not page._round_label.isVisible()
+
+    def test_set_failure_keeps_stepper_visible(self, qtbot) -> None:
+        """set_failure keeps the stepper visible -- unlike success, it's the
+        only place that shows which specific stage failed."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_stage("verifying")
+        page.set_failure("Verification mismatch", "/tmp/backup.json")
+
+        assert page._progress_container.isVisible()
 
     def test_undo_signal_emitted(self, qtbot) -> None:
         """Clicking Undo button emits undo_requested."""

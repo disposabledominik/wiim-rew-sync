@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.warning_box import add_optional_warning_box
 from src.models.capabilities import DeviceInfo
 
 
@@ -36,6 +37,7 @@ class DevicePickerDialog(QDialog):
         parent: QWidget | None,
         discovered_devices: list[DeviceInfo],
         exclude_ip: str,
+        warning: tuple[str, str] | None = None,
     ) -> None:
         """Initialize the device picker dialog.
 
@@ -43,18 +45,29 @@ class DevicePickerDialog(QDialog):
             parent: Parent widget (may be None).
             discovered_devices: All discovered WiiM devices on the network.
             exclude_ip: IP address of the current device to exclude from the list.
+            warning: Optional (header, body_html) shown above the device
+                list -- lets callers fold a preceding confirmation dialog
+                into this one instead of showing it as a separate step.
         """
         super().__init__(parent)
         self.setWindowTitle("Select Target Devices")
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(420 if warning else 380)
         self.setModal(True)
 
         self._devices = [d for d in discovered_devices if d.ip != exclude_ip]
+        self._warning = warning
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         """Build the dialog layout."""
         layout = QVBoxLayout(self)
+
+        add_optional_warning_box(
+            layout,
+            self._warning,
+            frame_object_name="device_picker_warning_frame",
+            body_object_name="device_picker_warning_body",
+        )
 
         # Header
         header = QLabel("Select one or more target devices:")
@@ -77,6 +90,10 @@ class DevicePickerDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self._button_box.setObjectName("button_box")
+        if self._warning is not None:
+            ok_button = self._button_box.button(QDialogButtonBox.StandardButton.Ok)
+            if ok_button is not None:
+                ok_button.setText("Copy")
         self._button_box.accepted.connect(self.accept)
         self._button_box.rejected.connect(self.reject)
         layout.addWidget(self._button_box)
@@ -111,6 +128,7 @@ class DevicePickerDialog(QDialog):
         parent: QWidget | None,
         discovered_devices: list[DeviceInfo],
         exclude_ip: str,
+        warning: tuple[str, str] | None = None,
     ) -> list[DeviceInfo] | None:
         """Show the device picker and return selected devices or None on cancel.
 
@@ -120,11 +138,13 @@ class DevicePickerDialog(QDialog):
             parent: Parent widget (may be None).
             discovered_devices: All discovered WiiM devices.
             exclude_ip: IP address of current device to exclude.
+            warning: Optional (header, body_html) shown above the device
+                list.
 
         Returns:
             List of selected DeviceInfo objects, or None if the user cancelled.
         """
-        dialog = DevicePickerDialog(parent, discovered_devices, exclude_ip)
+        dialog = DevicePickerDialog(parent, discovered_devices, exclude_ip, warning)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.selected_devices()
         return None

@@ -45,7 +45,8 @@ class FilterTable(QWidget):
     - Comparison (diff) view highlighting changed bands
 
     The table is centered horizontally and constrained to a max width
-    of ~400px for compact readability.
+    (see `FILTER_TABLE_MAX_WIDTH` in `src/gui/constants.py`) for compact
+    readability -- enforced by the caller (`ReviewPage`), not this class.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:

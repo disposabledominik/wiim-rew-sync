@@ -1438,116 +1438,109 @@ class TestPresets:
         assert "&lt;b&gt;Bold&lt;/b&gt;" in message
         assert "&amp; Loud" in message
 
-    def test_166_copy_to_device_declined_skips_device_picker(self, window) -> None:
-        """Declining the preview confirmation aborts before the device picker
-        or any run_async call for _on_copy_to_device_requested."""
+    def test_166_copy_to_device_cancelled_at_picker_skips_run_async(self, window) -> None:
+        """Cancelling the combined warning+picker dialog aborts before any
+        run_async call for _on_copy_to_device_requested. The preview and
+        activation warnings are now embedded in the device picker itself
+        (folded into one dialog) rather than shown as separate confirmations
+        beforehand, so "declining" is now expressed as the user cancelling
+        that single dialog -- DevicePickerDialog.get_devices returning None."""
         _setup_device(window)
         window._discovered_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
         items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.No,
-            ),
-            patch(
-                "src.gui.main_window.DevicePickerDialog.get_devices"
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=None,
             ) as mock_picker,
             patch.object(window._bridge, "run_async") as mock_run,
         ):
             window._on_copy_to_device_requested(items)
 
-        mock_picker.assert_not_called()
+        mock_picker.assert_called_once()
+        # The combined warning text is passed as the picker's 4th arg.
+        warning = mock_picker.call_args[0][3]
+        assert warning is not None
+        assert "Movie Night" in warning[1]
         mock_run.assert_not_called()
 
     # --- #191: Copy-to-Device RoomFit target-activation warning ---
 
-    def test_191_confirm_copy_activation_dialog_for_peq_item(self, window) -> None:
+    def test_191_copy_activation_warning_html_for_peq_item(self, window) -> None:
         """Copying a PEQ preset warns that it will become active and enable
         PEQ on the target device(s), naming the preset -- PEQ redesign
-        mirrors RoomFit's #191 warning (docs/corrections.md)."""
+        mirrors RoomFit's #191 warning (docs/corrections.md).
+
+        `_copy_activation_warning_html` is the pure text builder folded into
+        `DevicePickerDialog`'s embedded warning in the actual copy-to-device
+        flow (there's no longer a standalone `_confirm_copy_activation`
+        dialog to test directly)."""
         items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
 
-        with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
-        ) as mock_question:
-            result = window._confirm_copy_activation(items)
+        body = window._copy_activation_warning_html(items)
 
-        mock_question.assert_called_once()
-        message = mock_question.call_args[0][2]
-        assert "Movie Night" in message
-        assert result is True
+        assert body is not None
+        assert "Movie Night" in body
 
-    def test_191_confirm_copy_activation_dialog_for_roomfit_item(self, window) -> None:
+    def test_191_copy_activation_warning_html_for_roomfit_item(self, window) -> None:
         """Copying a RoomFit profile warns that it will become active and
         enable RoomFit on the target device(s), naming the profile."""
         items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
 
-        with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
-        ) as mock_question:
-            result = window._confirm_copy_activation(items)
+        body = window._copy_activation_warning_html(items)
 
-        mock_question.assert_called_once()
-        message = mock_question.call_args[0][2]
-        assert "Living Room" in message
-        assert result is True
+        assert body is not None
+        assert "Living Room" in body
 
-    def test_191_confirm_copy_activation_mixed_selection_shows_one_dialog(self, window) -> None:
+    def test_191_copy_activation_warning_html_mixed_selection_combines_both(
+        self, window
+    ) -> None:
         """A selection containing both types (not reachable via the current
-        UI's mutual-exclusion behavior, but the method must not assume it)
-        shows exactly one combined dialog, not two sequential popups."""
+        UI's mutual-exclusion behavior, but the builder must not assume it)
+        combines both into one body, not two sequential popups' worth of
+        text."""
         items = [
             PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ"),
             PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit"),
         ]
 
-        with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
-        ) as mock_question:
-            result = window._confirm_copy_activation(items)
+        body = window._copy_activation_warning_html(items)
 
-        mock_question.assert_called_once()
-        message = mock_question.call_args[0][2]
-        assert "Movie Night" in message
-        assert "Living Room" in message
-        assert result is True
+        assert body is not None
+        assert "Movie Night" in body
+        assert "Living Room" in body
 
-    def test_191_confirm_copy_activation_declined_returns_false(self, window) -> None:
-        items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
-
-        with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.No,
-        ):
-            result = window._confirm_copy_activation(items)
-
-        assert result is False
-
-    def test_191_copy_to_device_roomfit_declined_at_activation_dialog_skips_picker(
+    def test_191_copy_activation_warning_html_empty_selection_returns_none(
         self, window
     ) -> None:
-        """The RoomFit activation warning is a second, independent gate --
-        declining it (after accepting the first preview dialog) must also
-        abort before the device picker."""
+        assert window._copy_activation_warning_html([]) is None
+
+    def test_191_copy_to_device_roomfit_cancelled_at_picker_skips_run_async(
+        self, window
+    ) -> None:
+        """The RoomFit activation warning is embedded in the same combined
+        device-picker dialog as the PEQ case -- cancelling that dialog must
+        abort before any run_async call, and the warning text passed to the
+        picker must name the RoomFit item and mention RoomFit specifically."""
         _setup_device(window)
         window._discovered_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
         items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
 
         with (
-            patch.object(window, "_confirm_preset_preview", return_value=True),
-            patch.object(window, "_confirm_copy_activation", return_value=False),
             patch(
-                "src.gui.main_window.DevicePickerDialog.get_devices"
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=None,
             ) as mock_picker,
             patch.object(window._bridge, "run_async") as mock_run,
         ):
             window._on_copy_to_device_requested(items)
 
-        mock_picker.assert_not_called()
+        mock_picker.assert_called_once()
+        warning = mock_picker.call_args[0][3]
+        assert warning is not None
+        assert "Living Room" in warning[1]
+        assert "RoomFit" in warning[1]
         mock_run.assert_not_called()
 
     # --- Issue #156: Delete from Presets on Device ---
@@ -1646,6 +1639,38 @@ class TestPresets:
 
         mock_adapter.delete_roomfit_profile.assert_called_once_with("Living Room")
         mock_error.assert_called_once_with("Deleted 1, 1 failed")
+
+    def test_local_preset_delete_confirmed_deletes_and_refreshes(self, window) -> None:
+        """Confirming the local-delete dialog deletes the profile and refreshes
+        My Saved Presets, mirroring the device-side delete's safety check
+        (this one was previously missing any confirmation at all)."""
+        with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch.object(window._profile_repository, "delete") as mock_delete,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            window._on_profile_delete_requested("Movie Night")
+
+        mock_delete.assert_called_once_with("Movie Night")
+        mock_refresh.assert_called_once()
+        mock_success.assert_called_once_with("Deleted 'Movie Night'")
+
+    def test_local_preset_delete_declined_does_not_delete(self, window) -> None:
+        """Declining the local-delete confirmation leaves the repository untouched."""
+        with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.No,
+            ),
+            patch.object(window._profile_repository, "delete") as mock_delete,
+        ):
+            window._on_profile_delete_requested("Movie Night")
+
+        mock_delete.assert_not_called()
 
     # --- Issue #27: RoomFit profile selection triggers read and advances ---
 
