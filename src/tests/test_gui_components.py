@@ -14,7 +14,9 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from src.gui.components.action_button import ElidingPushButton, make_action_button
 from src.gui.components.device_card import DeviceCard
+from src.gui.components.eliding_label import ElidingLabel
 from src.gui.components.filter_table import FilterTable
 from src.gui.components.sidebar_nav import SidebarNav
 from src.gui.components.status_banner import StatusBanner
@@ -238,6 +240,23 @@ class TestStepIndicator:
 
         assert indicator._steps[0].state == _StepState.COMPLETED
         assert indicator._steps[0]._circle.text() == "\u2713"
+
+    def test_label_and_summary_use_eliding_label(self, qtbot) -> None:
+        """Step label/summary use ElidingLabel so long names elide instead of clip.
+
+        Plain QLabels don't elide -- text past the widget's width is just
+        silently clipped rather than shortened with an ellipsis (a real bug
+        report: long device/source names disappeared instead of degrading
+        gracefully as the window narrowed). See TestElidingLabel below for
+        the eliding behavior itself.
+        """
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+        indicator.set_steps(["Connect"])
+        indicator.set_completed(0, "WiiM Pro")
+
+        assert isinstance(indicator._steps[0]._label, ElidingLabel)
+        assert isinstance(indicator._steps[0]._summary, ElidingLabel)
 
     def test_completed_step_emits_click(self, qtbot) -> None:
         """Clicking a completed step emits step_clicked with the step index."""
@@ -818,6 +837,110 @@ class TestDeviceCard:
         with qtbot.waitSignal(card.retry_clicked, timeout=1000):
             qtbot.mouseClick(card._retry_button, Qt.MouseButton.LeftButton)
 
+
+# ---------------------------------------------------------------------------
+# TestActionButton
+# ---------------------------------------------------------------------------
+
+
+class TestActionButton:
+    """Tests for make_action_button's styling triad and ElidingPushButton."""
+
+    def test_make_action_button_sets_styling_triad(self, qtbot) -> None:
+        """make_action_button sets objectName, class property, and cursor."""
+        button = make_action_button(
+            "Do Thing", object_name="btn_do_thing", style_class="secondary"
+        )
+        qtbot.addWidget(button)
+
+        assert button.objectName() == "btn_do_thing"
+        assert button.property("class") == "secondary"
+        assert button.cursor().shape() == Qt.CursorShape.PointingHandCursor
+        assert button.text() == "Do Thing"
+
+    def test_make_action_button_explicit_tooltip(self, qtbot) -> None:
+        """An explicit tooltip is applied and survives even when not elided."""
+        button = make_action_button(
+            "Load", object_name="btn_load", style_class="secondary",
+            tooltip="Load preset into editor",
+        )
+        qtbot.addWidget(button)
+
+        assert button.toolTip() == "Load preset into editor"
+
+    def test_no_parent_keeps_full_text(self, qtbot) -> None:
+        """A button with no parent doesn't elide against a meaningless width."""
+        button = ElidingPushButton("A Fairly Long Button Label")
+        qtbot.addWidget(button)
+
+        assert button.text() == "A Fairly Long Button Label"
+
+    def test_elides_when_too_narrow_and_shows_tooltip_fallback(self, qtbot) -> None:
+        """Text elides to fit a narrow parent and the full label becomes the tooltip."""
+        container = QWidget()
+        qtbot.addWidget(container)
+        button = ElidingPushButton("A Very Long Button Label That Cannot Possibly Fit", container)
+        container.show()
+        button.resize(40, 24)
+        qtbot.wait(10)
+
+        assert button.text() != "A Very Long Button Label That Cannot Possibly Fit"
+        assert button.text().endswith("…")
+        assert button.toolTip() == "A Very Long Button Label That Cannot Possibly Fit"
+
+    def test_explicit_tooltip_not_overwritten_when_elided(self, qtbot) -> None:
+        """An explicit tooltip is preserved even while the label is elided."""
+        container = QWidget()
+        qtbot.addWidget(container)
+        button = ElidingPushButton("A Very Long Button Label That Cannot Possibly Fit", container)
+        button.setToolTip("Custom tooltip")
+        container.show()
+        button.resize(40, 24)
+        qtbot.wait(10)
+
+        assert button.text() != "A Very Long Button Label That Cannot Possibly Fit"
+        assert button.toolTip() == "Custom tooltip"
+
+    def test_widening_restores_full_text(self, qtbot) -> None:
+        """Resizing back to a comfortable width restores the full label and clears the tooltip."""
+        container = QWidget()
+        qtbot.addWidget(container)
+        text = "A Very Long Button Label That Cannot Possibly Fit"
+        button = ElidingPushButton(text, container)
+        container.show()
+        button.resize(40, 24)
+        qtbot.wait(10)
+        assert button.text() != text
+
+        button.resize(600, 24)
+        qtbot.wait(10)
+        assert button.text() == text
+        assert button.toolTip() == ""
+
+    def test_size_hint_reflects_full_text_even_when_elided(self, qtbot) -> None:
+        """sizeHint() always reflects the full label, not the elided display text.
+
+        Regression: sizeHint() used to reflect whatever text was currently
+        *displayed*. Once a button had been elided narrow, its sizeHint
+        would stay small forever after -- a layout only ever offers a
+        widget as much space as its sizeHint asks for, so widening the
+        window back would never restore the full label (the button stayed
+        shrunk until the app restarted). sizeHint() must be computed against
+        the full text regardless of the current display state.
+        """
+        container = QWidget()
+        qtbot.addWidget(container)
+        text = "A Very Long Button Label That Cannot Possibly Fit"
+        button = ElidingPushButton(text, container)
+        container.show()
+        full_hint_width = button.sizeHint().width()
+
+        button.resize(40, 24)
+        qtbot.wait(10)
+        assert button.text() != text  # confirm it actually elided
+
+        assert button.sizeHint().width() == full_hint_width
+
     def test_invalid_state_raises(self, qtbot) -> None:
         """set_state with an invalid value raises ValueError."""
         card = DeviceCard()
@@ -825,6 +948,39 @@ class TestDeviceCard:
 
         with pytest.raises(ValueError, match="Invalid state"):
             card.set_state("broken")
+
+
+class TestElidingLabel:
+    """Tests for ElidingLabel, used by StepIndicator's step/summary labels."""
+
+    def test_elides_when_too_narrow_and_shows_tooltip_fallback(self, qtbot) -> None:
+        """Text elides to fit a narrow width and the full text becomes the tooltip."""
+        container = QWidget()
+        qtbot.addWidget(container)
+        text = "A Very Long Step Summary That Cannot Possibly Fit"
+        label = ElidingLabel(text, container)
+        container.show()
+        label.resize(40, 20)
+        qtbot.wait(10)
+
+        assert label.text() != text
+        assert label.text().endswith("…")
+        assert label.toolTip() == text
+
+    def test_size_hint_reflects_full_text_even_when_elided(self, qtbot) -> None:
+        """sizeHint() reflects the full text, not the currently-elided display text."""
+        container = QWidget()
+        qtbot.addWidget(container)
+        text = "A Very Long Step Summary That Cannot Possibly Fit"
+        label = ElidingLabel(text, container)
+        container.show()
+        full_hint_width = label.sizeHint().width()
+
+        label.resize(40, 20)
+        qtbot.wait(10)
+        assert label.text() != text
+
+        assert label.sizeHint().width() == full_hint_width
 
 
 def test_pushpage_dry_run_badge_preserves_reserved_space(qtbot) -> None:

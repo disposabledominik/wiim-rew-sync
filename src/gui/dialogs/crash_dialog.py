@@ -13,11 +13,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
@@ -131,25 +131,26 @@ class CrashDialog(QDialog):
         button_layout.setSpacing(SPACING_SM)
 
         # "View Logs" button (secondary style)
-        view_logs_btn = QPushButton("View Logs")
-        view_logs_btn.setObjectName("crash_view_logs_btn")
-        view_logs_btn.setProperty("buttonStyle", "secondary")
+        view_logs_btn = make_action_button(
+            "View Logs", object_name="crash_view_logs_btn", style_class="secondary"
+        )
         view_logs_btn.clicked.connect(self._on_view_logs)
         button_layout.addWidget(view_logs_btn)
 
         # "Generate Support Bundle" button (secondary style)
-        support_btn = QPushButton("Generate Support Bundle")
-        support_btn.setObjectName("crash_support_bundle_btn")
-        support_btn.setProperty("buttonStyle", "secondary")
+        support_btn = make_action_button(
+            "Generate Support Bundle", object_name="crash_support_bundle_btn",
+            style_class="secondary",
+        )
         support_btn.clicked.connect(self._on_support_bundle)
         button_layout.addWidget(support_btn)
 
         button_layout.addStretch(1)
 
         # "Close" button (primary style, closes the dialog)
-        close_btn = QPushButton("Close")
-        close_btn.setObjectName("crash_close_btn")
-        close_btn.setProperty("buttonStyle", "primary")
+        close_btn = make_action_button(
+            "Close", object_name="crash_close_btn", style_class="primary"
+        )
         close_btn.setDefault(True)
         close_btn.setFocus()
         close_btn.clicked.connect(self._on_close)

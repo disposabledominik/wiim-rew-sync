@@ -554,35 +554,18 @@ class TestUnsavedChangesDialog:
         assert message is not None
         assert "unsaved filter changes" in message.text()
 
-    def test_three_buttons_present(self, qtbot) -> None:
-        """Dialog has Save, Discard, and Cancel buttons."""
+    def test_two_buttons_present(self, qtbot) -> None:
+        """Dialog has Discard and Continue Working buttons."""
         dialog = UnsavedChangesDialog(None)
         qtbot.addWidget(dialog)
 
         from PySide6.QtWidgets import QPushButton
 
-        save = dialog.findChild(QPushButton, "save_button")
         discard = dialog.findChild(QPushButton, "discard_button")
         cancel = dialog.findChild(QPushButton, "cancel_button")
 
-        assert save is not None
         assert discard is not None
         assert cancel is not None
-
-    def test_save_button_click_returns_save(self, qtbot) -> None:
-        """Clicking Save sets choice to 'save' and accepts dialog."""
-        dialog = UnsavedChangesDialog(None)
-        qtbot.addWidget(dialog)
-
-        from PySide6.QtWidgets import QPushButton
-
-        save_btn = dialog.findChild(QPushButton, "save_button")
-        assert save_btn is not None
-
-        with qtbot.waitSignal(dialog.accepted, timeout=1000):
-            save_btn.click()
-
-        assert dialog.choice == "save"
 
     def test_discard_button_click_returns_discard(self, qtbot) -> None:
         """Clicking Discard sets choice to 'discard' and accepts dialog."""
@@ -620,16 +603,6 @@ class TestUnsavedChangesDialog:
         qtbot.addWidget(dialog)
 
         assert dialog.choice == "cancel"
-
-    def test_static_confirm_discard_save(self, qtbot) -> None:
-        """Static confirm_discard() returns 'save' when user clicks Save."""
-        with _patch.object(UnsavedChangesDialog, "exec", return_value=QDialog.DialogCode.Accepted):
-            # We need to also patch the _result to simulate Save click
-            with _patch.object(
-                UnsavedChangesDialog, "choice", new_callable=lambda: property(lambda self: "save")
-            ):
-                result = UnsavedChangesDialog.confirm_discard(None)
-        assert result == "save"
 
     def test_static_confirm_discard_discard(self, qtbot) -> None:
         """Static confirm_discard() returns 'discard' when user clicks Discard."""

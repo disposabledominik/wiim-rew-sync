@@ -557,6 +557,31 @@ class TestMyPresetsViewContextMenu:
 
         assert blocker.args == ["Original"]
 
+    def test_copy_to_device_button_emits_selected_profile(self, qtbot) -> None:
+        """Clicking Copy to Another Device emits copy_to_device_requested with the Profile."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.show()
+
+        profile = _make_profile("Copy Me")
+        view.set_presets([profile])
+        view._list_widget.setCurrentRow(0)
+
+        assert view._copy_btn.isEnabled()
+        with qtbot.waitSignal(view.copy_to_device_requested, timeout=1000) as blocker:
+            qtbot.mouseClick(view._copy_btn, Qt.MouseButton.LeftButton)
+
+        assert blocker.args[0].name == "Copy Me"
+
+    def test_copy_to_device_disabled_without_selection(self, qtbot) -> None:
+        """Copy to Another Device is disabled until a preset is selected."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+
+        view.set_presets([_make_profile("Some Preset")])
+
+        assert not view._copy_btn.isEnabled()
+
 
 # ---------------------------------------------------------------------------
 # TestSettingsView

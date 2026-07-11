@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
@@ -33,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.page_layout import make_page_title
 from src.gui.constants import (
     MAX_CONTENT_WIDTH,
@@ -295,8 +295,12 @@ class SettingsView(QWidget):
         line_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         input_layout.addWidget(line_edit)
 
-        browse_btn = QPushButton("Browse...", input_row)
-        browse_btn.setObjectName(f"Settings_{object_prefix}_browse")
+        browse_btn = make_action_button(
+            "Browse...",
+            object_name=f"Settings_{object_prefix}_browse",
+            style_class="secondary",
+            parent=input_row,
+        )
         browse_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         browse_btn.clicked.connect(
             lambda: self._on_browse_clicked(line_edit, label_text)
@@ -363,15 +367,19 @@ class SettingsView(QWidget):
         btn_layout.setSpacing(SPACING_MD)
 
         # Open Log Folder button (Req 24.1)
-        open_folder_btn = QPushButton("Open Log Folder", btn_row)
-        open_folder_btn.setObjectName("SettingsOpenLogFolderBtn")
+        open_folder_btn = make_action_button(
+            "Open Log Folder", object_name="SettingsOpenLogFolderBtn",
+            style_class="secondary", parent=btn_row,
+        )
         open_folder_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         open_folder_btn.clicked.connect(self._on_open_log_folder)
         btn_layout.addWidget(open_folder_btn)
 
         # Copy Log Path button (Req 24.5)
-        copy_path_btn = QPushButton("Copy Log Path", btn_row)
-        copy_path_btn.setObjectName("SettingsCopyLogPathBtn")
+        copy_path_btn = make_action_button(
+            "Copy Log Path", object_name="SettingsCopyLogPathBtn",
+            style_class="secondary", parent=btn_row,
+        )
         copy_path_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         copy_path_btn.clicked.connect(self._on_copy_log_path)
         btn_layout.addWidget(copy_path_btn)
@@ -389,8 +397,10 @@ class SettingsView(QWidget):
         layout.setSpacing(SPACING_MD)
 
         # Generate Support Bundle button (Req 24.12)
-        bundle_btn = QPushButton("Generate Support Bundle", group)
-        bundle_btn.setObjectName("SettingsSupportBundleBtn")
+        bundle_btn = make_action_button(
+            "Generate Support Bundle", object_name="SettingsSupportBundleBtn",
+            style_class="secondary", parent=group,
+        )
         bundle_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         bundle_btn.clicked.connect(self._on_support_bundle_clicked)
         layout.addWidget(bundle_btn)
@@ -405,8 +415,10 @@ class SettingsView(QWidget):
         layout.addWidget(bundle_desc)
 
         # Show onboarding again button
-        onboarding_btn = QPushButton("Show onboarding again", group)
-        onboarding_btn.setObjectName("SettingsShowOnboardingBtn")
+        onboarding_btn = make_action_button(
+            "Show onboarding again", object_name="SettingsShowOnboardingBtn",
+            style_class="secondary", parent=group,
+        )
         onboarding_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         onboarding_btn.clicked.connect(self._on_show_onboarding_clicked)
         layout.addWidget(onboarding_btn)

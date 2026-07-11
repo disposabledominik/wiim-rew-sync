@@ -22,12 +22,12 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.list_item_style import apply_active_item_style
 from src.gui.components.page_layout import (
     ICON_NO_CONNECTION,
@@ -321,42 +321,37 @@ class PresetsDeviceView(QWidget):
         layout.setSpacing(SPACING_SM)
 
         # Export as REW File
-        self._export_btn = QPushButton("Export as REW File")
-        self._export_btn.setObjectName("btn_export_rew")
-        self._export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._export_btn.setProperty("class", "primary")
+        self._export_btn = make_action_button(
+            "Export as REW File", object_name="btn_export_rew", style_class="primary"
+        )
         self._export_btn.clicked.connect(self._on_export_clicked)
         layout.addWidget(self._export_btn)
 
         # Save to My Presets
-        self._save_btn = QPushButton("Save to My Presets")
-        self._save_btn.setObjectName("btn_save_presets")
-        self._save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._save_btn.setProperty("class", "secondary")
+        self._save_btn = make_action_button(
+            "Save to My Presets", object_name="btn_save_presets", style_class="secondary"
+        )
         self._save_btn.clicked.connect(self._on_save_clicked)
         layout.addWidget(self._save_btn)
 
         # Load into Editor
-        self._load_btn = QPushButton("Load into Editor")
-        self._load_btn.setObjectName("btn_load_editor")
-        self._load_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._load_btn.setProperty("class", "secondary")
+        self._load_btn = make_action_button(
+            "Load into Editor", object_name="btn_load_editor", style_class="secondary"
+        )
         self._load_btn.clicked.connect(self._on_load_clicked)
         layout.addWidget(self._load_btn)
 
         # Copy to Another Device
-        self._copy_btn = QPushButton("Copy to Another Device")
-        self._copy_btn.setObjectName("btn_copy_device")
-        self._copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._copy_btn.setProperty("class", "secondary")
+        self._copy_btn = make_action_button(
+            "Copy to Another Device", object_name="btn_copy_device", style_class="secondary"
+        )
         self._copy_btn.clicked.connect(self._on_copy_clicked)
         layout.addWidget(self._copy_btn)
 
         # Delete — irreversible, hardware-side, so styled distinctly (Req 15.x)
-        self._delete_btn = QPushButton("Delete")
-        self._delete_btn.setObjectName("btn_delete_preset")
-        self._delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._delete_btn.setProperty("class", "danger")
+        self._delete_btn = make_action_button(
+            "Delete", object_name="btn_delete_preset", style_class="danger"
+        )
         self._delete_btn.clicked.connect(self._on_delete_clicked)
         layout.addWidget(self._delete_btn)
 

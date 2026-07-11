@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QSizePolicy,
     QTextBrowser,
     QTextEdit,
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.constants import (
     ACCENT_COLOR,
     SPACING_MD,
@@ -218,10 +218,10 @@ class HelpView(QFrame):
         header_layout.addWidget(title_label)
         header_layout.addStretch()
 
-        self._close_button = QPushButton("\u2715")  # Unicode X
-        self._close_button.setObjectName("helpCloseButton")
+        self._close_button = make_action_button(
+            "\u2715", object_name="helpCloseButton", style_class="ghost"
+        )  # Unicode X
         self._close_button.setFixedSize(28, 28)
-        self._close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._close_button.clicked.connect(self.close_requested.emit)
         header_layout.addWidget(self._close_button)
         root_layout.addWidget(header)
@@ -260,18 +260,20 @@ class HelpView(QFrame):
         navigation_layout.setContentsMargins(0, 0, 0, 0)
         navigation_layout.setSpacing(SPACING_XS)
 
-        self._search_prev_button = QPushButton("◀")
-        self._search_prev_button.setObjectName("helpSearchPrevButton")
+        self._search_prev_button = make_action_button(
+            "◀", object_name="helpSearchPrevButton", style_class="ghost",
+            tooltip="Previous match",
+        )
         self._search_prev_button.setFixedSize(24, 24)
-        self._search_prev_button.setToolTip("Previous match")
         self._search_prev_button.clicked.connect(self._on_search_previous)
         self._search_prev_button.setEnabled(False)
         navigation_layout.addWidget(self._search_prev_button)
 
-        self._search_next_button = QPushButton("▶")
-        self._search_next_button.setObjectName("helpSearchNextButton")
+        self._search_next_button = make_action_button(
+            "▶", object_name="helpSearchNextButton", style_class="ghost",
+            tooltip="Next match",
+        )
         self._search_next_button.setFixedSize(24, 24)
-        self._search_next_button.setToolTip("Next match")
         self._search_next_button.clicked.connect(self._on_search_next)
         self._search_next_button.setEnabled(False)
         navigation_layout.addWidget(self._search_next_button)

@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QPushButton,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.models.capabilities import DeviceCapabilities
 from src.models.source_slot import SourceSlotInfo
 
@@ -106,7 +106,9 @@ class DiagnosticsPanel(QWidget):
             "Enter httpapi command (e.g. getStatusEx)..."
         )
         cmd_layout.addWidget(self._command_input)
-        self._send_btn = QPushButton("Send")
+        self._send_btn = make_action_button(
+            "Send", object_name="diag_send_btn", style_class="secondary"
+        )
         self._send_btn.setFixedWidth(80)
         cmd_layout.addWidget(self._send_btn)
         layout.addWidget(cmd_group)
@@ -148,7 +150,9 @@ class DiagnosticsPanel(QWidget):
         slots_layout.addWidget(slots_help)
 
         slots_toolbar = QHBoxLayout()
-        self._refresh_slots_btn = QPushButton("Refresh Slots")
+        self._refresh_slots_btn = make_action_button(
+            "Refresh Slots", object_name="diag_refresh_slots_btn", style_class="secondary"
+        )
         self._refresh_slots_btn.setMinimumWidth(100)
         slots_toolbar.addWidget(self._refresh_slots_btn)
         slots_toolbar.addStretch()
@@ -181,7 +185,9 @@ class DiagnosticsPanel(QWidget):
         log_layout = QVBoxLayout(log_group)
 
         log_toolbar = QHBoxLayout()
-        self._refresh_log_btn = QPushButton("Refresh")
+        self._refresh_log_btn = make_action_button(
+            "Refresh", object_name="diag_refresh_log_btn", style_class="secondary"
+        )
         self._refresh_log_btn.setMinimumWidth(100)
         log_toolbar.addWidget(self._refresh_log_btn)
         log_toolbar.addStretch()

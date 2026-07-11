@@ -16,10 +16,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
+
+from src.gui.components.action_button import make_action_button
 
 
 class ExportDialog(QDialog):
@@ -95,7 +96,9 @@ class ExportDialog(QDialog):
         self._stereo_path_edit.setReadOnly(True)
         row.addWidget(self._stereo_path_edit)
 
-        browse_btn = QPushButton("Browse...")
+        browse_btn = make_action_button(
+            "Browse...", object_name="export_browse_stereo", style_class="secondary"
+        )
         browse_btn.clicked.connect(self._browse_stereo)
         row.addWidget(browse_btn)
 
@@ -113,7 +116,9 @@ class ExportDialog(QDialog):
         self._left_path_edit.setReadOnly(True)
         row_l.addWidget(self._left_path_edit)
 
-        browse_l_btn = QPushButton("Browse...")
+        browse_l_btn = make_action_button(
+            "Browse...", object_name="export_browse_left", style_class="secondary"
+        )
         browse_l_btn.clicked.connect(self._browse_left)
         row_l.addWidget(browse_l_btn)
 
@@ -129,7 +134,9 @@ class ExportDialog(QDialog):
         self._right_path_edit.setReadOnly(True)
         row_r.addWidget(self._right_path_edit)
 
-        browse_r_btn = QPushButton("Browse...")
+        browse_r_btn = make_action_button(
+            "Browse...", object_name="export_browse_right", style_class="secondary"
+        )
         browse_r_btn.clicked.connect(self._browse_right)
         row_r.addWidget(browse_r_btn)
 

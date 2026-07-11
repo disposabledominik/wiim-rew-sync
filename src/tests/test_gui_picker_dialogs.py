@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QListWidget
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.dialogs.device_picker import DevicePickerDialog
 from src.gui.dialogs.measurement_picker import MeasurementPickerDialog
+from src.gui.dialogs.preset_type_dialog import PresetTypeDialog
 from src.gui.dialogs.source_picker import SourcePickerDialog
 from src.models.capabilities import DeviceInfo
 
@@ -82,6 +83,45 @@ class TestSourcePickerDialog:
         dialog.reject()
 
         assert dialog.result() == QDialog.DialogCode.Rejected
+
+
+# ---------------------------------------------------------------------------
+# PresetTypeDialog tests
+# ---------------------------------------------------------------------------
+
+
+class TestPresetTypeDialog:
+    """Tests for the PresetTypeDialog PEQ/RoomFit choice."""
+
+    def test_defaults_to_peq(self, qtbot) -> None:
+        """PEQ Preset is checked by default."""
+        dialog = PresetTypeDialog(None)
+        qtbot.addWidget(dialog)
+
+        assert dialog.selected_type() == "PEQ"
+
+    def test_selecting_roomfit_radio_changes_type(self, qtbot) -> None:
+        """Checking the RoomFit radio changes the returned type."""
+        dialog = PresetTypeDialog(None)
+        qtbot.addWidget(dialog)
+
+        dialog._roomfit_radio.setChecked(True)
+
+        assert dialog.selected_type() == "RoomFit"
+
+    def test_get_type_returns_none_on_cancel(self, qtbot) -> None:
+        """get_type() returns None when the dialog is rejected."""
+        with patch.object(PresetTypeDialog, "exec", return_value=QDialog.DialogCode.Rejected):
+            result = PresetTypeDialog.get_type(None)
+
+        assert result is None
+
+    def test_get_type_returns_selected_type_on_accept(self, qtbot) -> None:
+        """get_type() returns the selected type when the dialog is accepted."""
+        with patch.object(PresetTypeDialog, "exec", return_value=QDialog.DialogCode.Accepted):
+            result = PresetTypeDialog.get_type(None)
+
+        assert result == "PEQ"
 
 
 # ---------------------------------------------------------------------------

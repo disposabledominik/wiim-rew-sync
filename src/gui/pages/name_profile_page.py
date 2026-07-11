@@ -15,10 +15,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.list_item_style import apply_active_item_style
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
@@ -102,10 +102,10 @@ class NameProfilePage(QWidget):
         layout.addWidget(self._profiles_list)
 
         # Save button
-        self._save_button = QPushButton("Save")
+        self._save_button = make_action_button(
+            "Save", object_name="NameProfileSaveButton", style_class="primary"
+        )
         self._save_button.setEnabled(False)
-        self._save_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._save_button.setProperty("class", "primary")
         self._save_button.clicked.connect(self._on_save_clicked)
         layout.addWidget(self._save_button, alignment=Qt.AlignmentFlag.AlignCenter)
 

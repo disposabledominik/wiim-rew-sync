@@ -15,11 +15,11 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSizePolicy,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.filter_table import FilterTable
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
@@ -113,27 +113,6 @@ class ReviewPage(QWidget):
             notes_map_r,
         )
 
-    def set_summary(
-        self,
-        device: str,
-        source: str,
-        channel: str,
-        band_count: int,
-    ) -> None:
-        """Update the summary header text.
-
-        Displays: "{band_count} bands -> {device} / {source} / {channel}"
-
-        Args:
-            device: Device name (e.g. "WiiM Pro Plus").
-            source: Audio source name (e.g. "wifi").
-            channel: Channel mode (e.g. "Stereo").
-            band_count: Number of active filter bands.
-        """
-        self._summary_label.setText(
-            f"{band_count} bands \u2192 {device} / {source} / {channel}"
-        )
-
     def set_dry_run(self, enabled: bool) -> None:
         """Update the dry run state.
 
@@ -160,12 +139,6 @@ class ReviewPage(QWidget):
             "Review Filters", content_wrapper, object_name="ReviewPageTitle"
         )
         content_layout.addWidget(title)
-
-        # Summary header
-        self._summary_label = QLabel("", content_wrapper)
-        self._summary_label.setObjectName("ReviewPageSummary")
-        self._summary_label.setProperty("class", "caption")
-        content_layout.addWidget(self._summary_label)
 
         # Dry Run badge (accent-colored pill, always reserves space)
         self._dry_run_badge = QLabel("DRY RUN", content_wrapper)
@@ -213,21 +186,24 @@ class ReviewPage(QWidget):
         action_layout.setContentsMargins(0, 0, 0, 0)
         action_layout.setSpacing(SPACING_MD)
 
-        self._push_button = QPushButton("Push to Device", content_wrapper)
-        self._push_button.setObjectName("ReviewPagePushButton")
-        self._push_button.setProperty("class", "primary")
+        self._push_button = make_action_button(
+            "Push to Device", object_name="ReviewPagePushButton", style_class="primary",
+            parent=content_wrapper,
+        )
         self._push_button.clicked.connect(self._on_push_clicked)
         action_layout.addWidget(self._push_button)
 
-        export_button = QPushButton("Export as REW File", content_wrapper)
-        export_button.setObjectName("ReviewPageExportButton")
-        export_button.setProperty("class", "secondary")
+        export_button = make_action_button(
+            "Export as REW File", object_name="ReviewPageExportButton",
+            style_class="secondary", parent=content_wrapper,
+        )
         export_button.clicked.connect(self.export_rew_requested.emit)
         action_layout.addWidget(export_button)
 
-        save_button = QPushButton("Save to My Presets", content_wrapper)
-        save_button.setObjectName("ReviewPageSaveButton")
-        save_button.setProperty("class", "ghost")
+        save_button = make_action_button(
+            "Save to My Presets", object_name="ReviewPageSaveButton",
+            style_class="ghost", parent=content_wrapper,
+        )
         save_button.clicked.connect(self.save_preset_requested.emit)
         action_layout.addWidget(save_button)
 

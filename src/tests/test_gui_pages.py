@@ -372,23 +372,6 @@ class TestFiltersPage:
 class TestReviewPage:
     """Tests for ReviewPage: summary, dry run, push signal, compare toggle."""
 
-    def test_set_summary_updates_label(self, qtbot) -> None:
-        """set_summary updates the summary label with device/source/channel info."""
-        page = ReviewPage()
-        qtbot.addWidget(page)
-
-        page.set_summary(
-            device="WiiM Pro Plus",
-            source="wifi",
-            channel="Stereo",
-            band_count=10,
-        )
-
-        text = page._summary_label.text()
-        assert "10 bands" in text
-        assert "WiiM Pro Plus" in text
-        assert "wifi" in text
-
     def test_dry_run_toggle_changes_button(self, qtbot) -> None:
         """Toggling dry run changes the push button text and badge appearance.
 
@@ -484,6 +467,7 @@ class TestPushPage:
         page.show()
 
         page.set_success()
+        qtbot.wait(10)  # let the layout settle before synthesizing a click
 
         with qtbot.waitSignal(page.undo_requested, timeout=1000):
             qtbot.mouseClick(page._undo_button, Qt.MouseButton.LeftButton)
@@ -497,7 +481,7 @@ class TestPushPage:
         page.set_dry_run_result("10 bands translated, no changes written")
 
         assert page._dry_run_badge.isVisible()
-        assert "Translation Preview" in page._result_message.text()
+        assert "Dry Run Complete" in page._result_message.text()
 
     def test_failure_detail_not_clipped_at_min_window_height(self, qtbot) -> None:
         """A long multi-line critical failure message isn't silently

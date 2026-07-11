@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
     QRadioButton,
     QSizePolicy,
     QStackedWidget,
@@ -33,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.adapters.rew_http_client import MeasurementSummary
+from src.gui.components.action_button import make_action_button
 from src.gui.components.page_layout import (
     build_centered_content,
     center_column,
@@ -187,10 +187,9 @@ class RewPullView(QWidget):
         self._message_label.setWordWrap(True)
         layout.addWidget(self._message_label)
 
-        back_btn = QPushButton("Back")
-        back_btn.setObjectName("btn_rew_pull_placeholder_back")
-        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        back_btn.setProperty("class", "secondary")
+        back_btn = make_action_button(
+            "Back", object_name="btn_rew_pull_placeholder_back", style_class="secondary"
+        )
         back_btn.clicked.connect(self.back_requested.emit)
         layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
@@ -250,19 +249,17 @@ class RewPullView(QWidget):
         actions_bar = QHBoxLayout()
         actions_bar.setSpacing(SPACING_SM)
 
-        back_btn = QPushButton("Back")
-        back_btn.setObjectName("btn_rew_pull_back")
-        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        back_btn.setProperty("class", "secondary")
+        back_btn = make_action_button(
+            "Back", object_name="btn_rew_pull_back", style_class="secondary"
+        )
         back_btn.clicked.connect(self.back_requested.emit)
         actions_bar.addWidget(back_btn)
 
         actions_bar.addStretch()
 
-        self._continue_btn = QPushButton("Continue")
-        self._continue_btn.setObjectName("btn_rew_pull_continue")
-        self._continue_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._continue_btn.setProperty("class", "primary")
+        self._continue_btn = make_action_button(
+            "Continue", object_name="btn_rew_pull_continue", style_class="primary"
+        )
         self._continue_btn.clicked.connect(self._on_continue_clicked)
         actions_bar.addWidget(self._continue_btn)
 

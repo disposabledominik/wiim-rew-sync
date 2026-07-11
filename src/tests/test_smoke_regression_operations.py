@@ -2283,52 +2283,6 @@ class TestSettingsUIState:
                 fm.finish_operation()
             mock_clear.assert_called_once()
 
-    # --- Issue #33: _do_copy_presets_batch iterates all selected devices ---
-
-    def test_issue33_copy_batch_iterates_all(self, window) -> None:
-        """#33: _do_copy_presets_batch processes all items, not just first."""
-        _setup_device(window)
-        items = [
-            MagicMock(name="Preset1", preset_type="PEQ"),
-            MagicMock(name="Preset2", preset_type="PEQ"),
-        ]
-        # Fix MagicMock name attribute (it's special in MagicMock)
-        items[0].name = "Preset1"
-        items[1].name = "Preset2"
-
-        filters = [_make_filter(100)]
-        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
-        read_result = (filters, ChannelMode.STEREO, peq_settings)
-
-        with (
-            patch.object(
-                window, "_read_preset_to_copy", new_callable=AsyncMock,
-                return_value=read_result,
-            ) as mock_read,
-            patch.object(
-                window, "_do_copy_preset_to_device", new_callable=AsyncMock
-            ) as mock_copy,
-        ):
-            import asyncio
-
-            asyncio.run(
-                window._do_copy_presets_batch(items, "192.168.1.200", "wifi")
-            )
-            assert mock_read.call_count == 2
-            assert mock_copy.call_count == 2
-            # Verify each preset was processed with correct parameters
-            call_args_list = mock_copy.call_args_list
-            assert call_args_list[0][0][0] == "Preset1"
-            assert call_args_list[0][0][1] == "PEQ"
-            assert call_args_list[0][0][2] == "192.168.1.200"
-            assert call_args_list[0][0][3] == "wifi"
-            assert call_args_list[0][0][4] == filters
-            assert call_args_list[1][0][0] == "Preset2"
-            assert call_args_list[1][0][1] == "PEQ"
-            assert call_args_list[1][0][2] == "192.168.1.200"
-            assert call_args_list[1][0][3] == "wifi"
-
-
     def test_issue153_copy_batch_counts_verification_failure(self, window) -> None:
         """#153: a verification failure during copy must count as a real
         failure in the batch summary, not be silently treated as success.
@@ -2922,15 +2876,21 @@ class TestSettingsUIState:
     # --- Issue #74: _do_copy_presets_batch_multi iterates all devices ---
 
     def test_issue74_copy_batch_multi_iterates_all_devices(self, window) -> None:
-        """#74: _do_copy_presets_batch_multi iterates all target devices --
-        and, critically, actually *targets* each distinct device (the
-        original regression called selected_devices[0] repeatedly, which a
-        bare call_count==2 check wouldn't catch if both calls silently hit
-        the same IP)."""
+        """#74: _do_copy_presets_batch_multi iterates all (preset, device)
+        pairs -- and, critically, actually *targets* each distinct device
+        (the original regression called selected_devices[0] repeatedly,
+        which a bare call_count check wouldn't catch if all calls silently
+        hit the same IP). Also covers multiple *items*, not just multiple
+        devices -- folded in from the removed #33 test after #33's
+        single-device `_do_copy_presets_batch` was superseded by this
+        multi-device version (docs/smoke_test_issues.md row 74) and left
+        behind as dead code with its own regression test."""
         _setup_device(window)
-        items = [MagicMock()]
+        items = [MagicMock(), MagicMock()]
         items[0].name = "Preset1"
         items[0].preset_type = "PEQ"
+        items[1].name = "Preset2"
+        items[1].preset_type = "PEQ"
 
         device1 = MagicMock(ip="192.168.1.201", name="Device A")
         device2 = MagicMock(ip="192.168.1.202", name="Device B")
@@ -2944,7 +2904,7 @@ class TestSettingsUIState:
             patch.object(
                 window, "_read_preset_to_copy", new_callable=AsyncMock,
                 return_value=read_result,
-            ),
+            ) as mock_read,
             patch.object(
                 window, "_do_copy_preset_to_device", new_callable=AsyncMock
             ) as mock_copy,
@@ -2954,10 +2914,16 @@ class TestSettingsUIState:
             asyncio.run(
                 window._do_copy_presets_batch_multi(items, devices, "wifi")
             )
-            assert mock_copy.call_count == 2
+            assert mock_read.call_count == 2
+            assert mock_copy.call_count == 4
             # _do_copy_preset_to_device(preset_name, preset_type, target_ip, target_source, ...)
-            ips_called = [c.args[2] for c in mock_copy.call_args_list]
-            assert ips_called == ["192.168.1.201", "192.168.1.202"]
+            calls = [(c.args[0], c.args[2]) for c in mock_copy.call_args_list]
+            assert calls == [
+                ("Preset1", "192.168.1.201"),
+                ("Preset1", "192.168.1.202"),
+                ("Preset2", "192.168.1.201"),
+                ("Preset2", "192.168.1.202"),
+            ]
 
 
     # --- Issue #78: Copy status message says "X preset(s) copied to Y device(s)" ---

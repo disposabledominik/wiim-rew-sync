@@ -14,13 +14,13 @@ from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.device_card import DeviceCard
 from src.gui.components.page_layout import (
     build_centered_content,
@@ -159,11 +159,11 @@ class ConnectPage(QWidget):
         title = make_page_title(
             "Connect to Device", content_wrapper, object_name="ConnectPageTitle"
         )
-        self._rescan_btn = QPushButton("⟳", content_wrapper)
-        self._rescan_btn.setObjectName("ConnectPageRescanButton")
+        self._rescan_btn = make_action_button(
+            "⟳", object_name="ConnectPageRescanButton", style_class="ghost",
+            tooltip="Rescan for devices", parent=content_wrapper,
+        )
         self._rescan_btn.setFixedSize(32, 32)
-        self._rescan_btn.setToolTip("Rescan for devices")
-        self._rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._rescan_btn.clicked.connect(self.refresh_requested.emit)
 
         title_row = QHBoxLayout()
@@ -258,8 +258,10 @@ class ConnectPage(QWidget):
         layout.addWidget(causes_label)
 
         # Retry button
-        retry_button = QPushButton("Retry", widget)
-        retry_button.setObjectName("ConnectPageRetryButton")
+        retry_button = make_action_button(
+            "Retry", object_name="ConnectPageRetryButton", style_class="secondary",
+            parent=widget,
+        )
         retry_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         retry_button.setMinimumWidth(120)
         retry_button.clicked.connect(self._on_retry_clicked)

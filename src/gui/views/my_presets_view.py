@@ -22,11 +22,11 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
-    QPushButton,
     QSizePolicy,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     LIST_ITEM_HEIGHT,
@@ -106,6 +106,7 @@ class MyPresetsView(QWidget):
     rename_requested = Signal(str, str)  # old_name, new_name
     duplicate_requested = Signal(str)  # preset name
     delete_requested = Signal(str)  # preset name
+    copy_to_device_requested = Signal(object)  # Profile
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -166,20 +167,43 @@ class MyPresetsView(QWidget):
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(SPACING_SM)
 
-        self._load_btn = QPushButton("Load into Editor", self._toolbar)
-        self._load_btn.setToolTip("Load preset into Review for push/export")
+        self._load_btn = make_action_button(
+            "Load into Editor",
+            object_name="btn_load_into_editor",
+            style_class="secondary",
+            tooltip="Load preset into Review for push/export",
+            parent=self._toolbar,
+        )
         self._load_btn.clicked.connect(self._on_load_clicked)
         toolbar_layout.addWidget(self._load_btn)
 
-        self._rename_btn = QPushButton("Rename", self._toolbar)
+        self._rename_btn = make_action_button(
+            "Rename", object_name="btn_rename_preset", style_class="secondary",
+            parent=self._toolbar,
+        )
         self._rename_btn.clicked.connect(self._on_rename_clicked)
         toolbar_layout.addWidget(self._rename_btn)
 
-        self._duplicate_btn = QPushButton("Duplicate", self._toolbar)
+        self._duplicate_btn = make_action_button(
+            "Duplicate", object_name="btn_duplicate_preset", style_class="secondary",
+            parent=self._toolbar,
+        )
         self._duplicate_btn.clicked.connect(self._on_duplicate_clicked)
         toolbar_layout.addWidget(self._duplicate_btn)
 
-        self._delete_btn = QPushButton("Delete", self._toolbar)
+        self._copy_btn = make_action_button(
+            "Copy to Another Device",
+            object_name="btn_copy_device_local",
+            style_class="secondary",
+            parent=self._toolbar,
+        )
+        self._copy_btn.clicked.connect(self._on_copy_clicked)
+        toolbar_layout.addWidget(self._copy_btn)
+
+        self._delete_btn = make_action_button(
+            "Delete", object_name="btn_delete_preset_local", style_class="danger",
+            parent=self._toolbar,
+        )
         self._delete_btn.clicked.connect(self._on_delete_clicked)
         toolbar_layout.addWidget(self._delete_btn)
 
@@ -188,6 +212,7 @@ class MyPresetsView(QWidget):
         self._load_btn.setEnabled(False)
         self._rename_btn.setEnabled(False)
         self._duplicate_btn.setEnabled(False)
+        self._copy_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
         content_layout.addWidget(self._toolbar)
 
@@ -366,6 +391,12 @@ class MyPresetsView(QWidget):
         )
         menu.addAction(duplicate_action)
 
+        copy_action = QAction("Copy to Another Device", menu)
+        copy_action.triggered.connect(
+            lambda: self.copy_to_device_requested.emit(profile)
+        )
+        menu.addAction(copy_action)
+
         menu.addSeparator()
 
         delete_action = QAction("Delete", menu)
@@ -384,6 +415,7 @@ class MyPresetsView(QWidget):
         self._load_btn.setEnabled(has_selection)
         self._rename_btn.setEnabled(has_selection)
         self._duplicate_btn.setEnabled(has_selection)
+        self._copy_btn.setEnabled(has_selection)
         self._delete_btn.setEnabled(has_selection)
 
     def _get_selected_profile(self) -> Profile | None:
@@ -416,6 +448,12 @@ class MyPresetsView(QWidget):
         profile = self._get_selected_profile()
         if profile:
             self.delete_requested.emit(profile.name)
+
+    def _on_copy_clicked(self) -> None:
+        """Handle Copy to Another Device button click."""
+        profile = self._get_selected_profile()
+        if profile:
+            self.copy_to_device_requested.emit(profile)
 
     # ------------------------------------------------------------------
     # Event overrides

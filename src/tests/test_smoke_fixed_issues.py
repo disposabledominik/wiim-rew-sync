@@ -344,7 +344,8 @@ def test_sidebar_device_header_click_emits_connect_and_sets_home_active(qtbot):
     assert nav._active_key == "home"
 
 
-# Issue 89: UnsavedChangesDialog Cancel button should use ghost class and no inline styles
+# Issue 89: UnsavedChangesDialog Cancel/Continue Working button should use no inline
+# styles (styled entirely via QSS class) so it stays visible in dark theme.
 def test_unsaved_changes_dialog_cancel_button_style(qtbot):
     from src.gui.dialogs.unsaved_changes_dialog import UnsavedChangesDialog
 
@@ -353,7 +354,7 @@ def test_unsaved_changes_dialog_cancel_button_style(qtbot):
 
     cancel_btn = dialog.findChild(type(dialog._cancel_btn), "cancel_button")
     assert cancel_btn is not None
-    assert cancel_btn.property("class") == "ghost"
+    assert cancel_btn.property("class") == "primary"
     assert cancel_btn.styleSheet() == ""
 
 

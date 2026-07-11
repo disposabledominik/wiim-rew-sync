@@ -15,13 +15,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QRadioButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     LIST_ITEM_HEIGHT,
@@ -194,11 +194,11 @@ class SourcePage(QWidget):
         content_layout.addStretch()
 
         # Continue button
-        self._continue_btn = QPushButton("Continue")
-        self._continue_btn.setObjectName("source_continue_btn")
+        self._continue_btn = make_action_button(
+            "Continue", object_name="source_continue_btn", style_class="primary"
+        )
         self._continue_btn.setEnabled(False)
         self._continue_btn.setMinimumHeight(LIST_ITEM_HEIGHT)
-        self._continue_btn.setProperty("class", "primary")
         self._continue_btn.clicked.connect(self._on_continue_clicked)
         content_layout.addWidget(self._continue_btn)
 

@@ -24,13 +24,13 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QRadioButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     SPACING_LG,
@@ -276,7 +276,9 @@ class FiltersPage(QWidget):
         stereo_layout.setContentsMargins(0, 0, 0, 0)
         stereo_layout.setSpacing(SPACING_MD)
 
-        stereo_btn = QPushButton("Browse...")
+        stereo_btn = make_action_button(
+            "Browse...", object_name="filters_browse_stereo", style_class="secondary"
+        )
         stereo_btn.setMinimumWidth(100)
         stereo_btn.clicked.connect(self._on_stereo_browse)
         stereo_layout.addWidget(stereo_btn)
@@ -291,10 +293,11 @@ class FiltersPage(QWidget):
         file_layout.addWidget(self._stereo_section)
 
         # "Next" button for stereo mode (enabled once a file is selected)
-        self._next_btn = QPushButton("Next")
+        self._next_btn = make_action_button(
+            "Next", object_name="filters_next_stereo", style_class="primary"
+        )
         self._next_btn.setMinimumWidth(140)
         self._next_btn.setEnabled(False)
-        self._next_btn.setProperty("class", "primary")
         self._next_btn.clicked.connect(self._on_stereo_next)
         file_layout.addWidget(self._next_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -312,7 +315,9 @@ class FiltersPage(QWidget):
         left_label.setMinimumWidth(100)
         left_row.addWidget(left_label)
 
-        left_btn = QPushButton("Browse...")
+        left_btn = make_action_button(
+            "Browse...", object_name="filters_browse_left", style_class="secondary"
+        )
         left_btn.setMinimumWidth(100)
         left_btn.clicked.connect(self._on_left_browse)
         left_row.addWidget(left_btn)
@@ -333,7 +338,9 @@ class FiltersPage(QWidget):
         right_label.setMinimumWidth(100)
         right_row.addWidget(right_label)
 
-        right_btn = QPushButton("Browse...")
+        right_btn = make_action_button(
+            "Browse...", object_name="filters_browse_right", style_class="secondary"
+        )
         right_btn.setMinimumWidth(100)
         right_btn.clicked.connect(self._on_right_browse)
         right_row.addWidget(right_btn)
@@ -347,10 +354,11 @@ class FiltersPage(QWidget):
         lr_layout.addLayout(right_row)
 
         # Next button for L/R mode (enabled when both files are selected)
-        self._import_lr_btn = QPushButton("Next")
+        self._import_lr_btn = make_action_button(
+            "Next", object_name="filters_next_lr", style_class="primary"
+        )
         self._import_lr_btn.setMinimumWidth(140)
         self._import_lr_btn.setEnabled(False)
-        self._import_lr_btn.setProperty("class", "primary")
         self._import_lr_btn.clicked.connect(self._on_import_lr_confirmed)
         lr_layout.addWidget(
             self._import_lr_btn, alignment=Qt.AlignmentFlag.AlignLeft
@@ -411,7 +419,11 @@ class FiltersPage(QWidget):
         self._warnings_label.setWordWrap(True)
         layout.addWidget(self._warnings_label)
 
-        continue_btn = QPushButton("Continue with adjustments")
+        continue_btn = make_action_button(
+            "Continue with adjustments",
+            object_name="filters_continue_with_warnings",
+            style_class="warning",
+        )
         continue_btn.clicked.connect(self._on_continue_with_warnings)
         layout.addWidget(continue_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -433,7 +445,9 @@ class FiltersPage(QWidget):
         self._error_label.setWordWrap(True)
         layout.addWidget(self._error_label)
 
-        retry_btn = QPushButton("Try Again")
+        retry_btn = make_action_button(
+            "Try Again", object_name="filters_retry_btn", style_class="secondary"
+        )
         retry_btn.clicked.connect(self._on_retry)
         layout.addWidget(retry_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 

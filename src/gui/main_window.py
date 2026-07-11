@@ -53,6 +53,7 @@ from src.gui.constants import MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH
 from src.gui.dialogs.crash_dialog import CrashDialog
 from src.gui.dialogs.device_picker import DevicePickerDialog
 from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
+from src.gui.dialogs.preset_type_dialog import PresetTypeDialog
 from src.gui.dialogs.unsaved_changes_dialog import UnsavedChangesDialog
 from src.gui.operation_feedback import OperationFeedbackManager
 from src.gui.pages.connect_page import ConnectPage
@@ -1658,18 +1659,7 @@ class MainWindow(QMainWindow):
                 state.current_filters = validated
                 self._review_page.set_filters(validated, clamping_map, rows, notes)
 
-            # Set summary info
-            device_ip = state.selected_device or "Unknown"
-            source = state.selected_source or DEFAULT_SOURCE
-
-            # Try to get friendly device name
-            device_name = self._lookup_device_name(device_ip, device_ip)
-
             validated_count = len(state.current_filters)
-            active_bands = sum(
-                1 for f in state.current_filters if getattr(f, "enabled", True)
-            )
-            self._review_page.set_summary(device_name, source, channel.display_value, active_bands)
 
             # Advance wizard to REVIEW step
             if getattr(self, "_sidebar_load_in_progress", False):
@@ -2455,58 +2445,51 @@ class MainWindow(QMainWindow):
         finally:
             await target_client.close()
 
-    async def _do_copy_presets_batch(
+    async def _write_preset_copies_to_devices(
         self,
-        items: list[Any],
-        target_ip: str,
+        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]],
+        target_devices: list[DeviceInfo],
         target_source: str,
-    ) -> None:
-        """Copy multiple presets to a target device sequentially (smoke #33).
+    ) -> tuple[int, int]:
+        """Write each already-read preset to every target device.
 
-        Processes each preset in order within a single async coroutine to
-        avoid concurrent run_async calls clobbering each other.
+        Shared by `_do_copy_presets_batch_multi` (reads come from the live
+        source device) and `_do_copy_local_profile_to_devices` (reads come
+        from a locally saved Profile, no source device involved) -- both
+        write via the identical `_do_copy_preset_to_device` primitive per
+        (read, device) pair, so that loop/exception-handling/progress-emit
+        logic lives exactly once.
 
         Args:
-            items: List of PresetItem objects to copy.
-            target_ip: IP address of the target device.
-            target_source: Target source name on the remote device.
+            reads: List of (preset_name, preset_type, filters, channel_mode,
+                peq_settings) tuples, one per already-read preset.
+            target_devices: List of discovered device objects to copy to.
+            target_source: Target source name on each remote device.
+
+        Returns:
+            Tuple of (succeeded, failed) copy-operation counts.
         """
         succeeded = 0
         failed = 0
 
-        for item in items:
-            preset_name = getattr(item, "name", "")
-            preset_type = getattr(item, "preset_type", "PEQ")
-            if not preset_name:
-                continue
-
-            try:
-                read_result = await self._read_preset_to_copy(preset_name, preset_type)
-                if read_result is None:
+        for preset_name, preset_type, filters, channel_mode, peq_settings in reads:
+            for device in target_devices:
+                self._bridge.progress_update.emit(
+                    f"Copying '{preset_name}' to {device.name}..."
+                )
+                try:
+                    await self._do_copy_preset_to_device(
+                        preset_name, preset_type, device.ip, target_source,
+                        filters, channel_mode, peq_settings,
+                    )
+                    succeeded += 1
+                except Exception:
+                    logger.exception(
+                        "Copy preset '%s' to %s failed", preset_name, device.ip
+                    )
                     failed += 1
-                    continue
-                filters, channel_mode, peq_settings = read_result
-                await self._do_copy_preset_to_device(
-                    preset_name, preset_type, target_ip, target_source,
-                    filters, channel_mode, peq_settings,
-                )
-                succeeded += 1
-            except Exception:
-                logger.exception(
-                    "Copy preset '%s' to %s failed", preset_name, target_ip
-                )
-                failed += 1
 
-        # Show summary result
-        total = succeeded + failed
-        if failed == 0:
-            self._status_banner.show_success(
-                f"All {total} preset(s) copied to {target_ip}"
-            )
-        else:
-            self._status_banner.show_error(
-                f"Copied {succeeded} of {total} presets ({failed} failed)"
-            )
+        return succeeded, failed
 
     async def _do_copy_presets_batch_multi(
         self,
@@ -2528,9 +2511,8 @@ class MainWindow(QMainWindow):
             target_devices: List of discovered device objects to copy to.
             target_source: Target source name on each remote device.
         """
-        succeeded = 0
-        failed = 0
-        total_ops = len(items) * len(target_devices)
+        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
+        read_failed = 0
 
         for item in items:
             preset_name = getattr(item, "name", "")
@@ -2546,33 +2528,23 @@ class MainWindow(QMainWindow):
                 self._bridge.progress_update.emit(
                     f"Failed to read '{preset_name}' -- skipping"
                 )
-                failed += len(target_devices)
+                read_failed += len(target_devices)
                 continue
             if read_result is None:
-                failed += len(target_devices)
+                read_failed += len(target_devices)
                 continue
             filters, channel_mode, peq_settings = read_result
+            reads.append((preset_name, preset_type, filters, channel_mode, peq_settings))
 
-            for device in target_devices:
-                target_ip = device.ip
-                self._bridge.progress_update.emit(
-                    f"Copying '{preset_name}' to {device.name}..."
-                )
-                try:
-                    await self._do_copy_preset_to_device(
-                        preset_name, preset_type, target_ip, target_source,
-                        filters, channel_mode, peq_settings,
-                    )
-                    succeeded += 1
-                except Exception:
-                    logger.exception(
-                        "Copy preset '%s' to %s failed", preset_name, target_ip
-                    )
-                    failed += 1
+        succeeded, write_failed = await self._write_preset_copies_to_devices(
+            reads, target_devices, target_source
+        )
+        failed = read_failed + write_failed
 
         # Show summary result
         n_items = len(items)
         n_devices = len(target_devices)
+        total_ops = n_items * n_devices
         if failed == 0:
             self._status_banner.show_success(
                 f"{n_items} preset(s) copied to {n_devices} device(s)"
@@ -2580,6 +2552,47 @@ class MainWindow(QMainWindow):
         else:
             self._status_banner.show_error(
                 f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
+            )
+
+    async def _do_copy_local_profile_to_devices(
+        self,
+        profile_name: str,
+        preset_type: str,
+        target_devices: list[DeviceInfo],
+        target_source: str,
+        filters: list[CanonicalFilter],
+        channel_mode: ChannelMode,
+        peq_settings: PEQSettings,
+    ) -> None:
+        """Copy a locally saved profile's already-in-hand filters to devices.
+
+        Unlike `_do_copy_presets_batch_multi`, there's no source device to
+        read from -- the filters already came from a local Profile -- so
+        this is a single-entry `reads` list around the same shared
+        `_write_preset_copies_to_devices` write primitive.
+
+        Args:
+            profile_name: Name of the local profile being copied.
+            preset_type: "PEQ" or "RoomFit", chosen via PresetTypeDialog.
+            target_devices: List of discovered device objects to copy to.
+            target_source: Target source name on each remote device.
+            filters: Filters from the local Profile.
+            channel_mode: Channel mode of the local Profile.
+            peq_settings: Full PEQSettings built from the local Profile.
+        """
+        reads = [(profile_name, preset_type, filters, channel_mode, peq_settings)]
+        succeeded, failed = await self._write_preset_copies_to_devices(
+            reads, target_devices, target_source
+        )
+
+        n_devices = len(target_devices)
+        if failed == 0:
+            self._status_banner.show_success(
+                f"'{profile_name}' copied to {n_devices} device(s)"
+            )
+        else:
+            self._status_banner.show_error(
+                f"Copied to {succeeded} of {n_devices} device(s) ({failed} failed)"
             )
 
     async def _do_delete_presets(self, items: list[Any]) -> None:
@@ -3786,6 +3799,9 @@ class MainWindow(QMainWindow):
         self._my_presets_view.delete_requested.connect(
             self._on_profile_delete_requested
         )
+        self._my_presets_view.copy_to_device_requested.connect(
+            self._on_local_preset_copy_to_device_requested
+        )
         self._rew_pull_view.measurement_selected.connect(
             self._on_rew_pull_measurement_selected
         )
@@ -3874,6 +3890,80 @@ class MainWindow(QMainWindow):
                 "copy_presets_to_devices",
                 self._do_copy_presets_batch_multi(
                     items, selected_devices, target_source
+                ),
+            )
+        )
+
+    @Slot(object)
+    def _on_local_preset_copy_to_device_requested(self, profile: object) -> None:
+        """Handle MyPresetsView "Copy to Another Device" action.
+
+        A locally saved Profile carries no record of whether it originated
+        as a PEQ preset or a RoomFit profile (see build_profile /
+        Profile in src/models/profile.py), so unlike the device-to-device
+        copy flow, this asks the user which target write-mode to use before
+        picking devices. There's also no live source device to read from
+        here -- the filters are already in hand -- so this skips
+        _confirm_preset_preview (source-side read warning) but still shows
+        _confirm_copy_activation (target-side write warning), since writing
+        to the target device(s) is identical to the device-to-device flow.
+
+        Args:
+            profile: Profile object selected in My Saved Presets.
+        """
+        if not self._discovered_devices:
+            self._status_banner.show_error("No other devices discovered")
+            return
+
+        preset_type = PresetTypeDialog.get_type(self)
+        if preset_type is None:
+            return
+
+        from src.gui.views.presets_device_view import PresetItem
+
+        name: str = getattr(profile, "name", "")
+        channel_mode_value = getattr(profile, "channel_mode", ChannelMode.STEREO)
+        filters_value = getattr(profile, "filters", None)
+        filters_l_value = getattr(profile, "filters_l", None)
+        filters_r_value = getattr(profile, "filters_r", None)
+
+        preview_item = PresetItem(
+            name=name,
+            channel_mode=channel_mode_value.display_value,
+            preset_type=preset_type,
+        )
+        if not self._confirm_copy_activation([preview_item]):
+            return
+
+        selected_devices = DevicePickerDialog.get_devices(
+            self, self._discovered_devices, ""
+        )
+        if selected_devices is None:
+            return
+
+        state = self._wizard_controller.state
+        target_source = state.primary_source
+
+        peq_settings = build_peq_settings(
+            target_source,
+            filters_value or [],
+            channel_mode_value,
+            filters_l=filters_l_value,
+            filters_r=filters_r_value,
+        )
+        filters, channel_mode = extract_filters(peq_settings)
+
+        logger.info(
+            "Copy local preset '%s' (%s) to %d device(s)",
+            name, preset_type, len(selected_devices),
+        )
+
+        self._bridge.run_async(
+            self._bridge_wrapper(
+                "copy_local_preset_to_devices",
+                self._do_copy_local_profile_to_devices(
+                    name, preset_type, selected_devices, target_source,
+                    filters, channel_mode, peq_settings,
                 ),
             )
         )
@@ -4261,11 +4351,7 @@ class MainWindow(QMainWindow):
         else:
             self._review_page.set_filters(filters)
 
-        # Update summary (use current connection info if available)
-        device = state.selected_device or "No device"
-        source = state.selected_source or "Not selected"
         active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
-        self._review_page.set_summary(device, source, channel.display_value, active_bands)
 
         # Navigate to Review step — update both wizard state and stacked widget
         # so that subsequent navigation/step_changed doesn't override (smoke #87)
@@ -4481,14 +4567,11 @@ class MainWindow(QMainWindow):
         """
         # Check for unsaved changes (skip if _skip_unsaved_prompt is set, e.g. in tests)
         if not getattr(self, "_skip_unsaved_prompt", False) and self._has_unsaved_changes():
-            choice: Literal["save", "discard", "cancel"] = (
-                UnsavedChangesDialog.confirm_discard(self)
-            )
+            choice: Literal["discard", "cancel"] = UnsavedChangesDialog.confirm_discard(self)
             if choice == "cancel":
                 event.ignore()
                 return
-            # "save" or "discard" - proceed with close
-            # (save logic would be handled by task 11.2 wiring)
+            # "discard" - proceed with close
 
         # Save sidebar collapse state
         self._settings.sidebar_collapsed = self._sidebar_nav.collapsed

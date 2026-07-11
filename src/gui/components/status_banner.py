@@ -16,11 +16,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
-    QPushButton,
     QSizePolicy,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.constants import AUTO_DISMISS_MS, STATUS_BANNER_HEIGHT
 from src.gui.style_utils import set_qss_property
 
@@ -69,10 +69,11 @@ class StatusBanner(QFrame):
         layout.addWidget(self._message_label)
 
         # Close button — styled as a visible "Dismiss" text button
-        self._close_button = QPushButton("Dismiss", self)
-        self._close_button.setObjectName("StatusBannerClose")
+        self._close_button = make_action_button(
+            "Dismiss", object_name="StatusBannerClose", style_class="ghost",
+            tooltip="Dismiss this message", parent=self,
+        )
         self._close_button.setFixedHeight(22)
-        self._close_button.setToolTip("Dismiss this message")
         self._close_button.clicked.connect(self._on_close_clicked)
         self._close_button.setVisible(False)
         layout.addWidget(self._close_button)

@@ -1,8 +1,9 @@
 """Unsaved Changes Dialog - confirmation when navigating away with pending changes.
 
 Triggered when the user has modified filter settings and attempts to close the
-application or navigate away from the current wizard step. Offers three actions:
-Save (persist changes first), Discard (leave without saving), or Cancel (stay).
+application or navigate away from the current wizard step. Offers two actions:
+Continue Working (stay and keep the in-progress changes) or Discard and Quit
+(leave without saving).
 
 Requirement 12.5: WHEN the user has unsaved filter changes and attempts to
 navigate away or close the App, THE App SHALL prompt with an "Unsaved changes"
@@ -18,11 +19,11 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
@@ -31,7 +32,7 @@ from src.gui.constants import (
 
 
 class UnsavedChangesDialog(QDialog):
-    """Modal dialog prompting the user to save, discard, or cancel.
+    """Modal dialog prompting the user to continue working or discard and quit.
 
     Shown when unsaved filter changes exist and the user attempts to
     navigate away or close the application.
@@ -50,11 +51,11 @@ class UnsavedChangesDialog(QDialog):
         self.setMinimumWidth(400)
         self.setModal(True)
 
-        self._result: Literal["save", "discard", "cancel"] = "cancel"
+        self._result: Literal["discard", "cancel"] = "cancel"
         self._setup_ui()
 
     @property
-    def choice(self) -> Literal["save", "discard", "cancel"]:
+    def choice(self) -> Literal["discard", "cancel"]:
         """The user's choice after the dialog closes."""
         return self._result
 
@@ -98,49 +99,40 @@ class UnsavedChangesDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(SPACING_SM)
 
-        # Cancel button (ghost/text style) - leftmost
-        self._cancel_btn = QPushButton("Cancel")
-        self._cancel_btn.setObjectName("cancel_button")
-        self._cancel_btn.setProperty("class", "ghost")
+        button_layout.addStretch(1)
+
+        # Discard button (destructive/warning) -- stretches on both sides
+        # center the row instead of pinning it to the right edge.
+        self._discard_btn = make_action_button(
+            "Discard and Quit", object_name="discard_button", style_class="danger"
+        )
+        self._discard_btn.clicked.connect(self._on_discard)
+        button_layout.addWidget(self._discard_btn)
+
+        # Continue Working button (primary/accent) - default, keeps user safe
+        self._cancel_btn = make_action_button(
+            "Continue Working", object_name="cancel_button", style_class="primary"
+        )
+        self._cancel_btn.setDefault(True)
         self._cancel_btn.clicked.connect(self._on_cancel)
         button_layout.addWidget(self._cancel_btn)
 
         button_layout.addStretch(1)
 
-        # Discard button (destructive/warning)
-        self._discard_btn = QPushButton("Discard")
-        self._discard_btn.setObjectName("discard_button")
-        self._discard_btn.setProperty("class", "danger")
-        self._discard_btn.clicked.connect(self._on_discard)
-        button_layout.addWidget(self._discard_btn)
-
-        # Save button (primary/accent)
-        self._save_btn = QPushButton("Save")
-        self._save_btn.setObjectName("save_button")
-        self._save_btn.setProperty("class", "primary")
-        self._save_btn.setDefault(True)
-        self._save_btn.clicked.connect(self._on_save)
-        button_layout.addWidget(self._save_btn)
-
         layout.addLayout(button_layout)
 
-    def _on_save(self) -> None:
-        """Handle Save button click."""
-        self._result = "save"
-        self.accept()
-
     def _on_discard(self) -> None:
-        """Handle Discard button click."""
+        """Handle Discard and Quit button click."""
         self._result = "discard"
         self.accept()
 
     def _on_cancel(self) -> None:
-        """Handle Cancel button click."""
+        """Handle Continue Working button click."""
         self._result = "cancel"
         self.reject()
 
     @staticmethod
-    def confirm_discard(parent: QWidget | None) -> Literal["save", "discard", "cancel"]:
+    def confirm_discard(parent: QWidget | None) -> Literal["discard", "cancel"]:
         """Show the unsaved changes dialog and return the user's choice.
 
         This is the primary entry point for standard usage.
@@ -149,7 +141,6 @@ class UnsavedChangesDialog(QDialog):
             parent: Parent widget (may be None).
 
         Returns:
-            "save" if the user wants to save first,
             "discard" if the user wants to leave without saving,
             "cancel" if the user wants to stay on the current page.
         """

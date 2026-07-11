@@ -21,12 +21,12 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.constants import (
     ANIMATION_NORMAL,
     SPACING_MD,
@@ -111,9 +111,10 @@ class DeviceCard(QFrame):
         )
         error_layout.addWidget(self._error_label)
 
-        self._retry_button = QPushButton("Retry", self._error_widget)
-        self._retry_button.setObjectName("DeviceCardRetry")
-        self._retry_button.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._retry_button = make_action_button(
+            "Retry", object_name="DeviceCardRetry", style_class="secondary",
+            parent=self._error_widget,
+        )
         self._retry_button.clicked.connect(self._on_retry_clicked)
         error_layout.addWidget(self._retry_button)
 

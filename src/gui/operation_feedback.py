@@ -12,7 +12,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QTimer, Signal
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QWidget
+
+from src.gui.components.action_button import ElidingPushButton, make_action_button
 
 if TYPE_CHECKING:
     from src.gui.components.status_banner import StatusBanner
@@ -81,7 +83,7 @@ class OperationFeedbackManager(QObject):
         self._timeout_timer.timeout.connect(self._on_timeout)
 
         # Cancel button (created lazily, inserted into StatusBanner layout)
-        self._cancel_button: QPushButton | None = None
+        self._cancel_button: ElidingPushButton | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -175,8 +177,9 @@ class OperationFeedbackManager(QObject):
     def _show_cancel_button(self) -> None:
         """Insert a Cancel button into the StatusBanner layout."""
         if self._cancel_button is None:
-            self._cancel_button = QPushButton("Cancel")
-            self._cancel_button.setObjectName("OperationCancelButton")
+            self._cancel_button = make_action_button(
+                "Cancel", object_name="OperationCancelButton", style_class="secondary"
+            )
             self._cancel_button.setFixedHeight(28)
             self._cancel_button.setMinimumWidth(60)
             self._cancel_button.clicked.connect(self._on_cancel_clicked)

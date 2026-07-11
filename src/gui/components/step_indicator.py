@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from src.gui.components.eliding_label import ElidingLabel
 from src.gui.constants import (
     FONT_SIZE_CAPTION,
     SPACING_MD,
@@ -61,14 +62,14 @@ class _StepWidget(QWidget):
         self._circle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         top_row.addWidget(self._circle)
 
-        self._label = QLabel(label)
+        self._label = ElidingLabel(label)
         self._label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         top_row.addWidget(self._label)
 
         layout.addLayout(top_row)
 
         # Summary text (shown below label for completed steps)
-        self._summary = QLabel()
+        self._summary = ElidingLabel()
         self._summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
         font = self._summary.font()
         font.setPixelSize(FONT_SIZE_CAPTION)

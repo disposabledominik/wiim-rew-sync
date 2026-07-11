@@ -14,13 +14,13 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
+from src.gui.components.action_button import make_action_button
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     SPACING_LG,
@@ -251,7 +251,7 @@ class PushPage(QWidget):
         self._dry_run_badge.setVisible(True)
         self._result_icon.setText("\u2139")  # info icon
         self._set_result_class("info")
-        self._result_message.setText("Translation Preview (Dry Run)")
+        self._result_message.setText("Dry Run Complete - Nothing Was Changed")
         self._detail_label.setText(summary)
         self._detail_label.setVisible(True)
         self._backup_path_label.setVisible(False)
@@ -411,7 +411,7 @@ class PushPage(QWidget):
         self._detail_label = QLabel("", self._result_frame)
         self._detail_label.setObjectName("PushPageDetailLabel")
         self._detail_label.setWordWrap(True)
-        self._detail_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._detail_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._detail_label.setProperty("class", "caption")
         self._detail_label.setVisible(False)
         frame_layout.addWidget(self._detail_label)
@@ -439,13 +439,13 @@ class PushPage(QWidget):
         # or deleted state isn't useful to display). A dialog rather than an
         # inline table, since a full 10-band (or L/R, 2x10-band) table does
         # not comfortably fit on this page alongside the result summary.
-        self._show_pushed_filters_button = QPushButton(
-            "Show Pushed Filters", self._result_container
+        self._show_pushed_filters_button = make_action_button(
+            "Show Pushed Filters",
+            object_name="PushPageShowFiltersButton",
+            style_class="linkButton",
+            parent=self._result_container,
         )
-        self._show_pushed_filters_button.setObjectName("PushPageShowFiltersButton")
         self._show_pushed_filters_button.setFlat(True)
-        self._show_pushed_filters_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._show_pushed_filters_button.setProperty("class", "linkButton")
         self._show_pushed_filters_button.clicked.connect(
             self._on_show_pushed_filters_clicked
         )
@@ -460,16 +460,18 @@ class PushPage(QWidget):
         action_layout.setSpacing(SPACING_MD)
         action_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._ok_button = QPushButton("OK", self._result_container)
-        self._ok_button.setObjectName("PushPageOKButton")
-        self._ok_button.setProperty("class", "success")
+        self._ok_button = make_action_button(
+            "OK", object_name="PushPageOKButton", style_class="success",
+            parent=self._result_container,
+        )
         self._ok_button.clicked.connect(self.done_acknowledged.emit)
         self._ok_button.setVisible(False)
         action_layout.addWidget(self._ok_button)
 
-        self._undo_button = QPushButton("Undo", self._result_container)
-        self._undo_button.setObjectName("PushPageUndoButton")
-        self._undo_button.setProperty("class", "warning")
+        self._undo_button = make_action_button(
+            "Undo", object_name="PushPageUndoButton", style_class="warning",
+            parent=self._result_container,
+        )
         self._undo_button.clicked.connect(self.undo_requested.emit)
         self._undo_button.setVisible(False)
         action_layout.addWidget(self._undo_button)
@@ -483,11 +485,11 @@ class PushPage(QWidget):
         secondary_layout.setSpacing(SPACING_MD)
         secondary_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        export_link = QPushButton("Export as REW File", self._secondary_row)
-        export_link.setObjectName("PushPageExportLink")
+        export_link = make_action_button(
+            "Export as REW File", object_name="PushPageExportLink",
+            style_class="linkButton", parent=self._secondary_row,
+        )
         export_link.setFlat(True)
-        export_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        export_link.setProperty("class", "linkButton")
         export_link.clicked.connect(self.export_requested.emit)
         secondary_layout.addWidget(export_link)
 
@@ -495,11 +497,11 @@ class PushPage(QWidget):
         separator.setObjectName("PushPageLinkSeparator")
         secondary_layout.addWidget(separator)
 
-        save_link = QPushButton("Save to My Presets", self._secondary_row)
-        save_link.setObjectName("PushPageSavePresetLink")
+        save_link = make_action_button(
+            "Save to My Presets", object_name="PushPageSavePresetLink",
+            style_class="linkButton", parent=self._secondary_row,
+        )
         save_link.setFlat(True)
-        save_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        save_link.setProperty("class", "linkButton")
         save_link.clicked.connect(self.save_preset_requested.emit)
         secondary_layout.addWidget(save_link)
 
