@@ -132,6 +132,16 @@ Other models: not yet owned/confirmed, keep generic runtime probing rather than 
   (`EQv2SourceLoad`) returns `{"status":"Failed"}`. USB playback on Amp Ultra is implemented as a
   media server routed through the `wifi` pipeline, not a distinct input line
   (`docs/corrections.md`, 2026-07-03).
+- **No command deletes/resets a per-source PEQ slot once written.** `EQv2Delete` only removes a
+  *named saved profile* from the separate `EQv2GetNewList` list — it does not touch a live
+  per-`source_name` buffer. Confirmed on hardware (`docs/corrections.md`, 2026-07-10): neither
+  `EQv2Delete` (using the stray row's own `Name`) nor overwriting the slot's bands with an all-`OFF`
+  template removes the row from `EQGetSourceModes` on any of 4 tested devices — both leave the row
+  listed, just with reset content. Treat a garbage/stray `source_name` (e.g. from passing an
+  unsplit multi-value string where a single source was expected) as **permanent**: there is no
+  known way to remove it, only to zero out its content. `scripts/cleanup_stray_peq_sources.sh`
+  diagnoses these rows and attempts both mechanisms for confirmation on new hardware, but expect
+  `NOT REMOVABLE`.
 
 ---
 
@@ -267,9 +277,10 @@ plugin instead of `EqNp`, and — since the device accepts and stores *any* `sou
 written, not just real inputs (see "Key rules" in Source Discovery above) — rows for arbitrary
 garbage strings a client has written in the past, including comma-joined ones (e.g.
 `"wifi,bluetooth,auxIn"`); **these are leftover junk slots, not evidence of a real multi-source
-feature.** Filter for `pluginURI == EqNp` and a known real `source_name` if using this. Not used by
-this app — equivalent per-source data is already available via `EQGetLV2SourceBandEx` — documented
-for completeness only.
+feature.** Filter for `pluginURI == EqNp` and a known real `source_name` if using this. Used by this
+app's read-only source-slot diagnostic (`WiiMAdapter.get_source_slot_overview()`, Diagnostics
+panel's "Source Slots" section) to surface junk slots in one call — see "Key rules" above for why
+they can't be deleted.
 
 ### Write
 ```
@@ -510,6 +521,12 @@ exist," and `EQStat` on a RoomFit-less device is not reliably `Off` at rest. Tre
 -list condition above as the sole signal, not `EQStat` or the raw response status (`docs/
 corrections.md`, 2026-06-14, 2026-07-10).
 
+"Mini has no RoomFit" is precisely true only of the `EQLevel:2` namespace: Mini's own on-device
+calibration profile (`Type:"RC"`, real and readable) is filed under `EQLevel:1` (the PEQ namespace)
+instead, since Mini has no independent `EQLevel:2` storage to put it in (`docs/corrections.md`,
+2026-07-10). This app's `list_roomfit_profiles()`/`read_roomfit()` correctly scope to `EQLevel:2`
+only and have no reason to also scan `EQLevel:1` for RoomFit-typed content.
+
 ### Calibration-result push commands — out of scope, not used by this app
 
 A second, separate command family exists alongside the `EQLevel:2` LV2 commands above, confirmed
@@ -542,6 +559,22 @@ Ultra) is exactly where both are aliased/inert. WiiM Mini has no `RC` capability
 `RC.Version` values have been observed so far — treat "`RC.Version >= 1.1`" as the working
 assumption, not a confirmed threshold; a device reporting some other version is untested. Full
 investigation trail: `docs/corrections.md`, 2026-07-10.
+
+### Other RC/subwoofer-related commands — out of scope, not used by this app
+
+Further API research turned up these commands. None are hardware-tested — each was traced to a
+feature outside this app's scope before testing, so no test was needed (`docs/corrections.md`,
+2026-07-10):
+
+| Command | Payload | Scope |
+|---|---|---|
+| `EQMoveRCModes:{"EQLevel":<int>,"newLevel":<int>,"pluginURI":"..."}` | migrates EQ data between two `EQLevel` namespaces | Room Correction / calibration-finalization flow — same family as the `RoomCorr*` commands above |
+| `EQGetModeParam:{"EQLevel":2,"pluginURI":"...","Name":"<profile>"}` | reads an RC-mode parameter for a named RoomFit profile | Room Correction profile management |
+| `EQGetRCSubCal` (bare) / `EQSetRCSubCal:{"delayMs":<float, 3dp>,"levelDb":<float, 3dp>,"Version":"1.0","Time":<unix ms>}` | subwoofer output delay (ms) and level (dB) trim | Subwoofer settings — an entirely different feature from PEQ/RoomFit filters, not just calibration-adjacent |
+| `EQMoveMode:%s` | unknown | Command-name string exists but no feature exercising it was found — purpose and payload are unknown; not worth guessing |
+
+None of these touch the PEQ/RoomFit filter model (`EQBand`/`EQBandL`/`EQBandR`, `channelMode`,
+`EQStat`) this app operates on. Out of scope; do not use.
 
 ### Notes
 - Same `param_name`/band-letter/`channelMode`/`EQStat` format as PEQ — `wiim_parser.py` and

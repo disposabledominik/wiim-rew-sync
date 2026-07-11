@@ -12,19 +12,32 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from src.adapters.wiim_commands import encode_wiim_command, expect_dict_response
+from src.adapters.wiim_commands import (
+    PLUGIN_URI,
+    encode_wiim_command,
+    expect_dict_response,
+    expect_list_response,
+)
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import ChannelMode
-from src.models.errors import WiiMConnectionError, WiiMResponseError
+from src.models.errors import (
+    RoomFitUnsupportedError,
+    WiiMConnectionError,
+    WiiMResponseError,
+)
 from src.models.peq import PEQSettings
+from src.models.source_slot import SourceSlotInfo
 from src.translator.wiim_generator import generate_wiim_band_array
 from src.translator.wiim_parser import parse_wiim_band_array
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from src.adapters.command_queue import WiiMCommandQueue
 
 logger = logging.getLogger("wiim_rew_sync.wiim_api")
@@ -483,34 +496,93 @@ class WiiMAdapter:
             band_array_r, _warnings_r = generate_wiim_band_array(
                 bands_r, max_bands=self._capabilities.max_filters
             )
-            if self._capabilities.supports_batch_write:
-                await self._write_peq_batch_lr(
-                    source_name, band_array_l, band_array_r
-                )
-            else:
-                await self._write_peq_sequential_lr(
-                    source_name, band_array_l, band_array_r, queue
-                )
+            await self._write_bands(
+                partial(
+                    self._write_peq_batch_lr,
+                    source_name, band_array_l, band_array_r,
+                ),
+                partial(
+                    self._write_peq_sequential_lr,
+                    source_name, band_array_l, band_array_r, queue,
+                ),
+            )
         else:
             # Stereo mode: single band array
             bands = settings.bands
             band_array, _warnings = generate_wiim_band_array(
                 bands, max_bands=self._capabilities.max_filters
             )
-            if self._capabilities.supports_batch_write:
-                await self._write_peq_batch(source_name, band_array, channel_mode_wire)
-            else:
-                await self._write_peq_sequential(
-                    source_name, band_array, channel_mode_wire, queue
+            await self._write_bands(
+                partial(
+                    self._write_peq_batch,
+                    source_name, band_array, channel_mode_wire,
+                ),
+                partial(
+                    self._write_peq_sequential,
+                    source_name, band_array, channel_mode_wire, queue,
+                ),
+            )
+
+    @staticmethod
+    def _is_write_rejection(resp: object) -> bool:
+        """True when a write response is an explicit device-side rejection
+        ("unknown command" or {"status": "Failed"}) rather than acceptance
+        ("OK" string, or a dict on some firmware)."""
+        if isinstance(resp, str) and "unknown" in resp.lower():
+            return True
+        return isinstance(resp, dict) and str(resp.get("status", "")).lower() == "failed"
+
+    async def _write_bands(
+        self,
+        batch: Callable[[], Awaitable[object]],
+        sequential: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Dispatch a band write to the batch or sequential path.
+
+        ``supports_batch_write`` is tri-state: True/False use the
+        corresponding path directly (identical to the old behavior). None
+        means "not yet determined" -- there is no connect-time write probe
+        anymore (2026-07-10 redesign; the old probe performed a real
+        EQSetLV2Band write) -- so the first real push attempts the batch
+        form, and on an explicit device-side rejection falls back to
+        sequential within the same call, recording the outcome on the
+        capabilities object for the rest of the session. Network errors
+        propagate without recording anything -- they say nothing about
+        batch support.
+        """
+        known = self._capabilities.supports_batch_write
+        if known is False:
+            await sequential()
+            return
+        resp = await batch()
+        if known is None:
+            if self._is_write_rejection(resp):
+                logger.info(
+                    "Batch PEQ write rejected by device (%r); recording "
+                    "supports_batch_write=False and falling back to "
+                    "sequential writes.",
+                    resp,
                 )
+                self._capabilities.supports_batch_write = False
+                await sequential()
+            else:
+                logger.info(
+                    "Batch PEQ write accepted; recording "
+                    "supports_batch_write=True."
+                )
+                self._capabilities.supports_batch_write = True
 
     async def _write_peq_batch(
         self,
         source_name: str,
         band_array: list[float],
         channel_mode: str,
-    ) -> None:
-        """Write all bands in a single EQSetLV2SourceBand payload."""
+    ) -> object:
+        """Write all bands in a single EQSetLV2SourceBand payload.
+
+        Returns the raw device response so _write_bands() can inspect it
+        for an explicit rejection when batch capability is still unknown.
+        """
         eq_band_params = _flat_array_to_band_params(
             band_array, self._capabilities.max_filters
         )
@@ -519,7 +591,7 @@ class WiiMAdapter:
             {"channelMode": channel_mode, "EQBand": eq_band_params},
             source_name=source_name,
         )
-        await self._client.command(command)
+        return await self._client.command(command)
 
     async def _write_peq_sequential(
         self,
@@ -563,8 +635,12 @@ class WiiMAdapter:
         source_name: str,
         band_array_l: list[float],
         band_array_r: list[float],
-    ) -> None:
-        """Write L/R bands in a single EQSetLV2SourceBand payload."""
+    ) -> object:
+        """Write L/R bands in a single EQSetLV2SourceBand payload.
+
+        Returns the raw device response so _write_bands() can inspect it
+        for an explicit rejection when batch capability is still unknown.
+        """
         num_bands = self._capabilities.max_filters
         eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
         eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
@@ -573,7 +649,7 @@ class WiiMAdapter:
             {"channelMode": "L/R", "EQBandL": eq_band_l, "EQBandR": eq_band_r},
             source_name=source_name,
         )
-        await self._client.command(command)
+        return await self._client.command(command)
 
     async def _write_peq_sequential_lr(
         self,
@@ -719,7 +795,33 @@ class WiiMAdapter:
         original = await self.read_peq(source_name)
         await self.load_peq_profile(source_name, preset_name)
         preview = await self.read_peq(source_name)
-        if original.name != preset_name:
+        await self.restore_peq_selection_and_enable_state(
+            source_name, original, preset_name,
+            context=f"after previewing '{preset_name}'",
+        )
+        return preview
+
+    async def restore_peq_selection_and_enable_state(
+        self,
+        source_name: str,
+        original: PEQSettings,
+        current_name: str,
+        *,
+        context: str,
+    ) -> None:
+        """Best-effort: re-select the source's original active preset and
+        restore its enable-state.
+
+        PEQ twin of ``restore_roomfit_selection_and_enable_state()`` below --
+        written once, here, so preview/restore call sites can't drift out of
+        sync the way RoomFit's preview and write paths once did (#192). If
+        the original state had no saved-preset name (raw filters pushed via
+        ``write_peq`` -- the common case for this app's primary push
+        workflow), the original bands are written back directly instead.
+        Logs and swallows failures rather than raising, since this runs as
+        cleanup after the caller's primary operation already completed.
+        """
+        if original.name != current_name:
             try:
                 if original.name:
                     await self.load_peq_profile(source_name, original.name)
@@ -727,16 +829,14 @@ class WiiMAdapter:
                     await self.write_peq(source_name, original)
             except Exception:
                 logger.warning(
-                    "Failed to restore original PEQ profile '%s' on source '%s' "
-                    "after previewing '%s'", original.name or "(unnamed)",
-                    source_name, preset_name,
+                    "Failed to restore original PEQ profile '%s' on source "
+                    "'%s' (%s).", original.name or "(unnamed)",
+                    source_name, context,
                     exc_info=True,
                 )
         await self.set_peq_enabled_best_effort(
-            source_name, original.enabled,
-            context=f"after previewing '{preset_name}'",
+            source_name, original.enabled, context=context,
         )
-        return preview
 
     async def _delete_profile(self, profile_name: str, eq_level: int | None = None) -> None:
         """Shared EQv2Delete issuer for delete_peq_profile/delete_roomfit_profile."""
@@ -778,16 +878,29 @@ class WiiMAdapter:
     # RoomFit
     # ------------------------------------------------------------------
 
-    def _require_roomfit_level(self, min_level: int, operation: str) -> None:
-        """Raise WiiMResponseError if roomfit_level is below min_level.
+    def _require_roomfit(self, capability: str, operation: str) -> None:
+        """Raise RoomFitUnsupportedError if the named RoomFit capability is absent.
 
         Shared gate for every RoomFit method so the check and error-message
         format live in one place instead of being hand-rolled per method.
+        Callers branch on the exception *type*, never the message text
+        (docs/corrections.md, 2026-07-10 -- the CLI used to substring-match
+        the old ladder-based message, which broke silently when it changed).
+
+        Args:
+            capability: "supported" (subsystem present), "read" (band buffer
+                readable), or "write" (save confirmed).
+            operation: Human-readable operation name for the error message.
         """
-        if self._capabilities.roomfit_level < min_level:
-            raise WiiMResponseError(
-                f"RoomFit {operation} requires roomfit_level >= {min_level}, "
-                f"device has level {self._capabilities.roomfit_level}"
+        satisfied = {
+            "supported": self._capabilities.supports_roomfit,
+            "read": self._capabilities.supports_roomfit_read,
+            "write": self._capabilities.supports_roomfit_write,
+        }[capability]
+        if not satisfied:
+            raise RoomFitUnsupportedError(
+                f"RoomFit {operation} is not supported by this device "
+                f"(missing '{capability}' capability)"
             )
 
     async def get_roomfit_status(self) -> tuple[bool, str]:
@@ -797,13 +910,13 @@ class WiiMAdapter:
         empty ``source_name`` — this is RoomFit's *global* scope query,
         distinct from ``read_roomfit()``'s per-source buffer read.
 
-        Requires ``roomfit_level >= 1`` in device capabilities.
+        Requires ``supports_roomfit`` in device capabilities.
 
         Raises:
-            WiiMResponseError: RoomFit not supported (level < 1) or device
-                returned an unexpected response.
+            RoomFitUnsupportedError: RoomFit not supported by this device.
+            WiiMResponseError: Device returned an unexpected response.
         """
-        self._require_roomfit_level(1, "status")
+        self._require_roomfit("supported", "status")
         response = await self._read_fx_status("", eq_level=2)
         return bool(response.get("EQStat", "Off") == "On"), str(response.get("Name", ""))
 
@@ -826,7 +939,7 @@ class WiiMAdapter:
     ) -> PEQSettings:
         """Read RoomFit bands for a named profile.
 
-        Requires ``roomfit_level >= 2`` in device capabilities.
+        Requires ``supports_roomfit_read`` in device capabilities.
 
         RoomFit reads return the API working buffer, NOT the DSP-active state.
         We must first load the target profile into the buffer, then read bands.
@@ -848,7 +961,7 @@ class WiiMAdapter:
             WiiMResponseError: RoomFit read not supported (level < 2) or
                 device returned an unexpected response.
         """
-        self._require_roomfit_level(2, "read")
+        self._require_roomfit("read", "read")
 
         # Step 1: Load the target profile into the API working buffer
         await self.load_roomfit_profile(profile_name)
@@ -959,12 +1072,13 @@ class WiiMAdapter:
     ) -> None:
         """Write RoomFit bands to a named profile.
 
-        Requires ``roomfit_level >= 2`` in device capabilities (relaxed from
-        ``>= 4`` -- a device whose level-4 write-capability probe was
-        skipped for safety, #190, gets a real write attempt here as its own
-        capability confirmation instead; ``RoomFitSafeWrite.execute()``
-        upgrades ``roomfit_level`` to 4 in-session on a verified-successful
-        write).
+        Requires ``supports_roomfit_read`` in device capabilities --
+        deliberately not ``supports_roomfit_write``: there is no write-probe
+        at connect time (removed 2026-07-10; the old level-4 probe performed
+        a real save with live-audio risk, #190), so a real, SafeWrite-
+        protected write attempt here is itself the capability confirmation.
+        ``RoomFitSafeWrite.execute()`` sets ``supports_roomfit_write`` on a
+        verified-successful write.
 
         Writes to the API buffer, then saves to the named profile. WARNING:
         the buffer adopts ``profile_name`` as soon as the save succeeds, so a
@@ -987,10 +1101,10 @@ class WiiMAdapter:
             filters_r: Right channel filters (required when channel_mode is LR).
 
         Raises:
-            WiiMResponseError: RoomFit write not supported (level < 2) or
-                device returned an error.
+            RoomFitUnsupportedError: RoomFit not readable on this device.
+            WiiMResponseError: Device returned an error.
         """
-        self._require_roomfit_level(2, "write")
+        self._require_roomfit("read", "write")
 
         num_bands = self._capabilities.max_filters
         mode = (
@@ -1018,6 +1132,10 @@ class WiiMAdapter:
                     # app-saved profiles regardless -- see the RoomFit "Quirk"
                     # note in docs/wiim_api_notes.md and docs/corrections.md
                     # 2026-07-04). Included for wire-format parity only.
+                    # ASSUMPTION: a fixed single value is correct for every
+                    # device -- untested on multi-output hardware, since the
+                    # owned fleet is Speaker-only (docs/corrections.md,
+                    # 2026-07-10).
                     "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
                 },
                 source_name="",
@@ -1038,6 +1156,10 @@ class WiiMAdapter:
                     # app-saved profiles regardless -- see the RoomFit "Quirk"
                     # note in docs/wiim_api_notes.md and docs/corrections.md
                     # 2026-07-04). Included for wire-format parity only.
+                    # ASSUMPTION: a fixed single value is correct for every
+                    # device -- untested on multi-output hardware, since the
+                    # owned fleet is Speaker-only (docs/corrections.md,
+                    # 2026-07-10).
                     "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
                 },
                 source_name="",
@@ -1060,7 +1182,7 @@ class WiiMAdapter:
     ) -> list[dict[str, str]]:
         """List RoomFit profiles on the device.
 
-        Requires ``roomfit_level >= 1`` in device capabilities.
+        Requires ``supports_roomfit`` in device capabilities.
 
         Args:
             source_name: Audio input source (not used in command, but kept
@@ -1073,5 +1195,58 @@ class WiiMAdapter:
             WiiMResponseError: RoomFit not supported (level < 1) or
                 device returned an unexpected response.
         """
-        self._require_roomfit_level(1, "profile listing")
+        self._require_roomfit("supported", "profile listing")
         return await self._fetch_profile_list(eq_level=2)
+
+    # ------------------------------------------------------------------
+    # Source-slot diagnostic (#194 follow-up, docs/wiim_api_notes.md)
+    # ------------------------------------------------------------------
+
+    async def get_source_slot_overview(self) -> list[SourceSlotInfo]:
+        """Read every live per-source PEQ slot the device currently tracks.
+
+        Issues a bare ``EQGetSourceModes`` -- one call instead of one
+        ``EQGetLV2SourceBandEx`` round-trip per source. Read-only: this is a
+        diagnostic to surface garbage slots left behind by a comma-joined or
+        otherwise invalid ``source_name`` write (docs/smoke_test_issues.md
+        #194), not a cleanup tool -- no known command removes a slot once
+        written (docs/corrections.md, 2026-07-10), so there is no delete
+        path here.
+
+        Rows are filtered to ``pluginURI == EqNp`` (PEQ) -- other plugin
+        URIs (e.g. the legacy ``Eq10HP`` graphic-EQ) are not this app's
+        domain and are silently skipped. A row whose ``source_name`` isn't
+        one of ``capabilities.source_names`` is flagged
+        ``is_known_source=False``.
+
+        Returns:
+            One SourceSlotInfo per EqNp row, in the order the device
+            reported them.
+
+        Raises:
+            WiiMResponseError: The response isn't the expected list-of-dicts
+                shape (e.g. a generic-LinkPlay device that doesn't support
+                this command).
+            WiiMConnectionError: Device unreachable (propagated from
+                http_client).
+        """
+        response = expect_list_response(
+            await self._client.command("EQGetSourceModes"), "EQGetSourceModes"
+        )
+
+        known_sources = set(self._capabilities.source_names)
+        slots: list[SourceSlotInfo] = []
+        for row in response:
+            if not isinstance(row, dict) or row.get("pluginURI") != PLUGIN_URI:
+                continue
+            source_name = row.get("source_name", "")
+            slots.append(
+                SourceSlotInfo(
+                    source_name=source_name,
+                    name=row.get("Name", ""),
+                    enabled=row.get("EQStat", "Off") == "On",
+                    channel_mode=row.get("channelMode", ""),
+                    is_known_source=source_name in known_sources,
+                )
+            )
+        return slots

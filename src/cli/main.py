@@ -34,6 +34,7 @@ from src.models.capabilities import DeviceInfo
 from src.models.channel_mode import ChannelMode
 from src.models.errors import (
     ParseError,
+    RoomFitUnsupportedError,
     ValidationError,
     WiiMConnectionError,
     WiiMResponseError,
@@ -392,9 +393,14 @@ async def _set_filters(
         adapter = WiiMAdapter(client, capabilities)
         backup_manager = BackupManager(get_app_data_dir())
 
-        # Use command queue for sequential writes if batch is not supported
+        # Use command queue for sequential writes if batch is confirmed
+        # unsupported. ``supports_batch_write`` is tri-state (True/False/
+        # None="not yet determined" -- there is no connect-time write probe
+        # anymore); None must NOT be treated as False, or every first-ever
+        # write to a device loses the batch-write attempt WiiMAdapter's
+        # write path is designed to make.
         queue: WiiMCommandQueue | None = None
-        if not capabilities.supports_batch_write:
+        if capabilities.supports_batch_write is False:
             queue = WiiMCommandQueue(client)
             await queue.start()
 
@@ -489,16 +495,15 @@ def cmd_list_roomfit_profiles(device: str, timeout: float) -> int:
     """List RoomFit profiles on a device. Exit 0 on success, 1 on error."""
     try:
         profiles = asyncio.run(_list_roomfit_profiles(device, timeout))
+    except RoomFitUnsupportedError:
+        print(
+            "Dedicated RoomFit filters not available on this device "
+            "(room correction uses PEQ bands instead).",
+            file=sys.stderr,
+        )
+        return 1
     except (WiiMConnectionError, WiiMResponseError) as exc:
-        error_msg = str(exc)
-        if "roomfit_level >= 1" in error_msg:
-            print(
-                "Dedicated RoomFit filters not available on this device "
-                "(room correction uses PEQ bands instead).",
-                file=sys.stderr,
-            )
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     if not profiles:
@@ -551,16 +556,15 @@ def cmd_get_roomfit_filters(
         settings = asyncio.run(
             _get_roomfit_filters(device, source, profile_name, timeout)
         )
+    except RoomFitUnsupportedError:
+        print(
+            "Dedicated RoomFit filters not available on this device "
+            "(room correction uses PEQ bands instead).",
+            file=sys.stderr,
+        )
+        return 1
     except (WiiMConnectionError, WiiMResponseError) as exc:
-        error_msg = str(exc)
-        if "roomfit_level >= 2" in error_msg:
-            print(
-                "Dedicated RoomFit filters not available on this device "
-                "(room correction uses PEQ bands instead).",
-                file=sys.stderr,
-            )
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     print(
@@ -639,21 +643,19 @@ def cmd_set_roomfit_filters(
         result = asyncio.run(
             _set_roomfit_filters(device, source, profile_name, file, timeout)
         )
+    except RoomFitUnsupportedError:
+        # write_roomfit()'s gate is read-support only (no write-probe exists,
+        # 2026-07-10 redesign) -- a device with confirmed read support gets a
+        # real write attempt as its own capability test, so this message only
+        # fires for devices that never confirmed RoomFit read support at all.
+        print(
+            "Dedicated RoomFit filters not available on this device "
+            "(room correction uses PEQ bands instead).",
+            file=sys.stderr,
+        )
+        return 1
     except (WiiMConnectionError, WiiMResponseError) as exc:
-        error_msg = str(exc)
-        # write_roomfit()'s gate is roomfit_level >= 2 (relaxed from >= 4,
-        # #190/redesign 2026-07-05) -- a device that only ever confirms
-        # roomfit_level >= 2 gets a real write attempt as its own
-        # capability test, so this message now only fires for devices that
-        # never confirmed RoomFit *read* support at all.
-        if "roomfit_level >= 2" in error_msg:
-            print(
-                "Dedicated RoomFit filters not available on this device "
-                "(room correction uses PEQ bands instead).",
-                file=sys.stderr,
-            )
-        else:
-            print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
     except (ParseError, ValidationError) as exc:
         print(f"Error: {exc}", file=sys.stderr)

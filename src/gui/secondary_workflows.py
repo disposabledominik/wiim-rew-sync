@@ -59,11 +59,17 @@ class SecondaryWorkflowManager(QObject):
             profile, and the profile's name (for the Filters step tooltip,
             #162d).
         undo_complete(bool, str): Success flag and message after undo.
+        source_slots_ready(list): SourceSlotInfo rows from the current
+            device's EQGetSourceModes overview (diagnostic-only).
+        source_slots_error(str): Error message when the slot overview
+            couldn't be fetched (e.g. device doesn't support the command).
     """
 
     # --- Signals ---
     profile_recalled = Signal(list, str)
     undo_complete = Signal(bool, str)
+    source_slots_ready = Signal(list)
+    source_slots_error = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -247,3 +253,30 @@ class SecondaryWorkflowManager(QObject):
         except Exception as exc:
             logger.exception("Undo last push failed")
             self.undo_complete.emit(False, str(exc))
+
+    # ------------------------------------------------------------------
+    # Workflow: Source-Slot Overview (#194 follow-up diagnostic)
+    # ------------------------------------------------------------------
+
+    @Slot()
+    def fetch_source_slots(self) -> None:
+        """Fetch the current device's live per-source PEQ slot overview.
+
+        Read-only diagnostic (EQGetSourceModes) -- surfaces garbage slots
+        left behind by invalid source_name writes. Not a new MainWindow
+        `_do_*` method: this orchestration lives here, per backlog #7's
+        rule that new orchestration must not grow MainWindow further.
+        """
+        assert self._bridge is not None
+        self._bridge.run_async(self._do_fetch_source_slots())
+
+    async def _do_fetch_source_slots(self) -> None:
+        if self._current_adapter is None:
+            self.source_slots_error.emit("No device connected")
+            return
+        try:
+            slots = await self._current_adapter.get_source_slot_overview()
+            self.source_slots_ready.emit(slots)
+        except Exception as exc:
+            logger.warning("Source-slot overview fetch failed: %s", exc)
+            self.source_slots_error.emit(str(exc))

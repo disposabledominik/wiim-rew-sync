@@ -78,7 +78,9 @@ def _make_caps(roomfit_level: int = 0) -> MagicMock:
         roomfit_level: 0 = PEQ-only device, 2+ = RoomFit capable.
     """
     caps = MagicMock()
-    caps.roomfit_level = roomfit_level
+    caps.supports_roomfit = roomfit_level >= 1
+    caps.supports_roomfit_read = roomfit_level >= 2
+    caps.supports_roomfit_write = roomfit_level >= 4
     caps.device_name = "WiiM Pro Plus"
     caps.model = "WiiM Pro Plus"
     caps.source_names = ["wifi", "optical", "hdmi"]
@@ -90,7 +92,9 @@ def _make_caps(roomfit_level: int = 0) -> MagicMock:
 def _make_empty_sources_caps() -> MagicMock:
     """Create a mock DeviceCapabilities with empty source_names."""
     caps = MagicMock()
-    caps.roomfit_level = 0
+    caps.supports_roomfit = False
+    caps.supports_roomfit_read = False
+    caps.supports_roomfit_write = False
     caps.device_name = "WiiM Mini"
     caps.model = "WiiM Mini"
     caps.source_names = []

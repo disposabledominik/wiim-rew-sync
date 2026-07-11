@@ -4,6 +4,11 @@
 #   RoomCorrGet, RoomCorrGetMode, RoomCorrSet, RoomCorrSetLR, RoomCorrSetMode, setRoomCorrection,
 #   EQv2Rename, EQSetChannelMode, EQGetLV2Band/EQGetLV2SourceBand (non-Ex), EQv2Load.
 #
+# (EQGetModeParam, EQGetRCSubCal/EQSetRCSubCal, EQMoveMode/EQMoveRCModes were investigated
+# via API research and found out of scope — calibration/RC-profile-management and
+# subwoofer-trim features respectively, unrelated to PEQ/RoomFit filter sync — see
+# docs/wiim_api_notes.md and docs/corrections.md. Not tested here; no hardware test needed.)
+#
 # Manual tool, not part of the pytest suite. Findings should feed docs/corrections.md and
 # docs/wiim_api_notes.md updates per this project's # ASSUMPTION: workflow.
 #
@@ -14,8 +19,8 @@
 #        ./validate_new_wiim_commands.sh --summarize [results-file]
 #   (no flags)      Section 1 only — read-only existence/shape checks. Always safe.
 #   --writes        Also run Section 2 — write tests. Each backs up state first and
-#                   restores it afterward, verifying the restore succeeded. The two
-#                   riskiest sub-tests (RoomFit push, EQv2Rename) additionally prompt for
+#                   restores it afterward, verifying the restore succeeded. The riskiest
+#                   sub-tests (RoomFit push, EQv2Rename) additionally prompt for
 #                   confirmation unless --yes is also given.
 #   --source=X      PEQ source_name to use for per-source tests (default: auto-detected
 #                   via getAudioInputEnable, falling back to "wifi").

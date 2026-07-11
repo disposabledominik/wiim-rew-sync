@@ -62,6 +62,10 @@ def encode_wiim_command(
     included only when given (omission defaults to PEQ/EQLevel:1 on the device).
 
     Raises:
+        ValueError: source_name containing a comma -- a multi-value string is
+            never a valid WiiM source; the device silently stores a permanent
+            junk slot for it (docs/smoke_test_issues.md #194). Split the
+            selection and issue one command per source instead.
         ValueError: eq_level=2 (RoomFit) with a real (non-empty) source_name --
             the device silently accepts this but targets an orphaned per-source
             slot instead of the real RoomFit buffer. Also raised the other way:
@@ -76,6 +80,14 @@ def encode_wiim_command(
             shape happens to not raise. There is no legitimate RoomFit call
             shape any of these three branches would reject.
     """
+    if source_name is not None and "," in source_name:
+        raise ValueError(
+            f"source_name must be a single source, got the multi-value string "
+            f"{source_name!r} for {command!r}. The device silently stores a "
+            f"permanent junk slot for any string it receives (docs/"
+            f"wiim_api_notes.md \"Key rules\"; docs/smoke_test_issues.md #194) "
+            f"-- split the selection and issue one command per source."
+        )
     if eq_level == 2 and source_name:
         raise ValueError(
             f"RoomFit (EQLevel:2) commands must omit source_name or pass \"\", "
@@ -121,5 +133,14 @@ def expect_dict_response(response: object, context: str) -> dict[str, Any]:
     if not isinstance(response, dict):
         raise WiiMResponseError(
             f"Expected JSON dict from {context}, got: {type(response).__name__}"
+        )
+    return response
+
+
+def expect_list_response(response: object, context: str) -> list[Any]:
+    """Raise WiiMResponseError with a consistent message if response isn't a list."""
+    if not isinstance(response, list):
+        raise WiiMResponseError(
+            f"Expected a JSON list from {context}, got: {type(response).__name__}"
         )
     return response

@@ -8,7 +8,13 @@ Requirements referenced: 1.2-1.12, 11.1-11.8.
 
 from __future__ import annotations
 
-from src.gui.wizard_controller import FlowType, WizardController, WizardStep, steps_for_flow
+from src.gui.wizard_controller import (
+    FlowType,
+    WizardController,
+    WizardState,
+    WizardStep,
+    steps_for_flow,
+)
 from src.models.canonical import CanonicalFilter
 
 # ---------------------------------------------------------------------------
@@ -368,3 +374,51 @@ class TestWizardControllerSummaries:
         assert WizardStep.CONNECT not in ctrl.completed_steps
         assert WizardStep.EQ_TYPE not in ctrl.completed_steps
         assert WizardStep.SOURCE not in ctrl.completed_steps
+
+
+class TestWizardStateSourceSelection:
+    """WizardState source-selection accessors (docs/smoke_test_issues.md #194).
+
+    ``selected_sources`` (list) is the authoritative store; ``selected_source``
+    is a comma-joined compatibility property whose setter parses back into the
+    list (the Qt signal boundary still speaks comma-joined strings);
+    ``primary_source`` is the single-source accessor every single-source
+    device operation must use.
+    """
+
+    def test_single_source_passthrough(self) -> None:
+        state = WizardState()
+        state.selected_source = "optical"
+        assert state.selected_sources == ["optical"]
+        assert state.primary_source == "optical"
+
+    def test_comma_joined_returns_first(self) -> None:
+        state = WizardState()
+        state.selected_source = "wifi,bluetooth,auxIn"
+        assert state.selected_sources == ["wifi", "bluetooth", "auxIn"]
+        assert state.primary_source == "wifi"
+
+    def test_whitespace_stripped(self) -> None:
+        state = WizardState()
+        state.selected_source = "wifi, optical"
+        assert state.selected_sources == ["wifi", "optical"]
+        assert state.primary_source == "wifi"
+        state.selected_source = " bluetooth , wifi"
+        assert state.primary_source == "bluetooth"
+
+    def test_empty_defaults_to_wifi(self) -> None:
+        state = WizardState()
+        state.selected_source = ""
+        assert state.selected_sources == []
+        assert state.primary_source == "wifi"
+
+    def test_leading_empty_parts_skipped(self) -> None:
+        state = WizardState()
+        state.selected_source = " , ,optical"
+        assert state.selected_sources == ["optical"]
+        assert state.primary_source == "optical"
+
+    def test_getter_round_trips_comma_joined(self) -> None:
+        state = WizardState()
+        state.selected_source = "wifi, optical"
+        assert state.selected_source == "wifi,optical"

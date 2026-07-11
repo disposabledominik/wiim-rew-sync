@@ -813,7 +813,13 @@ async def test_get_roomfit_filters_uses_preview_not_raw_read(
     monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
 
     prober_instance = MagicMock()
-    prober_instance.probe = AsyncMock(return_value=DeviceCapabilities(roomfit_level=4))
+    prober_instance.probe = AsyncMock(
+        return_value=DeviceCapabilities(
+            supports_roomfit=True,
+            supports_roomfit_read=True,
+            supports_roomfit_write=True,
+        )
+    )
     monkeypatch.setattr(cli, "CapabilityProber", MagicMock(return_value=prober_instance))
 
     adapter_instance = MagicMock()
@@ -907,10 +913,10 @@ def test_set_roomfit_filters_verification_failure_exits_nonzero(
 def test_set_roomfit_filters_level_too_low(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """set-roomfit-filters shows specific error when device lacks roomfit_level
-    >= 2 (relaxed from >= 4, #191 -- a device at level 3 now gets a real write
-    attempt instead of being rejected outright; only < 2 is rejected)."""
-    from src.models.errors import WiiMResponseError
+    """set-roomfit-filters shows a specific error when the device lacks
+    RoomFit read support (RoomFitUnsupportedError), rather than falling
+    through to the generic WiiMResponseError handler."""
+    from src.models.errors import RoomFitUnsupportedError
 
     rew_file = tmp_path / "filters.txt"
     rew_file.write_text(
@@ -921,11 +927,7 @@ def test_set_roomfit_filters_level_too_low(
     monkeypatch.setattr(
         cli,
         "_set_roomfit_filters",
-        AsyncMock(
-            side_effect=WiiMResponseError(
-                "RoomFit write requires roomfit_level >= 2, device has level 0"
-            )
-        ),
+        AsyncMock(side_effect=RoomFitUnsupportedError("RoomFit write requires read support")),
     )
 
     code = cli.cmd_set_roomfit_filters(

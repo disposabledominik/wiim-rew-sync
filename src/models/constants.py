@@ -30,3 +30,7 @@ DEFAULT_MAX_BANDS: int = 10
 DEFAULT_SOURCE_NAMES: tuple[str, ...] = (
     "wifi", "bluetooth", "line-in", "auxIn", "optical", "HDMI",
 )
+
+# Default single source used when no source has been selected yet. "wifi" is
+# present on every known model and covers Wi-Fi/Ethernet/USB playback.
+DEFAULT_SOURCE: str = "wifi"

@@ -37,6 +37,10 @@ class CapabilityFileEntry(BaseModel):
     supports_roomfit: bool | None = None
     supports_roomfit_read: bool | None = None
     supports_roomfit_write: bool | None = None
+    # Legacy key from the pre-2026-07-10 schema (the removed 0-4 ladder).
+    # Still accepted so user-edited capability files survive upgrades --
+    # merge_into() maps it onto the three booleans above when they aren't
+    # set explicitly.
     roomfit_level: int | None = None
     supports_lr_filters: bool | None = None
     supports_profile_enumeration: bool | None = None
@@ -198,14 +202,22 @@ def merge_into(
     `min(entry.max_bands, capabilities.max_filters)` below).
     """
     if entry is not None:
+        # Legacy roomfit_level (removed 0-4 ladder) maps onto the three
+        # booleans, but an explicit boolean in the same entry always wins.
+        if entry.roomfit_level is not None:
+            level = entry.roomfit_level
+            if entry.supports_roomfit is None:
+                capabilities.supports_roomfit = level >= 1
+            if entry.supports_roomfit_read is None:
+                capabilities.supports_roomfit_read = level >= 2
+            if entry.supports_roomfit_write is None:
+                capabilities.supports_roomfit_write = level >= 4
         if entry.supports_roomfit is not None:
             capabilities.supports_roomfit = entry.supports_roomfit
         if entry.supports_roomfit_read is not None:
             capabilities.supports_roomfit_read = entry.supports_roomfit_read
         if entry.supports_roomfit_write is not None:
             capabilities.supports_roomfit_write = entry.supports_roomfit_write
-        if entry.roomfit_level is not None:
-            capabilities.roomfit_level = entry.roomfit_level
         if entry.supports_lr_filters is not None:
             capabilities.supports_lr_filters = entry.supports_lr_filters
         if entry.supports_profile_enumeration is not None:
@@ -219,19 +231,15 @@ def merge_into(
         if entry.source_aliases is not None:
             capabilities.source_aliases = entry.source_aliases
 
-    # Re-enforce the roomfit_level ladder invariant (0 -> no RoomFit at all,
-    # 1 -> supports_roomfit, 2 -> +read, 4 -> +write) after applying overrides
-    # above, since a capability-file entry can set supports_roomfit/_read/_write
-    # independently of roomfit_level -- without this, e.g. supports_roomfit=False
-    # alone would leave whatever roomfit_level the runtime probe found, and the
-    # flow-type gate (which only inspects roomfit_level) would still activate
-    # RoomFit despite the override.
+    # Keep the three RoomFit booleans internally consistent after overrides:
+    # a device whose subsystem is absent can't be readable/writable, and one
+    # that isn't readable can't be writable. (The old roomfit_level ladder
+    # needed a whole reconciliation block here; with the booleans as the
+    # only state, this downward cascade is all that's left.)
     if not capabilities.supports_roomfit:
-        capabilities.roomfit_level = 0
-    elif not capabilities.supports_roomfit_read:
-        capabilities.roomfit_level = min(capabilities.roomfit_level, 1)
-    elif not capabilities.supports_roomfit_write:
-        capabilities.roomfit_level = min(capabilities.roomfit_level, 3)
+        capabilities.supports_roomfit_read = False
+    if not capabilities.supports_roomfit_read:
+        capabilities.supports_roomfit_write = False
 
     # Fall back to the generic source list (#167b) when neither the runtime
     # probe (getAudioInputEnable) nor a capability-file `sources` override

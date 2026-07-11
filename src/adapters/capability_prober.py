@@ -6,14 +6,21 @@ DeviceCapabilities object.  All probes are best-effort: any failure is caught,
 logged, and the affected capability is set to its most conservative (safest)
 default value.
 
-Probing sequence:
-  1. getStatusEx        -> model, firmware, uuid, mac_address
-  2. getAudioInputEnable -> source_names
-  3. EQGetLV2BandEx     -> supports_peq, supports_lr_filters
-  4. EQSetLV2Band (batch) -> supports_batch_write
-  5. EQGetLV2List       -> supports_profile_enumeration
-  6. RoomFit levels 0-4 -> roomfit_level, supports_roomfit*
-  7. GetMultiroomInfo   -> role
+Probing sequence (read-only -- no probe writes to the device; 2026-07-10
+redesign, docs/corrections.md):
+  1. getStatusEx            -> model, firmware, uuid, mac_address
+  2. getAudioInputEnable    -> source_names
+  3. GetAcousticCapability  -> supports_roomfit* (declarative), rc_version
+  4. EQGetLV2BandEx         -> supports_peq, supports_lr_filters, max_filters
+  5. EQv2GetNewList         -> supports_profile_enumeration
+  6. RoomFit fallback probe -> supports_roomfit* (only when step 3
+                               unavailable; read-only)
+  7. GetMultiroomInfo       -> role
+
+supports_batch_write is NOT probed: it starts as None ("unknown") and the
+first real push attempts the batch form, falling back to sequential and
+recording the outcome (WiiMAdapter.write_peq) -- the old probe performed a
+real EQSetLV2Band write at connect time.
 
 Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10
 """
@@ -58,7 +65,7 @@ class CapabilityProber:
         caps = DeviceCapabilities()
 
         # Step 1: getStatusEx — identity
-        status = await self._probe_status(caps)
+        await self._probe_status(caps)
 
         # Determine if this is a WiiM device
         is_wiim = is_wiim_device(caps.model)
@@ -79,17 +86,25 @@ class CapabilityProber:
         # Step 2: getAudioInputEnable — source list
         await self._probe_source_names(caps)
 
-        # Step 3: EQGetLV2BandEx — PEQ support & channel mode
+        # Step 3: GetAcousticCapability — declarative subsystem report
+        # (single read-only call; RoomFit support comes from here on devices
+        # that support the command, replacing the old per-command probe)
+        acoustic_ok = await self._probe_acoustic_capability(caps)
+
+        # Step 4: EQGetLV2BandEx — PEQ confirmation & band model
+        # (always runs: max_filters and channelMode/supports_lr_filters come
+        # from the live band read regardless of what step 3 declared, and it
+        # doubles as the PEQ probe on devices without GetAcousticCapability)
         await self._probe_peq(caps)
 
-        # Step 4: Batch write test
-        await self._probe_batch_write(caps, status)
-
-        # Step 5: EQGetLV2List — profile enumeration
+        # Step 5: EQv2GetNewList — profile enumeration
         await self._probe_profile_enumeration(caps)
 
-        # Step 6: RoomFit sequential probe (levels 0-4)
-        await self._probe_roomfit(caps)
+        # Step 6: RoomFit fallback probe — only when GetAcousticCapability
+        # was unavailable (read-only; no write test exists anymore, see
+        # _probe_roomfit's docstring)
+        if not acoustic_ok:
+            await self._probe_roomfit(caps)
 
         # Step 7: GetMultiroomInfo — multiroom role
         await self._probe_multiroom(caps)
@@ -190,6 +205,23 @@ class CapabilityProber:
             caps.supports_lr_filters = False
             return
 
+        # A dict alone is NOT proof of PEQ support: generic LinkPlay firmware
+        # answers every EQGetLV2* command with a stock tone-control dict
+        # ({"Bass": 0, "EQEnable": 0, "Treble": 0} -- confirmed against real
+        # hardware, docs/corrections.md 2026-07-10), which the old
+        # isinstance() check accepted as a PEQ device. Require actual band
+        # data, same as _probe_roomfit()'s has_bands check.
+        has_bands = "EQBand" in resp or "EQBandL" in resp or "EQBandR" in resp
+        if not has_bands:
+            logger.info(
+                "EQGetLV2BandEx returned a dict without band data (%r keys); "
+                "PEQ unsupported (generic LinkPlay tone-control response).",
+                sorted(resp.keys()),
+            )
+            caps.supports_peq = False
+            caps.supports_lr_filters = False
+            return
+
         # Valid response means PEQ is supported
         caps.supports_peq = True
 
@@ -198,130 +230,94 @@ class CapabilityProber:
         caps.supports_lr_filters = "channelMode" in resp
 
         # Dynamically detect max_filters by counting distinct band letter prefixes
-        # in the EQBand response (e.g. a_mode, b_mode, ... l_mode → 12 bands).
-        # ASSUMPTION: this count reflects bands available in the device's
-        # *current* channel mode at probe time (i.e. per-channel if probed
-        # while in L/R mode, total if probed while in Stereo mode) rather than
-        # two independent per-channel limits. Unverified against real hardware
-        # in both modes.
-        # TODO: confirm by comparing EQGetLV2BandEx (Stereo) vs
-        # EQGetLV2SourceBandEx (L/R) band-letter counts on the same device.
-        # See docs/corrections.md 2026-06-27.
-        eq_band: list[dict[str, object]] = resp.get("EQBand", [])
+        # in the band response (e.g. a_mode, b_mode, ... l_mode → 12 bands).
+        # This count reflects bands available in the device's *current* channel
+        # mode at probe time -- per-channel if probed in L/R mode, total if
+        # probed in Stereo mode -- confirmed against real hardware
+        # (docs/corrections.md, 2026-07-03), matching max_filters' own
+        # per-channel-in-L/R semantics, so either key below yields the right
+        # number. A device probed in L/R mode has EQBandL/EQBandR and no
+        # EQBand -- counting only EQBand was why a 10-band fallback used to
+        # exist here.
+        eq_band: list[dict[str, object]] = (
+            resp.get("EQBand") or resp.get("EQBandL") or resp.get("EQBandR") or []
+        )
         band_letters: set[str] = set()
         for entry in eq_band:
             pn = str(entry.get("param_name", ""))
             if "_" in pn:
                 band_letters.add(pn.split("_")[0])
-        caps.max_filters = len(band_letters) if band_letters else 10
-
-    async def _probe_batch_write(
-        self, caps: DeviceCapabilities, status: dict[str, Any]
-    ) -> None:
-        """Probe batch write by attempting a 10-band EQSetLV2Band payload.
-
-        Requirement 2.4: determine supports_batch_write by attempting a write
-        of all 10 bands in a single EQSetLV2Band payload.
-
-        NOTE: We first read current state, then write it back unchanged to
-        avoid altering device state during probing. The write-back preserves
-        the band *values* but not the live source's "this equals saved preset
-        X" Name association: a raw EQSetLV2Band write drops it even with
-        byte-identical bands (confirmed on real hardware, docs/corrections.md
-        2026-07-05 -- the same mechanism as the RoomFit level-4 probe fix,
-        #175, just via a plain write instead of save-then-delete). The read
-        response itself echoes which source is live (`source_name`), so the
-        pre-probe Name is restored via EQv2SourceLoad scoped to that same
-        source once the write attempt is done -- PEQ's EQv2SourceLoad
-        requires an explicit source_name (unlike RoomFit's global one) or it
-        silently targets whatever's live instead (docs/corrections.md,
-        2026-07-03).
-
-        `_probe_batch_write()` runs before the wizard's source is chosen, so
-        it has no source_name of its own to scope the read/write to -- this
-        is why it uses the bare/live-source commands rather than the
-        per-source ones `write_peq()` uses in production.
-
-        This capture-then-restore shape is duplicated (not shared) with
-        `_probe_roomfit()`'s level-4 probe below and with
-        `WiiMAdapter.restore_roomfit_active_profile()` -- deliberately, not
-        an oversight: this prober has no `WiiMAdapter` instance yet (probing
-        determines the capabilities an adapter would need to be constructed
-        with), so it can't call that shared helper and talks to `self._client`
-        directly instead. If a third probe ever needs this pattern, consider
-        a small `CapabilityProber`-local helper before copying this block
-        again.
-        """
-        if not caps.supports_peq:
-            caps.supports_batch_write = False
+        if not band_letters:
+            # Band keys exist but hold no parseable a_mode-style entries:
+            # not a real EqNp PEQ engine. Never invent a 10-band default for
+            # a device that demonstrated none (docs/corrections.md,
+            # 2026-07-10 -- the old fallback turned generic-LinkPlay
+            # responses into supports_peq=True, max_filters=10).
+            caps.supports_peq = False
+            caps.supports_lr_filters = False
+            caps.max_filters = 0
             return
+        caps.max_filters = len(band_letters)
 
-        original_active_name = ""
-        live_source_name = ""
-        write_issued = False
+    async def _probe_acoustic_capability(self, caps: DeviceCapabilities) -> bool:
+        """Probe GetAcousticCapability -- one read-only declarative report.
+
+        Returns True when the device answered with the real capability
+        schema, meaning RoomFit support was determined here and the
+        per-command fallback probe (_probe_roomfit) can be skipped.
+
+        Response shapes (all hardware-confirmed, docs/wiim_api_notes.md and
+        docs/device_capability_examples/, 2026-07-10):
+          - Full schema dict with PEQ/RC/GEQ/... subsystem blocks -- most
+            WiiM devices.
+          - {"status": "Failed"} -- device has no acoustic-capability
+            subsystem at all (WiiM Mini).
+          - "unknown command" -- generic LinkPlay firmware.
+
+        RC presence means the full RoomFit workflow works: the band buffer
+        is readable, and EQSourceSave persists. There is deliberately no
+        write test -- the old level-4 write probe performed a real
+        EQSourceSave with live-audio risk (#190) and was removed; every real
+        write goes through RoomFitSafeWrite's backup/verify/rollback, which
+        catches a genuinely write-incapable device at push time with full
+        recovery. RC.Version is stored on caps.rc_version (discriminates the
+        out-of-scope RoomCorr* command family's behavior).
+        """
         try:
-            # Read current bands first so we can write them back unchanged
-            encoded_uri = quote(PLUGIN_URI)
-            read_resp = await self._client.command(f"EQGetLV2BandEx:{encoded_uri}")
-
-            if not isinstance(read_resp, dict):
-                caps.supports_batch_write = False
-                return
-
-            # Extract the current band data to write back
-            eq_band = read_resp.get("EQBand", [])
-            channel_mode = read_resp.get("channelMode", "Stereo")
-            original_active_name = str(read_resp.get("Name", ""))
-            live_source_name = str(read_resp.get("source_name", ""))
-
-            if not eq_band:
-                caps.supports_batch_write = False
-                return
-
-            # Build the write payload — write the same data back
-            command = encode_wiim_command(
-                "EQSetLV2Band", {"channelMode": channel_mode, "EQBand": eq_band}
-            )
-            write_issued = True
-            resp = await self._client.command(command)
-
-            # Success if we get "OK" or a dict response without error
-            if isinstance(resp, str) and resp.strip().lower() == "ok":
-                caps.supports_batch_write = True
-            elif isinstance(resp, dict):
-                # Some firmware returns a dict on success
-                caps.supports_batch_write = True
-            else:
-                caps.supports_batch_write = False
-
+            resp = await self._client.command("GetAcousticCapability")
         except Exception:
-            logger.warning(
-                "Batch write probe failed; sequential writes assumed.", exc_info=True
+            logger.info(
+                "GetAcousticCapability probe failed; falling back to "
+                "per-command RoomFit probing.",
+                exc_info=True,
             )
-            caps.supports_batch_write = False
-        finally:
-            # Restore the live source's pre-probe Name association, if the
-            # write was actually attempted and there was a name to restore --
-            # see the docstring above. Run even if the write itself raised,
-            # since a client-side timeout doesn't guarantee the device didn't
-            # still apply it.
-            if write_issued and original_active_name and live_source_name:
-                try:
-                    await self._client.command(
-                        encode_wiim_command(
-                            "EQv2SourceLoad",
-                            {"Name": original_active_name},
-                            source_name=live_source_name,
-                        )
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to restore PEQ active preset %r on source %r "
-                        "after batch-write capability probe; device may show "
-                        "no active preset until the user re-selects one.",
-                        original_active_name, live_source_name,
-                        exc_info=True,
-                    )
+            return False
+
+        if not isinstance(resp, dict) or "status" in resp:
+            # "unknown command" (str) or {"status": "Failed"} -- no
+            # declarative data; caller falls back to _probe_roomfit().
+            return False
+        if "PEQ" not in resp and "RC" not in resp:
+            # A dict, but not the capability schema -- treat as unsupported
+            # rather than concluding "no RoomFit" from an unknown shape.
+            logger.info(
+                "GetAcousticCapability returned an unrecognised shape "
+                "(%r keys); falling back to per-command RoomFit probing.",
+                sorted(resp.keys()),
+            )
+            return False
+
+        rc_block = resp.get("RC")
+        if isinstance(rc_block, dict):
+            caps.supports_roomfit = True
+            caps.supports_roomfit_read = True
+            caps.supports_roomfit_write = True
+            caps.rc_version = str(rc_block.get("Version", ""))
+        else:
+            caps.supports_roomfit = False
+            caps.supports_roomfit_read = False
+            caps.supports_roomfit_write = False
+        return True
 
     async def _probe_profile_enumeration(self, caps: DeviceCapabilities) -> None:
         """Probe EQv2GetNewList for profile enumeration support.
@@ -355,71 +351,62 @@ class CapabilityProber:
         )
 
     async def _probe_roomfit(self, caps: DeviceCapabilities) -> None:
-        """Probe RoomFit capability levels 0-4 sequentially.
-
-        Requirement 2.6: determine roomfit_level using a sequential probe
-        sequence; the level is set to the highest confirmed level.
+        """Fallback RoomFit probe -- read-only, for devices without
+        GetAcousticCapability (see _probe_acoustic_capability above).
 
         RoomFit uses the standard LV2 PEQ commands with EQLevel: 2 added to
-        the JSON payload. There are NO separate getRoomFitStatus/getRoomFitBands/
-        setRoomFitBands commands (see docs/corrections.md 2026-06-14).
+        the JSON payload. There are NO separate getRoomFitStatus/
+        getRoomFitBands/setRoomFitBands commands (docs/corrections.md
+        2026-06-14).
 
-        Level 0: no RoomFit at all (default)
-        Level 1: EQv2GetNewList + EQLevel:2 returns valid JSON (not "unknown command")
-        Level 2: EQGetLV2SourceBandEx + EQLevel:2 returns band data with EQBand/EQBandL/EQBandR
-        Level 3: implicit from level 2 — band data is parseable (response is dict with bands)
-        Level 4: EQSetLV2SourceBand + EQSourceSave + EQLevel:2 both succeed (write + save)
+        Detection is two read-only steps:
+          1. EQv2GetNewList + EQLevel:2 -- an empty "custom" list is THE
+             no-RoomFit signal (docs/wiim_api_notes.md, Capability
+             detection): RoomFit-less devices (WiiM Mini) do NOT return
+             "unknown command", they return a valid-looking
+             {"custom": [], "preset": []} and silently accept every
+             subsequent RoomFit command against dead storage
+             (docs/corrections.md, 2026-07-10).
+          2. EQGetLV2SourceBandEx + EQLevel:2 + source_name="" -- the global
+             band buffer must actually be readable.
 
-        The level-4 write test has observable side effects on the device
-        (it saves and deletes a throwaway profile) -- both the pre-probe
-        active profile Name and the pre-probe DSP on/off state (EQStat) are
-        captured before the test and restored afterward (#177, #190), so a
-        routine capability probe never leaves the device in a different
-        state than it found it.
-
-        Live-audio safety (#190): what's applied to actual playback when
-        RoomFit is enabled is the persisted, *selected* named profile, not
-        the transient working buffer -- and a profile stays selected even
-        while disabled. If EQStat is "Off" but a real profile is selected,
-        the level-4 test is skipped entirely rather than attempted and
-        restored afterward, since restoring after the fact can't undo audio
-        that was already audible. `roomfit_level` then stays at 3 (write
-        unconfirmed) for that connection.
+        Write capability is set equal to read capability -- there is
+        deliberately no write test. The old level-4 probe performed a real
+        EQSourceSave (plus an elaborate EQStat/Name capture-restore guard,
+        #175/#177/#190) and was removed 2026-07-10; every real write goes
+        through RoomFitSafeWrite's backup/verify/rollback, which catches a
+        genuinely write-incapable device at push time with full recovery.
         """
-        caps.roomfit_level = 0
         caps.supports_roomfit = False
         caps.supports_roomfit_read = False
         caps.supports_roomfit_write = False
 
-        # Level 1: EQv2GetNewList with EQLevel: 2
+        # Step 1: profile list -- empty "custom" means no RoomFit
         try:
             resp = await self._client.command(
                 encode_wiim_command("EQv2GetNewList", eq_level=2)
             )
             if isinstance(resp, str) and "unknown" in resp.lower():
-                # Device doesn't support RoomFit
                 return
             if not isinstance(resp, dict):
                 return
-            # Valid JSON response — level 1
-            caps.roomfit_level = 1
+            if not resp.get("custom"):
+                return
             caps.supports_roomfit = True
         except Exception:
-            logger.info("RoomFit level 1 probe (EQv2GetNewList+EQLevel:2) failed.")
+            logger.info("RoomFit probe (EQv2GetNewList+EQLevel:2) failed.")
             return
 
-        # Level 2: EQGetLV2SourceBandEx with EQLevel: 2 and an explicit empty
-        # source_name -- RoomFit's band read/write requires source_name="" per
-        # docs/wiim_api_notes.md's "source_name & EQLevel Reference" (omitting
-        # the key entirely, as a prior pass mistakenly did, fails against real
-        # hardware and was the root cause of a RoomFit-detection regression).
+        # Step 2: band-buffer read -- RoomFit's global scope requires an
+        # explicit empty source_name (docs/wiim_api_notes.md's "source_name
+        # & EQLevel Reference"; omitting the key entirely fails against real
+        # hardware and once caused a RoomFit-detection regression).
         try:
             band_resp = await self._client.command(
                 encode_wiim_command("EQGetLV2SourceBandEx", source_name="", eq_level=2)
             )
             if not isinstance(band_resp, dict):
                 return
-            # Check for band data keys
             has_bands = (
                 "EQBand" in band_resp
                 or "EQBandL" in band_resp
@@ -427,173 +414,12 @@ class CapabilityProber:
             )
             if not has_bands:
                 return
-            caps.roomfit_level = 2
             caps.supports_roomfit_read = True
-        except Exception:
-            logger.info(
-                "RoomFit level 2 probe (EQGetLV2SourceBandEx+EQLevel:2) failed."
-            )
-            return
-
-        # Level 3: Implicit — band data is parseable (dict with band keys confirmed above)
-        caps.roomfit_level = 3
-
-        # Level 4: Write test — EQSourceSave with EQLevel: 2
-        # Instead of writing all bands back (which can exceed the device's URL
-        # length limit for L/R mode with 12 bands — HTTP 431), we only test
-        # that EQSourceSave works. The buffer already has data from our level 2
-        # read, so saving it to a temp profile name confirms write capability.
-        #
-        # The buffer "adopts" whatever name it's saved under (RoomFit Write
-        # workflow, docs/wiim_api_notes.md) -- saving to this throwaway name
-        # and then deleting that same name orphans the buffer from whatever
-        # profile was genuinely active before the probe ran: a subsequent
-        # status read's Name comes back "", and the WiiM app itself shows
-        # RoomFit as deselected (confirmed on real hardware, docs/
-        # corrections.md 2026-07-05). Capture the pre-probe active name from
-        # the level 2 read above and restore it via EQv2SourceLoad once
-        # cleanup is done, so a routine capability probe doesn't silently
-        # deactivate the user's actual RoomFit selection.
-        original_active_name = str(band_resp.get("Name", ""))
-        original_eqstat_on = band_resp.get("EQStat") == "On"
-
-        # SAFETY (#190): what's actually applied to live audio when EQStat
-        # is "On" is the persisted, *named* profile that's currently
-        # selected -- not the transient working buffer this probe reads and
-        # writes. A profile stays "selected" even while EQStat is "Off"
-        # (docs/wiim_api_notes.md's DSP on/off toggle section), so a device
-        # can have RoomFit disabled while a named profile with completely
-        # unknown -- possibly extreme -- filter values sits selected
-        # underneath. Something in this test's sequence (`EQSourceSave`
-        # below, or the `EQv2SourceLoad` name-restore in the `finally` block)
-        # can flip EQStat from "Off" to "On" as an undocumented side effect
-        # -- curl reproduction (docs/corrections.md, 2026-07-06) confirmed
-        # `EQv2SourceLoad` alone does this and `EQSourceSave` alone does not,
-        # making the `finally` block's own restore call the more likely
-        # culprit than the `EQSourceSave` call this comment originally named.
-        # Exact mechanism aside, if EQStat flips while a real profile is
-        # selected, its actual filter values become audible -- a genuine
-        # hearing/speaker-damage risk at loud volume, not a cosmetic one.
-        # There is no way to test write capability here without risking
-        # exactly that, so when EQStat is "Off" *and* a real profile is
-        # selected, skip the live write test entirely rather than try to
-        # race the side effect after the fact. `roomfit_level` stays at 3
-        # (write unconfirmed) until the device is probed again with RoomFit
-        # already enabled (e.g. after the user enables it in the WiiM Home
-        # app, which is the only supported way to toggle it -- see "Not
-        # implemented" above) -- "safety before convenience" (CLAUDE.md).
-        #
-        # Safe to proceed when EQStat is already "On" (whatever's selected is
-        # already audible; this test cannot introduce new audible content,
-        # only relabel-and-restore the same bytes -- confirmed unchanged
-        # end-to-end on real hardware, docs/corrections.md 2026-07-05) or
-        # when EQStat is "Off" with nothing selected (`original_active_name`
-        # empty -- a fresh/never-configured device has no real profile whose
-        # content could be exposed).
-        if not original_eqstat_on and original_active_name:
-            logger.info(
-                "Skipping RoomFit level 4 write-capability test: EQStat is "
-                "Off but profile %r is still selected -- testing write here "
-                "risks briefly applying its real filter values to live "
-                "audio if this test's sequence re-enables it as a side "
-                "effect.",
-                original_active_name,
-            )
-            return
-
-        _PROBE_PROFILE_NAME = "__wiim_rew_sync_probe__"
-        save_issued = False
-        try:
-            # Save buffer contents to a temporary profile (no source_name --
-            # see the level 2 probe above).
-            save_issued = True
-            save_resp = await self._client.command(
-                encode_wiim_command(
-                    "EQSourceSave", {"Name": _PROBE_PROFILE_NAME}, eq_level=2
-                )
-            )
-            if isinstance(save_resp, str) and "unknown" in save_resp.lower():
-                return
-
-            caps.roomfit_level = 4
             caps.supports_roomfit_write = True
-
         except Exception:
-            logger.info("RoomFit level 4 probe (EQSourceSave+EQLevel:2) failed.")
-            # Keep at whatever level was last confirmed (level 3)
-        finally:
-            # Restore RoomFit's DSP on/off toggle to its pre-probe state FIRST
-            # (#190), ahead of the delete/name-restore cleanup below. By this
-            # point the guard above has already ruled out the one case where
-            # a wrong EQStat could expose a real, unknown profile's filter
-            # values (Off-with-something-selected) -- so this restore is
-            # defense-in-depth, not the primary safeguard: it holds even if
-            # the guard's reasoning about which states are "safe" turns out
-            # to be incomplete. Every extra round-trip before correcting
-            # EQStat (delete, then load) widens whatever window remains for
-            # no benefit -- especially the `EQv2SourceLoad` name-restore that
-            # follows, confirmed (docs/corrections.md, 2026-07-06) to
-            # unconditionally turn EQStat back on -- so this call goes out
-            # immediately, before either of them. Unconditional (not gated on
-            # save_issued): the property must hold even if the read that
-            # populated original_eqstat_on was somehow stale, and the command
-            # is a cheap no-op if EQStat was never touched.
-            try:
-                await self._client.command(
-                    encode_wiim_command(
-                        "EQChangeSourceFX" if original_eqstat_on else "EQSourceOff",
-                        source_name="",
-                        eq_level=2,
-                    )
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to restore RoomFit on/off state (was %s) after "
-                    "capability probe; device may show RoomFit as %s instead.",
-                    "On" if original_eqstat_on else "Off",
-                    "Off" if original_eqstat_on else "On",
-                    exc_info=True,
-                )
-            # Cleanup: delete the temporary probe profile (best-effort). Run
-            # this unconditionally once the save command was issued -- a
-            # timeout or error response doesn't guarantee the device didn't
-            # still create the profile before the failure, so skipping
-            # cleanup on those paths would leak it permanently.
-            if save_issued:
-                try:
-                    await self._client.command(
-                        encode_wiim_command(
-                            "EQv2Delete", {"Name": _PROBE_PROFILE_NAME}, eq_level=2
-                        )
-                    )
-                except Exception:
-                    logger.debug(
-                        "RoomFit probe cleanup (EQv2Delete) failed; non-critical."
-                    )
-            # Restore the buffer's pre-probe name association, if it had
-            # one -- see the comment above the original_active_name capture
-            # above. Deliberately NOT nested under `if save_issued:`: the
-            # buffer's Name can change independently of whether the throwaway
-            # save succeeded (e.g. the level-2 read itself already loaded
-            # something), so this must run whenever cleanup runs, not only
-            # when a profile was created to clean up.
-            if original_active_name:
-                try:
-                    await self._client.command(
-                        encode_wiim_command(
-                            "EQv2SourceLoad",
-                            {"Name": original_active_name},
-                            eq_level=2,
-                        )
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to restore RoomFit active profile %r after "
-                        "capability probe; device may show no active "
-                        "profile until the user re-selects one.",
-                        original_active_name,
-                        exc_info=True,
-                    )
+            logger.info(
+                "RoomFit probe (EQGetLV2SourceBandEx+EQLevel:2) failed."
+            )
 
     async def _probe_multiroom(self, caps: DeviceCapabilities) -> None:
         """Probe GetMultiroomInfo for multiroom role.

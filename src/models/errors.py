@@ -20,6 +20,17 @@ class WiiMResponseError(WiiMREWSyncError):
     """Malformed or unexpected response from a WiiM device."""
 
 
+class RoomFitUnsupportedError(WiiMResponseError):
+    """A RoomFit operation was attempted on a device without the capability.
+
+    Raised by ``WiiMAdapter._require_roomfit()`` before any network call is
+    made. A dedicated type (rather than a message convention) so callers --
+    notably the CLI's error reporting -- can branch on it without matching
+    substrings of the error text, which silently breaks when the message
+    changes.
+    """
+
+
 # --- Translation / parsing ---
 
 

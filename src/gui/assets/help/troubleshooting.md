@@ -166,7 +166,6 @@ overrides:
       "supports_roomfit": false,
       "supports_roomfit_read": false,
       "supports_roomfit_write": false,
-      "roomfit_level": 0,
       "supports_lr_filters": true,
       "supports_profile_enumeration": true,
       "supports_batch_write": false,
@@ -189,7 +188,7 @@ your device.
 | `supports_roomfit` | true/false | Whether the device supports RoomFit at all. |
 | `supports_roomfit_read` | true/false | Whether RoomFit profiles can be read from the device. |
 | `supports_roomfit_write` | true/false | Whether RoomFit profiles can be written to the device. |
-| `roomfit_level` | number | The device's RoomFit feature level (advanced/internal use). |
+| `roomfit_level` | number | Legacy field from older app versions (a 0-4 level). Still accepted: it maps onto the three `supports_roomfit*` fields above when those aren't set explicitly. New entries should use the true/false fields instead. |
 | `supports_lr_filters` | true/false | Whether independent Left/Right channel filters are supported. |
 | `supports_profile_enumeration` | true/false | Whether the device can list its saved PEQ/RoomFit profiles. |
 | `supports_batch_write` | true/false | Whether all bands can be written in a single command instead of one at a time. |

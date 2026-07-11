@@ -28,6 +28,7 @@ from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.models.peq import PEQSettings
 from src.tests.conftest import close_coroutine_tree
 
 # ---------------------------------------------------------------------------
@@ -77,7 +78,9 @@ def _make_caps(
 ) -> MagicMock:
     """Create a mock DeviceCapabilities."""
     caps = MagicMock()
-    caps.roomfit_level = roomfit_level
+    caps.supports_roomfit = roomfit_level >= 1
+    caps.supports_roomfit_read = roomfit_level >= 2
+    caps.supports_roomfit_write = roomfit_level >= 4
     caps.device_name = model
     caps.model = model
     caps.source_names = source_names or ["wifi", "optical", "hdmi"]
@@ -3193,3 +3196,67 @@ class TestSharedHelpers:
         assert mode == ChannelMode.LR
         assert len(filters) == 2
         assert filters_l is not None and filters_r is not None
+
+
+class TestIssue194SingleSourceOperations:
+    """#194: single-source device operations must never receive the raw
+    comma-joined multi-select string as source_name.
+
+    The WiiM API silently stores a permanent junk slot for ANY source_name
+    string it receives -- comma-joined selections like "wifi,bluetooth,auxIn"
+    were found as real slots on hardware (docs/wiim_api_notes.md "Key rules";
+    factory reset is the only removal). Every single-source flow must go
+    through WizardState.primary_source, never state.selected_source raw.
+    """
+
+    @staticmethod
+    def _preview_settings() -> PEQSettings:
+        return PEQSettings(
+            source_name="wifi",
+            channel_mode=ChannelMode.STEREO,
+            bands=[_make_filter()],
+        )
+
+    def test_issue194_load_peq_preset_uses_single_source(self, window) -> None:
+        """Preset load with a multi-source selection targets the first source."""
+        adapter = _setup_device(window)
+        window._wizard_controller.state.selected_source = "wifi,bluetooth,auxIn"
+        adapter.read_peq_preset_preview = AsyncMock(
+            return_value=self._preview_settings()
+        )
+
+        import asyncio
+
+        asyncio.run(window._do_load_peq_preset("My Preset"))
+
+        adapter.read_peq_preset_preview.assert_awaited_once_with("wifi", "My Preset")
+
+    def test_issue194_device_pull_uses_single_source(self, window) -> None:
+        """Device pull strips whitespace and uses only the first source."""
+        adapter = _setup_device(window)
+        window._wizard_controller.state.selected_source = "wifi, optical"
+        adapter.read_peq = AsyncMock(return_value=self._preview_settings())
+
+        import asyncio
+
+        asyncio.run(window._do_device_pull())
+
+        adapter.read_peq.assert_awaited_once_with("wifi")
+
+    def test_issue194_read_preset_to_copy_uses_single_source(self, window) -> None:
+        """The shared copy-flow read uses the first selected source -- not a
+        hardcoded 'wifi', and never the raw comma string."""
+        adapter = _setup_device(window)
+        window._wizard_controller.state.selected_source = "bluetooth,wifi"
+        adapter.read_peq_preset_preview = AsyncMock(
+            return_value=self._preview_settings()
+        )
+
+        import asyncio
+
+        result = asyncio.run(window._read_preset_to_copy("My Preset", "PEQ"))
+
+        assert result is not None
+        adapter.read_peq_preset_preview.assert_awaited_once_with(
+            "bluetooth", "My Preset"
+        )

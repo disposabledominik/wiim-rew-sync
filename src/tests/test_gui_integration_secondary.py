@@ -143,3 +143,57 @@ class TestUndoSuccessWithValidBackup:
         success, message = undo_signals[0]
         assert success is False
         assert message == "Rollback failed"
+
+
+# ---------------------------------------------------------------------------
+# Source-slot overview fetch (#194 follow-up diagnostic)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchSourceSlots:
+    """Test SecondaryWorkflowManager._do_fetch_source_slots."""
+
+    @pytest.mark.asyncio
+    async def test_no_adapter_emits_error(self) -> None:
+        manager = SecondaryWorkflowManager()
+        manager._current_adapter = None
+
+        errors: list[str] = []
+        manager.source_slots_error.connect(errors.append)
+
+        await manager._do_fetch_source_slots()
+
+        assert errors == ["No device connected"]
+
+    @pytest.mark.asyncio
+    async def test_success_emits_ready_with_slots(self) -> None:
+        from src.models.source_slot import SourceSlotInfo
+
+        manager = SecondaryWorkflowManager()
+        slots = [SourceSlotInfo(source_name="wifi", is_known_source=True)]
+        mock_adapter = MagicMock()
+        mock_adapter.get_source_slot_overview = AsyncMock(return_value=slots)
+        manager._current_adapter = mock_adapter
+
+        ready_signals: list[list] = []
+        manager.source_slots_ready.connect(ready_signals.append)
+
+        await manager._do_fetch_source_slots()
+
+        assert ready_signals == [slots]
+
+    @pytest.mark.asyncio
+    async def test_adapter_error_emits_error_signal(self) -> None:
+        manager = SecondaryWorkflowManager()
+        mock_adapter = MagicMock()
+        mock_adapter.get_source_slot_overview = AsyncMock(
+            side_effect=RuntimeError("device rejected EQGetSourceModes")
+        )
+        manager._current_adapter = mock_adapter
+
+        errors: list[str] = []
+        manager.source_slots_error.connect(errors.append)
+
+        await manager._do_fetch_source_slots()
+
+        assert errors == ["device rejected EQGetSourceModes"]

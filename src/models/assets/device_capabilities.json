@@ -6,7 +6,7 @@
       "supports_roomfit": false,
       "supports_roomfit_read": false,
       "supports_roomfit_write": false,
-      "roomfit_level": 0,
+      "supports_batch_write": false,
       "supported_filter_types": ["PEAK", "LS", "HS"],
       "sources": ["wifi", "bluetooth", "line-in"]
     }

@@ -58,7 +58,9 @@ def _make_caps(
 ) -> MagicMock:
     """Create a mock DeviceCapabilities."""
     caps = MagicMock()
-    caps.roomfit_level = roomfit_level
+    caps.supports_roomfit = roomfit_level >= 1
+    caps.supports_roomfit_read = roomfit_level >= 2
+    caps.supports_roomfit_write = roomfit_level >= 4
     caps.device_name = model
     caps.model = model
     caps.source_names = source_names if source_names is not None else ["wifi", "optical", "hdmi"]
@@ -249,8 +251,10 @@ class TestIssue16RoomfitDefaultSource:
         # Call _on_device_pull_requested
         window._on_device_pull_requested()
 
-        # Verify source defaulted to "wifi"
-        assert window._wizard_controller.state.selected_source == "wifi"
+        # Verify the pull resolves to "wifi" via primary_source's default
+        # (no source-selection guard needed -- _do_device_pull reads
+        # primary_source directly, which already falls back to "wifi").
+        assert window._wizard_controller.state.primary_source == "wifi"
 
 
 # ---------------------------------------------------------------------------

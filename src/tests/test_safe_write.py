@@ -1465,9 +1465,9 @@ class _FakeRoomFitDevice:
     calls* (a push followed by an undo), which a stateless mock can't model.
 
     `capabilities` is an instance attribute (not class-level) deliberately:
-    RoomFitSafeWrite.execute() now mutates `roomfit_level` in place on a
-    successful push at a previously-unconfirmed level (#191) -- a
-    class-level attribute would leak that mutation across every test that
+    RoomFitSafeWrite.execute() now mutates `supports_roomfit_write` in
+    place on a successful push when it was previously unconfirmed (#191) --
+    a class-level attribute would leak that mutation across every test that
     instantiates this fake, since they'd all share the same object.
     """
 
@@ -1610,17 +1610,17 @@ class TestRoomFitPushThenUndoPreservesActiveProfile:
 
 
 class TestRoomFitLevelUpgrade:
-    """#191: a verified-successful push at a previously-unconfirmed
-    roomfit_level (e.g. 3, write-test skipped for #190 safety) upgrades
-    the adapter's in-memory capabilities to level 4 -- it serves as its own
-    write-capability confirmation. A failed push must NOT upgrade the
-    level, since an unverified write proves nothing."""
+    """#191: a verified-successful push when write capability was
+    previously unconfirmed upgrades the adapter's in-memory
+    `supports_roomfit_write` to True -- it serves as its own
+    write-capability confirmation. A failed push must NOT upgrade it,
+    since an unverified write proves nothing."""
 
-    async def test_successful_push_upgrades_level_3_to_4(
+    async def test_successful_push_upgrades_unconfirmed_write(
         self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
     ) -> None:
         bands = _make_bands()
-        mock_roomfit_adapter.capabilities.roomfit_level = 3
+        mock_roomfit_adapter.capabilities.supports_roomfit_write = False
         mock_roomfit_adapter.list_roomfit_profiles.return_value = []
         mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
 
@@ -1629,15 +1629,14 @@ class TestRoomFitLevelUpgrade:
         )
 
         assert result.success is True
-        assert mock_roomfit_adapter.capabilities.roomfit_level == 4
         assert mock_roomfit_adapter.capabilities.supports_roomfit_write is True
 
-    async def test_failed_push_does_not_upgrade_level(
+    async def test_failed_push_does_not_upgrade_write_capability(
         self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
     ) -> None:
         intended_bands = _make_bands(freq=100.0)
         bad_readback = _make_settings(bands=_make_bands(freq=999.0))
-        mock_roomfit_adapter.capabilities.roomfit_level = 3
+        mock_roomfit_adapter.capabilities.supports_roomfit_write = False
         mock_roomfit_adapter.list_roomfit_profiles.return_value = []
         mock_roomfit_adapter.read_roomfit.return_value = bad_readback
 
@@ -1646,14 +1645,14 @@ class TestRoomFitLevelUpgrade:
         )
 
         assert result.success is False
-        assert mock_roomfit_adapter.capabilities.roomfit_level == 3
+        assert mock_roomfit_adapter.capabilities.supports_roomfit_write is False
 
-    async def test_successful_push_at_level_4_does_not_change_it(
+    async def test_successful_push_already_confirmed_does_not_change_it(
         self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
     ) -> None:
-        """Already at 4 -- no-op, not re-logged as an "upgrade"."""
+        """Already confirmed -- no-op, not re-logged as an "upgrade"."""
         bands = _make_bands()
-        mock_roomfit_adapter.capabilities.roomfit_level = 4
+        mock_roomfit_adapter.capabilities.supports_roomfit_write = True
         mock_roomfit_adapter.list_roomfit_profiles.return_value = []
         mock_roomfit_adapter.read_roomfit.return_value = _make_settings(bands=bands)
 
@@ -1662,7 +1661,7 @@ class TestRoomFitLevelUpgrade:
         )
 
         assert result.success is True
-        assert mock_roomfit_adapter.capabilities.roomfit_level == 4
+        assert mock_roomfit_adapter.capabilities.supports_roomfit_write is True
 
 
 class TestRoomFitUndoOldFormatBackup:

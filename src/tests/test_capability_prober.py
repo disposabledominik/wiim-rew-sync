@@ -9,7 +9,7 @@ Requirements tested: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10
 
 from __future__ import annotations
 
-import json
+from typing import ClassVar
 from unittest.mock import AsyncMock
 from urllib.parse import quote, unquote
 
@@ -179,125 +179,11 @@ class TestWiiMDeviceDetection:
         # are present but disabled in the fixture, matching real hardware traffic.
         assert caps.source_names == ["wifi", "line-in", "HDMI"]
         assert caps.supports_lr_filters is True
-        assert caps.supports_batch_write is True
+        # No write-probe exists anymore: batch capability is unknown until
+        # the first real push attempts it (WiiMAdapter._write_bands).
+        assert caps.supports_batch_write is None
         assert caps.supports_profile_enumeration is True
         assert caps.role == "solo"
-
-    @pytest.mark.asyncio
-    async def test_batch_write_probe_restores_active_preset(self) -> None:
-        """#177: the batch-write probe reads the live source's bands then
-        writes them back unchanged via the bare EQSetLV2Band -- confirmed on
-        real hardware that this raw write drops the live source's "this
-        equals saved preset X" Name association even with byte-identical
-        bands (docs/corrections.md 2026-07-05), the same mechanism as #175's
-        RoomFit probe fix. The probe must restore the pre-probe Name via
-        EQv2SourceLoad, scoped to the source_name the read itself echoed
-        back (PEQ's EQv2SourceLoad requires an explicit source_name)."""
-        client = _make_mock_client()
-        calls: list[str] = []
-
-        live_band_response = {
-            "EQStat": "On",
-            "channelMode": "Stereo",
-            "Name": "M16",
-            "source_name": "HDMI",
-            "EQBand": [
-                {"param_name": "a_mode", "value": 1.0},
-                {"param_name": "a_freq", "value": 80.0},
-                {"param_name": "a_q", "value": 1.41},
-                {"param_name": "a_gain", "value": -4.0},
-            ],
-        }
-
-        async def mock_command(cmd: str) -> dict | str:
-            calls.append(cmd)
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd == "getAudioInputEnable":
-                return AUDIO_INPUT_ENABLE_RESPONSE
-            if cmd.startswith("EQGetLV2BandEx:"):
-                return live_band_response
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2SourceLoad:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                return "unknown command"
-            if cmd.startswith("EQGetLV2SourceBandEx:"):
-                return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
-
-        prober = CapabilityProber(client)
-        caps = await prober.probe()
-
-        assert caps.supports_batch_write is True
-
-        load_calls = [c for c in calls if c.startswith("EQv2SourceLoad:")]
-        assert len(load_calls) == 1, "Probe must restore the pre-probe active preset"
-        payload = json.loads(unquote(load_calls[0].split(":", 1)[1]))
-        assert payload["Name"] == "M16"
-        assert payload["source_name"] == "HDMI"
-        # Restore must happen AFTER the write-back, not before.
-        write_index = next(i for i, c in enumerate(calls) if c.startswith("EQSetLV2Band:"))
-        load_index = next(i for i, c in enumerate(calls) if c.startswith("EQv2SourceLoad:"))
-        assert write_index < load_index
-
-    @pytest.mark.asyncio
-    async def test_batch_write_probe_skips_restore_when_no_prior_active_name(
-        self,
-    ) -> None:
-        """#177: if the live source's buffer had no name before the probe ran
-        (e.g. raw/unsaved filters, never loaded from a preset), there's
-        nothing to restore -- the probe must not issue a spurious
-        EQv2SourceLoad."""
-        client = _make_mock_client()
-        calls: list[str] = []
-
-        live_band_response = {
-            "EQStat": "On",
-            "channelMode": "Stereo",
-            "Name": "",
-            "source_name": "wifi",
-            "EQBand": [
-                {"param_name": "a_mode", "value": 1.0},
-                {"param_name": "a_freq", "value": 80.0},
-                {"param_name": "a_q", "value": 1.41},
-                {"param_name": "a_gain", "value": -4.0},
-            ],
-        }
-
-        async def mock_command(cmd: str) -> dict | str:
-            calls.append(cmd)
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd == "getAudioInputEnable":
-                return AUDIO_INPUT_ENABLE_RESPONSE
-            if cmd.startswith("EQGetLV2BandEx:"):
-                return live_band_response
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2SourceLoad:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                return "unknown command"
-            if cmd.startswith("EQGetLV2SourceBandEx:"):
-                return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
-
-        prober = CapabilityProber(client)
-        caps = await prober.probe()
-
-        assert caps.supports_batch_write is True
-        load_calls = [c for c in calls if c.startswith("EQv2SourceLoad:")]
-        assert load_calls == []
 
     @pytest.mark.asyncio
     async def test_malformed_dict_response_not_treated_as_enumeration_support(
@@ -337,7 +223,12 @@ class TestWiiMDeviceDetection:
         """WiiM Mini should be detected as WiiM with PEQ but no RoomFit."""
         client = _make_mock_client()
 
+        write_commands: list[str] = []
+
         async def mock_command(cmd: str) -> dict | str:
+            if cmd.startswith(("EQSourceSave:", "EQv2Delete:", "EQSetLV2SourceBand:")):
+                write_commands.append(cmd)
+                return "OK"
             if cmd == "getStatusEx":
                 return STATUS_EX_WIIM_MINI
             if cmd.startswith("EQGetLV2BandEx:"):
@@ -345,7 +236,16 @@ class TestWiiMDeviceDetection:
             if cmd.startswith("EQSetLV2Band:"):
                 return "OK"
             if cmd.startswith("EQv2GetNewList:"):
-                return "unknown command"
+                # Real Mini hardware never returns "unknown command" here: the
+                # RoomFit-namespace list (EQLevel:2) is a valid-looking dict
+                # with an EMPTY custom list -- the sole no-RoomFit signal
+                # (docs/wiim_api_notes.md Capability detection; docs/
+                # corrections.md 2026-07-10) -- while the PEQ-namespace list
+                # (EQLevel:1) genuinely works and can even hold calibration
+                # profiles.
+                if '"EQLevel": 2' in unquote(cmd):
+                    return {"custom": [], "preset": []}
+                return EQ_GET_LV2_LIST_RESPONSE
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
             return "unknown command"
@@ -358,15 +258,91 @@ class TestWiiMDeviceDetection:
         assert caps.supports_peq is True
         assert caps.max_filters == 10
         assert caps.model == "WiiM_Mini"
-        assert caps.roomfit_level == 0
         assert caps.supports_roomfit is False
         assert caps.supports_roomfit_read is False
         assert caps.supports_roomfit_write is False
+        # The empty-custom signal must stop the probe BEFORE any RoomFit
+        # write: without it, the probe proceeded to a real EQSourceSave on
+        # hardware with nothing to write to (docs/corrections.md, 2026-07-10).
+        assert write_commands == []
         # Mini has no getAudioInputEnable ("unknown command" via the fallback
         # branch above) -- source_names ends up whatever the bundled
         # device_capabilities.json's WiiM_Mini entry provides via merge_into()
         # (#167), not asserted here since that's this test's model's own data,
         # not this probe step's behavior.
+
+    @pytest.mark.asyncio
+    async def test_tone_control_dict_response_is_not_peq(self) -> None:
+        """Generic-LinkPlay-style firmware answers every EQGetLV2* command
+        with a stock tone-control dict -- captured from real hardware
+        (AudioCast, docs/device_capability_examples/, docs/corrections.md
+        2026-07-10). It's a dict, so the old isinstance() check reported
+        supports_peq=True with an invented max_filters=10. Must probe as
+        no-PEQ. Uses a WiiM-recognized model string so the probe actually
+        reaches _probe_peq (non-WiiM models short-circuit earlier and never
+        exercise the shape check)."""
+        client = _make_mock_client()
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return STATUS_EX_WIIM_PRO
+            if cmd.startswith(("EQGetLV2BandEx:", "EQGetLV2SourceBandEx:")):
+                # Real generic-LinkPlay response shape, regardless of plugin URI
+                return {"Bass": 0, "EQEnable": 0, "Treble": 0}
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_peq is False
+        assert caps.supports_lr_filters is False
+        assert caps.max_filters == 0
+
+    @pytest.mark.asyncio
+    async def test_probe_peq_counts_bands_when_device_is_in_lr_mode(self) -> None:
+        """A device probed while in L/R mode returns EQBandL/EQBandR and no
+        EQBand. The band count must come from the per-channel array (8
+        letters here -> max_filters=8, unambiguous against both the
+        default-10 cap and the old always-10 fallback) -- counting only
+        EQBand was why the old 10-band fallback existed."""
+        client = _make_mock_client()
+
+        lr_band_response = {
+            "EQStat": "On",
+            "channelMode": "L/R",
+            "EQBandL": [
+                {"param_name": f"{chr(ord('a') + i)}_{param}", "value": 1.0}
+                for i in range(8)
+                for param in ("mode", "freq", "gain", "q")
+            ],
+            "EQBandR": [
+                {"param_name": f"{chr(ord('a') + i)}_{param}", "value": 1.0}
+                for i in range(8)
+                for param in ("mode", "freq", "gain", "q")
+            ],
+        }
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return STATUS_EX_WIIM_PRO
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return lr_band_response
+            if cmd == "GetMultiroomInfo":
+                return MULTIROOM_SOLO
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_peq is True
+        assert caps.supports_lr_filters is True
+        assert caps.max_filters == 8
 
     @pytest.mark.asyncio
     async def test_get_audio_input_enable_malformed_response_degrades_gracefully(
@@ -422,9 +398,9 @@ class TestGenericLinkPlayDefaults:
         assert caps.max_filters == 0
         assert caps.model == "UP2STREAM_PRO_V3"
         assert caps.supports_lr_filters is False
-        assert caps.supports_batch_write is False
+        assert caps.supports_batch_write is None
         assert caps.supports_profile_enumeration is False
-        assert caps.roomfit_level == 0
+        assert caps.supports_roomfit is False
         assert caps.role == "solo"
 
 
@@ -443,9 +419,8 @@ class TestConnectionFailure:
         assert caps.supports_peq is False
         assert caps.max_filters == 0
         assert caps.supports_lr_filters is False
-        assert caps.supports_batch_write is False
+        assert caps.supports_batch_write is None
         assert caps.supports_profile_enumeration is False
-        assert caps.roomfit_level == 0
         assert caps.supports_roomfit is False
         assert caps.supports_roomfit_read is False
         assert caps.supports_roomfit_write is False
@@ -468,463 +443,272 @@ class TestConnectionFailure:
         assert caps.max_filters == 0
 
 
-class TestRoomFitLevelDetection:
-    """Test RoomFit level probing using real API commands (EQLevel: 2).
+class TestAcousticCapabilityProbe:
+    """GetAcousticCapability -- the declarative, read-only capability report
+    that replaces per-command RoomFit probing on devices that support it
+    (docs/wiim_api_notes.md; fixtures mirror the real hardware dumps in
+    docs/device_capability_examples/, 2026-07-10)."""
 
-    RoomFit uses standard LV2 PEQ commands with EQLevel: 2 in the payload.
-    See docs/corrections.md 2026-06-14 for context.
-    """
+    ACOUSTIC_FULL: ClassVar[dict] = {
+        "Version": "1.0",
+        "GEQ": {"Version": "1.0"},
+        "PEQ": {"Version": "1.0", "Filters": ["OFF", "LS", "PK", "HS", "LP", "HP"]},
+        "RC": {"Version": "1.1"},
+        "SubLPF": {"Version": "1.0"},
+        "EQBlock": {
+            "Version": "1.0",
+            "Blocks": [{"id": 1, "type": "EQ"}, {"id": 2, "type": "RC"}],
+        },
+    }
 
-    @pytest.mark.asyncio
-    async def test_roomfit_level_4_full_support(self) -> None:
-        """Device with full RoomFit support → level 4."""
+    @staticmethod
+    def _client_with(acoustic_response: dict | str) -> tuple:
         client = _make_mock_client()
-        calls: list[str] = []
-
-        roomfit_band_response = {
-            "EQStat": "On",
-            "channelMode": "Stereo",
-            "Name": "My RoomFit",
-            "EQBand": [
-                {"param_name": "a_mode", "value": 1.0},
-                {"param_name": "a_freq", "value": 80.0},
-                {"param_name": "a_q", "value": 1.41},
-                {"param_name": "a_gain", "value": -4.0},
-            ],
-        }
+        issued: list[str] = []
 
         async def mock_command(cmd: str) -> dict | str:
-            calls.append(cmd)
+            issued.append(cmd)
             if cmd == "getStatusEx":
                 return STATUS_EX_WIIM_PRO
+            if cmd == "GetAcousticCapability":
+                return acoustic_response
             if cmd.startswith("EQGetLV2BandEx:"):
-                # PEQ probe (no EQLevel) vs RoomFit probe (EQLevel: 2)
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
                 return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQSetLV2SourceBand:"):
-                return "OK"
             if cmd.startswith("EQv2GetNewList:"):
-                if '"EQLevel": 2' in cmd:
+                if '"EQLevel": 2' in unquote(cmd):
                     return {
                         "custom": [
-                            {"Name": "My RoomFit", "channelMode": "Stereo", "Type": "RC"}
+                            {"Name": "RF1", "channelMode": "Stereo", "Type": "RC"}
                         ],
                         "preset": [],
                     }
                 return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQGetLV2SourceBandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
                 return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSourceSave:"):
-                return "OK"
-            if cmd.startswith("EQv2Delete:"):
-                return "OK"
-            if cmd.startswith("EQChangeSourceFX:"):
-                return "OK"
-            if cmd.startswith("EQSourceOff:"):
-                return "OK"
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
+        return client, issued
+
+    @pytest.mark.asyncio
+    async def test_rc_block_means_full_roomfit_support(self) -> None:
+        """RC present in the schema -> all three RoomFit booleans set, plus
+        rc_version captured; the fallback probe is skipped entirely."""
+        client, issued = self._client_with(self.ACOUSTIC_FULL)
 
         prober = CapabilityProber(client)
         caps = await prober.probe()
 
-        assert caps.roomfit_level == 4
         assert caps.supports_roomfit is True
         assert caps.supports_roomfit_read is True
         assert caps.supports_roomfit_write is True
-
-        # #190: the pre-probe EQStat ("On") must be explicitly restored via
-        # EQChangeSourceFX, not left at whatever the level-4 write test left it.
-        fx_calls = [c for c in calls if c.startswith("EQChangeSourceFX:")]
-        assert len(fx_calls) == 1
-        assert [c for c in calls if c.startswith("EQSourceOff:")] == []
+        assert caps.rc_version == "1.1"
+        # Declarative answer obtained -- no EQLevel:2 fallback probing
+        roomfit_probes = [
+            c for c in issued
+            if c.startswith(("EQv2GetNewList:", "EQGetLV2SourceBandEx:"))
+            and '"EQLevel": 2' in unquote(c)
+        ]
+        assert roomfit_probes == []
 
     @pytest.mark.asyncio
-    async def test_roomfit_level_4_probe_restores_active_profile(self) -> None:
-        """#177: the level-4 write test saves the buffer under a throwaway
-        name then deletes it -- the buffer "adopts" whatever name it's saved
-        under, so deleting that same name orphans it from whatever profile
-        was genuinely active before the probe ran (confirmed on real
-        hardware: EQStat stays "On" but Name comes back "" afterward, and the
-        WiiM app itself shows RoomFit as deselected). The probe must restore
-        the pre-probe active name via EQv2SourceLoad once cleanup is done."""
-        client = _make_mock_client()
-        calls: list[str] = []
-
-        roomfit_band_response = {
-            "EQStat": "On",
-            "channelMode": "Stereo",
-            "Name": "Lođa zatvorena REW",
-            "EQBand": [
-                {"param_name": "a_mode", "value": 1.0},
-                {"param_name": "a_freq", "value": 80.0},
-                {"param_name": "a_q", "value": 1.41},
-                {"param_name": "a_gain", "value": -4.0},
-            ],
-        }
-
-        async def mock_command(cmd: str) -> dict | str:
-            calls.append(cmd)
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                if '"EQLevel": 2' in cmd:
-                    return {
-                        "custom": [
-                            {
-                                "Name": "Lođa zatvorena REW",
-                                "channelMode": "Stereo",
-                                "Type": "RC",
-                            }
-                        ],
-                        "preset": [],
-                    }
-                return EQ_GET_LV2_LIST_RESPONSE
-            if cmd.startswith("EQGetLV2SourceBandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSourceSave:"):
-                return "OK"
-            if cmd.startswith("EQv2Delete:"):
-                return "OK"
-            if cmd.startswith("EQv2SourceLoad:"):
-                return "OK"
-            if cmd.startswith("EQChangeSourceFX:"):
-                return "OK"
-            if cmd.startswith("EQSourceOff:"):
-                return "OK"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
+    async def test_schema_without_rc_means_no_roomfit(self) -> None:
+        """A real schema lacking the RC block -> no RoomFit, fallback skipped."""
+        no_rc = {k: v for k, v in self.ACOUSTIC_FULL.items() if k != "RC"}
+        client, issued = self._client_with(no_rc)
 
         prober = CapabilityProber(client)
         caps = await prober.probe()
 
-        assert caps.roomfit_level == 4
-
-        load_calls = [c for c in calls if c.startswith("EQv2SourceLoad:")]
-        assert len(load_calls) == 1, "Probe must restore the pre-probe active profile"
-        payload = json.loads(unquote(load_calls[0].split(":", 1)[1]))
-        assert payload["Name"] == "Lođa zatvorena REW"
-        # Restore must happen AFTER the temp probe profile is deleted, not before.
-        save_index = next(i for i, c in enumerate(calls) if c.startswith("EQSourceSave:"))
-        delete_index = next(i for i, c in enumerate(calls) if c.startswith("EQv2Delete:"))
-        load_index = next(i for i, c in enumerate(calls) if c.startswith("EQv2SourceLoad:"))
-        assert delete_index < load_index
-
-        # #190: pre-probe EQStat ("On") must also be explicitly restored --
-        # and, since RoomFit applies whatever profile is selected to live
-        # audio as soon as it's enabled, this is a live-audio safety
-        # ordering, not just cleanup housekeeping: the restore must fire
-        # immediately after the save, *before* the delete/name-restore
-        # round-trips, to minimize how long an unknown filter could be
-        # audible if the save flips EQStat on as a side effect.
-        fx_calls = [c for c in calls if c.startswith("EQChangeSourceFX:")]
-        assert len(fx_calls) == 1
-        assert [c for c in calls if c.startswith("EQSourceOff:")] == []
-        fx_index = next(i for i, c in enumerate(calls) if c.startswith("EQChangeSourceFX:"))
-        assert save_index < fx_index < delete_index
-
-    @pytest.mark.asyncio
-    async def test_roomfit_level_4_probe_skips_restore_when_no_prior_active_name(
-        self,
-    ) -> None:
-        """#177: if the buffer had no name before the probe ran (e.g. a fresh
-        device with no saved RoomFit profiles yet), there's nothing to
-        restore -- the probe must not issue a spurious EQv2SourceLoad.
-
-        #190: this is also the exact shape of a real regression report --
-        a device with RoomFit originally *disabled* (EQStat "Off") came back
-        with RoomFit enabled after nothing more than a routine capability
-        probe, because the level-4 write test's save-then-delete sequence
-        only restored the pre-probe active Name, never the pre-probe on/off
-        state. The probe must issue an explicit EQSourceOff to put RoomFit
-        back in the "Off" state it found."""
-        client = _make_mock_client()
-        calls: list[str] = []
-
-        roomfit_band_response = {
-            "EQStat": "Off",
-            "channelMode": "Stereo",
-            "Name": "",
-            "EQBand": [
-                {"param_name": "a_mode", "value": -1.0},
-            ],
-        }
-
-        async def mock_command(cmd: str) -> dict | str:
-            calls.append(cmd)
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                if '"EQLevel": 2' in cmd:
-                    return {"custom": [], "preset": []}
-                return EQ_GET_LV2_LIST_RESPONSE
-            if cmd.startswith("EQGetLV2SourceBandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSourceSave:"):
-                return "OK"
-            if cmd.startswith("EQv2Delete:"):
-                return "OK"
-            if cmd.startswith("EQv2SourceLoad:"):
-                return "OK"
-            if cmd.startswith("EQChangeSourceFX:"):
-                return "OK"
-            if cmd.startswith("EQSourceOff:"):
-                return "OK"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
-
-        prober = CapabilityProber(client)
-        caps = await prober.probe()
-
-        assert caps.roomfit_level == 4
-        load_calls = [c for c in calls if c.startswith("EQv2SourceLoad:")]
-        assert load_calls == []
-
-        # #190: EQStat must be put back to "Off" via an explicit EQSourceOff,
-        # not left however the level-4 write test happened to leave it. And,
-        # since RoomFit's DSP toggle gates whether the selected profile's
-        # (here unknown/possibly extreme) filters are actually applied to
-        # live playback, this restore is a safety-critical ordering: it must
-        # fire immediately after the save, before the delete round-trip,
-        # rather than being the last thing cleanup gets around to.
-        off_calls = [c for c in calls if c.startswith("EQSourceOff:")]
-        assert len(off_calls) == 1
-        assert [c for c in calls if c.startswith("EQChangeSourceFX:")] == []
-        save_index = next(i for i, c in enumerate(calls) if c.startswith("EQSourceSave:"))
-        off_index = next(i for i, c in enumerate(calls) if c.startswith("EQSourceOff:"))
-        delete_index = next(i for i, c in enumerate(calls) if c.startswith("EQv2Delete:"))
-        assert save_index < off_index < delete_index
-
-    @pytest.mark.asyncio
-    async def test_roomfit_level_4_probe_skipped_when_disabled_with_selected_profile(
-        self,
-    ) -> None:
-        """#190: the actual reported-regression shape -- RoomFit disabled
-        (EQStat "Off") but a named profile ("DangerDanger") is still
-        selected underneath, per the WiiM Home app's own behavior (a profile
-        stays selected while disabled -- docs/wiim_api_notes.md). What's
-        applied to live audio when RoomFit is enabled is that selected,
-        persisted profile's real filter values, not the transient working
-        buffer -- so if EQSourceSave's undocumented side effect can flip
-        EQStat to "On", the only way to guarantee "DangerDanger"'s unknown,
-        possibly-extreme filters never become briefly audible is to never
-        attempt the live write test in this state at all. The probe must
-        skip level 4 entirely (no EQSourceSave, no EQv2Delete, no toggle
-        commands) and stay at level 3."""
-        client = _make_mock_client()
-        calls: list[str] = []
-
-        roomfit_band_response = {
-            "EQStat": "Off",
-            "channelMode": "Stereo",
-            "Name": "DangerDanger",
-            "EQBand": [
-                {"param_name": "a_mode", "value": 1.0},
-                {"param_name": "a_freq", "value": 80.0},
-                {"param_name": "a_q", "value": 1.41},
-                {"param_name": "a_gain", "value": 12.0},
-            ],
-        }
-
-        async def mock_command(cmd: str) -> dict | str:
-            calls.append(cmd)
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                if '"EQLevel": 2' in cmd:
-                    return {
-                        "custom": [
-                            {"Name": "DangerDanger", "channelMode": "Stereo", "Type": "RC"}
-                        ],
-                        "preset": [],
-                    }
-                return EQ_GET_LV2_LIST_RESPONSE
-            if cmd.startswith("EQGetLV2SourceBandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
-                return EQ_GET_LV2_BAND_RESPONSE
-            # EQSourceSave/EQv2Delete/EQv2SourceLoad/EQChangeSourceFX/
-            # EQSourceOff deliberately have no success case here -- the
-            # probe must never call any of them in this scenario, so if it
-            # does, the "unknown command" fallback below makes that visible
-            # via caps rather than the test accidentally validating a
-            # broken guard.
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
-
-        prober = CapabilityProber(client)
-        caps = await prober.probe()
-
-        assert caps.roomfit_level == 3
+        assert caps.supports_roomfit is False
+        assert caps.supports_roomfit_read is False
         assert caps.supports_roomfit_write is False
-        assert caps.supports_roomfit_read is True
-
-        for prefix in (
-            "EQSourceSave:",
-            "EQv2Delete:",
-            "EQv2SourceLoad:",
-            "EQChangeSourceFX:",
-            "EQSourceOff:",
-        ):
-            assert [c for c in calls if c.startswith(prefix)] == [], (
-                f"{prefix} must never be issued when RoomFit is disabled "
-                "with a real profile selected"
-            )
+        assert caps.rc_version == ""
+        roomfit_probes = [
+            c for c in issued
+            if c.startswith(("EQv2GetNewList:", "EQGetLV2SourceBandEx:"))
+            and '"EQLevel": 2' in unquote(c)
+        ]
+        assert roomfit_probes == []
 
     @pytest.mark.asyncio
-    async def test_roomfit_level_2_read_only(self) -> None:
-        """Device where RoomFit read works but save fails → level 3 (parseable)."""
-        client = _make_mock_client()
-
-        roomfit_band_response = {
-            "EQStat": "On",
-            "channelMode": "Stereo",
-            "EQBand": [
-                {"param_name": "a_mode", "value": 1.0},
-                {"param_name": "a_freq", "value": 80.0},
-                {"param_name": "a_q", "value": 1.41},
-                {"param_name": "a_gain", "value": -4.0},
-            ],
-        }
-
-        async def mock_command(cmd: str) -> dict | str:
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                if '"EQLevel": 2' in cmd:
-                    return {"custom": [], "preset": []}
-                return EQ_GET_LV2_LIST_RESPONSE
-            if cmd.startswith("EQGetLV2SourceBandEx:"):
-                if "EQLevel" in cmd:
-                    return roomfit_band_response
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSourceSave:"):
-                # Save fails for RoomFit → level 4 not reached
-                return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
+    async def test_failed_status_falls_back_to_per_command_probe(self) -> None:
+        """{"status":"Failed"} (WiiM Mini shape) -> declarative data absent;
+        the read-only fallback probe runs and determines support."""
+        client, issued = self._client_with({"status": "Failed"})
 
         prober = CapabilityProber(client)
         caps = await prober.probe()
 
-        # Level 3 because bands are parseable (dict with EQBand key)
-        # but write returned "unknown command"
-        assert caps.roomfit_level == 3
+        # Fallback found a non-empty custom list + readable buffer
         assert caps.supports_roomfit is True
         assert caps.supports_roomfit_read is True
-        assert caps.supports_roomfit_write is False
+        assert caps.supports_roomfit_write is True
+        fallback_lists = [
+            c for c in issued
+            if c.startswith("EQv2GetNewList:") and '"EQLevel": 2' in unquote(c)
+        ]
+        assert len(fallback_lists) == 1
 
     @pytest.mark.asyncio
-    async def test_roomfit_level_1_status_only(self) -> None:
-        """Device where EQv2GetNewList succeeds but band read fails → level 1."""
+    async def test_unknown_command_falls_back_to_per_command_probe(self) -> None:
+        """Generic-LinkPlay "unknown command" -> fallback probe runs."""
+        client, issued = self._client_with("unknown command")
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_roomfit is True  # via fallback fixtures
+        fallback_lists = [
+            c for c in issued
+            if c.startswith("EQv2GetNewList:") and '"EQLevel": 2' in unquote(c)
+        ]
+        assert len(fallback_lists) == 1
+
+    @pytest.mark.asyncio
+    async def test_unrecognised_dict_shape_falls_back(self) -> None:
+        """A dict that isn't the capability schema (no PEQ/RC keys) must not
+        be interpreted as "no RoomFit" -- fall back instead."""
+        client, issued = self._client_with({"Bass": 0, "EQEnable": 0, "Treble": 0})
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_roomfit is True  # via fallback fixtures
+        fallback_lists = [
+            c for c in issued
+            if c.startswith("EQv2GetNewList:") and '"EQLevel": 2' in unquote(c)
+        ]
+        assert len(fallback_lists) == 1
+
+
+class TestRoomFitFallbackProbe:
+    """The read-only per-command RoomFit fallback (devices without
+    GetAcousticCapability). Detection is: non-empty custom list, then a
+    readable band buffer. Write support := read support -- there is no
+    write test (2026-07-10 redesign)."""
+
+    ROOMFIT_BAND_RESPONSE: ClassVar[dict] = {
+        "EQStat": "On",
+        "channelMode": "Stereo",
+        "Name": "My RoomFit",
+        "EQBand": [
+            {"param_name": "a_mode", "value": 1.0},
+            {"param_name": "a_freq", "value": 80.0},
+            {"param_name": "a_q", "value": 1.41},
+            {"param_name": "a_gain", "value": -4.0},
+        ],
+    }
+
+    def _client(self, *, list_resp: dict | str, band_resp: dict | str) -> tuple:
         client = _make_mock_client()
+        issued: list[str] = []
 
         async def mock_command(cmd: str) -> dict | str:
+            issued.append(cmd)
             if cmd == "getStatusEx":
                 return STATUS_EX_WIIM_PRO
             if cmd.startswith("EQGetLV2BandEx:"):
-                if "EQLevel" in cmd:
-                    # Band read fails — returns non-dict
-                    return "unknown command"
                 return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
             if cmd.startswith("EQv2GetNewList:"):
-                if '"EQLevel": 2' in cmd:
-                    return {"custom": [], "preset": []}
+                if '"EQLevel": 2' in unquote(cmd):
+                    return list_resp
                 return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQGetLV2SourceBandEx:"):
-                if "EQLevel" in cmd:
-                    # Returns non-dict (level 2 fails)
-                    return "error"
+                if '"EQLevel": 2' in unquote(cmd):
+                    return band_resp
                 return EQ_GET_LV2_BAND_RESPONSE
             if cmd == "GetMultiroomInfo":
                 return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
+        return client, issued
+
+    @pytest.mark.asyncio
+    async def test_full_support_is_read_only_probing(self) -> None:
+        """Profiles exist + buffer readable -> all three booleans True, and
+        the probe never issues a single write command (the old level-4
+        probe's EQSourceSave/EQv2Delete are gone)."""
+        client, issued = self._client(
+            list_resp={
+                "custom": [{"Name": "RF1", "channelMode": "Stereo", "Type": "RC"}],
+                "preset": [],
+            },
+            band_resp=self.ROOMFIT_BAND_RESPONSE,
+        )
 
         prober = CapabilityProber(client)
         caps = await prober.probe()
 
-        assert caps.roomfit_level == 1
         assert caps.supports_roomfit is True
+        assert caps.supports_roomfit_read is True
+        assert caps.supports_roomfit_write is True
+        writes = [
+            c for c in issued
+            if c.startswith((
+                "EQSourceSave:", "EQv2Delete:", "EQSetLV2SourceBand:",
+                "EQSetLV2Band:", "EQv2SourceLoad:", "EQChangeSourceFX:",
+                "EQSourceOff:",
+            ))
+        ]
+        assert writes == [], f"probe issued write/side-effect commands: {writes}"
+
+    @pytest.mark.asyncio
+    async def test_empty_custom_list_means_no_roomfit(self) -> None:
+        """Empty custom list is THE no-RoomFit signal -- probing stops
+        before the band read."""
+        client, issued = self._client(
+            list_resp={"custom": [], "preset": []},
+            band_resp=self.ROOMFIT_BAND_RESPONSE,
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_roomfit is False
+        assert caps.supports_roomfit_read is False
+        assert caps.supports_roomfit_write is False
+        band_reads = [
+            c for c in issued
+            if c.startswith("EQGetLV2SourceBandEx:") and '"EQLevel": 2' in unquote(c)
+        ]
+        assert band_reads == []
+
+    @pytest.mark.asyncio
+    async def test_unknown_command_means_no_roomfit(self) -> None:
+        client, _ = self._client(
+            list_resp="unknown command",
+            band_resp=self.ROOMFIT_BAND_RESPONSE,
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.supports_roomfit is False
         assert caps.supports_roomfit_read is False
         assert caps.supports_roomfit_write is False
 
     @pytest.mark.asyncio
-    async def test_roomfit_level_0_no_support(self) -> None:
-        """Device where EQv2GetNewList returns 'unknown command' → level 0."""
-        client = _make_mock_client()
-
-        async def mock_command(cmd: str) -> dict | str:
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
+    async def test_unreadable_buffer_means_list_only_support(self) -> None:
+        """Profiles exist but the band buffer isn't readable -> subsystem
+        present, read (and therefore write) unconfirmed."""
+        client, _ = self._client(
+            list_resp={
+                "custom": [{"Name": "RF1", "channelMode": "Stereo", "Type": "RC"}],
+                "preset": [],
+            },
+            band_resp={"status": "Failed"},
+        )
 
         prober = CapabilityProber(client)
         caps = await prober.probe()
 
-        assert caps.roomfit_level == 0
-        assert caps.supports_roomfit is False
+        assert caps.supports_roomfit is True
+        assert caps.supports_roomfit_read is False
+        assert caps.supports_roomfit_write is False
 
 
 class TestMultiroomRoleDetection:
@@ -1130,8 +914,12 @@ class TestDynamicMaxFilters:
         assert caps.max_filters == 10
 
     @pytest.mark.asyncio
-    async def test_empty_eqband_defaults_to_10(self) -> None:
-        """Device with empty EQBand list → max_filters defaults to 10."""
+    async def test_empty_eqband_means_no_peq(self) -> None:
+        """Device with an EQBand key but no parseable band entries is not a
+        real EqNp PEQ engine -- supports_peq=False, max_filters=0. This
+        replaces the old behavior of inventing a 10-band default, which
+        turned generic-LinkPlay tone-control responses into phantom PEQ
+        devices (docs/corrections.md, 2026-07-10)."""
         client = _make_mock_client()
 
         empty_band_response = {
@@ -1158,8 +946,8 @@ class TestDynamicMaxFilters:
         prober = CapabilityProber(client)
         caps = await prober.probe()
 
-        assert caps.supports_peq is True
-        assert caps.max_filters == 10
+        assert caps.supports_peq is False
+        assert caps.max_filters == 0
 
 
 class TestProbeNeverRaises:
@@ -1327,8 +1115,7 @@ class TestRoomFitProbeNoSourceBandWrite:
         prober = CapabilityProber(client)
         caps = await prober.probe()
 
-        # Device should reach level 4 (full RoomFit support)
-        assert caps.roomfit_level == 4
+        # Full RoomFit support detected via the read-only fallback
         assert caps.supports_roomfit_write is True
 
         # The probe MUST NOT send EQSetLV2SourceBand with EQLevel in the payload
@@ -1342,9 +1129,10 @@ class TestRoomFitProbeNoSourceBandWrite:
             f"{roomfit_source_band_writes}"
         )
 
-        # Verify that EQSourceSave IS used (the safe alternative)
+        # There is no write test at all anymore: EQSourceSave must not
+        # appear either (2026-07-10 redesign).
         roomfit_saves = [
             cmd for cmd in issued_commands
-            if cmd.startswith("EQSourceSave:") and "EQLevel" in cmd
+            if cmd.startswith("EQSourceSave:")
         ]
-        assert len(roomfit_saves) >= 1, "Probe should use EQSourceSave for level 4 test"
+        assert roomfit_saves == []

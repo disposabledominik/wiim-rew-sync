@@ -16,6 +16,7 @@ from PySide6.QtCore import QObject, Signal
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.models.constants import DEFAULT_SOURCE
 from src.translator._warnings import FilterRow
 
 
@@ -46,7 +47,10 @@ class WizardState:
     flow_type: FlowType = FlowType.PEQ
     current_step: WizardStep = WizardStep.CONNECT
     selected_device: str | None = None
-    selected_source: str = ""
+    # The user's source selection. The push flow is multi-select by design
+    # and fans out one write per entry; everything else must scope to a
+    # single source via `primary_source` below (#194).
+    selected_sources: list[str] = field(default_factory=list)
     channel_mode: ChannelMode = ChannelMode.STEREO
     current_filters: list[CanonicalFilter] = field(default_factory=list)
     # Snapshot of current_filters as of the last successful push -- lets
@@ -98,6 +102,40 @@ class WizardState:
         if self.channel_mode.is_lr and (self.filters_l or self.filters_r):
             return self.filters_l + self.filters_r
         return self.current_filters
+
+    @property
+    def selected_source(self) -> str:
+        """Comma-joined view of ``selected_sources``.
+
+        Compatibility bridge for the Qt signal boundary and display sites:
+        SourcePage/QuickSetupDialog emit comma-joined strings, and summary
+        labels show the full selection. The setter parses back into
+        ``selected_sources``, so string assignment keeps working while the
+        list stays the single authoritative store. Device operations must
+        never consume this raw value -- use ``primary_source`` (single-source
+        operations) or ``selected_sources`` (the push fan-out) instead
+        (#194).
+        """
+        return ",".join(self.selected_sources)
+
+    @selected_source.setter
+    def selected_source(self, value: str) -> None:
+        self.selected_sources = [p.strip() for p in value.split(",") if p.strip()]
+
+    @property
+    def primary_source(self) -> str:
+        """The single source that scopes a single-source device operation.
+
+        The selection is multi-select by design (the push flow fans out per
+        source), but every other device operation -- preset load/save/
+        export/copy, pulls, preview reads -- targets exactly one source.
+        Passing a comma-joined string as a WiiM ``source_name`` silently
+        creates a permanent junk slot on the device (docs/wiim_api_notes.md
+        "Key rules"; docs/smoke_test_issues.md #194), so those call sites
+        must use this accessor. This property is the only place the
+        first-entry + default logic lives.
+        """
+        return self.selected_sources[0] if self.selected_sources else DEFAULT_SOURCE
 
 
 def steps_for_flow(flow_type: FlowType) -> list[WizardStep]:
@@ -286,7 +324,7 @@ class WizardController(QObject):
             return False
 
         # 2. Source selected (RoomFit is source-agnostic)
-        if state.flow_type != FlowType.ROOMFIT and not state.selected_source:
+        if state.flow_type != FlowType.ROOMFIT and not state.selected_sources:
             return False
 
         # 3. Filters loaded

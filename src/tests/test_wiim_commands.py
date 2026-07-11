@@ -72,6 +72,23 @@ class TestEncodeWiimCommand:
         _, payload = _decode(encode_wiim_command("EQv2GetNewList", eq_level=1))
         assert payload == {"pluginURI": PLUGIN_URI, "EQLevel": 1}
 
+    def test_rejects_comma_joined_source_name(self) -> None:
+        """A multi-value source string is never a valid WiiM source: the
+        device silently stores a permanent junk slot for whatever string it
+        receives (hardware-confirmed, docs/smoke_test_issues.md #194; docs/
+        wiim_api_notes.md "Key rules"). Callers must split their selection
+        and issue one command per source -- this guard backstops every
+        adapter path against the mistake."""
+        with pytest.raises(ValueError, match="single source"):
+            encode_wiim_command(
+                "EQv2SourceLoad",
+                {"Name": "My Preset"},
+                source_name="wifi,bluetooth,auxIn",
+            )
+        # Applies regardless of command family or EQLevel
+        with pytest.raises(ValueError, match="single source"):
+            encode_wiim_command("EQGetLV2SourceBandEx", source_name="wifi, optical")
+
     def test_roomfit_rejects_real_source_name(self) -> None:
         """A real source_name is never valid for any EQLevel:2 (RoomFit)
         command -- the device silently accepts it but targets an orphaned

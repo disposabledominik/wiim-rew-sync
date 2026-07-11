@@ -158,7 +158,7 @@ class PresetsDeviceView(QWidget):
         self._peq_search.setVisible(False)
 
     def set_roomfit_hidden(self) -> None:
-        """Hide the RoomFit section when roomfit_level == 0 (Req 15.11)."""
+        """Hide the RoomFit section when the device has no RoomFit support (Req 15.11)."""
         self._roomfit_items = []
         self._roomfit_section.setVisible(False)
 

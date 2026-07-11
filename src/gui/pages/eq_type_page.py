@@ -1,7 +1,7 @@
 """EQ Type selection page: Parametric EQ vs RoomFit.
 
 Presents a binary choice as two large clickable cards. The WizardController
-decides whether to show this page based on device capabilities (roomfit_level >= 2).
+decides whether to show this page based on device capabilities (supports_roomfit_read).
 """
 
 from __future__ import annotations

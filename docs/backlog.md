@@ -95,9 +95,9 @@ current release but may be reconsidered in future versions. Backend support may 
 
 **Originally:** Code quality audit (2026-06-28)
 
-**What:** `src/gui/main_window.py` is ~180KB / 150 methods / ~4,270 lines (grown
-from ~159KB / 137 methods / ~3,800 lines at the original audit — confirmed
-2026-07-04). 25 of its `async def _do_*` methods call adapters/repository
+**What:** `src/gui/main_window.py` is ~4,470 lines (grown from ~4,270 at the
+last audit, confirmed 2026-07-11 during the RoomFit-capability-model/
+prober-redesign pass). 25 of its `async def _do_*` methods call adapters/repository
 directly (network I/O + data manipulation in a GUI class), violating
 `.kiro/steering/rules.md` rule #14 ("Separate UI from business logic
 strictly. No network calls or data manipulation in GUI components").
@@ -139,14 +139,21 @@ handlers (same shape as `SecondaryWorkflowManager.undo_complete` etc.).
 ~Medium, best done incrementally (4-6 methods per pass) rather than
 big-bang, to keep each step independently testable.
 
-**Status:** Not started — and the file has grown ~13% (methods and size)
-since the audit that flagged it, since new features keep landing directly
-in MainWindow (e.g. `_do_delete_presets` above). Priority: High — recommend
-tackling Phase 1 (discovery, probing, file imports — 4 methods, lowest
-risk) before or alongside the *next* feature that would otherwise add more
-orchestration to MainWindow. Does not need to block all feature work, but
-adopt the rule now: new orchestration logic goes into a controller/manager
-class, never directly into MainWindow.
+**Status:** Not started — the file keeps growing as new features land directly in
+MainWindow (e.g. `_do_delete_presets`, and most recently the 2026-07-10/11
+RoomFit-capability-model/prober-redesign pass, which touched 5 of the comma-source
+bug's call sites — all already-flagged `_do_*` extraction candidates,
+`_do_preset_export`/`_do_preset_save`/`_do_load_peq_preset` among them — and reduced
+their per-method state re-derivation in the process, which should make eventual
+extraction slightly easier). That same pass's new orchestration (the Phase 5
+source-slot diagnostic, `EQGetSourceModes`) deliberately did **not** add a new
+MainWindow `_do_*` method — it went into `SecondaryWorkflowManager` (a new
+`fetch_source_slots()`/`source_slots_ready` signal pair) instead, demonstrating the
+target pattern this item recommends. Priority: High — recommend tackling Phase 1
+(discovery, probing, file imports — 4 methods, lowest risk) before or alongside the
+*next* feature that would otherwise add more orchestration to MainWindow. Does not
+need to block all feature work, but the rule is now being followed for new
+orchestration (see Phase 5 above) even though the extraction itself hasn't started.
 
 **To reactivate:** Start with the 4 Phase-1 methods, write
 `test_primary_workflows.py` mirroring `test_secondary_workflows.py`'s
@@ -155,6 +162,31 @@ verify smoke tests still pass, then proceed to the next phase. **Bundle
 opportunity:** while moving `_do_list_presets`, also resolve item #3
 above (`ProfileRepository.list()` shadows builtin) — rename to
 `list_all()` at the same time, since that line is already being touched.
+
+---
+
+## 8. On-Device Preset/Profile Rename via `EQv2Rename`
+
+**Originally:** Surfaced during 2026-07-10 hardware API research (`docs/corrections.md`).
+
+**What:** A rename action in `PresetsDeviceView` (and/or `MyPresetsView` for the on-device side)
+that renames a saved PEQ preset or RoomFit profile in place on the device, instead of the current
+save-as-new + delete-old workaround.
+
+**Backend status:** `EQv2Rename:{"pluginURI":"...","Name":"<old>","newName":"<new>","EQLevel":<1|2>}`
+is hardware-confirmed working (`docs/corrections.md`, 2026-07-10) — clean round-trip verified for
+both ordinary PEQ presets and RoomFit profiles, including RoomFit's own calibration profile, on two
+device models (WiiM Amp Ultra, WiiM Mini). Not yet wired into `WiiMAdapter` — no
+`rename_peq_profile()`/`rename_roomfit_profile()` methods exist. `MyPresetsView`'s existing rename
+action is local-repo-only (renames the JSON profile file, not anything on the device).
+
+**Why deferred:** No user request yet; the save-as-new+delete-old workaround already covers the
+functional need (it just loses `UpdateAt` and requires two device round-trips instead of one).
+
+**To reactivate:** Add `rename_peq_profile(old_name, new_name)`/`rename_roomfit_profile(old_name,
+new_name)` to `WiiMAdapter`, issuing `EQv2Rename` via `encode_wiim_command` (classify it into
+`_ROOMFIT_REQUIRES_OMITTED_SOURCE_NAME` in `wiim_commands.py`, matching every other RoomFit command
+that takes no `source_name`). Wire a rename action into `PresetsDeviceView`'s per-preset menu.
 
 ---
 

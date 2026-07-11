@@ -629,14 +629,12 @@ class RoomFitSafeWrite:
                     exc_info=True,
                 )
 
-            if self._adapter.capabilities.roomfit_level < 4:
-                old_level = self._adapter.capabilities.roomfit_level
-                self._adapter.capabilities.roomfit_level = 4
+            if not self._adapter.capabilities.supports_roomfit_write:
                 self._adapter.capabilities.supports_roomfit_write = True
                 logger.info(
-                    "RoomFit write succeeded at previously-unconfirmed level %d; "
-                    "upgrading roomfit_level to 4 for this session.",
-                    old_level,
+                    "RoomFit write succeeded on a device whose write "
+                    "capability was previously unconfirmed; recording "
+                    "supports_roomfit_write for this session.",
                 )
 
             if on_stage is not None:

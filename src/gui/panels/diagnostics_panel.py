@@ -21,12 +21,15 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from src.models.capabilities import DeviceCapabilities
+from src.models.source_slot import SourceSlotInfo
 
 _LOG_TAIL_LINES = 100
 
@@ -50,9 +53,13 @@ class DiagnosticsPanel(QWidget):
 
     Signals:
         raw_command_requested: Emitted with the command text when Send is clicked.
+        source_slots_requested: Emitted when the "Refresh slots" button is
+            clicked, for the controller layer to fetch a fresh
+            EQGetSourceModes overview.
     """
 
     raw_command_requested = Signal(str)
+    source_slots_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize the diagnostics panel.
@@ -125,6 +132,43 @@ class DiagnosticsPanel(QWidget):
         caps_layout.addWidget(self._capabilities_display)
         layout.addWidget(caps_group)
 
+        # --- Source slots ---
+        slots_group = QGroupBox("Source Slots (EQGetSourceModes)")
+        slots_layout = QVBoxLayout(slots_group)
+
+        slots_help = QLabel(
+            "Every per-source PEQ slot the device currently tracks. Rows "
+            "flagged “unknown” don't match any real input -- usually "
+            "garbage left behind by an invalid write. These are permanent: "
+            "no known command removes a slot once written, short of a "
+            "factory reset."
+        )
+        slots_help.setWordWrap(True)
+        slots_layout.addWidget(slots_help)
+
+        slots_toolbar = QHBoxLayout()
+        self._refresh_slots_btn = QPushButton("Refresh Slots")
+        self._refresh_slots_btn.setMinimumWidth(100)
+        slots_toolbar.addWidget(self._refresh_slots_btn)
+        slots_toolbar.addStretch()
+        slots_layout.addLayout(slots_toolbar)
+
+        self._slots_table = QTableWidget()
+        self._slots_table.setColumnCount(4)
+        self._slots_table.setHorizontalHeaderLabels(
+            ["Source", "Name", "Mode", "Status"]
+        )
+        self._slots_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._slots_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self._slots_table.setMinimumHeight(100)
+        self._slots_table.setMaximumHeight(220)
+        slots_layout.addWidget(self._slots_table)
+
+        self._slots_status_label = QLabel("")
+        slots_layout.addWidget(self._slots_status_label)
+
+        layout.addWidget(slots_group)
+
         # --- Log tail ---
         log_group = QGroupBox("Log Tail (wiim_api.log)")
         log_layout = QVBoxLayout(log_group)
@@ -153,6 +197,7 @@ class DiagnosticsPanel(QWidget):
         self._send_btn.clicked.connect(self._on_send_clicked)
         self._command_input.returnPressed.connect(self._on_send_clicked)
         self._refresh_log_btn.clicked.connect(self._on_refresh_log_clicked)
+        self._refresh_slots_btn.clicked.connect(self.source_slots_requested.emit)
 
     def _on_send_clicked(self) -> None:
         """Handle Send button click or Enter key in command input."""
@@ -186,6 +231,43 @@ class DiagnosticsPanel(QWidget):
         caps_dict = capabilities.model_dump()
         formatted = json.dumps(caps_dict, indent=2, default=str)
         self._capabilities_display.setPlainText(formatted)
+
+    def on_source_slots_ready(self, slots: list[SourceSlotInfo]) -> None:
+        """Populate the source-slot table from a fresh EQGetSourceModes read.
+
+        Args:
+            slots: Parsed slot rows from WiiMAdapter.get_source_slot_overview().
+        """
+        self._slots_table.setRowCount(len(slots))
+        unknown_count = 0
+        for row, slot in enumerate(slots):
+            if not slot.is_known_source:
+                unknown_count += 1
+            source_item = QTableWidgetItem(
+                slot.source_name if slot.is_known_source else f"{slot.source_name}  ⚠ unknown"
+            )
+            self._slots_table.setItem(row, 0, source_item)
+            self._slots_table.setItem(row, 1, QTableWidgetItem(slot.name))
+            self._slots_table.setItem(row, 2, QTableWidgetItem(slot.channel_mode))
+            self._slots_table.setItem(
+                row, 3, QTableWidgetItem("On" if slot.enabled else "Off")
+            )
+        if unknown_count:
+            self._slots_status_label.setText(
+                f"{len(slots)} slot(s), {unknown_count} unknown (garbage, permanent)."
+            )
+        else:
+            self._slots_status_label.setText(f"{len(slots)} slot(s), all recognized.")
+
+    def on_source_slots_error(self, message: str) -> None:
+        """Show an error message in place of the source-slot table.
+
+        Args:
+            message: The error to display (e.g. device doesn't support
+                EQGetSourceModes, or no device connected).
+        """
+        self._slots_table.setRowCount(0)
+        self._slots_status_label.setText(f"Error: {message}")
 
     def refresh_log_tail(self, log_path: Path) -> None:
         """Read and display the last 100 lines of the specified log file.

@@ -224,59 +224,68 @@ class TestMergeInto:
         result = merge_into(caps, entry, default_max_bands=8)
         assert result.max_filters == 12
 
-    def test_supports_roomfit_false_alone_forces_level_zero(self) -> None:
-        """supports_roomfit=False must zero roomfit_level too (#161).
+    def test_supports_roomfit_false_alone_cascades_downward(self) -> None:
+        """supports_roomfit=False must clear read/write too (#161).
 
-        Previously the two fields were applied as fully independent
-        overrides, so setting supports_roomfit=False alone left whatever
-        roomfit_level the runtime probe found -- and the flow-type gate only
-        inspects roomfit_level, so RoomFit still activated despite the
-        override.
+        The three booleans must stay internally consistent: a device whose
+        subsystem is overridden away can't be readable or writable.
         """
         caps = DeviceCapabilities(
-            supports_peq=True, supports_roomfit=True, roomfit_level=4
+            supports_peq=True,
+            supports_roomfit=True,
+            supports_roomfit_read=True,
+            supports_roomfit_write=True,
         )
         entry = CapabilityFileEntry(supports_roomfit=False)
         result = merge_into(caps, entry)
         assert result.supports_roomfit is False
-        assert result.roomfit_level == 0
+        assert result.supports_roomfit_read is False
+        assert result.supports_roomfit_write is False
 
-    def test_supports_roomfit_read_false_caps_level_to_one(self) -> None:
-        """supports_roomfit_read=False caps a probed level=4 down to 1."""
+    def test_supports_roomfit_read_false_clears_write(self) -> None:
+        """supports_roomfit_read=False cascades to write, keeps subsystem."""
         caps = DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
             supports_roomfit_read=True,
-            roomfit_level=4,
+            supports_roomfit_write=True,
         )
         entry = CapabilityFileEntry(supports_roomfit_read=False)
         result = merge_into(caps, entry)
-        assert result.roomfit_level == 1
+        assert result.supports_roomfit is True
+        assert result.supports_roomfit_read is False
+        assert result.supports_roomfit_write is False
 
-    def test_supports_roomfit_write_false_caps_level_to_three(self) -> None:
-        """supports_roomfit_write=False caps a probed level=4 down to 3."""
-        caps = DeviceCapabilities(
-            supports_peq=True,
-            supports_roomfit=True,
-            supports_roomfit_read=True,
-            supports_roomfit_write=True,
-            roomfit_level=4,
-        )
-        entry = CapabilityFileEntry(supports_roomfit_write=False)
-        result = merge_into(caps, entry)
-        assert result.roomfit_level == 3
-
-    def test_roomfit_level_only_override_behaves_as_today(self) -> None:
-        """A regression case: overriding just roomfit_level (no bool fields)
-        still applies -- the ladder only lowers the level to match a False
-        bool override; it never overrides an explicitly-set roomfit_level."""
-        caps = DeviceCapabilities(
-            supports_peq=True,
-            supports_roomfit=True,
-            supports_roomfit_read=True,
-            supports_roomfit_write=True,
-            roomfit_level=4,
-        )
+    def test_legacy_roomfit_level_maps_onto_booleans(self) -> None:
+        """A user-edited capability file from before the 2026-07-10 redesign
+        may still carry the legacy 0-4 roomfit_level -- it maps onto the
+        three booleans (>=1 supported, >=2 read, >=4 write)."""
+        caps = DeviceCapabilities(supports_peq=True)
         entry = CapabilityFileEntry(roomfit_level=2)
         result = merge_into(caps, entry)
-        assert result.roomfit_level == 2
+        assert result.supports_roomfit is True
+        assert result.supports_roomfit_read is True
+        assert result.supports_roomfit_write is False
+
+    def test_legacy_roomfit_level_zero_means_no_roomfit(self) -> None:
+        caps = DeviceCapabilities(
+            supports_peq=True,
+            supports_roomfit=True,
+            supports_roomfit_read=True,
+            supports_roomfit_write=True,
+        )
+        entry = CapabilityFileEntry(roomfit_level=0)
+        result = merge_into(caps, entry)
+        assert result.supports_roomfit is False
+        assert result.supports_roomfit_read is False
+        assert result.supports_roomfit_write is False
+
+    def test_explicit_boolean_wins_over_legacy_roomfit_level(self) -> None:
+        """When one entry carries both the legacy level and an explicit
+        boolean, the boolean wins for its own field."""
+        caps = DeviceCapabilities(supports_peq=True)
+        entry = CapabilityFileEntry(roomfit_level=4, supports_roomfit_write=False)
+        result = merge_into(caps, entry)
+        assert result.supports_roomfit is True
+        assert result.supports_roomfit_read is True
+        assert result.supports_roomfit_write is False

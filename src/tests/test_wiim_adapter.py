@@ -18,7 +18,11 @@ from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import ChannelMode
-from src.models.errors import WiiMConnectionError, WiiMResponseError
+from src.models.errors import (
+    RoomFitUnsupportedError,
+    WiiMConnectionError,
+    WiiMResponseError,
+)
 from src.models.peq import PEQSettings
 
 # ---------------------------------------------------------------------------
@@ -794,12 +798,11 @@ class TestReadRoomfit:
 
     @pytest.fixture
     def roomfit_read_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level >= 2 (read supported)."""
+        """Capabilities with RoomFit read supported."""
         return DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
             supports_roomfit_read=True,
-            roomfit_level=3,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -808,10 +811,10 @@ class TestReadRoomfit:
 
     @pytest.fixture
     def low_roomfit_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level < 2 (read NOT supported)."""
+        """Capabilities with RoomFit present but read NOT supported."""
         return DeviceCapabilities(
             supports_peq=True,
-            roomfit_level=1,
+            supports_roomfit=True,
             max_filters=10,
             model="WiiM_Mini",
             firmware="5.0.0.10",
@@ -821,12 +824,12 @@ class TestReadRoomfit:
     async def test_read_roomfit_insufficient_level_raises(
         self, mock_client: AsyncMock, low_roomfit_capabilities: DeviceCapabilities
     ) -> None:
-        """read_roomfit raises WiiMResponseError when roomfit_level < 2."""
+        """read_roomfit raises RoomFitUnsupportedError without read support."""
         adapter = WiiMAdapter(
             http_client=mock_client, capabilities=low_roomfit_capabilities
         )
 
-        with pytest.raises(WiiMResponseError, match="roomfit_level >= 2"):
+        with pytest.raises(RoomFitUnsupportedError, match="read"):
             await adapter.read_roomfit("wifi", "My Profile")
 
     async def test_read_roomfit_insufficient_level_no_commands(
@@ -909,13 +912,12 @@ class TestWriteRoomfit:
 
     @pytest.fixture
     def roomfit_write_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level >= 4 (write supported)."""
+        """Capabilities with RoomFit write support confirmed."""
         return DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
             supports_roomfit_read=True,
             supports_roomfit_write=True,
-            roomfit_level=4,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -924,12 +926,11 @@ class TestWriteRoomfit:
 
     @pytest.fixture
     def insufficient_write_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level < 2 (write genuinely not supported --
-        the device never even confirmed RoomFit read support)."""
+        """Capabilities where the device never confirmed RoomFit read
+        support -- write is gated on read (no write-probe exists)."""
         return DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
-            roomfit_level=1,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -938,14 +939,13 @@ class TestWriteRoomfit:
 
     @pytest.fixture
     def unconfirmed_write_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level == 3 (read confirmed, write-test
-        skipped for #190 safety -- now allowed to attempt a write, which
-        serves as its own capability confirmation)."""
+        """Capabilities with read confirmed but write never confirmed --
+        a real write attempt is allowed and serves as its own capability
+        confirmation (there is no connect-time write probe)."""
         return DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
             supports_roomfit_read=True,
-            roomfit_level=3,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -955,7 +955,7 @@ class TestWriteRoomfit:
     async def test_write_roomfit_insufficient_level_raises(
         self, mock_client: AsyncMock, insufficient_write_capabilities: DeviceCapabilities
     ) -> None:
-        """write_roomfit raises WiiMResponseError when roomfit_level < 2."""
+        """write_roomfit raises RoomFitUnsupportedError without read support."""
         from src.models.canonical import CanonicalFilter
 
         adapter = WiiMAdapter(
@@ -963,7 +963,7 @@ class TestWriteRoomfit:
         )
         filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
 
-        with pytest.raises(WiiMResponseError, match="roomfit_level >= 2"):
+        with pytest.raises(RoomFitUnsupportedError, match="write"):
             await adapter.write_roomfit("wifi", "My Profile", filters)
 
     async def test_write_roomfit_insufficient_level_no_commands(
@@ -982,12 +982,12 @@ class TestWriteRoomfit:
 
         mock_client.command.assert_not_called()
 
-    async def test_write_roomfit_level_3_allowed(
+    async def test_write_roomfit_unconfirmed_write_allowed(
         self, mock_client: AsyncMock, unconfirmed_write_capabilities: DeviceCapabilities
     ) -> None:
-        """#190/#191: a device at roomfit_level == 3 (write-test skipped for
-        safety) is now allowed to attempt a real write -- the gate only
-        rejects level < 2."""
+        """#190/#191: a device with read confirmed but write unconfirmed is
+        allowed to attempt a real write -- the gate only requires read
+        support."""
         from src.models.canonical import CanonicalFilter
 
         mock_client.command.return_value = "OK"
@@ -1048,34 +1048,34 @@ class TestWriteRoomfit:
         assert "source_name" not in save_payload
 
 
-class TestRequireRoomfitLevel:
-    """Test the shared _require_roomfit_level() gate used by every RoomFit
-    method (get_roomfit_status >=1, read_roomfit >=2, write_roomfit >=2,
-    list_roomfit_profiles >=1) -- extracted to replace four hand-rolled
-    duplicates of the same check."""
+class TestRequireRoomfit:
+    """Test the shared _require_roomfit() gate used by every RoomFit method
+    (get_roomfit_status/list_roomfit_profiles -> "supported",
+    read_roomfit/write_roomfit -> "read") -- extracted to replace four
+    hand-rolled duplicates of the same check. Callers branch on the
+    RoomFitUnsupportedError *type*, never the message text."""
 
-    def test_passes_when_level_meets_minimum(self, adapter: WiiMAdapter) -> None:
-        adapter.capabilities.roomfit_level = 2
-        adapter._require_roomfit_level(2, "read")  # does not raise
+    def test_passes_when_capability_present(self, adapter: WiiMAdapter) -> None:
+        adapter.capabilities.supports_roomfit_read = True
+        adapter._require_roomfit("read", "read")  # does not raise
 
-    def test_passes_when_level_exceeds_minimum(self, adapter: WiiMAdapter) -> None:
-        adapter.capabilities.roomfit_level = 4
-        adapter._require_roomfit_level(2, "read")  # does not raise
-
-    def test_raises_when_level_below_minimum(self, adapter: WiiMAdapter) -> None:
-        adapter.capabilities.roomfit_level = 1
-        with pytest.raises(WiiMResponseError, match="read requires roomfit_level >= 2"):
-            adapter._require_roomfit_level(2, "read")
-
-    def test_error_message_includes_operation_and_actual_level(
+    def test_raises_typed_error_when_capability_absent(
         self, adapter: WiiMAdapter
     ) -> None:
-        adapter.capabilities.roomfit_level = 0
-        with pytest.raises(
-            WiiMResponseError,
-            match="RoomFit status requires roomfit_level >= 1, device has level 0",
-        ):
-            adapter._require_roomfit_level(1, "status")
+        adapter.capabilities.supports_roomfit_read = False
+        with pytest.raises(RoomFitUnsupportedError):
+            adapter._require_roomfit("read", "read")
+
+    def test_is_a_wiim_response_error(self, adapter: WiiMAdapter) -> None:
+        """Existing except-WiiMResponseError handlers keep working."""
+        adapter.capabilities.supports_roomfit = False
+        with pytest.raises(WiiMResponseError):
+            adapter._require_roomfit("supported", "status")
+
+    def test_error_message_includes_operation(self, adapter: WiiMAdapter) -> None:
+        adapter.capabilities.supports_roomfit = False
+        with pytest.raises(RoomFitUnsupportedError, match="status"):
+            adapter._require_roomfit("supported", "status")
 
 
 # ---------------------------------------------------------------------------
@@ -1088,11 +1088,10 @@ class TestListRoomfitProfiles:
 
     @pytest.fixture
     def roomfit_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level >= 1 (profile listing supported)."""
+        """Capabilities with RoomFit present (profile listing supported)."""
         return DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
-            roomfit_level=1,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -1101,10 +1100,9 @@ class TestListRoomfitProfiles:
 
     @pytest.fixture
     def no_roomfit_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level 0 (RoomFit not supported)."""
+        """Capabilities with RoomFit not supported."""
         return DeviceCapabilities(
             supports_peq=True,
-            roomfit_level=0,
             max_filters=10,
             model="WiiM_Mini",
             firmware="5.0.0.10",
@@ -1143,12 +1141,12 @@ class TestListRoomfitProfiles:
     async def test_list_roomfit_profiles_level_too_low(
         self, mock_client: AsyncMock, no_roomfit_capabilities: DeviceCapabilities
     ) -> None:
-        """list_roomfit_profiles raises when roomfit_level < 1."""
+        """list_roomfit_profiles raises without RoomFit support."""
         adapter = WiiMAdapter(
             http_client=mock_client, capabilities=no_roomfit_capabilities
         )
 
-        with pytest.raises(WiiMResponseError, match="roomfit_level >= 1"):
+        with pytest.raises(RoomFitUnsupportedError):
             await adapter.list_roomfit_profiles("wifi")
 
         mock_client.command.assert_not_called()
@@ -1700,11 +1698,10 @@ class TestGetRoomfitStatus:
 
     @pytest.fixture
     def roomfit_status_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level >= 1 (status query supported)."""
+        """Capabilities with RoomFit present (status query supported)."""
         return DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
-            roomfit_level=1,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -1755,12 +1752,12 @@ class TestGetRoomfitStatus:
         assert "source_name" in command  # explicit "" -- distinct from omitting it
 
     async def test_insufficient_level_raises(self) -> None:
-        """Raises WiiMResponseError when roomfit_level < 1."""
+        """Raises RoomFitUnsupportedError without RoomFit support."""
         mock_client = AsyncMock(spec=WiiMHttpClient)
-        caps = DeviceCapabilities(supports_peq=True, roomfit_level=0, max_filters=10)
+        caps = DeviceCapabilities(supports_peq=True, max_filters=10)
         adapter = WiiMAdapter(http_client=mock_client, capabilities=caps)
 
-        with pytest.raises(WiiMResponseError, match="roomfit_level >= 1"):
+        with pytest.raises(RoomFitUnsupportedError):
             await adapter.get_roomfit_status()
 
         mock_client.command.assert_not_called()
@@ -1932,12 +1929,11 @@ class TestReadRoomfitPresetPreview:
 
     @pytest.fixture
     def roomfit_preview_capabilities(self) -> DeviceCapabilities:
-        """Capabilities with roomfit_level >= 2 (read + status supported)."""
+        """Capabilities with RoomFit read + status supported."""
         return DeviceCapabilities(
             supports_peq=True,
             supports_roomfit=True,
             supports_roomfit_read=True,
-            roomfit_level=3,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -2060,7 +2056,6 @@ class TestRestoreRoomfitActiveProfile:
             supports_peq=True,
             supports_roomfit=True,
             supports_roomfit_read=True,
-            roomfit_level=3,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -2139,7 +2134,6 @@ class TestRestoreRoomfitSelectionAndEnableState:
             supports_peq=True,
             supports_roomfit=True,
             supports_roomfit_read=True,
-            roomfit_level=3,
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
@@ -2216,3 +2210,117 @@ class TestRestoreRoomfitSelectionAndEnableState:
             "Failed to restore RoomFit enable-state" in rec.message
             for rec in caplog.records
         )
+
+
+# ---------------------------------------------------------------------------
+# Tests: get_source_slot_overview (#194 follow-up diagnostic)
+# ---------------------------------------------------------------------------
+
+
+class TestGetSourceSlotOverview:
+    """Test the EQGetSourceModes-based source-slot diagnostic."""
+
+    @pytest.fixture
+    def caps_with_known_sources(self) -> DeviceCapabilities:
+        return DeviceCapabilities(
+            supports_peq=True,
+            max_filters=10,
+            model="WiiM_Ultra",
+            source_names=["wifi", "bluetooth", "optical"],
+        )
+
+    async def test_classifies_known_and_unknown_slots(
+        self, mock_client: AsyncMock, caps_with_known_sources: DeviceCapabilities
+    ) -> None:
+        """Real hardware dump (2026-07-10): a mix of real sources and
+        garbage rows left behind by invalid source_name writes -- the
+        unsplit comma-joined value and a stray typo'd name."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=caps_with_known_sources
+        )
+        mock_client.command.return_value = [
+            {
+                "source_name": "wifi",
+                "Name": "M16",
+                "NameL": "M16",
+                "NameR": "M16",
+                "channelMode": "Stereo",
+                "EQStat": "On",
+                "pluginURI": "http://moddevices.com/plugins/caps/EqNp",
+            },
+            {
+                "source_name": "wifi,bluetooth,auxIn",
+                "Name": "",
+                "channelMode": "Stereo",
+                "EQStat": "Off",
+                "pluginURI": "http://moddevices.com/plugins/caps/EqNp",
+            },
+            {
+                "source_name": "dominik",
+                "Name": "Test",
+                "channelMode": "L/R",
+                "EQStat": "Off",
+                "pluginURI": "http://moddevices.com/plugins/caps/EqNp",
+            },
+        ]
+
+        slots = await adapter.get_source_slot_overview()
+
+        assert len(slots) == 3
+        assert slots[0].source_name == "wifi"
+        assert slots[0].is_known_source is True
+        assert slots[0].enabled is True
+        assert slots[1].source_name == "wifi,bluetooth,auxIn"
+        assert slots[1].is_known_source is False
+        assert slots[2].source_name == "dominik"
+        assert slots[2].is_known_source is False
+        assert slots[2].channel_mode == "L/R"
+
+        call_args = mock_client.command.call_args[0][0]
+        assert call_args == "EQGetSourceModes"
+
+    async def test_non_eqnp_plugin_rows_are_skipped(
+        self, mock_client: AsyncMock, caps_with_known_sources: DeviceCapabilities
+    ) -> None:
+        """Legacy Eq10HP graphic-EQ rows aren't this app's domain -- skip."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=caps_with_known_sources
+        )
+        mock_client.command.return_value = [
+            {
+                "source_name": "wifi",
+                "Name": "M16",
+                "channelMode": "Stereo",
+                "EQStat": "On",
+                "pluginURI": "http://some.other/plugin/Eq10HP",
+            },
+        ]
+
+        slots = await adapter.get_source_slot_overview()
+
+        assert slots == []
+
+    async def test_empty_list_response(
+        self, mock_client: AsyncMock, caps_with_known_sources: DeviceCapabilities
+    ) -> None:
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=caps_with_known_sources
+        )
+        mock_client.command.return_value = []
+
+        slots = await adapter.get_source_slot_overview()
+
+        assert slots == []
+
+    async def test_non_list_response_raises(
+        self, mock_client: AsyncMock, caps_with_known_sources: DeviceCapabilities
+    ) -> None:
+        """A device that doesn't support EQGetSourceModes typically returns
+        the generic "unknown command" string -- not the expected list."""
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=caps_with_known_sources
+        )
+        mock_client.command.return_value = "unknown command"
+
+        with pytest.raises(WiiMResponseError):
+            await adapter.get_source_slot_overview()

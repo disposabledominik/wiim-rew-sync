@@ -970,13 +970,10 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error("No device connected")
             return
 
-        # Precondition: source must be selected (for PEQ flows)
-        # RoomFit is device-global, so default to "wifi" if no source explicitly set
-        source_name = self._wizard_controller.state.selected_source
-        if not source_name:
-            # Default for RoomFit or when source step was skipped
-            self._wizard_controller.state.selected_source = "wifi"
-
+        # No source-selection guard needed here: _do_device_pull reads
+        # state.primary_source, which already defaults to DEFAULT_SOURCE
+        # when no source was selected (RoomFit is device-global, or the
+        # source step was skipped).
         self._status_banner.show_progress("Pulling filters from device...")
         self._bridge.run_async(
             self._bridge_wrapper("device_pull", self._do_device_pull())
@@ -1082,8 +1079,8 @@ class MainWindow(QMainWindow):
                 self._wizard_controller.advance(summary="Dry Run")
             filters = state.current_filters
             band_count = len(filters)
-            sources = [s.strip() for s in (state.selected_source or "wifi").split(",") if s.strip()]
-            source_info = ", ".join(sources) if sources else "wifi"
+            sources = state.selected_sources
+            source_info = ", ".join(sources) if sources else state.primary_source
             channel = state.channel_mode.display_value
             self._push_page.set_dry_run_result(
                 f"Dry run complete: {band_count} bands validated for "
@@ -1172,11 +1169,10 @@ class MainWindow(QMainWindow):
         Requirement 18.2: Restore from most recent backup.
         """
         backup_path = self._wizard_controller.state.last_backup_path
-        source_name_raw = self._wizard_controller.state.selected_source or "wifi"
 
         if self._wizard_controller.flow_type == FlowType.ROOMFIT:
             # RoomFit undo: restore backed-up bands to the same profile name
-            source_name = source_name_raw.split(",")[0].strip()
+            source_name = self._wizard_controller.state.primary_source
             profile_name = self._wizard_controller.state.roomfit_profile_name
             self._bridge.run_async(
                 self._bridge_wrapper(
@@ -1197,7 +1193,7 @@ class MainWindow(QMainWindow):
                 )
             else:
                 # Single source undo (legacy format)
-                source_name = source_name_raw.split(",")[0].strip()
+                source_name = self._wizard_controller.state.primary_source
                 self._secondary_workflows.undo_last_push(source_name, backup_path)
 
     async def _do_undo_roomfit(
@@ -1422,14 +1418,14 @@ class MainWindow(QMainWindow):
         After storing capabilities:
         1. Creates WiiMAdapter and SafeWrite (Req 14.2, 14.3)
         2. Checks for empty source_names (Req 2.7) — error if none
-        3. Determines flow type based on roomfit_level
+        3. Determines flow type based on RoomFit read support
         4. Advances the wizard
 
         Args:
             caps: DeviceCapabilities object from the probe.
         """
-        # Store capabilities (caps has roomfit_level, source_names, etc.)
-        roomfit_level = getattr(caps, "roomfit_level", 0)
+        # Store capabilities (caps has supports_roomfit*, source_names, etc.)
+        roomfit_readable = bool(getattr(caps, "supports_roomfit_read", False))
 
         # Create WiiMAdapter and SafeWrite now that we have a connected client (Req 14.2, 14.3)
         assert self._wiim_http_client is not None
@@ -1460,20 +1456,20 @@ class MainWindow(QMainWindow):
         device_name = self._resolve_connect_summary()
 
         # Determine flow type and advance wizard
-        # Guard: some devices may incorrectly report roomfit_level >= 2 due to
+        # Guard: some devices may incorrectly report RoomFit support due to
         # firmware variations. Use model name as secondary check (smoke #36).
         model_str = (getattr(caps, "model", "") or "").lower()
         roomfit_blocked_models = ("mini",)  # Models known to not support RoomFit
         is_roomfit_blocked = any(m in model_str for m in roomfit_blocked_models)
 
-        if roomfit_level < 2 or is_roomfit_blocked:
+        if not roomfit_readable or is_roomfit_blocked:
             # PEQ-only device — skip EQ_TYPE step (Req 1.10)
-            if is_roomfit_blocked and roomfit_level >= 2:
+            if is_roomfit_blocked and roomfit_readable:
                 logger.warning(
-                    "Device model '%s' reports roomfit_level=%d but RoomFit is "
-                    "not supported on this model; forcing PEQ_ONLY flow (smoke #36)",
+                    "Device model '%s' reports RoomFit read support but "
+                    "RoomFit is not supported on this model; forcing "
+                    "PEQ_ONLY flow (smoke #36)",
                     model_str,
-                    roomfit_level,
                 )
             self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
             self._wizard_controller.advance(summary=device_name)
@@ -2201,7 +2197,7 @@ class MainWindow(QMainWindow):
 
         # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
         peq_data = PEQSettings(
-            source_name=self._wizard_controller.state.selected_source or "wifi",
+            source_name=self._wizard_controller.state.primary_source,
             channel_mode=ChannelMode.LR,
             bands_l=filters_l,
             bands_r=filters_r,
@@ -2222,7 +2218,7 @@ class MainWindow(QMainWindow):
         stores in wizard state, and emits result signal.
         """
         assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.selected_source
+        source_name = self._wizard_controller.state.primary_source
 
         peq_settings = await self._wiim_adapter.read_peq(source_name)
 
@@ -2249,7 +2245,7 @@ class MainWindow(QMainWindow):
             profile_name: Name of the RoomFit profile to read.
         """
         assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name = self._wizard_controller.state.primary_source
 
         peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
             source_name, profile_name
@@ -2280,7 +2276,7 @@ class MainWindow(QMainWindow):
             preset_name: Name of the PEQ preset to load.
         """
         assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name = self._wizard_controller.state.primary_source
 
         peq_settings = await self._wiim_adapter.read_peq_preset_preview(
             source_name, preset_name
@@ -2318,7 +2314,7 @@ class MainWindow(QMainWindow):
         filters to copy.
         """
         assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name = self._wizard_controller.state.primary_source
 
         # Reading (previewing + restoring) -- the confirmation dialog in
         # _on_copy_to_device_requested already warned the user this briefly
@@ -2602,7 +2598,7 @@ class MainWindow(QMainWindow):
             path: Destination file path.
         """
         assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name = self._wizard_controller.state.primary_source
 
         # Read preset filters from device (previewing + restoring -- the
         # confirmation dialog in _on_preset_export_requested already warned
@@ -2681,7 +2677,7 @@ class MainWindow(QMainWindow):
             preset_type: "PEQ" or "RoomFit".
         """
         assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name = self._wizard_controller.state.primary_source
 
         # Read preset filters from device (previewing + restoring -- the
         # confirmation dialog in _on_preset_save_requested already warned the
@@ -2801,7 +2797,7 @@ class MainWindow(QMainWindow):
 
         # Emit peq_ready with a PEQSettings carrying L/R bands
         peq_data = PEQSettings(
-            source_name=self._wizard_controller.state.selected_source or "wifi",
+            source_name=self._wizard_controller.state.primary_source,
             channel_mode=ChannelMode.LR,
             bands_l=filters_l,
             bands_r=filters_r,
@@ -2820,7 +2816,7 @@ class MainWindow(QMainWindow):
         """Execute push to device — PEQ via SafeWrite, or RoomFit via write_roomfit.
 
         For PEQ flow: constructs PEQSettings and uses SafeWrite protocol.
-        Pushes to ALL selected sources (comma-separated in state.selected_source).
+        Pushes to ALL selected sources (state.selected_sources).
         For RoomFit flow: uses write_roomfit with the named profile.
 
         Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
@@ -2833,20 +2829,19 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
 
         state = self._wizard_controller.state
-        source_names_raw = state.selected_source or "wifi"
         filters = state.current_filters
         channel_mode = state.channel_mode
         flow_type = self._wizard_controller.flow_type
 
-        logger.info(
-            "Push initiated: flow=%s, channel=%s, filters=%d, source=%s",
-            flow_type.value, channel_mode.value, len(filters), source_names_raw,
-        )
+        # The push flow is the one deliberately multi-source operation:
+        # one write per selected source. Empty selection falls back to the
+        # single default source (#194).
+        source_list = state.selected_sources or [state.primary_source]
 
-        # Parse comma-separated sources into a list
-        source_list = [s.strip() for s in source_names_raw.split(",") if s.strip()]
-        if not source_list:
-            source_list = ["wifi"]
+        logger.info(
+            "Push initiated: flow=%s, channel=%s, filters=%d, sources=%s",
+            flow_type.value, channel_mode.value, len(filters), source_list,
+        )
 
         on_stage = self._bridge.stage_changed.emit
 
@@ -3040,10 +3035,10 @@ class MainWindow(QMainWindow):
     async def _do_populate_name_profiles(self) -> None:
         """Fetch RoomFit profiles and populate the NameProfilePage."""
         assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name = self._wizard_controller.state.primary_source
 
         try:
-            if self._wiim_adapter.capabilities.roomfit_level >= 1:
+            if self._wiim_adapter.capabilities.supports_roomfit:
                 profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
                 profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
                 try:
@@ -3068,9 +3063,9 @@ class MainWindow(QMainWindow):
         """Fetch RoomFit profile names and populate FiltersPage dropdown."""
         assert self._wiim_adapter is not None
 
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name = self._wizard_controller.state.primary_source
         try:
-            if self._wiim_adapter.capabilities.roomfit_level >= 1:
+            if self._wiim_adapter.capabilities.supports_roomfit:
                 profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
                 profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
                 self._filters_page.set_roomfit_profiles(profile_names)
@@ -3101,7 +3096,7 @@ class MainWindow(QMainWindow):
         assert self._wiim_adapter is not None
         wiim_adapter = self._wiim_adapter
 
-        source_name = self._wizard_controller.state.selected_source or "wifi"
+        source_name = self._wizard_controller.state.primary_source
         from src.gui.views.presets_device_view import PresetItem
 
         async def _fetch_peq() -> None:
@@ -3131,7 +3126,7 @@ class MainWindow(QMainWindow):
 
         async def _fetch_roomfit() -> None:
             try:
-                if wiim_adapter.capabilities.roomfit_level >= 1:
+                if wiim_adapter.capabilities.supports_roomfit:
                     rf_profiles = await wiim_adapter.list_roomfit_profiles(source_name)
                     rf_items = [
                         PresetItem(
@@ -3760,6 +3755,9 @@ class MainWindow(QMainWindow):
         self._filters_page.rew_pull_view.back_requested.connect(
             self._on_filters_rew_pull_back_requested
         )
+        self._diagnostics_panel.source_slots_requested.connect(
+            self._secondary_workflows.fetch_source_slots
+        )
 
         # --- Outbound: workflow manager signals → UI updates ---
         self._secondary_workflows.profile_recalled.connect(
@@ -3767,6 +3765,12 @@ class MainWindow(QMainWindow):
         )
         self._secondary_workflows.undo_complete.connect(
             self._on_undo_complete
+        )
+        self._secondary_workflows.source_slots_ready.connect(
+            self._diagnostics_panel.on_source_slots_ready
+        )
+        self._secondary_workflows.source_slots_error.connect(
+            self._diagnostics_panel.on_source_slots_error
         )
 
     # --- Inbound handlers (page/view → workflow trigger) ---
@@ -3811,7 +3815,9 @@ class MainWindow(QMainWindow):
             return
 
         # Copy to ALL selected devices (smoke #73 — was using only first device)
-        target_source = state.selected_source
+        # Single source only: the target of a preset copy is one source slot on
+        # each remote device, never the local multi-select push fan-out (#194).
+        target_source = state.primary_source
 
         logger.info(
             "Copy-to-device: %d items to %d device(s)",
@@ -3824,7 +3830,7 @@ class MainWindow(QMainWindow):
             self._bridge_wrapper(
                 "copy_presets_to_devices",
                 self._do_copy_presets_batch_multi(
-                    items, selected_devices, target_source or "wifi"
+                    items, selected_devices, target_source
                 ),
             )
         )
@@ -4310,11 +4316,7 @@ class MainWindow(QMainWindow):
         supports_roomfit = bool(getattr(device_caps, "supports_roomfit", True))
 
         current_eq_type = "roomfit" if flow_type == FlowType.ROOMFIT else "peq"
-        current_sources = (
-            [s.strip() for s in state.selected_source.split(",") if s.strip()]
-            if state.selected_source
-            else None
-        )
+        current_sources = state.selected_sources or None
 
         result = QuickSetupDialog.get_setup(
             self,
@@ -4339,7 +4341,7 @@ class MainWindow(QMainWindow):
 
         # Apply source to wizard state (PEQ only)
         if self._wizard_controller.flow_type != FlowType.ROOMFIT and sources:
-            state.selected_source = ",".join(sources)
+            state.selected_sources = list(sources)
 
         # Delegate to the single shared function that marks CONNECT/EQ_TYPE/
         # SOURCE/FILTERS completed consistently, instead of reimplementing
