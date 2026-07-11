@@ -599,9 +599,9 @@ the LV2 PEQ API above; do not use these in implementation.
 
 ## Multiroom
 
-- `GetMultiroomInfo` → group role: `0`=solo, `1`=master, `2`=slave. Informational only for this app.
 - PEQ/RoomFit are per-device, not per-group — write directly to whichever device the user selected;
-  no redirection to the master needed.
+  no redirection to the master needed. Multiroom group role is not probed or surfaced by this app;
+  `GetMultiroomInfo` is documented here purely as a reference command, not one this app calls.
 - Older firmware (< 4.2.8020) may put slave nodes on internal 10.10.10.x WiFi Direct addresses;
   modern firmware keeps all nodes on the LAN with normal IPs.
 

@@ -347,74 +347,6 @@ class TestReadPeqErrors:
 
 
 # ---------------------------------------------------------------------------
-# Tests: get_multiroom_master_ip
-# ---------------------------------------------------------------------------
-
-
-class TestGetMultiroomMasterIp:
-    """Test multiroom master IP resolution."""
-
-    async def test_returns_master_ip(
-        self, adapter: WiiMAdapter, mock_client: AsyncMock
-    ) -> None:
-        """Returns master_ip from GetMultiroomInfo response."""
-        mock_client.command.return_value = {
-            "role": 2,
-            "master_ip": "192.168.1.100",
-            "slave_list": [],
-        }
-
-        result = await adapter.get_multiroom_master_ip()
-
-        assert result == "192.168.1.100"
-
-    async def test_returns_none_for_solo(
-        self, adapter: WiiMAdapter, mock_client: AsyncMock
-    ) -> None:
-        """Returns None when device is solo (no master_ip field)."""
-        mock_client.command.return_value = {
-            "role": 0,
-        }
-
-        result = await adapter.get_multiroom_master_ip()
-
-        assert result is None
-
-    async def test_returns_none_on_connection_error(
-        self, adapter: WiiMAdapter, mock_client: AsyncMock
-    ) -> None:
-        """Returns None when device is unreachable."""
-        mock_client.command.side_effect = WiiMConnectionError("timeout")
-
-        result = await adapter.get_multiroom_master_ip()
-
-        assert result is None
-
-    async def test_returns_none_on_non_dict_response(
-        self, adapter: WiiMAdapter, mock_client: AsyncMock
-    ) -> None:
-        """Returns None when response is not a dict (e.g. 'unknown command')."""
-        mock_client.command.return_value = "unknown command"
-
-        result = await adapter.get_multiroom_master_ip()
-
-        assert result is None
-
-    async def test_returns_none_for_empty_master_ip(
-        self, adapter: WiiMAdapter, mock_client: AsyncMock
-    ) -> None:
-        """Returns None when master_ip is empty string."""
-        mock_client.command.return_value = {
-            "role": 0,
-            "master_ip": "",
-        }
-
-        result = await adapter.get_multiroom_master_ip()
-
-        assert result is None
-
-
-# ---------------------------------------------------------------------------
 # Tests: write_peq — Batch path
 # ---------------------------------------------------------------------------
 
@@ -432,7 +364,6 @@ class TestWritePeqBatch:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     @pytest.fixture
@@ -519,7 +450,6 @@ class TestWritePeqSequential:
             max_filters=10,
             model="WiiM_Pro",
             firmware="5.0.0.10",
-            role="solo",
         )
 
     @pytest.fixture
@@ -601,7 +531,6 @@ class TestListPeqProfiles:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     @pytest.fixture
@@ -613,7 +542,6 @@ class TestListPeqProfiles:
             max_filters=10,
             model="WiiM_Mini",
             firmware="5.0.0.10",
-            role="solo",
         )
 
     async def test_list_peq_profiles_success(
@@ -806,7 +734,6 @@ class TestReadRoomfit:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     @pytest.fixture
@@ -818,7 +745,6 @@ class TestReadRoomfit:
             max_filters=10,
             model="WiiM_Mini",
             firmware="5.0.0.10",
-            role="solo",
         )
 
     async def test_read_roomfit_insufficient_level_raises(
@@ -921,7 +847,6 @@ class TestWriteRoomfit:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     @pytest.fixture
@@ -934,7 +859,6 @@ class TestWriteRoomfit:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     @pytest.fixture
@@ -949,7 +873,6 @@ class TestWriteRoomfit:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     async def test_write_roomfit_insufficient_level_raises(
@@ -1095,7 +1018,6 @@ class TestListRoomfitProfiles:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     @pytest.fixture
@@ -1106,7 +1028,6 @@ class TestListRoomfitProfiles:
             max_filters=10,
             model="WiiM_Mini",
             firmware="5.0.0.10",
-            role="solo",
         )
 
     async def test_list_roomfit_profiles_success(
@@ -1184,7 +1105,6 @@ class TestWritePeqLRBatch:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     @pytest.fixture
@@ -1260,7 +1180,6 @@ class TestWritePeqLRSequential:
             max_filters=10,
             model="WiiM_Pro",
             firmware="5.0.0.10",
-            role="solo",
         )
 
     @pytest.fixture
@@ -1325,7 +1244,6 @@ class TestNoStandaloneChannelModeCommand:
             max_filters=10,
             model="WiiM_Ultra",
             firmware="6.0.1.20",
-            role="solo",
         )
 
     @pytest.fixture

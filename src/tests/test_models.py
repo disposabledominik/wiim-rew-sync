@@ -308,14 +308,11 @@ class TestDeviceModels:
             model="WiiM Pro",
             firmware="4.8.5",
             uuid="device-uuid-123",
-            role="master",
         )
         assert di.ip == "192.168.1.100"
-        assert di.role == "master"
 
     def test_device_capabilities_defaults(self) -> None:
         dc = DeviceCapabilities()
         assert dc.supports_peq is False
         assert dc.max_filters == 0
-        assert dc.role == "solo"
         assert dc.source_names == []

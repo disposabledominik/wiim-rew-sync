@@ -65,7 +65,6 @@ async def _enrich_device(device: DeviceInfo, timeout: float) -> DeviceInfo:
         model=str(resp.get("project", device.model)) or device.model,
         firmware=str(resp.get("Release", device.firmware)) or device.firmware,
         uuid=str(resp.get("uuid", device.uuid)) or device.uuid,
-        role=device.role,
     )
 
 

@@ -187,8 +187,7 @@ class TestIssue14ConnectPageShowEvent:
 
         # Simulate having device cards already populated
         connect_page.set_devices([
-            {"name": "WiiM Pro", "model": "WiiM Pro", "ip": "192.168.1.100",
-             "firmware": "5.6.0", "role": ""},
+            {"name": "WiiM Pro", "model": "WiiM Pro", "ip": "192.168.1.100"},
         ])
         assert len(connect_page._device_cards) > 0
 

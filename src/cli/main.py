@@ -237,10 +237,10 @@ def cmd_list_devices(timeout: float) -> int:
         return 0
 
     rows = [
-        [device.name, device.ip, device.model, device.firmware, device.role]
+        [device.name, device.ip, device.model, device.firmware]
         for device in devices
     ]
-    print(_format_table(["Name", "IP", "Model", "Firmware", "Role"], rows))
+    print(_format_table(["Name", "IP", "Model", "Firmware"], rows))
     return 0
 
 

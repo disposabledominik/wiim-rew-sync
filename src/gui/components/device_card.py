@@ -1,9 +1,9 @@
 """DeviceCard — clickable card showing device info and connection state.
 
-Displays device name, model, IP address, firmware version, and multiroom
-role badge. Supports four visual states: idle, connecting, connected, error.
-Emits ``clicked`` when the card is selected and ``retry_clicked`` when the
-retry button is pressed in the error state.
+Displays device name, model, and IP address in a single row. Supports four
+visual states: idle, connecting, connected, error. Emits ``clicked`` when the
+card is selected and ``retry_clicked`` when the retry button is pressed in
+the error state.
 
 Requirements referenced: 2.3, 2.7, 2.9.
 """
@@ -39,10 +39,10 @@ from src.gui.style_utils import set_qss_property
 class DeviceCard(QFrame):
     """Clickable card representing a discovered WiiM device.
 
-    The card displays the device name (heading), model, IP address, firmware
-    version, and an optional multiroom role badge. Visual state is controlled
-    via :meth:`set_state` and drives QSS styling through the ``state`` dynamic
-    property.
+    The card displays the device name, model, and IP address in a single
+    row (name left-aligned and larger, model centered, IP right-aligned).
+    Visual state is controlled via :meth:`set_state` and drives QSS styling
+    through the ``state`` dynamic property.
 
     Signals:
         clicked: Emitted when the card body is clicked (device selection).
@@ -65,45 +65,36 @@ class DeviceCard(QFrame):
 
         # --- Main layout ------------------------------------------------------
         self._main_layout = QVBoxLayout(self)
-        self._main_layout.setContentsMargins(SPACING_MD, SPACING_MD, SPACING_MD, SPACING_MD)
+        self._main_layout.setContentsMargins(SPACING_MD, SPACING_SM, SPACING_MD, SPACING_SM)
         self._main_layout.setSpacing(SPACING_SM)
 
-        # Device name (heading)
-        self._name_label = QLabel(self)
-        self._name_label.setObjectName("DeviceCardName")
-        self._name_label.setProperty("class", "heading")
-        self._main_layout.addWidget(self._name_label)
-
-        # Model (secondary text)
-        self._model_label = QLabel(self)
-        self._model_label.setObjectName("DeviceCardModel")
-        self._model_label.setProperty("class", "secondary")
-        self._main_layout.addWidget(self._model_label)
-
-        # Info row: IP + firmware
+        # Info row: name (left) / model (center) / IP (right), equal thirds
         info_row = QHBoxLayout()
         info_row.setSpacing(SPACING_MD)
         info_row.setContentsMargins(0, 0, 0, 0)
 
+        self._name_label = QLabel(self)
+        self._name_label.setObjectName("DeviceCardName")
+        self._name_label.setProperty("class", "subheading")
+        self._name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        info_row.addWidget(self._name_label, 1)
+
+        self._model_label = QLabel(self)
+        self._model_label.setObjectName("DeviceCardModel")
+        self._model_label.setProperty("class", "secondary")
+        self._model_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._model_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        info_row.addWidget(self._model_label, 1)
+
         self._ip_label = QLabel(self)
         self._ip_label.setObjectName("DeviceCardIP")
-        self._ip_label.setProperty("class", "caption")
-        info_row.addWidget(self._ip_label)
+        self._ip_label.setProperty("class", "secondary")
+        self._ip_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._ip_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        info_row.addWidget(self._ip_label, 1)
 
-        self._firmware_label = QLabel(self)
-        self._firmware_label.setObjectName("DeviceCardFirmware")
-        self._firmware_label.setProperty("class", "caption")
-        info_row.addWidget(self._firmware_label)
-
-        info_row.addStretch()
         self._main_layout.addLayout(info_row)
-
-        # Role badge (pill-shaped label, hidden by default)
-        self._role_badge = QLabel(self)
-        self._role_badge.setObjectName("DeviceCardRoleBadge")
-        self._role_badge.setVisible(False)
-        self._role_badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        self._main_layout.addWidget(self._role_badge)
 
         # Error row (hidden by default): error message + retry button
         self._error_widget = QWidget(self)
@@ -135,33 +126,17 @@ class DeviceCard(QFrame):
     # Public API
     # ------------------------------------------------------------------
 
-    def set_device_info(
-        self,
-        name: str,
-        model: str,
-        ip: str,
-        firmware: str,
-        role: str = "",
-    ) -> None:
+    def set_device_info(self, name: str, model: str, ip: str) -> None:
         """Populate the card with device information.
 
         Args:
             name: Device display name (e.g. "Living Room WiiM Pro").
             model: Device model (e.g. "WiiM Pro Plus").
             ip: IP address (e.g. "192.168.1.42").
-            firmware: Firmware version string (e.g. "v4.8.1").
-            role: Multiroom role ("Leader", "Follower", or empty for solo).
         """
         self._name_label.setText(name)
         self._model_label.setText(model)
         self._ip_label.setText(ip)
-        self._firmware_label.setText(firmware)
-
-        if role:
-            self._role_badge.setText(role)
-            self._role_badge.setVisible(True)
-        else:
-            self._role_badge.setVisible(False)
 
     def set_state(self, state: str) -> None:
         """Set the visual state of the card.

@@ -79,7 +79,6 @@ def _solo_capabilities() -> DeviceCapabilities:
         model="WiiM_Ultra",
         firmware="6.0.1.20",
         uuid="test-uuid-1234",
-        role="solo",
     )
 
 

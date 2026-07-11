@@ -1,7 +1,5 @@
 """Device capability and info models."""
 
-from typing import Literal
-
 from pydantic import BaseModel
 
 
@@ -13,7 +11,6 @@ class DeviceInfo(BaseModel):
     model: str
     firmware: str
     uuid: str = ""
-    role: Literal["solo", "master", "slave"] = "solo"
 
 
 class DeviceCapabilities(BaseModel):
@@ -47,7 +44,6 @@ class DeviceCapabilities(BaseModel):
     firmware: str = ""
     uuid: str = ""
     mac_address: str = ""
-    role: Literal["solo", "master", "slave"] = "solo"
     source_names: list[str] = []
     supported_filter_types: list[str] = []
     source_aliases: dict[str, str] = {}

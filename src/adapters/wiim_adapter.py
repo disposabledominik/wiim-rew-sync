@@ -1,5 +1,5 @@
 """
-WiiM device adapter — PEQ read/write and multiroom operations.
+WiiM device adapter — PEQ and RoomFit read/write operations.
 
 Wraps WiiMHttpClient with domain-aware methods that issue the correct LV2 PEQ
 commands, parse responses via ``wiim_parser``, and return typed domain objects.
@@ -27,7 +27,6 @@ from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import ChannelMode
 from src.models.errors import (
     RoomFitUnsupportedError,
-    WiiMConnectionError,
     WiiMResponseError,
 )
 from src.models.peq import PEQSettings
@@ -422,34 +421,6 @@ class WiiMAdapter:
         """
         response = await self._read_fx_status(source_name, eq_level=1)
         return bool(response.get("EQStat", "Off") == "On")
-
-    # ------------------------------------------------------------------
-    # Multiroom
-    # ------------------------------------------------------------------
-
-    async def get_multiroom_master_ip(self) -> str | None:
-        """Return master IP from GetMultiroomInfo, or None if solo/unreachable.
-
-        Returns:
-            Master device IP string, or None if the device is solo or the
-            info cannot be retrieved.
-        """
-        try:
-            response = await self._client.command("GetMultiroomInfo")
-        except WiiMConnectionError as exc:
-            logger.warning("GetMultiroomInfo failed: %s", exc)
-            return None
-
-        if not isinstance(response, dict):
-            return None
-
-        # The response contains a 'master_ip' field when the device is part
-        # of a multiroom group.
-        master_ip: str | None = response.get("master_ip")
-        if master_ip:
-            return master_ip
-
-        return None
 
     # ------------------------------------------------------------------
     # PEQ Write

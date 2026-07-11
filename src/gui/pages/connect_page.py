@@ -79,7 +79,7 @@ class ConnectPage(QWidget):
     def set_devices(self, devices: list[dict[str, Any]]) -> None:
         """Populate the page with discovered device cards (replaces all current cards).
 
-        Each dict should have keys: name, model, ip, firmware, role.
+        Each dict should have keys: name, model, ip.
 
         If exactly one device is found, it is auto-selected and
         device_selected is emitted immediately (Req 2.4).
@@ -161,7 +161,7 @@ class ConnectPage(QWidget):
         )
         self._rescan_btn = QPushButton("⟳", content_wrapper)
         self._rescan_btn.setObjectName("ConnectPageRescanButton")
-        self._rescan_btn.setFixedWidth(28)
+        self._rescan_btn.setFixedSize(32, 32)
         self._rescan_btn.setToolTip("Rescan for devices")
         self._rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._rescan_btn.clicked.connect(self.refresh_requested.emit)
@@ -293,8 +293,6 @@ class ConnectPage(QWidget):
             name=device.get("name", "Unknown Device"),
             model=device.get("model", ""),
             ip=device.get("ip", ""),
-            firmware=device.get("firmware", ""),
-            role=device.get("role", ""),
         )
         device_ip = device.get("ip", "")
         card.clicked.connect(lambda _=None, ip=device_ip: self._on_card_clicked(ip))

@@ -70,10 +70,6 @@ EQ_GET_LV2_LIST_RESPONSE = {
     "preset": ["Flat", "Rock"],
 }
 
-MULTIROOM_SOLO = {"role": 0}
-MULTIROOM_MASTER = {"role": 1}
-MULTIROOM_SLAVE = {"role": 2}
-
 # getAudioInputEnable fixture, matching real hardware traffic
 # (docs/wiim_api_notes.md, WiiM Amp Ultra-style response) -- "udisk" (a hardware
 # capability, not a real PEQ source) never appears in this list at all, and
@@ -160,8 +156,6 @@ class TestWiiMDeviceDetection:
                 return "OK"
             if cmd.startswith("EQv2Delete:"):
                 return "OK"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -183,7 +177,6 @@ class TestWiiMDeviceDetection:
         # the first real push attempts it (WiiMAdapter._write_bands).
         assert caps.supports_batch_write is None
         assert caps.supports_profile_enumeration is True
-        assert caps.role == "solo"
 
     @pytest.mark.asyncio
     async def test_malformed_dict_response_not_treated_as_enumeration_support(
@@ -207,8 +200,6 @@ class TestWiiMDeviceDetection:
             if cmd.startswith("EQv2GetNewList:"):
                 # Malformed dict: no "status" key, but also no "custom"/"preset"
                 return {"unexpected": "shape"}
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -246,8 +237,6 @@ class TestWiiMDeviceDetection:
                 if '"EQLevel": 2' in unquote(cmd):
                     return {"custom": [], "preset": []}
                 return EQ_GET_LV2_LIST_RESPONSE
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -289,8 +278,6 @@ class TestWiiMDeviceDetection:
             if cmd.startswith(("EQGetLV2BandEx:", "EQGetLV2SourceBandEx:")):
                 # Real generic-LinkPlay response shape, regardless of plugin URI
                 return {"Bass": 0, "EQEnable": 0, "Treble": 0}
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -331,8 +318,6 @@ class TestWiiMDeviceDetection:
                 return STATUS_EX_WIIM_PRO
             if cmd.startswith("EQGetLV2BandEx:"):
                 return lr_band_response
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -362,8 +347,6 @@ class TestWiiMDeviceDetection:
                 return STATUS_EX_WIIM_PRO
             if cmd == "getAudioInputEnable":
                 return "not a dict or a recognised error string"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -385,8 +368,6 @@ class TestGenericLinkPlayDefaults:
         async def mock_command(cmd: str) -> dict | str:
             if cmd == "getStatusEx":
                 return STATUS_EX_GENERIC_LINKPLAY
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -401,7 +382,6 @@ class TestGenericLinkPlayDefaults:
         assert caps.supports_batch_write is None
         assert caps.supports_profile_enumeration is False
         assert caps.supports_roomfit is False
-        assert caps.role == "solo"
 
 
 class TestConnectionFailure:
@@ -424,7 +404,6 @@ class TestConnectionFailure:
         assert caps.supports_roomfit is False
         assert caps.supports_roomfit_read is False
         assert caps.supports_roomfit_write is False
-        assert caps.role == "solo"
         assert caps.model == ""
 
     @pytest.mark.asyncio
@@ -485,8 +464,6 @@ class TestAcousticCapabilityProbe:
                 return EQ_GET_LV2_LIST_RESPONSE
             if cmd.startswith("EQGetLV2SourceBandEx:"):
                 return EQ_GET_LV2_BAND_RESPONSE
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -620,8 +597,6 @@ class TestRoomFitFallbackProbe:
                 if '"EQLevel": 2' in unquote(cmd):
                     return band_resp
                 return EQ_GET_LV2_BAND_RESPONSE
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -711,106 +686,6 @@ class TestRoomFitFallbackProbe:
         assert caps.supports_roomfit_write is False
 
 
-class TestMultiroomRoleDetection:
-    """Test multiroom role detection from GetMultiroomInfo."""
-
-    @pytest.mark.asyncio
-    async def test_solo_role(self) -> None:
-        """Device in solo mode → role='solo'."""
-        client = _make_mock_client()
-
-        async def mock_command(cmd: str) -> dict | str:
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return {"role": 0}
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
-
-        prober = CapabilityProber(client)
-        caps = await prober.probe()
-        assert caps.role == "solo"
-
-    @pytest.mark.asyncio
-    async def test_master_role(self) -> None:
-        """Device as master → role='master'."""
-        client = _make_mock_client()
-
-        async def mock_command(cmd: str) -> dict | str:
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return {"role": 1}
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
-
-        prober = CapabilityProber(client)
-        caps = await prober.probe()
-        assert caps.role == "master"
-
-    @pytest.mark.asyncio
-    async def test_slave_role(self) -> None:
-        """Device as slave → role='slave'."""
-        client = _make_mock_client()
-
-        async def mock_command(cmd: str) -> dict | str:
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return {"role": 2}
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
-
-        prober = CapabilityProber(client)
-        caps = await prober.probe()
-        assert caps.role == "slave"
-
-    @pytest.mark.asyncio
-    async def test_multiroom_probe_failure_defaults_to_solo(self) -> None:
-        """GetMultiroomInfo failure → role='solo'."""
-        client = _make_mock_client()
-
-        async def mock_command(cmd: str) -> dict | str:
-            if cmd == "getStatusEx":
-                return STATUS_EX_WIIM_PRO
-            if cmd.startswith("EQGetLV2BandEx:"):
-                return EQ_GET_LV2_BAND_RESPONSE
-            if cmd.startswith("EQSetLV2Band:"):
-                return "OK"
-            if cmd.startswith("EQv2GetNewList:"):
-                return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                raise ConnectionError("Network error")
-            return "unknown command"
-
-        client.command = AsyncMock(side_effect=mock_command)
-
-        prober = CapabilityProber(client)
-        caps = await prober.probe()
-        assert caps.role == "solo"
-
-
 class TestDynamicMaxFilters:
     """Test dynamic max_filters detection from EQGetLV2BandEx band count."""
 
@@ -830,8 +705,6 @@ class TestDynamicMaxFilters:
                 return "OK"
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -875,8 +748,6 @@ class TestDynamicMaxFilters:
                 return "OK"
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -901,8 +772,6 @@ class TestDynamicMaxFilters:
                 return "OK"
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -937,8 +806,6 @@ class TestDynamicMaxFilters:
                 return "OK"
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -972,8 +839,6 @@ class TestProbeNeverRaises:
         async def mock_command(cmd: str) -> dict | str:
             if cmd == "getStatusEx":
                 return "OK"  # Non-dict
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -1018,8 +883,6 @@ class TestMuzoMiniRecognition:
                 return "OK"
             if cmd.startswith("EQv2GetNewList:"):
                 return "unknown command"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)
@@ -1106,8 +969,6 @@ class TestRoomFitProbeNoSourceBandWrite:
                 return "OK"
             if cmd.startswith("EQv2Delete:"):
                 return "OK"
-            if cmd == "GetMultiroomInfo":
-                return MULTIROOM_SOLO
             return "unknown command"
 
         client.command = AsyncMock(side_effect=mock_command)

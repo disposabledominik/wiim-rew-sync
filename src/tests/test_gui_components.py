@@ -757,7 +757,7 @@ class TestDeviceCard:
     """Tests for DeviceCard states (idle/connecting/connected/error)."""
 
     def test_set_device_info_populates_labels(self, qtbot) -> None:
-        """set_device_info fills name, model, IP, firmware, and role labels."""
+        """set_device_info fills name, model, and IP labels."""
         card = DeviceCard()
         qtbot.addWidget(card)
 
@@ -765,16 +765,11 @@ class TestDeviceCard:
             name="Living Room",
             model="WiiM Pro Plus",
             ip="192.168.1.42",
-            firmware="v4.8.1",
-            role="Leader",
         )
 
         assert card._name_label.text() == "Living Room"
         assert card._model_label.text() == "WiiM Pro Plus"
         assert card._ip_label.text() == "192.168.1.42"
-        assert card._firmware_label.text() == "v4.8.1"
-        assert card._role_badge.text() == "Leader"
-        assert not card._role_badge.isHidden()
 
     def test_idle_state_neutral_border(self, qtbot) -> None:
         """idle state sets the 'idle' property value."""

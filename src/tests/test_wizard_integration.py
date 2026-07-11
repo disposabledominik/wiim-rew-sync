@@ -69,8 +69,6 @@ def _make_single_device() -> list[dict]:
             "name": "WiiM Pro Plus",
             "model": "WiiM Pro Plus",
             "ip": "192.168.1.100",
-            "firmware": "5.6.0",
-            "role": "standalone",
         }
     ]
 

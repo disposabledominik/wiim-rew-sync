@@ -26,7 +26,6 @@ def _make_device(name: str = "Living Room", ip: str = "192.168.1.50") -> DeviceI
         name=name,
         model="WiiM_Pro",
         firmware="4.8.123",
-        role="solo",
     )
 
 
@@ -100,7 +99,7 @@ def test_list_devices_with_results(
     assert "Living Room" in out
     assert "192.168.1.50" in out
     assert "WiiM_Pro" in out
-    assert "Role" in out  # header present
+    assert "Firmware" in out  # header present
     assert "No devices found." not in out
 
 

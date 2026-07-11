@@ -15,7 +15,6 @@ redesign, docs/corrections.md):
   5. EQv2GetNewList         -> supports_profile_enumeration
   6. RoomFit fallback probe -> supports_roomfit* (only when step 3
                                unavailable; read-only)
-  7. GetMultiroomInfo       -> role
 
 supports_batch_write is NOT probed: it starts as None ("unknown") and the
 first real push attempts the batch form, falling back to sequential and
@@ -79,8 +78,6 @@ class CapabilityProber:
             )
             caps.max_filters = 0
             caps.supports_peq = False
-            # Still probe multiroom role (useful for any LinkPlay device)
-            await self._probe_multiroom(caps)
             return self._apply_capability_file(caps)
 
         # Step 2: getAudioInputEnable — source list
@@ -105,9 +102,6 @@ class CapabilityProber:
         # _probe_roomfit's docstring)
         if not acoustic_ok:
             await self._probe_roomfit(caps)
-
-        # Step 7: GetMultiroomInfo — multiroom role
-        await self._probe_multiroom(caps)
 
         # max_filters is set dynamically by _probe_peq(); ensure 0 if PEQ unsupported
         if not caps.supports_peq:
@@ -421,35 +415,3 @@ class CapabilityProber:
                 "RoomFit probe (EQGetLV2SourceBandEx+EQLevel:2) failed."
             )
 
-    async def _probe_multiroom(self, caps: DeviceCapabilities) -> None:
-        """Probe GetMultiroomInfo for multiroom role.
-
-        Requirement 2.7: determine the device's multiroom role.
-        """
-        try:
-            resp = await self._client.command("GetMultiroomInfo")
-        except Exception:
-            logger.warning(
-                "GetMultiroomInfo probe failed; assuming solo.", exc_info=True
-            )
-            caps.role = "solo"
-            return
-
-        if not isinstance(resp, dict):
-            caps.role = "solo"
-            return
-
-        # Parse role: 0=solo, 1=master, 2=slave
-        # See docs/wiim_api_notes.md: "Role: 0=solo, 1=master, 2=slave"
-        role_value = resp.get("role", resp.get("Role", 0))
-        try:
-            role_int = int(role_value)  # type: ignore[arg-type]
-        except (ValueError, TypeError):
-            role_int = 0
-
-        if role_int == 1:
-            caps.role = "master"
-        elif role_int == 2:
-            caps.role = "slave"
-        else:
-            caps.role = "solo"

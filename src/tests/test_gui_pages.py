@@ -44,10 +44,8 @@ class TestConnectPage:
         page.show()
 
         devices = [
-            {"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.10",
-             "firmware": "v4.8", "role": ""},
-            {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11",
-             "firmware": "v4.7", "role": ""},
+            {"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.10"},
+            {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
         ]
         page.set_devices(devices)
 
@@ -62,8 +60,7 @@ class TestConnectPage:
         qtbot.addWidget(page)
 
         devices = [
-            {"name": "Solo", "model": "Pro Plus", "ip": "192.168.1.42",
-             "firmware": "v4.8", "role": ""},
+            {"name": "Solo", "model": "Pro Plus", "ip": "192.168.1.42"},
         ]
 
         with qtbot.waitSignal(page.device_selected, timeout=1000) as blocker:

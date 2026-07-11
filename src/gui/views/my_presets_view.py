@@ -166,7 +166,7 @@ class MyPresetsView(QWidget):
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(SPACING_SM)
 
-        self._load_btn = QPushButton("Load", self._toolbar)
+        self._load_btn = QPushButton("Load into Editor", self._toolbar)
         self._load_btn.setToolTip("Load preset into Review for push/export")
         self._load_btn.clicked.connect(self._on_load_clicked)
         toolbar_layout.addWidget(self._load_btn)

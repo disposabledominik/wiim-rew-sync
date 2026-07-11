@@ -1297,14 +1297,6 @@ QFrame#DeviceCard[state="error"] {
     border-left: 3px solid #C62828;
 }
 
-#DeviceCardRoleBadge {
-    font-size: 12px;
-    background-color: #00B4D8;
-    color: #FFFFFF;
-    border-radius: 8px;
-    padding: 4px 8px;
-}
-
 #DeviceCardError {
     font-size: 12px;
     color: #C62828;
@@ -1350,6 +1342,19 @@ QPushButton#SidebarToggleButton {
 }
 
 QPushButton#SidebarToggleButton:hover {
+    background-color: #F0F0F0;
+}
+
+QPushButton#ConnectPageRescanButton {
+    background: transparent;
+    border: none;
+    padding: 0 0 6px 0;
+    min-height: 0px;
+    font-size: 28px;
+    text-align: center;
+}
+
+QPushButton#ConnectPageRescanButton:hover {
     background-color: #F0F0F0;
 }
 
