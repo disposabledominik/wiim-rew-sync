@@ -17,6 +17,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -154,14 +155,20 @@ class DiagnosticsPanel(QWidget):
         slots_layout.addLayout(slots_toolbar)
 
         self._slots_table = QTableWidget()
-        self._slots_table.setColumnCount(4)
+        self._slots_table.setColumnCount(5)
         self._slots_table.setHorizontalHeaderLabels(
-            ["Source", "Name", "Mode", "Status"]
+            ["Source", "Valid", "EQ Preset", "Mode", "EQ Status"]
         )
         self._slots_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._slots_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self._slots_table.setMinimumHeight(100)
         self._slots_table.setMaximumHeight(220)
+        # Compact diagnostic table -- columns should fit their content exactly,
+        # unlike the wider Stretch-mode tables elsewhere (filter_table.py,
+        # import_dialog.py) that are meant to fill their container.
+        header = self._slots_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
         slots_layout.addWidget(self._slots_table)
 
         self._slots_status_label = QLabel("")
@@ -243,14 +250,14 @@ class DiagnosticsPanel(QWidget):
         for row, slot in enumerate(slots):
             if not slot.is_known_source:
                 unknown_count += 1
-            source_item = QTableWidgetItem(
-                slot.source_name if slot.is_known_source else f"{slot.source_name}  ⚠ unknown"
-            )
-            self._slots_table.setItem(row, 0, source_item)
-            self._slots_table.setItem(row, 1, QTableWidgetItem(slot.name))
-            self._slots_table.setItem(row, 2, QTableWidgetItem(slot.channel_mode))
+            self._slots_table.setItem(row, 0, QTableWidgetItem(slot.source_name))
             self._slots_table.setItem(
-                row, 3, QTableWidgetItem("On" if slot.enabled else "Off")
+                row, 1, QTableWidgetItem("Yes" if slot.is_known_source else "No")
+            )
+            self._slots_table.setItem(row, 2, QTableWidgetItem(slot.name))
+            self._slots_table.setItem(row, 3, QTableWidgetItem(slot.channel_mode))
+            self._slots_table.setItem(
+                row, 4, QTableWidgetItem("On" if slot.enabled else "Off")
             )
         if unknown_count:
             self._slots_status_label.setText(

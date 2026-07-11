@@ -91,6 +91,28 @@ class TestConnectPage:
         with qtbot.waitSignal(page.refresh_requested, timeout=1000):
             page.show()
 
+    def test_rescan_button_emits_refresh_requested(self, qtbot) -> None:
+        """Clicking the title-row rescan button emits refresh_requested,
+        the same signal the Retry button uses -- lets the user manually
+        re-trigger discovery even when devices are already listed."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+
+        with qtbot.waitSignal(page.refresh_requested, timeout=1000):
+            page._rescan_btn.click()
+
+    def test_rescan_button_disabled_while_scanning(self, qtbot) -> None:
+        """The rescan button is disabled during an active scan and
+        re-enabled once scanning stops."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+
+        page.set_scanning(True)
+        assert not page._rescan_btn.isEnabled()
+
+        page.set_scanning(False)
+        assert page._rescan_btn.isEnabled()
+
     def test_empty_state_causes_text_not_clipped_at_narrow_width(self, qtbot) -> None:
         """The "Common causes" bullet list isn't squeezed to near-zero height
         at a narrow window width (smoke #180 -- _build_empty_widget's layout

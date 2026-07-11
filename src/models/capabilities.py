@@ -51,3 +51,9 @@ class DeviceCapabilities(BaseModel):
     source_names: list[str] = []
     supported_filter_types: list[str] = []
     source_aliases: dict[str, str] = {}
+    # Provenance flags -- both set in device_capability_file.py's merge_into(),
+    # the single merge point every probe() call flows through. Let the GUI
+    # warn the user when displayed capabilities didn't come purely from live
+    # device probing.
+    capability_file_override: bool = False
+    used_generic_capabilities: bool = False

@@ -66,6 +66,8 @@ def _make_caps(
     caps.source_names = source_names if source_names is not None else ["wifi", "optical", "hdmi"]
     caps.active_source = "wifi"
     caps.supports_profile_enumeration = False
+    caps.capability_file_override = False
+    caps.used_generic_capabilities = False
     return caps
 
 
@@ -131,6 +133,46 @@ class TestIssue6SidebarDeviceName:
         assert device_label_text == "WiiM Pro Plus"
 
 
+class TestCapabilityFallbackSidebarWarning:
+    """_on_capabilities_ready warns via the sidebar when capabilities came
+    from a capability-file override or generic/conservative defaults,
+    rather than pure live device probing."""
+
+    def test_no_fallback_shows_no_warning(self, window) -> None:
+        """Fully live-probed capabilities -- no warning glyph or tooltip."""
+        window._on_device_selected("192.168.1.100")
+
+        caps = _make_caps(model="WiiM Pro Plus", roomfit_level=2)
+        window._on_capabilities_ready(caps)
+
+        assert window._sidebar_nav._device_label.text() == "WiiM Pro Plus"
+        assert window._sidebar_nav._device_label.toolTip() == "Go to Connect step"
+
+    def test_generic_capabilities_shows_warning(self, window) -> None:
+        """used_generic_capabilities=True -- sidebar shows the warning glyph
+        and an explanatory tooltip."""
+        window._on_device_selected("192.168.1.100")
+
+        caps = _make_caps(model="WiiM Pro Plus", roomfit_level=2)
+        caps.used_generic_capabilities = True
+        window._on_capabilities_ready(caps)
+
+        assert window._sidebar_nav._device_label.text() == "WiiM Pro Plus  ⚠"
+        assert "generic defaults" in window._sidebar_nav._device_label.toolTip()
+
+    def test_capability_file_override_shows_warning(self, window) -> None:
+        """capability_file_override=True -- sidebar shows the warning glyph
+        and an explanatory tooltip."""
+        window._on_device_selected("192.168.1.100")
+
+        caps = _make_caps(model="WiiM Pro Plus", roomfit_level=2)
+        caps.capability_file_override = True
+        window._on_capabilities_ready(caps)
+
+        assert window._sidebar_nav._device_label.text() == "WiiM Pro Plus  ⚠"
+        assert "capability-file override" in window._sidebar_nav._device_label.toolTip()
+
+
 # ---------------------------------------------------------------------------
 # Issue #14: ConnectPage only auto-triggers discovery when no cards shown
 # ---------------------------------------------------------------------------
@@ -175,6 +217,22 @@ class TestIssue14ConnectPageShowEvent:
         connect_page.showEvent(event)
 
         assert len(signal_emitted) == 1
+
+
+class TestCtrlRRescanShortcut:
+    """Ctrl+R must actually re-trigger discovery, not just toggle the
+    scanning UI state -- it previously called only set_scanning(True) and
+    never reached _do_discovery(), a dead-end fixed alongside the new
+    Connect-step rescan button."""
+
+    def test_shortcut_reaches_discovery(self, window) -> None:
+        """_on_shortcut_refresh delegates to _on_refresh_requested, which
+        schedules the real discovery coroutine via the bridge."""
+        with patch.object(window, "_do_discovery") as mock_do_discovery:
+            window._on_shortcut_refresh()
+
+        window._bridge.run_async.assert_called_once()
+        mock_do_discovery.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

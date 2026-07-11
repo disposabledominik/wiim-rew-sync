@@ -90,6 +90,8 @@ def _make_caps(roomfit_level: int = 0) -> MagicMock:
     caps.source_names = ["wifi", "optical", "hdmi"]
     caps.active_source = "wifi"
     caps.supports_profile_enumeration = False
+    caps.capability_file_override = False
+    caps.used_generic_capabilities = False
     return caps
 
 

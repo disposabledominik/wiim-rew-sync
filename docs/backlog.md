@@ -190,6 +190,38 @@ that takes no `source_name`). Wire a rename action into `PresetsDeviceView`'s pe
 
 ---
 
+## 9. Packaged `.exe` Shows a Brief Window Flash on Launch (Known Issue)
+
+**Originally:** Reported by the device owner, 2026-07-11.
+
+**What:** Launching the packaged Windows `.exe` briefly shows a small window that closes
+automatically before the main GUI window appears.
+
+**Investigated (2026-07-11), no code change made:** `packaging/wiim_rew_sync_windows.spec:138`
+already sets `console=False` (a PE-subsystem-level setting — Windows creates no console for the
+process at all when this is set), every documented build path invokes this exact spec, and no
+subprocess/`QProcess`/`os.system` call exists anywhere in the startup path
+(`packaging/entry_gui.py`, `src/gui/` init). A clean rebuild (removing `build/`/`dist/` and
+re-running `pyinstaller packaging/wiim_rew_sync_windows.spec`) was confirmed by the device owner to
+not fix it, ruling out a stale-artifact explanation.
+
+**Suspected root cause:** the app is built as a PyInstaller **onefile** exe (confirmed via
+`entry_gui.py`'s `sys._MEIPASS` check) — every launch first silently extracts the bundled Python
+runtime and Qt libraries to a temp folder before any app code runs. This is a documented source of
+a brief window flash on some Windows/AV configurations, independent of the `console=False` setting.
+
+**Why deferred:** The only known fix is switching the spec from a onefile `EXE(...)` build to a
+onedir build (`EXE(..., exclude_binaries=True)` + `COLLECT(...)`), which removes the
+temp-extraction-at-launch step entirely. This changes distribution from a single `.exe` to an
+`.exe` + adjacent folder of files. The device owner declined this tradeoff (2026-07-11) — a single
+portable `.exe` is preferred over the flash-free folder distribution.
+
+**To reactivate:** Switch `packaging/wiim_rew_sync_windows.spec` to a onedir build as described
+above, update `packaging/README.md`'s build/distribution instructions accordingly, and re-verify
+the flash is gone on real hardware before closing this item.
+
+---
+
 ## Completed Items (Archive)
 
 ### Rethink Source Discovery

@@ -201,6 +201,34 @@ class TestMergeInto:
         result = merge_into(caps, None)
         assert result.source_names == list(DEFAULT_SOURCE_NAMES)
 
+    def test_no_entry_leaves_capability_file_override_false(self) -> None:
+        """Provenance flag stays False when no capability-file entry matched."""
+        caps = DeviceCapabilities(supports_peq=True, source_names=["wifi"])
+        result = merge_into(caps, None)
+        assert result.capability_file_override is False
+
+    def test_entry_present_sets_capability_file_override(self) -> None:
+        """Provenance flag is set as soon as a matching entry is applied,
+        regardless of which fields it overrides."""
+        caps = DeviceCapabilities(supports_peq=True, source_names=["wifi"])
+        entry = CapabilityFileEntry(supports_lr_filters=True)
+        result = merge_into(caps, entry)
+        assert result.capability_file_override is True
+
+    def test_empty_source_names_sets_used_generic_capabilities(self) -> None:
+        """Falling back to DEFAULT_SOURCE_NAMES flags the generic-fallback
+        provenance so the GUI can warn the user."""
+        caps = DeviceCapabilities(supports_peq=True, source_names=[])
+        result = merge_into(caps, None)
+        assert result.used_generic_capabilities is True
+
+    def test_nonempty_source_names_leaves_used_generic_capabilities_false(self) -> None:
+        """Real probed (or file-overridden) source names never trigger the
+        generic-fallback provenance flag."""
+        caps = DeviceCapabilities(supports_peq=True, source_names=["wifi", "optical"])
+        result = merge_into(caps, None)
+        assert result.used_generic_capabilities is False
+
     def test_nonempty_source_names_not_overridden_by_default(self) -> None:
         """A real probed source list is left alone -- the fallback only
         applies when source_names ends up empty."""

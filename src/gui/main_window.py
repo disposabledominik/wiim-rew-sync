@@ -79,11 +79,17 @@ from src.gui.views.my_presets_view import MyPresetsView
 from src.gui.views.presets_device_view import PresetsDeviceView
 from src.gui.views.rew_pull_view import RewPullView
 from src.gui.views.settings_view import SettingsView
-from src.gui.wizard_controller import FlowType, WizardController, WizardState, WizardStep
+from src.gui.wizard_controller import (
+    FlowType,
+    WizardController,
+    WizardState,
+    WizardStep,
+    parse_source_list,
+)
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
 from src.models.channel_mode import ChannelMode
-from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE_NAMES
+from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE, DEFAULT_SOURCE_NAMES
 from src.models.errors import (
     ParseError,
     REWNotConnectedError,
@@ -830,6 +836,19 @@ class MainWindow(QMainWindow):
                 return d.name
         return default
 
+    def _device_prefixed_name(self, base_name: str) -> str:
+        """Prefix `base_name` with the connected device's friendly name, so
+        exported/saved files stay unambiguous across multiple devices.
+
+        Always resolves against the currently connected device
+        (`state.selected_device`) -- every call site means exactly that, so
+        this takes no device-IP override.
+        """
+        device_name = self._lookup_device_name(
+            self._wizard_controller.state.selected_device, "WiiM"
+        )
+        return f"{device_name} - {base_name}"
+
     def _resolve_connect_summary(self) -> str:
         """Friendly device name for the Connect step -- same on every entry point."""
         caps = self._device_caps
@@ -843,7 +862,7 @@ class MainWindow(QMainWindow):
         "All sources", with a tooltip listing them. Otherwise -> "N sources"
         with a tooltip listing them.
         """
-        sources = [s.strip() for s in source_name.split(",") if s.strip()]
+        sources = parse_source_list(source_name)
         if not sources:
             return "", ""
         available = list(getattr(self._device_caps, "source_names", []) or [])
@@ -1477,8 +1496,21 @@ class MainWindow(QMainWindow):
             # Device supports RoomFit — show EQ_TYPE choice (Req 1.9)
             self._wizard_controller.advance(summary=device_name)
 
-        # Update sidebar with device info
-        self._sidebar_nav.set_device_info(device_name, connected=True)
+        # Update sidebar with device info, warning if displayed capabilities
+        # aren't purely from live device probing (capability-file override
+        # and/or generic/conservative fallback defaults)
+        capability_warning = ""
+        if getattr(caps, "capability_file_override", False) or getattr(
+            caps, "used_generic_capabilities", False
+        ):
+            capability_warning = (
+                "Some capabilities are from a capability-file override or "
+                "generic defaults, not the device itself — see Diagnostics "
+                "for details."
+            )
+        self._sidebar_nav.set_device_info(
+            device_name, connected=True, capability_warning=capability_warning
+        )
 
         # Populate SourcePage with available sources
         active_source = getattr(caps, "active_source", "")
@@ -1628,7 +1660,7 @@ class MainWindow(QMainWindow):
 
             # Set summary info
             device_ip = state.selected_device or "Unknown"
-            source = state.selected_source or "wifi"
+            source = state.selected_source or DEFAULT_SOURCE
 
             # Try to get friendly device name
             device_name = self._lookup_device_name(device_ip, device_ip)
@@ -2027,9 +2059,8 @@ class MainWindow(QMainWindow):
 
             # Build a default filename from device name + source
             state = self._wizard_controller.state
-            device_name = self._lookup_device_name(state.selected_device, "WiiM")
-            source = state.selected_source or "wifi"
-            default_name = f"{device_name} - {source}"
+            source = state.selected_source or DEFAULT_SOURCE
+            default_name = self._device_prefixed_name(source)
 
             paths = ExportDialog.get_paths(
                 channel_mode="lr",
@@ -2056,11 +2087,13 @@ class MainWindow(QMainWindow):
             logger.info("Export L/R REW: %s, %s", path_l, path_r)
         else:
             # Stereo mode: single file dialog
+            state = self._wizard_controller.state
+            default_name = self._device_prefixed_name(state.selected_source or DEFAULT_SOURCE)
             default_dir = self._settings.rew_folder or str(Path.home())
             path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Export REW EQ File",
-                default_dir,
+                str(Path(default_dir) / f"{default_name}.txt"),
                 "REW EQ Files (*.txt)",
             )
             if not path:
@@ -2665,7 +2698,9 @@ class MainWindow(QMainWindow):
                     f"Exported '{preset_name}' to {file_path.name}"
                 )
 
-    async def _do_preset_save(self, preset_name: str, preset_type: str) -> None:
+    async def _do_preset_save(
+        self, preset_name: str, preset_type: str, saved_name: str
+    ) -> None:
         """Read a preset from device and save to local profile repository.
 
         Uses build_profile helper for consistent Profile construction.
@@ -2673,8 +2708,12 @@ class MainWindow(QMainWindow):
         are delivered via QueuedConnection (thread-safe).
 
         Args:
-            preset_name: Name of the preset to save.
+            preset_name: Name of the preset to read from the device --
+                the exact on-device identifier, never prefixed.
             preset_type: "PEQ" or "RoomFit".
+            saved_name: Name for the resulting local Profile (device-name
+                prefixed by the caller); independent of preset_name so the
+                device read always uses the real on-device preset name.
         """
         assert self._wiim_adapter is not None
         source_name = self._wizard_controller.state.primary_source
@@ -2703,7 +2742,7 @@ class MainWindow(QMainWindow):
         # Save directly (Profile construction + file write is thread-safe)
         # For L/R, pass explicit channel lists from peq_settings
         profile = build_profile(
-            preset_name, filters, channel_mode,
+            saved_name, filters, channel_mode,
             filters_l=peq_settings.bands_l,
             filters_r=peq_settings.bands_r,
         )
@@ -3670,9 +3709,13 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_shortcut_refresh(self) -> None:
-        """Handle Ctrl+R — trigger device refresh/discovery."""
-        # Only trigger if on the connect page or as a general refresh
-        self._connect_page.set_scanning(True)
+        """Handle Ctrl+R — trigger device refresh/discovery.
+
+        Delegates to _on_refresh_requested (the same handler the Connect
+        page's Retry/rescan buttons use) so all three paths actually
+        re-trigger discovery instead of only toggling the scanning UI state.
+        """
+        self._on_refresh_requested()
         logger.debug("Keyboard shortcut: Ctrl+R — Refresh devices")
 
     @Slot()
@@ -3875,10 +3918,9 @@ class MainWindow(QMainWindow):
             return
 
         # Generate a default preset name from device + source
-        device_name = self._lookup_device_name(state.selected_device, "WiiM")
-        source = state.selected_source or "wifi"
+        source = state.selected_source or DEFAULT_SOURCE
         channel = state.channel_mode
-        preset_name = f"{device_name} - {source} ({channel.display_value})"
+        preset_name = self._device_prefixed_name(f"{source} ({channel.display_value})")
 
         self._save_filters_to_presets(preset_name, filters, channel)
 
@@ -3934,13 +3976,18 @@ class MainWindow(QMainWindow):
         preset_type = getattr(item, "preset_type", "PEQ")
         channel_mode = getattr(item, "channel_mode", "Stereo")
 
+        # Device-prefixed only for the destination filename -- preset_name
+        # itself stays exactly as the device reports it, since it's also the
+        # on-device lookup key passed to _do_preset_export below.
+        export_default_name = self._device_prefixed_name(preset_name)
+
         # Use the same dialog pattern as ReviewPage export
         if is_lr_mode(channel_mode):
             from src.gui.dialogs.export_dialog import ExportDialog
 
             paths = ExportDialog.get_paths(
                 channel_mode="lr",
-                default_name=preset_name,
+                default_name=export_default_name,
                 default_dir=self._settings.rew_folder,
                 parent=self,
             )
@@ -3957,7 +4004,7 @@ class MainWindow(QMainWindow):
             path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Export Preset as REW File",
-                str(Path(default_dir) / f"{preset_name}.txt"),
+                str(Path(default_dir) / f"{export_default_name}.txt"),
                 "REW EQ Files (*.txt)",
             )
             if not path:
@@ -3995,11 +4042,15 @@ class MainWindow(QMainWindow):
         item = items[0]
         preset_name = getattr(item, "name", "")
         preset_type = getattr(item, "preset_type", "PEQ")
+        # Device-prefixed only for the locally-saved Profile's name --
+        # preset_name itself stays exactly as the device reports it, since
+        # it's also the on-device lookup key _do_preset_save reads with.
+        saved_name = self._device_prefixed_name(preset_name)
         self._status_banner.show_progress(f"Saving '{preset_name}' to My Presets...")
         self._bridge.run_async(
             self._bridge_wrapper(
                 "preset_save",
-                self._do_preset_save(preset_name, preset_type),
+                self._do_preset_save(preset_name, preset_type, saved_name),
             )
         )
         logger.info("Preset save requested: %s", [i.name for i in items])
@@ -4385,7 +4436,7 @@ class MainWindow(QMainWindow):
 
         # SOURCE step — only needed for PEQ/PEQ_ONLY flows (not ROOMFIT)
         if flow_type != FlowType.ROOMFIT and WizardStep.SOURCE not in state.completed_steps:
-            source = state.selected_source or "wifi"
+            source = state.selected_source or DEFAULT_SOURCE
             state.selected_source = source
             self._apply_source_summary(state, source)
 

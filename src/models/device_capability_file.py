@@ -202,6 +202,7 @@ def merge_into(
     `min(entry.max_bands, capabilities.max_filters)` below).
     """
     if entry is not None:
+        capabilities.capability_file_override = True
         # Legacy roomfit_level (removed 0-4 ladder) maps onto the three
         # booleans, but an explicit boolean in the same entry always wins.
         if entry.roomfit_level is not None:
@@ -246,6 +247,7 @@ def merge_into(
     # produced anything -- e.g. WiiM Mini, which supports neither.
     if not capabilities.source_names:
         capabilities.source_names = list(DEFAULT_SOURCE_NAMES)
+        capabilities.used_generic_capabilities = True
 
     if not capabilities.supports_peq:
         return capabilities

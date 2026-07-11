@@ -12,6 +12,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -70,6 +71,7 @@ class ConnectPage(QWidget):
                 should be shown via set_devices).
         """
         self._scanning_widget.setVisible(active)
+        self._rescan_btn.setEnabled(not active)
         if active:
             self._devices_scroll.setVisible(False)
             self._empty_widget.setVisible(False)
@@ -153,11 +155,23 @@ class ConnectPage(QWidget):
         """Build the page layout with scanning, devices, and empty states."""
         content_layout, content_wrapper = build_centered_content(self)
 
-        # Page title
+        # Page title + manual rescan button
         title = make_page_title(
             "Connect to Device", content_wrapper, object_name="ConnectPageTitle"
         )
-        content_layout.addWidget(title)
+        self._rescan_btn = QPushButton("⟳", content_wrapper)
+        self._rescan_btn.setObjectName("ConnectPageRescanButton")
+        self._rescan_btn.setFixedWidth(28)
+        self._rescan_btn.setToolTip("Rescan for devices")
+        self._rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._rescan_btn.clicked.connect(self.refresh_requested.emit)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.addWidget(title)
+        title_row.addStretch()
+        title_row.addWidget(self._rescan_btn)
+        content_layout.addLayout(title_row)
 
         # --- Scanning state ---
         self._scanning_widget = self._build_scanning_widget(content_wrapper)

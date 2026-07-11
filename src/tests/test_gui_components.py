@@ -457,6 +457,34 @@ class TestSidebarNav:
         assert nav._device_label.text() == "No device"
         assert not nav._device_label.isEnabled()
 
+    def test_device_info_with_capability_warning_appends_glyph_and_tooltip(
+        self, qtbot
+    ) -> None:
+        """A non-empty capability_warning appends a warning glyph to the
+        label and surfaces the message as the tooltip."""
+        nav = SidebarNav()
+        qtbot.addWidget(nav)
+
+        nav.set_device_info(
+            "WiiM Pro Plus", connected=True, capability_warning="Using generic defaults."
+        )
+
+        assert nav._device_label.text() == "WiiM Pro Plus  ⚠"
+        assert nav._device_label.toolTip() == "Using generic defaults."
+
+    def test_device_info_without_capability_warning_keeps_default_tooltip(
+        self, qtbot
+    ) -> None:
+        """No warning -- label stays plain and tooltip is the normal
+        navigation hint."""
+        nav = SidebarNav()
+        qtbot.addWidget(nav)
+
+        nav.set_device_info("WiiM Pro Plus", connected=True)
+
+        assert nav._device_label.text() == "WiiM Pro Plus"
+        assert nav._device_label.toolTip() == "Go to Connect step"
+
 
 # ---------------------------------------------------------------------------
 # TestFilterTable

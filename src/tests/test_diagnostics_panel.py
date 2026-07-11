@@ -56,10 +56,14 @@ class TestOnSourceSlotsReady:
         panel.on_source_slots_ready(slots)
 
         assert panel._slots_table.rowCount() == 2
-        item0 = panel._slots_table.item(0, 0)
-        item1 = panel._slots_table.item(1, 0)
-        assert item0 is not None and item0.text() == "wifi"
-        assert item1 is not None and "unknown" in item1.text()
+        source0 = panel._slots_table.item(0, 0)
+        valid0 = panel._slots_table.item(0, 1)
+        source1 = panel._slots_table.item(1, 0)
+        valid1 = panel._slots_table.item(1, 1)
+        assert source0 is not None and source0.text() == "wifi"
+        assert valid0 is not None and valid0.text() == "Yes"
+        assert source1 is not None and source1.text() == "wifi,bluetooth,auxIn"
+        assert valid1 is not None and valid1.text() == "No"
         assert "1 unknown" in panel._slots_status_label.text()
 
     def test_all_known_status_message(self, panel: DiagnosticsPanel) -> None:

@@ -192,19 +192,31 @@ class SidebarNav(QWidget):
         self._toggle_btn.clicked.connect(self._on_toggle_clicked)
         layout.addWidget(self._toggle_btn)
 
-    def set_device_info(self, name: str, connected: bool) -> None:
+    def set_device_info(
+        self, name: str, connected: bool, capability_warning: str = ""
+    ) -> None:
         """Update header area with connected device name.
 
         Args:
             name: Device display name.
             connected: Whether the device is currently connected.
+            capability_warning: When non-empty, appends a warning glyph to
+                the label and sets it as the tooltip -- e.g. capabilities
+                came from a capability-file override or generic defaults
+                rather than live device probing. Persists on every wizard
+                step since the sidebar itself is always visible.
         """
         if connected and name:
-            self._device_label.setText(name)
+            label_text = f"{name}  ⚠" if capability_warning else name
+            self._device_label.setText(label_text)
             self._device_label.setEnabled(True)
+            self._device_label.setToolTip(
+                capability_warning if capability_warning else "Go to Connect step"
+            )
         else:
             self._device_label.setText("No device")
             self._device_label.setEnabled(False)
+            self._device_label.setToolTip("Go to Connect step")
 
     def set_collapsed(self, collapsed: bool) -> None:
         """Toggle between full labels and icon-only mode.

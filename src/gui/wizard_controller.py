@@ -20,6 +20,16 @@ from src.models.constants import DEFAULT_SOURCE
 from src.translator._warnings import FilterRow
 
 
+def parse_source_list(value: str) -> list[str]:
+    """Split a comma-joined source-name string into stripped, non-empty entries.
+
+    The single place this parsing rule lives, shared by ``WizardState.selected_source``'s
+    setter and any display/summary code (e.g. ``MainWindow._compute_source_summary``)
+    that needs to interpret the same comma-joined form (#194).
+    """
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
 class WizardStep(Enum):
     """Individual steps in the wizard flow."""
 
@@ -120,7 +130,7 @@ class WizardState:
 
     @selected_source.setter
     def selected_source(self, value: str) -> None:
-        self.selected_sources = [p.strip() for p in value.split(",") if p.strip()]
+        self.selected_sources = parse_source_list(value)
 
     @property
     def primary_source(self) -> str:

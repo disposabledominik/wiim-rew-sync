@@ -131,8 +131,7 @@ class SourcePage(QWidget):
         note = QLabel(
             "PEQ settings are stored per-source. Select one or more inputs "
             "to apply EQ to.\n"
-            "Tip: 'wifi' covers Wi-Fi, Ethernet, and USB playback. "
-            "Sound/Lite models use 'auxIn' instead of 'line-in'."
+            "Tip: 'wifi' covers Wi-Fi, Ethernet, and USB playback."
         )
         note.setObjectName("source_page_note")
         note.setWordWrap(True)

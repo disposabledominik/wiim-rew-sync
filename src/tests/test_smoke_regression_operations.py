@@ -86,6 +86,8 @@ def _make_caps(
     caps.source_names = source_names or ["wifi", "optical", "hdmi"]
     caps.active_source = "wifi"
     caps.supports_profile_enumeration = True
+    caps.capability_file_override = False
+    caps.used_generic_capabilities = False
     return caps
 
 
@@ -864,6 +866,28 @@ class TestImportExport:
         path_arg = mock_do_export.call_args[0][1]
         assert path_arg == "/tmp/myfile.txt"
 
+    def test_stereo_export_seeds_device_prefixed_filename(self, window) -> None:
+        """Stereo REW export seeds the save dialog with a device-name-prefixed
+        default filename, unlike before when it had no default filename at all."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.selected_source = "wifi"
+
+        with (
+            patch(
+                "src.gui.main_window.QFileDialog.getSaveFileName",
+                return_value=("", ""),
+            ) as mock_dialog,
+            patch.object(window._bridge, "run_async"),
+        ):
+            window._export_filters_as_rew(state.current_filters, "Stereo")
+
+        mock_dialog.assert_called_once()
+        seeded_path = mock_dialog.call_args[0][2]
+        assert seeded_path.endswith("WiiM - wifi.txt")
+
     # --- Issue #40: L/R export from Presets on Device generates dual files ---
 
     def test_issue40_lr_export_generates_dual_files(self, window, tmp_path) -> None:
@@ -1215,6 +1239,30 @@ class TestPresets:
         mock_export_workflow.assert_called_once_with("Movie Night", "PEQ", "/tmp/movie-night.txt")
         mock_run.assert_called_once()
 
+    def test_preset_export_seeds_device_prefixed_filename(self, window) -> None:
+        """Presets-on-Device stereo export seeds the save dialog with a
+        device-name-prefixed filename, while the on-device lookup key
+        (preset_name) passed to _do_preset_export stays unprefixed."""
+        item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
+
+        with (
+            patch(
+                "PySide6.QtWidgets.QMessageBox.question",
+                return_value=QMessageBox.StandardButton.Yes,
+            ),
+            patch(
+                "src.gui.main_window.QFileDialog.getSaveFileName",
+                return_value=("", ""),
+            ) as mock_dialog,
+            patch.object(window, "_do_preset_export", return_value=object()),
+            patch.object(window._bridge, "run_async", side_effect=close_coroutine_tree),
+        ):
+            window._presets_device_view.export_requested.emit([item])
+
+        mock_dialog.assert_called_once()
+        seeded_path = mock_dialog.call_args[0][2]
+        assert seeded_path.endswith("WiiM - Movie Night.txt")
+
     def test_issue24_presets_device_save_connected(self, window) -> None:
         """#24: Save signal triggers preset-save workflow."""
         item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
@@ -1233,8 +1281,39 @@ class TestPresets:
             window._presets_device_view.save_to_my_presets.emit([item])
 
         mock_progress.assert_called_once_with("Saving 'Movie Night' to My Presets...")
-        mock_save_workflow.assert_called_once_with("Movie Night", "PEQ")
+        mock_save_workflow.assert_called_once_with("Movie Night", "PEQ", "WiiM - Movie Night")
         mock_run.assert_called_once()
+
+    def test_do_preset_save_reads_device_with_unprefixed_name(self, window) -> None:
+        """_do_preset_save must read the on-device preset using the raw
+        preset_name (the actual on-device identifier), while the locally
+        saved Profile gets the separately-passed, device-prefixed
+        saved_name -- prefixing the device-side lookup key would break the
+        read outright (the device has no preset literally named
+        "WiiM - Movie Night")."""
+        mock_adapter = _setup_device(window)
+        mock_adapter.read_peq_preset_preview = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi",
+                channel_mode=ChannelMode.STEREO,
+                bands=[_make_filter()],
+            )
+        )
+
+        with patch.object(window._profile_repository, "save") as mock_save:
+            import asyncio
+
+            asyncio.run(
+                window._do_preset_save("Movie Night", "PEQ", "WiiM - Movie Night")
+            )
+
+        mock_adapter.read_peq_preset_preview.assert_called_once()
+        call_args = mock_adapter.read_peq_preset_preview.call_args[0]
+        assert call_args[1] == "Movie Night"
+
+        mock_save.assert_called_once()
+        saved_profile = mock_save.call_args[0][0]
+        assert saved_profile.name == "WiiM - Movie Night"
 
     def test_issue24_presets_device_load_connected(self, window) -> None:
         """#24: Load signal triggers preset-load workflow."""
