@@ -791,6 +791,29 @@ class TestRewPullView:
 
         assert view._title.isVisible()
 
+    def test_show_header_false_hides_header(self, qtbot) -> None:
+        """show_header=False hides the "Choose measurement(s)..." instruction
+        line for embedded use (e.g. FiltersPage, which shows its own
+        instruction text and would otherwise duplicate it)."""
+        view = RewPullView(show_header=False)
+        qtbot.addWidget(view)
+        view.show()
+        # isVisible() reflects the whole ancestor chain -- switch to the
+        # content state (where _header actually lives) before asserting,
+        # same as test_set_message_shows_placeholder does.
+        view.set_measurements([_make_rew_measurement("Speaker", 0)])
+
+        assert not view._header.isVisible()
+
+    def test_show_header_default_shows_header(self, qtbot) -> None:
+        """Default construction shows the header (standalone sidebar page)."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.show()
+        view.set_measurements([_make_rew_measurement("Speaker", 0)])
+
+        assert view._header.isVisible()
+
     def test_set_message_shows_placeholder(self, qtbot) -> None:
         """set_message() switches back to the placeholder state with the given text."""
         view = RewPullView()

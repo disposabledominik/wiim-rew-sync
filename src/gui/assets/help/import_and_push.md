@@ -76,7 +76,7 @@ After loading, the Review step shows a table of all filter bands:
 
 Toggle the "Dry Run" checkbox on the Review page to preview what would be
 sent to the device without actually writing anything. The push button
-changes to "Preview Only" and a "DRY RUN" badge appears.
+changes to "Preview Only".
 
 This is useful for verifying your filter file translates correctly before
 committing to a write.

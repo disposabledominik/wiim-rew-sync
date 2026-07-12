@@ -134,8 +134,15 @@ SIDEBAR_EXPANDED: int = 200
 SIDEBAR_COLLAPSED: int = 48
 """Sidebar width in pixels when collapsed (icons only)."""
 
-MIN_WINDOW_WIDTH: int = 800
-"""Minimum application window width in pixels."""
+MIN_WINDOW_WIDTH: int = 900
+"""Minimum application window width in pixels.
+
+Empirically validated (offscreen Qt measurement, accounting for the
+SIDEBAR_EXPANDED width the step indicator's content column loses) to keep
+the longest stepper label ("Name Profile", RoomFit flow) from eliding: it
+starts eliding below ~870px, so 900px leaves a small margin for font-metric
+variance across platforms.
+"""
 
 MIN_WINDOW_HEIGHT: int = 600
 """Minimum application window height in pixels."""
@@ -168,8 +175,9 @@ FILTER_COL_GAIN: int = 110
 FILTER_COL_Q: int = 80
 """Q factor column width in pixels."""
 
-FILTER_TABLE_MAX_WIDTH: int = 600
-"""Maximum filter table width in pixels."""
+FILTER_TABLE_MAX_WIDTH: int = 760
+"""Maximum filter table width in pixels (matches MAX_CONTENT_WIDTH so the
+table fills the full content column)."""
 
 # ---------------------------------------------------------------------------
 # Animation Timing (milliseconds)

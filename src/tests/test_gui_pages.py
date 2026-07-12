@@ -56,6 +56,68 @@ class TestConnectPage:
         assert not page._empty_widget.isVisible()
         assert len(page._device_cards) == 2
 
+    def test_set_devices_sorts_alphabetically_by_name(self, qtbot) -> None:
+        """Devices are displayed sorted by name, not discovery-arrival order."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        devices = [
+            {"name": "Zebra Room", "model": "Pro", "ip": "192.168.1.12"},
+            {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
+            {"name": "attic", "model": "Pro", "ip": "192.168.1.13"},
+        ]
+        page.set_devices(devices)
+
+        names = [ip for _card, ip, _sort_key in page._device_cards]
+        assert names == ["192.168.1.13", "192.168.1.11", "192.168.1.12"]
+
+    def test_blank_name_device_sorts_and_displays_as_unknown(self, qtbot) -> None:
+        """A device with a present-but-empty "name" (real for some mDNS/
+        subnet-scan responses) must sort and display the same fallback --
+        previously the sort key used "" (pinning it to the very top) while
+        the card label showed "" too (the dict-default only covers a
+        missing key, not an empty string), so an unnamed device rendered
+        with a blank label instead of "Unknown Device"."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        devices = [
+            {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
+            {"name": "", "model": "Pro", "ip": "192.168.1.99"},
+        ]
+        page.set_devices(devices)
+
+        blank_card = next(
+            card for card, ip, _sort_key in page._device_cards if ip == "192.168.1.99"
+        )
+        assert blank_card._name_label.text() == "Unknown Device"
+
+        sort_keys = [sort_key for _card, _ip, sort_key in page._device_cards]
+        assert sort_keys == sorted(sort_keys)
+        assert sort_keys[-1] == "unknown device"
+
+    def test_update_devices_keeps_progressive_arrivals_sorted(self, qtbot) -> None:
+        """Devices added incrementally during progressive discovery still
+        end up in alphabetical order, not arrival order."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.update_devices(
+            [{"name": "Zebra Room", "model": "Pro", "ip": "192.168.1.12"}]
+        )
+        page.update_devices(
+            [
+                {"name": "Zebra Room", "model": "Pro", "ip": "192.168.1.12"},
+                {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
+            ]
+        )
+
+        ips_in_order = [ip for _card, ip, _sort_key in page._device_cards]
+        assert ips_in_order == ["192.168.1.11", "192.168.1.12"]
+
     def test_single_device_auto_selects(self, qtbot) -> None:
         """A single discovered device auto-emits device_selected."""
         page = ConnectPage()
@@ -329,6 +391,7 @@ class TestFiltersPage:
             page._rew_api_source_radio.setChecked(True)
 
         assert not page._file_import_section.isVisible()
+        assert not page._file_import_actions.isVisible()
         assert page.rew_pull_view.isVisible()
 
     def test_rew_pull_back_reverts_to_file_import(self, qtbot) -> None:
@@ -342,7 +405,50 @@ class TestFiltersPage:
 
         assert page._file_source_radio.isChecked()
         assert page._file_import_section.isVisible()
+        assert page._file_import_actions.isVisible()
         assert not page.rew_pull_view.isVisible()
+
+    def test_subtitle_position_and_style_unchanged_across_source_toggle(
+        self, qtbot
+    ) -> None:
+        """The instruction line under the source toggle keeps the same
+        widget/position/font in both modes -- only its text changes -- so
+        toggling source doesn't visually jump or reflow (only its text
+        should change, not its identity, styling, or place in the layout)."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        subtitle_before = page._subtitle
+        style_class_before = page._subtitle.property("class")
+        text_before = page._subtitle.text()
+
+        page._rew_api_source_radio.setChecked(True)
+
+        assert page._subtitle is subtitle_before
+        assert page._subtitle.property("class") == style_class_before
+        assert page._subtitle.text() != text_before
+
+        page._file_source_radio.setChecked(True)
+
+        assert page._subtitle is subtitle_before
+        assert page._subtitle.property("class") == style_class_before
+        assert page._subtitle.text() == text_before
+
+    def test_continue_button_bottom_anchored(self, qtbot) -> None:
+        """The File Import Continue row sits at the bottom of the page,
+        matching Source/Review/NameProfile's convention, regardless of how
+        much vertical space the page is given."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.resize(1000, 700)
+        page.show()
+
+        y_at_700 = page._file_import_actions.y()
+
+        page.resize(1000, 1200)
+
+        assert page._file_import_actions.y() > y_at_700
 
     def test_set_rew_api_available_false_disables_and_falls_back(self, qtbot) -> None:
         """set_rew_api_available(False) disables the radio and reverts selection."""
@@ -375,12 +481,7 @@ class TestReviewPage:
     """Tests for ReviewPage: summary, dry run, push signal, compare toggle."""
 
     def test_dry_run_toggle_changes_button(self, qtbot) -> None:
-        """Toggling dry run changes the push button text and badge appearance.
-
-        Badge coloring is driven by the QSS theme files via the "active" dynamic
-        property (QLabel#ReviewPageDryRunBadge[active="true"/"false"]), not an
-        inline stylesheet, so we assert on the property rather than styleSheet().
-        """
+        """Toggling dry run changes the push button text."""
         page = ReviewPage()
         qtbot.addWidget(page)
         page.show()
@@ -388,12 +489,10 @@ class TestReviewPage:
         page.set_dry_run(True)
 
         assert page._push_button.text() == "Preview Only"
-        assert page._dry_run_badge.property("active") is True
 
         page.set_dry_run(False)
 
         assert page._push_button.text() == "Push to Device"
-        assert page._dry_run_badge.property("active") is False
 
     def test_push_signal_emitted(self, qtbot) -> None:
         """Clicking push button emits push_requested."""
@@ -439,6 +538,54 @@ class TestReviewPage:
 
         assert page._filter_table.width() == FILTER_TABLE_MAX_WIDTH
 
+    def test_filter_table_grows_to_fit_more_rows_but_not_past_them(self, qtbot) -> None:
+        """The FilterTable grows to accommodate more rows (so a large filter
+        set isn't squeezed into a few-row scroll box) but stops at the
+        height needed to show all of them -- it must not keep stretching to
+        fill a tall window once every row is already visible."""
+        page = ReviewPage()
+        qtbot.addWidget(page)
+        page.resize(1000, 900)
+        page.show()
+
+        few_filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)
+        ]
+        page.set_filters(few_filters)
+        qtbot.wait(10)
+        few_rows_height = page._filter_table.height()
+
+        many_filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0 * (i + 1), gain_db=1.0, q=1.0)
+            for i in range(10)
+        ]
+        page.set_filters(many_filters)
+        qtbot.wait(10)
+        many_rows_height = page._filter_table.height()
+
+        assert many_rows_height > few_rows_height
+
+    def test_filter_table_does_not_grow_past_content_when_page_grows(self, qtbot) -> None:
+        """Once the table is tall enough to show every row, giving the page
+        more height must not stretch the table further -- extra space
+        should go to the bottom-anchored action row, not an empty-looking
+        table."""
+        page = ReviewPage()
+        qtbot.addWidget(page)
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)
+        ]
+        page.set_filters(filters)
+
+        page.resize(1000, 700)
+        page.show()
+        height_at_700 = page._filter_table.height()
+
+        page.resize(1000, 1400)
+        height_at_1400 = page._filter_table.height()
+
+        assert height_at_1400 == height_at_700
+
 
 # ---------------------------------------------------------------------------
 # TestPushPage
@@ -458,7 +605,19 @@ class TestPushPage:
         assert page._stage_rows["backing_up"].status == "complete"
         assert page._stage_rows["writing"].status == "active"
         assert page._stage_rows["verifying"].status == "pending"
-        assert page._stage_rows["done"].status == "pending"
+
+    def test_set_stage_done_marks_all_stages_complete(self, qtbot) -> None:
+        """set_stage("done") (the backend's final on_stage callback) marks
+        every real stage complete -- there's no dedicated "Done" row."""
+        page = PushPage()
+        qtbot.addWidget(page)
+
+        page.set_stage("done")
+
+        assert page._stage_rows["backing_up"].status == "complete"
+        assert page._stage_rows["writing"].status == "complete"
+        assert page._stage_rows["verifying"].status == "complete"
+        assert "done" not in page._stage_rows
 
     def test_set_success_shows_buttons(self, qtbot) -> None:
         """set_success shows the OK and Undo buttons."""
@@ -590,6 +749,46 @@ class TestPushPage:
 
         with qtbot.waitSignal(page.undo_requested, timeout=1000):
             qtbot.mouseClick(page._undo_button, Qt.MouseButton.LeftButton)
+
+    def test_mark_undo_complete_disables_button_on_success(self, qtbot) -> None:
+        """A successful undo disables the Undo button -- clicking it again
+        would be ambiguous (nothing left to undo)."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_success()
+        assert page._undo_button.isEnabled()
+
+        page.mark_undo_complete(True)
+
+        assert not page._undo_button.isEnabled()
+
+    def test_mark_undo_complete_keeps_button_enabled_on_failure(self, qtbot) -> None:
+        """A failed undo leaves the button enabled so the user can retry."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_success()
+        page.mark_undo_complete(False)
+
+        assert page._undo_button.isEnabled()
+
+    def test_reset_reenables_undo_button(self, qtbot) -> None:
+        """A fresh push cycle re-enables Undo, even if a prior push's undo
+        had disabled it."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_success()
+        page.mark_undo_complete(True)
+        assert not page._undo_button.isEnabled()
+
+        page.reset()
+
+        assert page._undo_button.isEnabled()
 
     def test_dry_run_result_shows_badge(self, qtbot) -> None:
         """set_dry_run_result shows the DRY RUN badge."""

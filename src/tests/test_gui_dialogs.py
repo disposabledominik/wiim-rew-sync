@@ -500,6 +500,78 @@ class TestOnboardingOverlay:
 
         assert overlay.objectName() == "onboarding_overlay"
 
+    def test_capability_cards_not_clipped(self, qtbot) -> None:
+        """Each capability card's height must fit its own wrapped title +
+        description text -- a Fixed-width card whose height comes from
+        QWidget.sizeHint() (which ignores the fixed width when computing
+        wrapped-label height) previously locked in a too-short height and
+        clipped the longest description ("Push Safely", the middle card)."""
+        from src.gui.dialogs.onboarding_overlay import _CAP_CARD_WIDTH
+
+        overlay = OnboardingOverlay()
+        qtbot.addWidget(overlay)
+        overlay.show()
+
+        cap_cards = [
+            w for w in overlay.findChildren(QWidget)
+            if w.property("class") == "onboardingCapCard"
+        ]
+        assert len(cap_cards) == 3
+        for card in cap_cards:
+            assert card.width() == _CAP_CARD_WIDTH
+            # heightForWidth() is the authoritative wrap calculation Qt
+            # itself uses -- the card's actual fixed height must match it,
+            # not some earlier (unwrapped, too-short) estimate.
+            assert card.height() == card.heightForWidth(_CAP_CARD_WIDTH)
+
+    def test_card_stays_fixed_size_regardless_of_parent_size(self, qtbot) -> None:
+        """The central card's content never changes, so it must stay pinned
+        to its natural (sizeHint-based) size instead of stretching to fill
+        the overlay -- a Preferred size policy on a QVBoxLayout's sole item
+        with no addStretch() previously let the card grow to fill nearly
+        the entire parent height (e.g. ~636px at a 700px-tall window vs a
+        ~374px sizeHint), getting taller still as the window grew."""
+        from PySide6.QtWidgets import QWidget
+
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        parent.resize(1000, 700)
+        overlay = OnboardingOverlay(parent)
+        overlay.show()
+
+        card = overlay.findChild(QWidget, "onboarding_card")
+        assert card is not None
+        size_at_default = card.size()
+        assert size_at_default.height() <= card.sizeHint().height() + 1
+
+        parent.resize(1920, 1080)
+        qtbot.wait(50)
+
+        assert card.size() == size_at_default
+
+    def test_card_recenters_when_parent_resizes(self, qtbot) -> None:
+        """The fixed-size card re-centers (not just the backdrop) when the
+        parent window is resized/maximized while the overlay is visible."""
+        from PySide6.QtWidgets import QWidget
+
+        parent = QWidget()
+        qtbot.addWidget(parent)
+        parent.resize(1000, 700)
+        parent.show()
+        overlay = OnboardingOverlay(parent)
+        overlay.show()
+
+        card = overlay.findChild(QWidget, "onboarding_card")
+        assert card is not None
+
+        parent.resize(1920, 1080)
+        qtbot.wait(50)
+
+        expected_x = (1920 - card.width()) // 2
+        expected_y = (1080 - card.height()) // 2
+        assert abs(card.x() - expected_x) <= 1
+        assert abs(card.y() - expected_y) <= 1
+
 
 # ---------------------------------------------------------------------------
 # UnsavedChangesDialog tests
@@ -745,3 +817,104 @@ class TestQuickSetupDialog:
         body_label = dialog.findChild(QLabel, "quick_setup_warning_body")
         assert body_label is not None
         assert "This preset will briefly activate." in body_label.text()
+
+
+from src.gui.dialogs.warning_confirm_dialog import WarningConfirmDialog  # noqa: E402
+
+
+class TestWarningConfirmDialog:
+    """Tests for WarningConfirmDialog, the styled Yes/No replacement for
+    QMessageBox.question() used by MainWindow._confirm_action(). Every path
+    that could open a real, unmocked exec() is guarded here (this class was
+    the one confirmed test-coverage gap found while investigating a reported
+    hanging-dialog test run) -- exec() itself is always patched below."""
+
+    def test_displays_title_and_message(self, qtbot) -> None:
+        """Warning box shows the header and body text passed in."""
+        dialog = WarningConfirmDialog(
+            None, "Delete Preset(s)", "Permanently delete the following?"
+        )
+        qtbot.addWidget(dialog)
+
+        body_label = dialog.findChild(QLabel, "warning_confirm_label")
+        assert body_label is not None
+        assert "Permanently delete the following?" in body_label.text()
+        assert "Delete Preset(s)" in dialog.windowTitle()
+
+    def test_body_is_plain_text_by_default(self, qtbot) -> None:
+        """Default rich_text=False keeps HTML-looking text literal (safe for
+        arbitrary caller-provided values)."""
+        dialog = WarningConfirmDialog(None, "Title", "<b>raw</b><br>text")
+        qtbot.addWidget(dialog)
+
+        body_label = dialog.findChild(QLabel, "warning_confirm_label")
+        assert body_label is not None
+        assert body_label.textFormat() == Qt.TextFormat.PlainText
+
+    def test_rich_text_true_renders_html(self, qtbot) -> None:
+        """rich_text=True lets a caller-supplied HTML message render as HTML."""
+        dialog = WarningConfirmDialog(
+            None, "Title", "<b>bold</b><br>line", rich_text=True
+        )
+        qtbot.addWidget(dialog)
+
+        body_label = dialog.findChild(QLabel, "warning_confirm_label")
+        assert body_label is not None
+        assert body_label.textFormat() == Qt.TextFormat.RichText
+
+    def test_no_button_is_default(self, qtbot) -> None:
+        """No is the default button (safer default for a destructive confirm)."""
+        dialog = WarningConfirmDialog(None, "Title", "Message")
+        qtbot.addWidget(dialog)
+
+        button_box = dialog.findChild(QDialogButtonBox, "button_box")
+        assert button_box is not None
+        no_btn = button_box.button(QDialogButtonBox.StandardButton.No)
+        assert no_btn is not None
+        assert no_btn.isDefault()
+
+    def test_yes_click_accepts(self, qtbot) -> None:
+        """Clicking Yes accepts the dialog."""
+        dialog = WarningConfirmDialog(None, "Title", "Message")
+        qtbot.addWidget(dialog)
+
+        button_box = dialog.findChild(QDialogButtonBox, "button_box")
+        assert button_box is not None
+        yes_btn = button_box.button(QDialogButtonBox.StandardButton.Yes)
+        assert yes_btn is not None
+
+        with qtbot.waitSignal(dialog.accepted, timeout=1000):
+            yes_btn.click()
+
+        assert dialog.result() == QDialog.DialogCode.Accepted
+
+    def test_no_click_rejects(self, qtbot) -> None:
+        """Clicking No rejects the dialog."""
+        dialog = WarningConfirmDialog(None, "Title", "Message")
+        qtbot.addWidget(dialog)
+
+        button_box = dialog.findChild(QDialogButtonBox, "button_box")
+        assert button_box is not None
+        no_btn = button_box.button(QDialogButtonBox.StandardButton.No)
+        assert no_btn is not None
+
+        with qtbot.waitSignal(dialog.rejected, timeout=1000):
+            no_btn.click()
+
+        assert dialog.result() == QDialog.DialogCode.Rejected
+
+    def test_static_confirm_true(self, qtbot) -> None:
+        """Static confirm() returns True when the user accepts, exec() mocked."""
+        with patch.object(
+            WarningConfirmDialog, "exec", return_value=QDialog.DialogCode.Accepted
+        ):
+            result = WarningConfirmDialog.confirm(None, "Title", "Message")
+        assert result is True
+
+    def test_static_confirm_false(self, qtbot) -> None:
+        """Static confirm() returns False when the user cancels, exec() mocked."""
+        with patch.object(
+            WarningConfirmDialog, "exec", return_value=QDialog.DialogCode.Rejected
+        ):
+            result = WarningConfirmDialog.confirm(None, "Title", "Message")
+        assert result is False

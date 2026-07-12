@@ -55,7 +55,9 @@ class ConnectPage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ConnectPage")
-        self._device_cards: list[tuple[DeviceCard, str]] = []  # (card, ip) pairs
+        # (card, ip, sort_key) triples, kept in the same order as the cards
+        # appear in self._devices_layout so list index == layout index.
+        self._device_cards: list[tuple[DeviceCard, str, str]] = []
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -98,7 +100,7 @@ class ConnectPage(QWidget):
         self._empty_widget.setVisible(False)
         self._devices_scroll.setVisible(True)
 
-        for device in devices:
+        for device in sorted(devices, key=self._device_sort_key):
             self._add_device_card(device)
 
         # Auto-select single device (Req 2.4)
@@ -118,7 +120,7 @@ class ConnectPage(QWidget):
             devices: Cumulative list of all devices found so far.
         """
         # Build set of IPs already shown
-        shown_ips = {ip for _card, ip in self._device_cards}
+        shown_ips = {ip for _card, ip, _sort_key in self._device_cards}
 
         new_devices = [d for d in devices if d.get("ip", "") not in shown_ips]
         if not new_devices:
@@ -131,7 +133,8 @@ class ConnectPage(QWidget):
             self._devices_scroll.setVisible(True)
 
         for device in new_devices:
-            self._add_device_card(device)
+            insert_index = self._sorted_insert_index(self._device_sort_key(device))
+            self._add_device_card(device, insert_index=insert_index)
 
     def clear(self) -> None:
         """Reset the page to its initial scanning state."""
@@ -283,23 +286,61 @@ class ConnectPage(QWidget):
 
     def _clear_cards(self) -> None:
         """Remove all device cards from the layout."""
-        for card, _ip in self._device_cards:
+        for card, _ip, _sort_key in self._device_cards:
             self._devices_layout.removeWidget(card)
             card.deleteLater()
         self._device_cards.clear()
 
-    def _add_device_card(self, device: dict[str, Any]) -> None:
-        """Create and add a single device card to the layout."""
+    @staticmethod
+    def _device_display_name(device: dict[str, Any]) -> str:
+        """Display name for a device, falling back for a missing or blank name.
+
+        `.get("name", "Unknown Device")` alone only covers a missing key --
+        a device dict with a present-but-empty "name" (real for some
+        mDNS/subnet-scan responses) needs the same fallback so the sort key
+        and the on-card label never disagree about what an unnamed device
+        is called.
+        """
+        return device.get("name") or "Unknown Device"
+
+    @classmethod
+    def _device_sort_key(cls, device: dict[str, Any]) -> str:
+        """Sort key for alphabetical ordering by the device's display name."""
+        return cls._device_display_name(device).casefold()
+
+    def _sorted_insert_index(self, sort_key: str) -> int:
+        """Find the layout/list index to insert a card with *sort_key* at,
+        keeping self._device_cards (and the mirrored layout order) sorted.
+        """
+        for index, (_card, _ip, existing_key) in enumerate(self._device_cards):
+            if existing_key > sort_key:
+                return index
+        return len(self._device_cards)
+
+    def _add_device_card(
+        self, device: dict[str, Any], insert_index: int | None = None
+    ) -> None:
+        """Create and add a single device card to the layout.
+
+        Args:
+            device: Device info dict.
+            insert_index: Position among the device cards to insert at
+                (0-based, matching self._device_cards' order). Defaults to
+                appending at the end.
+        """
         card = DeviceCard(self._devices_container)
         card.set_device_info(
-            name=device.get("name", "Unknown Device"),
+            name=self._device_display_name(device),
             model=device.get("model", ""),
             ip=device.get("ip", ""),
         )
         device_ip = device.get("ip", "")
+        sort_key = self._device_sort_key(device)
         card.clicked.connect(lambda _=None, ip=device_ip: self._on_card_clicked(ip))
-        self._devices_layout.insertWidget(self._devices_layout.count() - 1, card)
-        self._device_cards.append((card, device_ip))
+        if insert_index is None:
+            insert_index = len(self._device_cards)
+        self._devices_layout.insertWidget(insert_index, card)
+        self._device_cards.insert(insert_index, (card, device_ip, sort_key))
 
     @Slot(str)
     def _on_card_clicked(self, ip: str) -> None:

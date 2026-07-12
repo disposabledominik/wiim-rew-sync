@@ -89,6 +89,21 @@ class NameProfilePage(QWidget):
         self._warning_label.setVisible(False)
         layout.addWidget(self._warning_label)
 
+        # Always-visible clarification -- unconditional regardless of which
+        # name is chosen: RoomFitSafeWrite.execute() always activates the
+        # pushed profile and enables RoomFit on success (see
+        # docs/wiim_api_notes.md's RoomFit "Write workflow" section). Placed
+        # right after the input it clarifies, not after the Save button --
+        # it's a caveat about what typing a name and saving will do, so it
+        # reads naturally before the user reaches the action itself.
+        activation_note = QLabel(
+            "<b>NOTE:</b> Saving will make this profile active on your device, "
+            "turning RoomFit on if it's currently off."
+        )
+        activation_note.setProperty("class", "caption")
+        activation_note.setWordWrap(True)
+        layout.addWidget(activation_note)
+
         # Existing profiles section
         profiles_heading = QLabel("Existing Profiles")
         profiles_heading.setProperty("class", "subheading")
@@ -101,28 +116,17 @@ class NameProfilePage(QWidget):
         self._profiles_list.itemClicked.connect(self._on_profile_item_clicked)
         layout.addWidget(self._profiles_list)
 
+        # Leading stretch pins Save to the bottom of the page, matching the
+        # primary button's position on every other wizard step.
+        layout.addStretch()
+
         # Save button
         self._save_button = make_action_button(
             "Save", object_name="NameProfileSaveButton", style_class="primary"
         )
         self._save_button.setEnabled(False)
         self._save_button.clicked.connect(self._on_save_clicked)
-        layout.addWidget(self._save_button, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        # Always-visible clarification -- unconditional regardless of which
-        # name is chosen: RoomFitSafeWrite.execute() always activates the
-        # pushed profile and enables RoomFit on success (see
-        # docs/wiim_api_notes.md's RoomFit "Write workflow" section).
-        activation_note = QLabel(
-            "<b>NOTE:</b> Saving will make this profile active on your device, "
-            "turning RoomFit on if it's currently off."
-        )
-        activation_note.setProperty("class", "caption")
-        activation_note.setWordWrap(True)
-        layout.addWidget(activation_note)
-
-        # Stretch at bottom
-        layout.addStretch()
+        layout.addWidget(self._save_button, alignment=Qt.AlignmentFlag.AlignRight)
 
     @property
     def active_profile(self) -> str:

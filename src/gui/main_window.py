@@ -99,7 +99,11 @@ from src.models.errors import (
     WiiMTimeoutError,
 )
 from src.models.peq import PEQSettings
-from src.repository.backup_manager import BackupManager
+from src.repository.backup_manager import (
+    BackupManager,
+    load_backup_json,
+    parse_backup_restore_metadata,
+)
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
 
@@ -1243,9 +1247,25 @@ class MainWindow(QMainWindow):
                 )
                 return
             self._clear_pushed_snapshot()
-            self._status_banner.show_success(
-                f"Profile '{profile_name}' restored from backup"
+            self._push_page.mark_undo_complete(True)
+            # was_new_profile determines what undo() actually did: for a
+            # brand-new profile it skips the bands-restore entirely (there
+            # was nothing to restore) and only re-activates the
+            # previously-active profile, leaving the new one on the device.
+            # Read the same metadata undo() itself used, so the message
+            # matches what happened instead of always claiming a restore.
+            _, _, was_new_profile, _ = parse_backup_restore_metadata(
+                load_backup_json(path)
             )
+            if was_new_profile is True:
+                self._status_banner.show_success(
+                    f"Original profile re-activated. Profile '{profile_name}' was "
+                    "kept, but deactivated."
+                )
+            else:
+                self._status_banner.show_success(
+                    f"Profile '{profile_name}' restored from backup"
+                )
         except Exception as exc:
             logger.exception("RoomFit undo failed")
             self._status_banner.show_error(f"Undo failed: {exc}")
@@ -1279,6 +1299,7 @@ class MainWindow(QMainWindow):
             self._clear_pushed_snapshot()
 
         if failed == 0:
+            self._push_page.mark_undo_complete(True)
             self._status_banner.show_success(
                 f"All {succeeded} source(s) restored from backup"
             )
@@ -4245,16 +4266,27 @@ class MainWindow(QMainWindow):
         """
         return html.escape(self._format_preset_names(items)).replace("\n", "<br>")
 
-    def _confirm_action(self, title: str, message: str) -> bool:
-        """Shared Yes/No confirmation dialog, default button No."""
-        from PySide6.QtWidgets import QMessageBox
+    def _confirm_action(
+        self, title: str, message: str, *, rich_text: bool = False
+    ) -> bool:
+        """Shared Yes/No confirmation dialog, default button No.
 
-        reply = QMessageBox.question(
-            self, title, message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return reply == QMessageBox.StandardButton.Yes
+        Uses the same styled yellow warning-box treatment as
+        DevicePickerDialog/QuickSetupDialog/PushConfirmation, rather than a
+        plain QMessageBox, so every "this will change state" confirmation in
+        the app reads consistently.
+
+        Args:
+            title: Warning box header text.
+            message: Warning body text. Plain text by default; pass
+                rich_text=True when message was deliberately built as HTML
+                (e.g. via _html_bullet_list(), which already escapes any
+                dynamic values before embedding them).
+            rich_text: Whether `message` should be interpreted as HTML.
+        """
+        from src.gui.dialogs.warning_confirm_dialog import WarningConfirmDialog
+
+        return WarningConfirmDialog.confirm(self, title, message, rich_text=rich_text)
 
     def _preset_preview_warning_html(self, items: list[Any]) -> str | None:
         """Build the warning body for `_confirm_preset_preview()` (below), and
@@ -4292,7 +4324,9 @@ class MainWindow(QMainWindow):
         if body is None:
             return True
         return self._confirm_action(
-            "Preset Will Briefly Activate on Device", f"{body}<br><br>Continue?"
+            "Preset Will Briefly Activate on Device",
+            f"{body}<br><br>Continue?",
+            rich_text=True,
         )
 
     def _copy_activation_warning_html(self, items: list[Any]) -> str | None:
@@ -4421,6 +4455,7 @@ class MainWindow(QMainWindow):
             success: Whether the undo succeeded.
             message: Human-readable result message.
         """
+        self._push_page.mark_undo_complete(success)
         if success:
             self._clear_pushed_snapshot()
             self._status_banner.show_success(message)

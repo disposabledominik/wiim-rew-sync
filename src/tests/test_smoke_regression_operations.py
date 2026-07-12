@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from PySide6.QtWidgets import QMessageBox
 
 from src.adapters.rew_http_client import MeasurementSummary
 from src.adapters.safe_write import RoomFitSafeWrite, WriteResult
@@ -297,8 +296,8 @@ class TestPushWriteOperations:
         with (
             patch.object(window._wizard_controller, "advance") as mock_adv,
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ) as mock_question,
         ):
             window._on_name_confirmed("Living Room")
@@ -322,7 +321,7 @@ class TestPushWriteOperations:
         with (
             patch.object(window._wizard_controller, "advance"),
             patch(
-                "PySide6.QtWidgets.QMessageBox.question"
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
             ) as mock_question,
         ):
             window._on_name_confirmed("New Profile")
@@ -344,8 +343,8 @@ class TestPushWriteOperations:
         with (
             patch.object(window._wizard_controller, "advance") as mock_adv,
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.No,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=False,
             ) as mock_question,
         ):
             window._on_name_confirmed("Living Room")
@@ -367,8 +366,8 @@ class TestPushWriteOperations:
         with (
             patch.object(window._wizard_controller, "advance"),
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
         ):
             window._on_name_confirmed("Living Room")
@@ -397,8 +396,8 @@ class TestPushWriteOperations:
         with (
             patch.object(window._wizard_controller, "advance") as mock_adv,
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.No,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=False,
             ) as mock_question,
         ):
             window._on_name_confirmed("Office")
@@ -424,8 +423,8 @@ class TestPushWriteOperations:
         with (
             patch.object(window._wizard_controller, "advance"),
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
         ):
             window._on_name_confirmed("Office")
@@ -448,7 +447,9 @@ class TestPushWriteOperations:
 
         with (
             patch.object(window._wizard_controller, "advance"),
-            patch("PySide6.QtWidgets.QMessageBox.question") as mock_question,
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+            ) as mock_question,
         ):
             window._on_name_confirmed("Brand New Room")
 
@@ -630,7 +631,6 @@ class TestPushWriteOperations:
         assert window.push_page._stage_rows["backing_up"].status == "complete"
         assert window.push_page._stage_rows["writing"].status == "active"
         assert window.push_page._stage_rows["verifying"].status == "pending"
-        assert window.push_page._stage_rows["done"].status == "pending"
 
     # --- Issue #80: Dry run shows preview without calling _do_push ---
 
@@ -816,8 +816,8 @@ class TestImportExport:
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
             patch(
                 "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
@@ -925,8 +925,8 @@ class TestImportExport:
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
             patch(
                 "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
@@ -1218,8 +1218,8 @@ class TestPresets:
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
             patch(
                 "src.gui.main_window.QFileDialog.getSaveFileName",
@@ -1247,8 +1247,8 @@ class TestPresets:
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
             patch(
                 "src.gui.main_window.QFileDialog.getSaveFileName",
@@ -1269,8 +1269,8 @@ class TestPresets:
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
             patch.object(window, "_do_preset_save", return_value=object()) as mock_save_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
@@ -1322,8 +1322,8 @@ class TestPresets:
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
             patch.object(window, "_ensure_wizard_state_for_load", return_value=True),
             patch.object(
@@ -1369,7 +1369,9 @@ class TestPresets:
         profile's buffer has no live-audio consequence to consent to."""
         items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
 
-        with patch("PySide6.QtWidgets.QMessageBox.question") as mock_question:
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+        ) as mock_question:
             result = window._confirm_preset_preview(items)
 
         mock_question.assert_not_called()
@@ -1380,8 +1382,8 @@ class TestPresets:
         items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
 
         with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=True,
         ) as mock_question:
             result = window._confirm_preset_preview(items)
 
@@ -1399,8 +1401,8 @@ class TestPresets:
         ]
 
         with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=True,
         ) as mock_question:
             window._confirm_preset_preview(items)
 
@@ -1413,8 +1415,8 @@ class TestPresets:
         items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
 
         with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.No,
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=False,
         ):
             result = window._confirm_preset_preview(items)
 
@@ -1428,8 +1430,8 @@ class TestPresets:
         items = [PresetItem(name="A <b>Bold</b> & Loud", channel_mode="Stereo", preset_type="PEQ")]
 
         with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.Yes,
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=True,
         ) as mock_question:
             window._confirm_preset_preview(items)
 
@@ -1569,8 +1571,8 @@ class TestPresets:
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
             patch.object(
                 window._bridge, "run_async", side_effect=close_coroutine_tree
@@ -1588,8 +1590,8 @@ class TestPresets:
 
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.No,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=False,
             ),
             patch.object(window._bridge, "run_async") as mock_run,
         ):
@@ -1646,8 +1648,8 @@ class TestPresets:
         (this one was previously missing any confirmation at all)."""
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
             patch.object(window._profile_repository, "delete") as mock_delete,
             patch.object(window, "_refresh_presets_view") as mock_refresh,
@@ -1663,8 +1665,8 @@ class TestPresets:
         """Declining the local-delete confirmation leaves the repository untouched."""
         with (
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.No,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=False,
             ),
             patch.object(window._profile_repository, "delete") as mock_delete,
         ):
@@ -2423,6 +2425,69 @@ class TestSettingsUIState:
                 mock_show_success.assert_not_called()
                 mock_show_error.assert_called_once()
 
+    def test_undo_roomfit_new_profile_shows_reactivation_message(
+        self, window, tmp_path
+    ) -> None:
+        """Undoing a push that created a brand-new profile must not claim
+        the profile was "restored from backup" -- nothing existed to
+        restore, undo() only re-activates the previously-active profile and
+        leaves the new one on the device (see RoomFitSafeWrite.undo())."""
+        _setup_device(window)
+        backup_path = tmp_path / "roomfit_backup.json"
+        backup_path.write_text(
+            '{"channel_mode": "stereo", "filters": '
+            '[{"type": "PEAK", "frequency_hz": 100.0, "gain_db": -3.0, "q": 1.0}], '
+            '"was_new_profile": true}',
+            encoding="utf-8",
+        )
+
+        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
+            roomfit_safe_write = MagicMock()
+            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+
+            import asyncio
+
+            with patch.object(window._status_banner, "show_success") as mock_success:
+                asyncio.run(
+                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+                )
+
+        message = mock_success.call_args[0][0]
+        assert "restored from backup" not in message
+        assert "re-activated" in message
+        assert "My Profile" in message
+
+    def test_undo_roomfit_overwrite_shows_restored_message(
+        self, window, tmp_path
+    ) -> None:
+        """Undoing a push that overwrote an existing profile keeps the
+        "restored from backup" message -- bands actually were restored in
+        this case."""
+        _setup_device(window)
+        backup_path = tmp_path / "roomfit_backup.json"
+        backup_path.write_text(
+            '{"channel_mode": "stereo", "filters": '
+            '[{"type": "PEAK", "frequency_hz": 100.0, "gain_db": -3.0, "q": 1.0}], '
+            '"was_new_profile": false}',
+            encoding="utf-8",
+        )
+
+        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
+            roomfit_safe_write = MagicMock()
+            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+
+            import asyncio
+
+            with patch.object(window._status_banner, "show_success") as mock_success:
+                asyncio.run(
+                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+                )
+
+        message = mock_success.call_args[0][0]
+        assert message == "Profile 'My Profile' restored from backup"
+
     # --- Issue #26: Copy to Another Device actually writes to target ---
 
     def test_issue26_copy_preset_to_device_writes_to_target(self, window) -> None:
@@ -2618,7 +2683,16 @@ class TestSettingsUIState:
     # --- Issue #38: My Saved Presets view has toolbar buttons ---
 
     def test_issue38_my_presets_view_has_toolbar(self, window, qtbot) -> None:
-        """#38: Toolbar actions emit for the selected preset."""
+        """#38: Toolbar actions emit for the selected preset.
+
+        `window` fixture wires `view.delete_requested` to the real
+        `MainWindow._on_profile_delete_requested`, which shows a real
+        `WarningConfirmDialog` confirmation -- clicking `_delete_btn` below
+        fires that handler too, not just this test's own lambda, so
+        `WarningConfirmDialog.confirm` must be patched or its `exec()`
+        blocks the test run on a real, unclosable popup (this was the
+        source of a previously-reported hanging-test bug, #203).
+        """
         view = window._my_presets_view
         profile = build_profile("Jazz Night", [_make_filter()], "Stereo")
 
@@ -2651,7 +2725,11 @@ class TestSettingsUIState:
 
         view._load_btn.click()
         view._duplicate_btn.click()
-        view._delete_btn.click()
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=True,
+        ):
+            view._delete_btn.click()
 
         assert load_calls == [profile]
         assert duplicate_calls == ["Jazz Night"]

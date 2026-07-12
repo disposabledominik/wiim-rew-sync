@@ -12,11 +12,12 @@ Requirements referenced: 23.1, 23.2, 23.3, 23.5, 23.7.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -52,6 +53,16 @@ _CAPABILITY_CARDS: list[tuple[str, str, str]] = [
     ),
 ]
 
+# card's max width (600) minus its own SPACING_XL margins on both sides
+# (32*2), minus the two SPACING_MD gaps between the 3 cards (16*2), split
+# three ways: (600 - 64 - 32) / 3 = 168. Giving each card this fixed width
+# up front (rather than leaving it to whatever the row's layout pass
+# assigns) lets its word-wrapped title/description labels run their
+# heightForWidth calculation against a known, final width before the outer
+# card's own (Minimum-floor) sizeHint is computed -- see the size-policy
+# comment in _setup_ui for why that ordering matters.
+_CAP_CARD_WIDTH = 168
+
 
 class OnboardingOverlay(QWidget):
     """First-run welcome overlay (Req 23).
@@ -83,6 +94,13 @@ class OnboardingOverlay(QWidget):
         # Fill entire parent area
         if parent is not None:
             self.setGeometry(parent.rect())
+            # As an unmanaged child widget (not placed in a layout), Qt does
+            # not auto-resize us when `parent` resizes -- our own
+            # resizeEvent only fires when Qt resizes *us* directly, which
+            # never happens here. Watch the parent's own resize events
+            # instead so maximizing/resizing the window while the overlay
+            # is visible keeps the backdrop and centered card in sync.
+            parent.installEventFilter(self)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._setup_ui()
 
@@ -91,6 +109,12 @@ class OnboardingOverlay(QWidget):
         super().showEvent(event)  # type: ignore[arg-type]
         if self.parent() is not None:
             self.setGeometry(self.parent().rect())  # type: ignore[union-attr]
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """Track the parent's geometry when it resizes (e.g. maximize)."""
+        if watched is self.parent() and event.type() == QEvent.Type.Resize:
+            self.setGeometry(self.parent().rect())  # type: ignore[union-attr]
+        return super().eventFilter(watched, event)
 
     def _setup_ui(self) -> None:
         """Build the overlay layout."""
@@ -103,6 +127,22 @@ class OnboardingOverlay(QWidget):
         card = QWidget()
         card.setObjectName("onboarding_card")
         card.setMaximumWidth(600)
+        # Fixed (not the default Preferred, which has Qt's GrowFlag set):
+        # root_layout has only this one item and no addStretch(), so a
+        # Preferred-policy card was being stretched to fill the *entire*
+        # available height of the overlay (measured 636px vs a 374px
+        # sizeHint at a 700px-tall window, growing further still on
+        # maximize) instead of sizing to its content. The card's content is
+        # static, so it should never grow -- Fixed pins it to its sizeHint
+        # (still capped to 600px wide by setMaximumWidth above) and
+        # AlignCenter on root_layout then centers that fixed-size card.
+        # (QSizePolicy.Minimum was tried instead of Fixed to let the height
+        # grow for the capability cards below, but Minimum still carries
+        # Qt's GrowFlag -- it reintroduced the exact over-growth this
+        # comment describes. The capability cards get a correct, immutable
+        # height of their own instead -- see _build_capability_card -- so
+        # this card's sizeHint() is accurate without needing to grow.)
+        card.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         # Drop shadow for depth
         shadow = QGraphicsDropShadowEffect(card)
         shadow.setBlurRadius(40)
@@ -179,9 +219,14 @@ class OnboardingOverlay(QWidget):
         """
         card = QWidget()
         card.setProperty("class", "onboardingCapCard")
+        card.setFixedWidth(_CAP_CARD_WIDTH)
         layout = QVBoxLayout(card)
         layout.setSpacing(SPACING_SM)
-        layout.setContentsMargins(SPACING_SM, SPACING_MD, SPACING_SM, SPACING_MD)
+        # No margins here -- the "onboardingCapCard" QSS rule already applies
+        # `padding: 16px`, so adding layout margins on top doubled the
+        # vertical chrome around a short title + description (cards were
+        # much taller than their text needed).
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # Emoji icon
         icon_label = QLabel(emoji)
@@ -208,6 +253,16 @@ class OnboardingOverlay(QWidget):
         # would otherwise break height-for-width sizing on the wrapped
         # title/desc labels above (smoke #180).
         layout.addStretch()
+
+        # QWidget.sizeHint() does NOT factor in a fixed width when
+        # computing height for word-wrapped children -- it reports the
+        # single-line, unwrapped-preferred size regardless of
+        # setFixedWidth(). Pin the height explicitly via heightForWidth(),
+        # which *does* run the layout's real wrap calculation at the fixed
+        # width -- this is what previously clipped the "Push Safely" card's
+        # longer description once the outer card's Fixed size policy
+        # started trusting an inaccurate sizeHint().
+        card.setFixedHeight(card.heightForWidth(_CAP_CARD_WIDTH))
         return card
 
     def _on_get_started(self) -> None:

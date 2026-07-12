@@ -34,6 +34,12 @@ _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
 _SKIPPED_OPACITY = 0.45
 _HIGHLIGHT_ALPHA = 40  # Accent background alpha for comparison highlights
 _NA_LABEL = "N/A"
+# QTabWidget::pane's QSS chrome (1px border + 8px padding on each side, see
+# fluent_dark.qss/fluent_light.qss) isn't reflected in tabBar().sizeHint() or
+# any table metric -- set_lr_filters() must add it explicitly to the height
+# budget or the tab content clips by this many px with the vertical
+# scrollbar forced off.
+_TAB_PANE_CHROME = 18
 
 
 class FilterTable(QWidget):
@@ -44,14 +50,23 @@ class FilterTable(QWidget):
     - L/R tabbed display via QTabWidget
     - Comparison (diff) view highlighting changed bands
 
-    The table is centered horizontally and constrained to a max width
-    (see `FILTER_TABLE_MAX_WIDTH` in `src/gui/constants.py`) for compact
-    readability -- enforced by the caller (`ReviewPage`), not this class.
+    Expands to fill its parent's available width (see
+    `FILTER_TABLE_MAX_WIDTH` in `src/gui/constants.py` for the width cap
+    the caller, `ReviewPage`, applies) rather than sizing to its content.
+    Height is different: it grows only up to the natural height needed to
+    show every row without internal scrolling (recomputed on every
+    set_filters/set_lr_filters/set_comparison call), then stops -- there's
+    no value in an empty-looking table stretching to fill a tall window
+    once all its rows are already visible.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("FilterTable")
+        # Expanding (not the default Preferred) so the table grows to fill
+        # spare space given to it by the caller's layout instead of sizing
+        # down to its content's sizeHint.
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Let table expand to fill available parent space
         outer_layout = QVBoxLayout(self)
@@ -105,6 +120,7 @@ class FilterTable(QWidget):
         self._container_layout.addWidget(table)
         self._table = table
         self._populate_table(table, filters, clamping_map, rows, notes_map)
+        self._apply_natural_max_height(table)
 
     def set_lr_filters(
         self,
@@ -143,6 +159,11 @@ class FilterTable(QWidget):
 
         self._container_layout.addWidget(tab_widget)
         self._tab_widget = tab_widget
+        tallest_table_height = max(
+            self._natural_table_height(left_table), self._natural_table_height(right_table)
+        )
+        tab_bar_height = tab_widget.tabBar().sizeHint().height()
+        self.setMaximumHeight(tallest_table_height + tab_bar_height + _TAB_PANE_CHROME)
 
     def set_comparison(
         self,
@@ -163,6 +184,7 @@ class FilterTable(QWidget):
         self._container_layout.addWidget(table)
         self._table = table
         self._populate_comparison(table, before, after)
+        self._apply_natural_max_height(table)
 
     def clear(self) -> None:
         """Remove all data and widgets."""
@@ -171,6 +193,23 @@ class FilterTable(QWidget):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _apply_natural_max_height(self, table: QTableWidget) -> None:
+        """Cap self's height to *table*'s natural (all-rows-visible) height."""
+        self.setMaximumHeight(self._natural_table_height(table))
+
+    @staticmethod
+    def _natural_table_height(table: QTableWidget) -> int:
+        """Height needed to show every row of *table* without scrolling.
+
+        `verticalHeader().length()` is the sum of all row heights (not just
+        the visible ones), so this is accurate even before the table has
+        been shown/laid out on screen.
+        """
+        header_height = table.horizontalHeader().height()
+        rows_height = table.verticalHeader().length()
+        frame = 2 * table.frameWidth()
+        return header_height + rows_height + frame
 
     def _clear_widgets(self) -> None:
         """Remove existing table or tab widget from the container."""
@@ -201,6 +240,14 @@ class FilterTable(QWidget):
 
         # Disable horizontal scrollbar — all columns visible
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Disable vertical scrollbar too -- the widget's height is always capped
+        # to _natural_table_height() right after populating, so every row is
+        # already visible; ScrollBarAsNeeded could still fire a needless
+        # scrollbar if that estimate is ever a couple px short of the real
+        # content height (QSS border/padding isn't fully reflected in
+        # frameWidth()). Safe to force off here because the height is fully
+        # computed/controlled by this class, not sized by the user.
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         return table
 

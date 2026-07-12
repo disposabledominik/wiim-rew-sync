@@ -341,7 +341,15 @@ class TestDevicePullPreconditions:
         Previously this was an error condition, but smoke fix #16 changed the
         behavior: RoomFit and source-skipped flows default to "wifi" and proceed.
 
-        Requirement: 4.5, smoke fix #16.
+        Since #194, `_on_device_pull_requested()` itself never mutates
+        `selected_source`/`selected_sources` -- the default is applied at
+        read time by `WizardState.primary_source` (consumed inside
+        `_do_device_pull`, which isn't actually invoked here since
+        `run_async` is mocked), not written back into wizard state. So this
+        asserts the read-time default via `primary_source`, not that
+        `selected_source` gets mutated to "wifi" (it stays "").
+
+        Requirement: 4.5, smoke fix #16, #194.
         """
         # Adapter is set but source is empty
         window._wiim_adapter = MagicMock()
@@ -352,8 +360,9 @@ class TestDevicePullPreconditions:
 
         # Should proceed with default source "wifi" — run_async IS called
         window._bridge.run_async.assert_called_once()
-        # Verify the source was defaulted
-        assert window._wizard_controller.state.selected_source == "wifi"
+        # Verify the default: WizardState.primary_source falls back to
+        # DEFAULT_SOURCE ("wifi") when selected_sources is empty.
+        assert window._wizard_controller.state.primary_source == "wifi"
 
 
 # ---------------------------------------------------------------------------

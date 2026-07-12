@@ -80,7 +80,7 @@ class FiltersPage(QWidget):
         # during this session overrides it for the rest of the session.
         self._default_import_dir: str = ""
         self._session_import_dir: str = ""
-        self.rew_pull_view = RewPullView(show_title=False)
+        self.rew_pull_view = RewPullView(show_title=False, show_header=False)
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -207,15 +207,9 @@ class FiltersPage(QWidget):
         )
         page_layout.addWidget(title)
 
-        # Subtitle (updated by _update_source_ui to match the active source)
-        self._subtitle = QLabel(
-            "Select channel mode and browse for your REW EQ text file(s)."
-        )
-        self._subtitle.setWordWrap(True)
-        self._subtitle.setProperty("class", "secondary")
-        page_layout.addWidget(self._subtitle)
-
-        # --- Import source toggle ---
+        # --- Import source toggle (above the instruction text, so the
+        # instruction line always sits directly below it -- same position
+        # and font in both File Import and Pull from REW API modes) ---
         source_section = QWidget()
         source_layout = QHBoxLayout(source_section)
         source_layout.setContentsMargins(0, 0, 0, 0)
@@ -238,6 +232,17 @@ class FiltersPage(QWidget):
         source_layout.addStretch()
 
         page_layout.addWidget(source_section)
+
+        # Instruction line (updated by _on_source_toggled to match the
+        # active source) -- stays in this exact layout position and keeps
+        # this styling in both modes, so switching source doesn't move or
+        # restyle it, only its text changes.
+        self._subtitle = QLabel(
+            "Select channel mode and browse for your REW EQ text file(s)."
+        )
+        self._subtitle.setWordWrap(True)
+        self._subtitle.setProperty("class", "secondary")
+        page_layout.addWidget(self._subtitle)
 
         # --- File Import section (channel toggle + browse buttons) ---
         self._file_import_section = QWidget()
@@ -292,15 +297,6 @@ class FiltersPage(QWidget):
 
         file_layout.addWidget(self._stereo_section)
 
-        # "Next" button for stereo mode (enabled once a file is selected)
-        self._next_btn = make_action_button(
-            "Next", object_name="filters_next_stereo", style_class="primary"
-        )
-        self._next_btn.setMinimumWidth(140)
-        self._next_btn.setEnabled(False)
-        self._next_btn.clicked.connect(self._on_stereo_next)
-        file_layout.addWidget(self._next_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
         # --- L/R file section ---
         self._lr_section = QWidget()
         lr_layout = QVBoxLayout(self._lr_section)
@@ -353,27 +349,54 @@ class FiltersPage(QWidget):
         right_row.addWidget(self._right_file_label)
         lr_layout.addLayout(right_row)
 
-        # Next button for L/R mode (enabled when both files are selected)
-        self._import_lr_btn = make_action_button(
-            "Next", object_name="filters_next_lr", style_class="primary"
-        )
-        self._import_lr_btn.setMinimumWidth(140)
-        self._import_lr_btn.setEnabled(False)
-        self._import_lr_btn.clicked.connect(self._on_import_lr_confirmed)
-        lr_layout.addWidget(
-            self._import_lr_btn, alignment=Qt.AlignmentFlag.AlignLeft
-        )
-
         self._lr_section.setVisible(False)
         file_layout.addWidget(self._lr_section)
 
         # --- Pull from REW API section (embedded picker) ---
         # measurement_selected is consumed directly by MainWindow (same
         # signal the sidebar's RewPullView instance uses); back_requested
-        # is also handled locally to flip the source toggle back.
+        # is also handled locally to flip the source toggle back. Given a
+        # stretch factor so it claims the page's spare vertical space
+        # directly, rather than that space collecting below it at the
+        # trailing addStretch() -- RewPullView's own internal measurement
+        # list already has a stretch factor of 1 inside itself, so the
+        # extra height flows through to the actual list.
         self.rew_pull_view.setVisible(False)
         self.rew_pull_view.back_requested.connect(self._on_rew_pull_back_requested)
-        page_layout.addWidget(self.rew_pull_view)
+        page_layout.addWidget(self.rew_pull_view, 1)
+
+        # --- Continue action row (shared position for both modes, so
+        # switching between Stereo/L/R doesn't shift the button vertically
+        # the way it would if each mode kept its own button inline after
+        # its own (differently-sized) file rows). Lives in its own
+        # page_layout-level container (not file_layout) with a leading
+        # stretch so it's bottom-anchored like every other wizard step's
+        # primary button, regardless of how tall the file rows above it
+        # are; visibility is tied to the File Import section's own toggle
+        # in _on_source_toggled so it doesn't show while Pull from REW API
+        # (which has its own action bar) is active. ---
+        self._file_import_actions = QWidget()
+        actions_row = QHBoxLayout(self._file_import_actions)
+        actions_row.setContentsMargins(0, 0, 0, 0)
+        actions_row.addStretch()
+
+        self._next_btn = make_action_button(
+            "Continue", object_name="filters_next_stereo", style_class="primary"
+        )
+        self._next_btn.setEnabled(False)
+        self._next_btn.clicked.connect(self._on_stereo_next)
+        actions_row.addWidget(self._next_btn)
+
+        self._import_lr_btn = make_action_button(
+            "Continue", object_name="filters_next_lr", style_class="primary"
+        )
+        self._import_lr_btn.setEnabled(False)
+        self._import_lr_btn.setVisible(False)
+        self._import_lr_btn.clicked.connect(self._on_import_lr_confirmed)
+        actions_row.addWidget(self._import_lr_btn)
+
+        page_layout.addStretch()
+        page_layout.addWidget(self._file_import_actions)
 
         # --- RoomFit profile dropdown (hidden — used only from sidebar) ---
         self._roomfit_section = QWidget()
@@ -397,8 +420,6 @@ class FiltersPage(QWidget):
         self._error_section = self._build_error_section()
         self._error_section.setVisible(False)
         page_layout.addWidget(self._error_section)
-
-        page_layout.addStretch()
 
         # Set initial mode visibility
         self._update_mode_ui()
@@ -472,6 +493,7 @@ class FiltersPage(QWidget):
         self._stereo_section.setVisible(not is_lr)
         self._next_btn.setVisible(not is_lr)
         self._lr_section.setVisible(is_lr)
+        self._import_lr_btn.setVisible(is_lr)
 
     @Slot(bool)
     def _on_source_toggled(self, rew_api_checked: bool) -> None:
@@ -482,6 +504,7 @@ class FiltersPage(QWidget):
                 checked (passed by the toggled(bool) signal of that radio).
         """
         self._file_import_section.setVisible(not rew_api_checked)
+        self._file_import_actions.setVisible(not rew_api_checked)
         self.rew_pull_view.setVisible(rew_api_checked)
         if rew_api_checked:
             self._subtitle.setText("Select a REW measurement to import filters from.")

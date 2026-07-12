@@ -9,7 +9,7 @@ Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
 
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -200,7 +200,7 @@ class SourcePage(QWidget):
         self._continue_btn.setEnabled(False)
         self._continue_btn.setMinimumHeight(LIST_ITEM_HEIGHT)
         self._continue_btn.clicked.connect(self._on_continue_clicked)
-        content_layout.addWidget(self._continue_btn)
+        content_layout.addWidget(self._continue_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
     # ------------------------------------------------------------------
     # Private slots

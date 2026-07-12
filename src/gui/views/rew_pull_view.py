@@ -65,7 +65,12 @@ class RewPullView(QWidget):
     measurement_selected = Signal(object)
     back_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None, show_title: bool = True) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        show_title: bool = True,
+        show_header: bool = True,
+    ) -> None:
         """Initialize the view.
 
         Args:
@@ -73,11 +78,16 @@ class RewPullView(QWidget):
             show_title: Whether to show the "Pull from REW" title. Pass
                 False when embedding inside a page that already has its
                 own title (e.g. FiltersPage's "Import REW Filters").
+            show_header: Whether to show the "Choose measurement(s)..."
+                instruction line. Pass False when embedding inside a page
+                that already shows its own instruction text for this step
+                (e.g. FiltersPage's subtitle), so the two don't duplicate.
         """
         super().__init__(parent)
         self.setObjectName("RewPullView")
         self._setup_ui()
         self._title.setVisible(show_title)
+        self._header.setVisible(show_header)
         self._showing_picker = False
         self.set_connecting()
 
@@ -203,9 +213,9 @@ class RewPullView(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(SPACING_MD)
 
-        header = QLabel("Choose measurement(s) to import filters from:")
-        header.setWordWrap(True)
-        layout.addWidget(header)
+        self._header = QLabel("Choose measurement(s) to import filters from:")
+        self._header.setWordWrap(True)
+        layout.addWidget(self._header)
 
         # --- Stereo / L-R toggle ---
         toggle_row = QHBoxLayout()

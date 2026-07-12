@@ -184,6 +184,49 @@ class TestStepIndicator:
         assert len(indicator._steps) == 4
         assert len(indicator._connectors) == 3
 
+    def test_labels_dont_elide_at_min_window_width_with_sidebar(self, qtbot) -> None:
+        """The longest stepper label ("Name Profile", RoomFit's 6-step flow)
+        must render in full at MIN_WINDOW_WIDTH, once the sidebar's width is
+        subtracted the way MainWindow actually lays it out (sidebar and the
+        step indicator's content column are QHBoxLayout siblings) --
+        eliding here previously required raising MIN_WINDOW_WIDTH (see
+        constants.py's docstring on that constant for the empirical
+        threshold this guards)."""
+        from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+
+        from src.gui.constants import MIN_WINDOW_WIDTH, SIDEBAR_EXPANDED
+
+        labels = ["Connect", "Eq Type", "Filters", "Review", "Name Profile", "Push"]
+
+        window = QWidget()
+        qtbot.addWidget(window)
+        window.setMinimumSize(MIN_WINDOW_WIDTH, 100)
+        root = QHBoxLayout(window)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        sidebar = QWidget()
+        sidebar.setFixedWidth(SIDEBAR_EXPANDED)
+        root.addWidget(sidebar)
+        content = QVBoxLayout()
+        content.setContentsMargins(0, 0, 0, 0)
+        indicator = StepIndicator()
+        indicator.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        content.addWidget(indicator)
+        root.addLayout(content)
+
+        for current_index in range(len(labels)):
+            indicator.set_steps(labels)
+            indicator.set_current(current_index)
+            window.resize(MIN_WINDOW_WIDTH, 100)
+            window.show()
+            qtbot.wait(10)
+
+            for step in indicator._steps:
+                assert step._label.text() == step._label_text, (
+                    f"step {step._label_text!r} elided to "
+                    f"{step._label.text()!r} at index {current_index}"
+                )
+
     def test_set_current_highlights_active(self, qtbot) -> None:
         """set_current marks the specified step as active."""
         from src.gui.components.step_indicator import _StepState
@@ -667,6 +710,45 @@ class TestFilterTable:
 
         table.clear()
         assert table._table is None
+
+    def test_vertical_scrollbar_always_off(self, qtbot) -> None:
+        """The table's height is always capped to its exact natural content
+        height right after populating, so a vertical scrollbar should never
+        be needed -- it must stay disabled regardless of row count."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        table.set_filters(self._make_filters())
+        assert table._table is not None
+        assert (
+            table._table.verticalScrollBarPolicy()
+            == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+    def test_lr_filters_max_height_accounts_for_tab_pane_chrome(self, qtbot) -> None:
+        """set_lr_filters()'s height budget must include the QTabWidget::pane's
+        QSS border+padding (_TAB_PANE_CHROME), not just the table + tab bar --
+        omitting it under-budgets the max height by the pane's chrome while
+        the vertical scrollbar is forced off, silently clipping the bottom
+        row(s) of the taller tab with no way to scroll to them."""
+        from src.gui.components.filter_table import _TAB_PANE_CHROME
+
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        left = self._make_filters()
+        right = self._make_filters() * 3
+
+        table.set_lr_filters(left, right)
+        assert table._tab_widget is not None
+
+        tallest = max(
+            table._natural_table_height(table._tab_widget.widget(0)),
+            table._natural_table_height(table._tab_widget.widget(1)),
+        )
+        tab_bar_height = table._tab_widget.tabBar().sizeHint().height()
+
+        assert table.maximumHeight() == tallest + tab_bar_height + _TAB_PANE_CHROME
 
     def test_clamping_color_follows_active_theme(self, qtbot) -> None:
         """Clamped-band foreground color must follow the active theme.

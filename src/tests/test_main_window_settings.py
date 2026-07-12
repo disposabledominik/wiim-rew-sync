@@ -209,7 +209,9 @@ class TestDryRunDefaultPrompt:
         settings = AppSettings(dry_run_default=False)
         window = make_window(settings)
 
-        with patch("PySide6.QtWidgets.QMessageBox.question") as mock_question:
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+        ) as mock_question:
             window._on_dry_run_toggled(False)
 
         mock_question.assert_not_called()
@@ -219,7 +221,9 @@ class TestDryRunDefaultPrompt:
         settings = AppSettings(dry_run_default=True)
         window = make_window(settings)
 
-        with patch("PySide6.QtWidgets.QMessageBox.question") as mock_question:
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+        ) as mock_question:
             window._on_dry_run_toggled(True)
 
         mock_question.assert_not_called()
@@ -227,14 +231,12 @@ class TestDryRunDefaultPrompt:
     def test_prompt_shown_when_toggled_off_while_default_true(self, make_window) -> None:
         """Prompt appears the first time Dry Run is turned off while it's
         still the global default."""
-        from PySide6.QtWidgets import QMessageBox
-
         settings = AppSettings(dry_run_default=True)
         window = make_window(settings)
 
         with patch(
-            "PySide6.QtWidgets.QMessageBox.question",
-            return_value=QMessageBox.StandardButton.No,
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=False,
         ) as mock_question:
             window._on_dry_run_toggled(False)
 
@@ -244,16 +246,14 @@ class TestDryRunDefaultPrompt:
     def test_answering_yes_disables_default_and_persists(self, make_window) -> None:
         """Accepting the prompt disables the global default, persists it, and
         refreshes SettingsView so it doesn't go stale."""
-        from PySide6.QtWidgets import QMessageBox
-
         settings = AppSettings(dry_run_default=True)
         window = make_window(settings)
 
         with (
             patch.object(window._settings, "save") as mock_save,
             patch(
-                "PySide6.QtWidgets.QMessageBox.question",
-                return_value=QMessageBox.StandardButton.Yes,
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
             ),
         ):
             window._on_dry_run_toggled(False)

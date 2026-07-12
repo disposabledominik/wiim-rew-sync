@@ -9,6 +9,8 @@ Requirements referenced: 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 18.1.
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
@@ -34,13 +36,14 @@ from src.models.canonical import CanonicalFilter
 # Stage definitions
 # ---------------------------------------------------------------------------
 
-_STAGES: list[str] = ["backing_up", "writing", "verifying", "done"]
+_STAGES: list[str] = ["backing_up", "writing", "verifying"]
 _STAGE_LABELS: dict[str, str] = {
     "backing_up": "Backing up",
     "writing": "Writing",
     "verifying": "Verifying",
-    "done": "Done",
 }
+
+logger = logging.getLogger(__name__)
 
 
 class _StageRow(QWidget):
@@ -127,16 +130,27 @@ class PushPage(QWidget):
         stage as active. Stages after it remain pending.
 
         Args:
-            stage: One of "backing_up", "writing", "verifying", "done".
+            stage: One of "backing_up", "writing", "verifying", or "done"
+                (the backend's final on_stage callback before returning
+                success -- there's no dedicated "Done" row to mark active,
+                since it would be immediately redundant with the terminal
+                result card set_success() shows right after; "done" instead
+                marks every real stage complete).
         """
         self._show_progress_state()
+        if stage == "done":
+            for row in self._stage_rows.values():
+                row.set_status("complete")
+            return
+        if stage not in _STAGES:
+            logger.warning("set_stage() received unrecognized stage %r", stage)
         stage_index = _STAGES.index(stage) if stage in _STAGES else 0
         for i, key in enumerate(_STAGES):
             row = self._stage_rows[key]
             if i < stage_index:
                 row.set_status("complete")
             elif i == stage_index:
-                row.set_status("active" if stage != "done" else "complete")
+                row.set_status("active")
             else:
                 row.set_status("pending")
 
@@ -292,9 +306,24 @@ class PushPage(QWidget):
         self._dry_run_badge.setVisible(False)
         self._round_label.setVisible(False)
         self._backup_path_label.setVisible(False)
+        self._undo_button.setEnabled(True)
         self._clear_success_filters()
         for row in self._stage_rows.values():
             row.set_status("pending")
+
+    def mark_undo_complete(self, success: bool) -> None:
+        """Disable the Undo button after a successful undo.
+
+        Once undo has actually run, clicking it again would either be a
+        no-op or re-run the same restore against state it no longer
+        matches -- disabling it removes the ambiguity. Left enabled on
+        failure so the user can retry.
+
+        Args:
+            success: Whether the undo operation completed successfully.
+        """
+        if success:
+            self._undo_button.setEnabled(False)
 
     # ------------------------------------------------------------------
     # Private helpers
