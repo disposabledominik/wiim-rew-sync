@@ -1,4 +1,4 @@
-"""FiltersPage — filter loading wizard step.
+"""FiltersPage - filter loading wizard step.
 
 Presents an Import source toggle (File Import vs Pull from REW API). File
 Import shows a Stereo/L/R toggle and file browse buttons for loading REW EQ
@@ -7,7 +7,7 @@ sidebar "Pull from REW" entry, see src/gui/views/rew_pull_view.py) so REW
 measurement selection behaves identically in both places. Supports inline
 validation warnings and error display with retry.
 
-The page does NOT perform network I/O — it only emits signals. RewPullView
+The page does NOT perform network I/O - it only emits signals. RewPullView
 is driven from the outside (MainWindow) exactly like the sidebar's instance.
 
 Requirements referenced: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 9.3, 5.2, 5.7.
@@ -52,9 +52,9 @@ class FiltersPage(QWidget):
     Signals:
         file_import_requested: Path to a single REW .txt file (stereo mode).
         file_import_lr_requested: Paths to left and right channel files.
-        device_pull_requested: (unused — kept for interface compatibility).
+        device_pull_requested: (unused - kept for interface compatibility).
         rew_api_pull_requested: User switched the source toggle to "Pull from
-            REW API" — caller should connect to REW and list measurements,
+            REW API" - caller should connect to REW and list measurements,
             then drive rew_pull_view via its set_connecting/set_measurements/
             set_message methods.
         roomfit_profile_selected: User selected a RoomFit profile name.
@@ -80,7 +80,9 @@ class FiltersPage(QWidget):
         # during this session overrides it for the rest of the session.
         self._default_import_dir: str = ""
         self._session_import_dir: str = ""
-        self.rew_pull_view = RewPullView(show_title=False, show_header=False)
+        self.rew_pull_view = RewPullView(
+            show_title=False, show_header=False, embedded=True
+        )
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -91,7 +93,7 @@ class FiltersPage(QWidget):
         """Set the Settings-configured default folder for the REW import dialogs.
 
         Called on startup and whenever Settings changes. Does not override a
-        directory the user has already browsed to during this session — see
+        directory the user has already browsed to during this session - see
         `_browse_start_dir`.
 
         Args:
@@ -180,7 +182,7 @@ class FiltersPage(QWidget):
         self._error_section.setVisible(True)
 
     def clear_results(self) -> None:
-        """Reset to initial state — hide warnings/errors, revert to File Import."""
+        """Reset to initial state - hide warnings/errors, revert to File Import."""
         self._warnings_section.setVisible(False)
         self._error_section.setVisible(False)
         self._file_source_radio.setChecked(True)
@@ -198,7 +200,7 @@ class FiltersPage(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        """Build the page layout — toggle + browse buttons, no cards/dialogs."""
+        """Build the page layout - toggle + browse buttons, no cards/dialogs."""
         page_layout, content_wrapper = build_centered_content(self)
 
         # Page title
@@ -249,6 +251,18 @@ class FiltersPage(QWidget):
         file_layout = QVBoxLayout(self._file_import_section)
         file_layout.setContentsMargins(0, 0, 0, 0)
         file_layout.setSpacing(SPACING_LG)
+
+        # Added directly (no scroll wrapper, no stretch factor): unlike
+        # RewPullView's measurement list, this section's content (mode
+        # toggle + one or two short file rows) is never tall enough to need
+        # scrolling. A QScrollArea with setWidgetResizable(True) (smoke
+        # #234) and a plain outer stretch factor both cause the same bug --
+        # either one lets Qt grow this widget beyond its sizeHint, and since
+        # file_layout has no trailing addStretch() of its own, that extra
+        # height gets distributed as gaps between its child rows instead of
+        # collecting below them. Leaving this widget unstretched keeps it
+        # compact; the page's own trailing addStretch() (below) absorbs the
+        # leftover space and bottom-anchors the Continue button instead.
         page_layout.addWidget(self._file_import_section)
 
         # --- Channel mode toggle ---
@@ -398,7 +412,7 @@ class FiltersPage(QWidget):
         page_layout.addStretch()
         page_layout.addWidget(self._file_import_actions)
 
-        # --- RoomFit profile dropdown (hidden — used only from sidebar) ---
+        # --- RoomFit profile dropdown (hidden - used only from sidebar) ---
         self._roomfit_section = QWidget()
         rf_layout = QVBoxLayout(self._roomfit_section)
         rf_layout.setContentsMargins(0, 0, 0, 0)
@@ -506,6 +520,8 @@ class FiltersPage(QWidget):
         self._file_import_section.setVisible(not rew_api_checked)
         self._file_import_actions.setVisible(not rew_api_checked)
         self.rew_pull_view.setVisible(rew_api_checked)
+        self._warnings_section.setVisible(False)
+        self._error_section.setVisible(False)
         if rew_api_checked:
             self._subtitle.setText("Select a REW measurement to import filters from.")
             self.rew_pull_view.set_connecting()
@@ -517,7 +533,7 @@ class FiltersPage(QWidget):
 
     @Slot()
     def _on_rew_pull_back_requested(self) -> None:
-        """Handle Back from the embedded RewPullView — revert to File Import."""
+        """Handle Back from the embedded RewPullView - revert to File Import."""
         self._file_source_radio.setChecked(True)
 
     def _browse_start_dir(self) -> str:
@@ -528,49 +544,48 @@ class FiltersPage(QWidget):
         """
         return self._session_import_dir or self._default_import_dir
 
-    @Slot()
-    def _on_stereo_browse(self) -> None:
-        """Open file dialog for stereo file selection (does not trigger import)."""
+    def _browse_rew_file(self, dialog_title: str) -> str | None:
+        """Open a REW-file picker dialog and record the chosen directory.
+
+        Returns:
+            The selected path, or None if the dialog was cancelled.
+        """
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select REW Filter File",
+            dialog_title,
             self._browse_start_dir(),
             "REW Text Files (*.txt);;All Files (*)",
         )
+        if not path:
+            return None
+        self._session_import_dir = str(Path(path).parent)
+        return path
+
+    @Slot()
+    def _on_stereo_browse(self) -> None:
+        """Open file dialog for stereo file selection (does not trigger import)."""
+        path = self._browse_rew_file("Select REW Filter File")
         if path:
             self._stereo_path = path
             self._stereo_file_label.setText(path.rsplit("/", 1)[-1])
-            self._session_import_dir = str(Path(path).parent)
             self._next_btn.setEnabled(True)
 
     @Slot()
     def _on_left_browse(self) -> None:
         """Open file dialog for left channel file."""
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Left Channel REW File",
-            self._browse_start_dir(),
-            "REW Text Files (*.txt);;All Files (*)",
-        )
+        path = self._browse_rew_file("Select Left Channel REW File")
         if path:
             self._left_path = path
             self._left_file_label.setText(path.rsplit("/", 1)[-1])
-            self._session_import_dir = str(Path(path).parent)
             self._update_lr_import_button()
 
     @Slot()
     def _on_right_browse(self) -> None:
         """Open file dialog for right channel file."""
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Right Channel REW File",
-            self._browse_start_dir(),
-            "REW Text Files (*.txt);;All Files (*)",
-        )
+        path = self._browse_rew_file("Select Right Channel REW File")
         if path:
             self._right_path = path
             self._right_file_label.setText(path.rsplit("/", 1)[-1])
-            self._session_import_dir = str(Path(path).parent)
             self._update_lr_import_button()
 
     @Slot()
@@ -594,12 +609,12 @@ class FiltersPage(QWidget):
 
     @Slot()
     def _on_continue_with_warnings(self) -> None:
-        """User acknowledged warnings — emit filters_accepted."""
+        """User acknowledged warnings - emit filters_accepted."""
         self.filters_accepted.emit()
 
     @Slot()
     def _on_retry(self) -> None:
-        """Retry after error — reset page to initial state."""
+        """Retry after error - reset page to initial state."""
         self._error_section.setVisible(False)
         self._warnings_section.setVisible(False)
 

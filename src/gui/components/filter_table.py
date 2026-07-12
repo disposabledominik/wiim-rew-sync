@@ -1,4 +1,4 @@
-"""FilterTable — read-only filter display with stretch columns.
+"""FilterTable - read-only filter display with stretch columns.
 
 Displays parametric EQ filter bands in a table that expands to fill
 available width. Supports stereo display, L/R tabbed display, and
@@ -40,6 +40,9 @@ _NA_LABEL = "N/A"
 # budget or the tab content clips by this many px with the vertical
 # scrollbar forced off.
 _TAB_PANE_CHROME = 18
+# Safety margin absorbing QSS border/padding on the table frame that
+# frameWidth() doesn't fully account for -- see _natural_table_height().
+_HEIGHT_ESTIMATE_MARGIN = 4
 
 
 class FilterTable(QWidget):
@@ -111,7 +114,7 @@ class FilterTable(QWidget):
                 When omitted, every entry in `filters` gets a sequential
                 band number, matching the previous (pre-B3) behavior.
             notes_map: Optional mapping of band index (0-based) to list of
-                conversion-note strings — values REW didn't specify and had to
+                conversion-note strings - values REW didn't specify and had to
                 be substituted (e.g. the fixed Q applied to a bare LP/HP).
                 Shown as a distinct (non-warning) indicator with a tooltip.
         """
@@ -189,6 +192,10 @@ class FilterTable(QWidget):
     def clear(self) -> None:
         """Remove all data and widgets."""
         self._clear_widgets()
+        # Qt clamps negative setMaximumHeight() args to 0 (not "unbounded"),
+        # so the reset value must be the real QWIDGETSIZE_MAX -- not
+        # importable from PySide6 (it's a C++-only macro), so hardcoded here.
+        self.setMaximumHeight(16777215)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -205,11 +212,19 @@ class FilterTable(QWidget):
         `verticalHeader().length()` is the sum of all row heights (not just
         the visible ones), so this is accurate even before the table has
         been shown/laid out on screen.
+
+        Adds a small fudge margin: QSS-driven border/padding on the table
+        frame isn't fully reflected in `frameWidth()`, so without it the
+        estimate can land a couple px short of the real content height and
+        trigger a needless scrollbar for content that does fit (#220). A
+        genuine "doesn't fit" case (the caller constrains the table below
+        this) still correctly shows a scrollbar -- see the dynamic
+        `ScrollBarAsNeeded` policy in `_create_table()`.
         """
         header_height = table.horizontalHeader().height()
         rows_height = table.verticalHeader().length()
         frame = 2 * table.frameWidth()
-        return header_height + rows_height + frame
+        return header_height + rows_height + frame + _HEIGHT_ESTIMATE_MARGIN
 
     def _clear_widgets(self) -> None:
         """Remove existing table or tab widget from the container."""
@@ -238,16 +253,17 @@ class FilterTable(QWidget):
         for col in range(len(_HEADERS)):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
 
-        # Disable horizontal scrollbar — all columns visible
+        # Disable horizontal scrollbar - all columns always stretch to fit.
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # Disable vertical scrollbar too -- the widget's height is always capped
-        # to _natural_table_height() right after populating, so every row is
-        # already visible; ScrollBarAsNeeded could still fire a needless
-        # scrollbar if that estimate is ever a couple px short of the real
-        # content height (QSS border/padding isn't fully reflected in
-        # frameWidth()). Safe to force off here because the height is fully
-        # computed/controlled by this class, not sized by the user.
-        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Vertical stays dynamic (Qt's default ScrollBarAsNeeded): the
+        # widget's height is capped to _natural_table_height() right after
+        # populating so it *usually* fits every row exactly, but the caller
+        # (ReviewPage) can also constrain the table below that -- e.g. a
+        # short window -- in which case a scrollbar is the correct outcome,
+        # not a bug to paper over. Forcing this off unconditionally (a past
+        # attempt at ~smoke #204) hid genuine "content doesn't fit" cases
+        # behind no scrollbar at all instead of fixing the height estimate.
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         return table
 

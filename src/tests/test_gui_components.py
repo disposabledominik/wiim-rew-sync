@@ -711,10 +711,14 @@ class TestFilterTable:
         table.clear()
         assert table._table is None
 
-    def test_vertical_scrollbar_always_off(self, qtbot) -> None:
-        """The table's height is always capped to its exact natural content
-        height right after populating, so a vertical scrollbar should never
-        be needed -- it must stay disabled regardless of row count."""
+    def test_vertical_scrollbar_policy_is_dynamic(self, qtbot) -> None:
+        """The vertical scrollbar policy is ScrollBarAsNeeded (Qt decides
+        based on actual content vs. viewport height), not force-disabled --
+        so a scrollbar correctly appears if the table is ever constrained
+        below the height its rows need, instead of silently hiding content
+        with no way to reach it (#220; a past attempt at #204 force-disabled
+        it, papering over an inaccurate height estimate instead of leaving
+        the real "does it fit" decision to Qt)."""
         table = FilterTable()
         qtbot.addWidget(table)
 
@@ -722,8 +726,51 @@ class TestFilterTable:
         assert table._table is not None
         assert (
             table._table.verticalScrollBarPolicy()
-            == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            == Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
+
+    def test_no_scrollbar_when_all_rows_visible(self, qtbot) -> None:
+        """When the table's height comfortably fits every row (the normal
+        case, since set_filters() caps maximumHeight to the natural content
+        height), no vertical scrollbar appears.
+
+        Explicitly resized to its own maximumHeight to simulate the room a
+        real stretch-factor-1 parent layout (ReviewPage) gives it -- a bare
+        top-level FilterTable with no such parent sizes to sizeHint()
+        instead, which is smaller than its natural-content cap and would
+        make this assertion meaningless."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+        table.show()
+
+        table.set_filters(self._make_filters())
+        table.resize(table.width(), table.maximumHeight())
+        qtbot.wait(20)
+
+        assert table._table is not None
+        assert not table._table.verticalScrollBar().isVisible()
+
+    def test_scrollbar_appears_when_height_constrained_below_content(
+        self, qtbot
+    ) -> None:
+        """When something external constrains the table below the height its
+        rows need (e.g. a short window), a vertical scrollbar appears so
+        every row stays reachable, instead of being silently clipped."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+        table.show()
+
+        table.set_filters(self._make_filters())
+        natural_height = table.maximumHeight()
+        # Force the table shorter than its own natural content height --
+        # simulates ReviewPage's caller-side constraint at a reduced window
+        # size, without needing a full ReviewPage/MainWindow to reproduce it.
+        table.setMaximumHeight(natural_height // 2)
+        table.resize(table.width(), natural_height // 2)
+        qtbot.wait(20)
+
+        assert table._table is not None
+        assert table._table.verticalScrollBar().isVisible()
 
     def test_lr_filters_max_height_accounts_for_tab_pane_chrome(self, qtbot) -> None:
         """set_lr_filters()'s height budget must include the QTabWidget::pane's

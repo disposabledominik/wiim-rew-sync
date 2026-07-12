@@ -106,6 +106,7 @@ from src.repository.backup_manager import (
 )
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
+from src.utils.device_name import sanitize_device_name
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
@@ -4076,7 +4077,7 @@ class MainWindow(QMainWindow):
     def _on_profile_duplicate_requested(self, name: str) -> None:
         """Handle MyPresetsView duplicate action."""
         try:
-            new_name = f"{name} (copy)"
+            new_name = sanitize_device_name(f"{name} (copy)").strip()
             self._profile_repository.duplicate(name, new_name)
             self._refresh_presets_view()
             self._status_banner.show_success(f"Duplicated '{name}'")

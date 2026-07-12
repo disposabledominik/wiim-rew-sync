@@ -41,10 +41,6 @@ from src.gui.components.page_layout import (
 )
 from src.gui.constants import SPACING_LG, SPACING_MD, SPACING_SM
 
-#: Tall enough to show ~8-10 measurement rows before scrolling kicks in,
-#: since a real REW library can hold 60+ measurements.
-_LIST_MIN_HEIGHT = 220
-
 
 class RewPullView(QWidget):
     """Embedded screen for selecting REW measurement(s) to import filters from.
@@ -70,6 +66,7 @@ class RewPullView(QWidget):
         parent: QWidget | None = None,
         show_title: bool = True,
         show_header: bool = True,
+        embedded: bool = False,
     ) -> None:
         """Initialize the view.
 
@@ -82,10 +79,19 @@ class RewPullView(QWidget):
                 instruction line. Pass False when embedding inside a page
                 that already shows its own instruction text for this step
                 (e.g. FiltersPage's subtitle), so the two don't duplicate.
+            embedded: Whether this view is embedded inside another page's
+                own centered/margined column (e.g. FiltersPage) rather than
+                being a standalone top-level sidebar view. When True, skips
+                this view's own outer margins and width-capping/centering
+                (via build_centered_content) instead of stacking a second
+                set on top of the host page's -- otherwise the host page
+                sees extra, unaccounted-for blank space around this view's
+                content, and its bottom-anchored action row ends up higher
+                than the host page's own (smoke #220).
         """
         super().__init__(parent)
         self.setObjectName("RewPullView")
-        self._setup_ui()
+        self._setup_ui(embedded)
         self._title.setVisible(show_title)
         self._header.setVisible(show_header)
         self._showing_picker = False
@@ -147,18 +153,61 @@ class RewPullView(QWidget):
                 item.setData(Qt.ItemDataRole.UserRole, measurement)
                 list_widget.addItem(item)
 
+        # Give each list a small floor height (a couple of rows) rather than
+        # its full natural content height. This keeps the *minimum* layout
+        # size small so the header/toggle/action-bar -- which sit outside
+        # the list and use a fixed/preferred size policy -- are never
+        # squeezed off-screen: when the window shrinks, Qt compresses the
+        # stretch=1 list first, down to this floor, and the list's own
+        # native scrollbar (see _build_list) takes over for whatever no
+        # longer fits, whether that's from many rows or a short window
+        # (smoke #232). The L/R lists share the same floor so they stay
+        # visually aligned.
+        floor_height = self._list_floor_height(self._list_widget)
+        self._list_widget.setMinimumHeight(floor_height)
+        lr_floor = max(
+            self._list_floor_height(self._list_left),
+            self._list_floor_height(self._list_right),
+        )
+        self._list_left.setMinimumHeight(lr_floor)
+        self._list_right.setMinimumHeight(lr_floor)
+
         self._pages.setCurrentIndex(0)
         self._update_continue_enabled()
         self._placeholder_widget.setVisible(False)
         self._content_widget.setVisible(True)
 
+    _MIN_VISIBLE_ROWS = 2
+
+    @classmethod
+    def _list_floor_height(cls, list_widget: QListWidget) -> int:
+        """Minimum height showing a couple of rows, below which the list's
+        own scrollbar (rather than further compression) takes over."""
+        if list_widget.count() == 0:
+            return 0
+        row_height = list_widget.sizeHintForRow(0)
+        rows = min(list_widget.count(), cls._MIN_VISIBLE_ROWS)
+        return rows * row_height + 2 * list_widget.frameWidth()
+
     # ------------------------------------------------------------------
     # UI Setup
     # ------------------------------------------------------------------
 
-    def _setup_ui(self) -> None:
-        """Build the view layout: placeholder state + toggle/picker state."""
-        container_layout, container = build_centered_content(self)
+    def _setup_ui(self, embedded: bool) -> None:
+        """Build the view layout: placeholder state + toggle/picker state.
+
+        Args:
+            embedded: Skip this view's own outer margins/centering when the
+                host page already provides its own (see __init__'s
+                docstring).
+        """
+        if embedded:
+            container_layout = QVBoxLayout(self)
+            container_layout.setContentsMargins(0, 0, 0, 0)
+            container_layout.setSpacing(SPACING_LG)
+            container: QWidget = self
+        else:
+            container_layout, container = build_centered_content(self)
 
         self._title = make_page_title("Pull from REW", container, object_name="view_title")
         # Pin to its sizeHint so it never absorbs leftover vertical space —
@@ -251,11 +300,21 @@ class RewPullView(QWidget):
         lr_layout.addLayout(self._labeled_column("Right Channel", self._list_right))
         self._pages.addWidget(lr_page)
 
+        # `_pages` is added directly (not wrapped in an outer QScrollArea):
+        # each list keeps its own native scrollbar (see _build_list), which
+        # scrolls only that list's rows -- not its "Left/Right Channel"
+        # label, and not the other list in L/R mode. Each list also gets a
+        # small floor minimumHeight (see _list_floor_height, called from
+        # set_measurements) so the header/toggle/action-bar below/above it
+        # always have a fixed, non-shrinkable size in the layout: Qt
+        # compresses the stretch=1 `_pages` item first as the window
+        # shrinks, down to that floor, before it would ever touch the fixed
+        # items (smoke #232).
         layout.addWidget(self._pages, 1)
 
         self._stereo_radio.toggled.connect(self._on_mode_toggled)
 
-        # --- Action bar ---
+        # --- Action bar (always visible -- lives outside _pages_scroll) ---
         actions_bar = QHBoxLayout()
         actions_bar.setSpacing(SPACING_SM)
 
@@ -278,12 +337,21 @@ class RewPullView(QWidget):
         return widget
 
     def _build_list(self, object_name: str) -> QListWidget:
-        """Build an empty single-selection measurement list widget."""
+        """Build an empty single-selection measurement list widget.
+
+        Keeps its own native vertical scrollbar (ScrollBarAsNeeded), so it
+        scrolls independently of any sibling list and never scrolls its own
+        heading label (see _labeled_column). A small floor minimumHeight is
+        applied once populated (see _list_floor_height(), called from
+        set_measurements()) so the list -- not the header/toggle/action-bar
+        around it -- is what shrinks (and gains a scrollbar) as the window
+        shrinks (smoke #232).
+        """
         list_widget = QListWidget()
         list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         list_widget.setObjectName(object_name)
         list_widget.setProperty("class", "selectableList")
-        list_widget.setMinimumHeight(_LIST_MIN_HEIGHT)
+        list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         list_widget.itemSelectionChanged.connect(self._update_continue_enabled)
         return list_widget
 

@@ -70,10 +70,22 @@ class WarningConfirmDialog(QDialog):
         no_button = button_box.button(QDialogButtonBox.StandardButton.No)
         if no_button is not None:
             no_button.setDefault(True)
-            no_button.setFocus()
+            self._no_button = no_button
+        else:
+            self._no_button = None
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+    def showEvent(self, event: object) -> None:
+        """Focus the "No" button once the dialog is actually visible.
+
+        `setFocus()` on a not-yet-shown widget is unreliable in Qt -- the
+        focus ring is only guaranteed once the dialog's window is active.
+        """
+        super().showEvent(event)  # type: ignore[arg-type]
+        if self._no_button is not None:
+            self._no_button.setFocus()
 
     @staticmethod
     def confirm(

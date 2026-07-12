@@ -501,11 +501,14 @@ class TestOnboardingOverlay:
         assert overlay.objectName() == "onboarding_overlay"
 
     def test_capability_cards_not_clipped(self, qtbot) -> None:
-        """Each capability card's height must fit its own wrapped title +
-        description text -- a Fixed-width card whose height comes from
-        QWidget.sizeHint() (which ignores the fixed width when computing
-        wrapped-label height) previously locked in a too-short height and
-        clipped the longest description ("Push Safely", the middle card)."""
+        """Each capability card's title/description text must not be
+        clipped -- the card sizes naturally to its content (no forced fixed
+        height; a past `setFixedHeight(heightForWidth(...))` attempt locked
+        in a too-short height and clipped the longest description, "Push
+        Safely", the middle card). Checked directly on the wrapped labels
+        (their assigned height must cover their own heightForWidth at their
+        actual rendered width) rather than asserting a specific card-height
+        formula, since the card is no longer pinned to one."""
         from src.gui.dialogs.onboarding_overlay import _CAP_CARD_WIDTH
 
         overlay = OnboardingOverlay()
@@ -519,10 +522,12 @@ class TestOnboardingOverlay:
         assert len(cap_cards) == 3
         for card in cap_cards:
             assert card.width() == _CAP_CARD_WIDTH
-            # heightForWidth() is the authoritative wrap calculation Qt
-            # itself uses -- the card's actual fixed height must match it,
-            # not some earlier (unwrapped, too-short) estimate.
-            assert card.height() == card.heightForWidth(_CAP_CARD_WIDTH)
+            for class_name in ("onboardingCapTitle", "onboardingCapDesc"):
+                label = next(
+                    child for child in card.findChildren(QLabel)
+                    if child.property("class") == class_name
+                )
+                assert label.height() >= label.heightForWidth(label.width())
 
     def test_card_stays_fixed_size_regardless_of_parent_size(self, qtbot) -> None:
         """The central card's content never changes, so it must stay pinned

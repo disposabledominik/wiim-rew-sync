@@ -25,6 +25,11 @@ from src.gui.constants import (
     SPACING_MD,
     SPACING_SM,
 )
+from src.utils.device_name import (
+    DEVICE_NAME_RULE_TEXT,
+    has_invalid_device_name_chars,
+    sanitize_device_name,
+)
 
 _EXISTING_WARNING = (
     "A profile named '{name}' already exists. Saving will overwrite its "
@@ -34,6 +39,10 @@ _ACTIVE_WARNING = (
     "This is your active profile. Saving will overwrite its stored filters "
     "with the ones you've selected -- since it's already active, this also "
     "updates what's currently playing."
+)
+_CHAR_WARNING = (
+    f"Only {DEVICE_NAME_RULE_TEXT} are allowed in a device profile name. "
+    "Other characters will be removed when you save."
 )
 
 
@@ -80,6 +89,17 @@ class NameProfilePage(QWidget):
         self._name_input.setPlaceholderText("Profile name (max 32 characters)")
         self._name_input.textChanged.connect(self._on_text_changed)
         layout.addWidget(self._name_input)
+
+        # Character-set warning (hidden unless the typed name currently
+        # contains a character the device naming API doesn't accept -- see
+        # src/utils/device_name.py). Disallowed characters are stripped
+        # automatically on save, this is advance notice of that, not a hard
+        # block on typing.
+        self._char_warning_label = QLabel(_CHAR_WARNING)
+        self._char_warning_label.setWordWrap(True)
+        self._char_warning_label.setProperty("class", "warning")
+        self._char_warning_label.setVisible(False)
+        layout.addWidget(self._char_warning_label)
 
         # Warning label (hidden by default; text swaps between the active-
         # profile and existing-non-active-profile cases, see classify())
@@ -188,22 +208,34 @@ class NameProfilePage(QWidget):
             self._name_input.setText(name)
 
     def _on_text_changed(self, text: str) -> None:
-        """Handle text input changes: enable/disable Save and show/hide warning."""
+        """Handle text input changes: enable/disable Save and show/hide warnings."""
         stripped = text.strip()
-        self._save_button.setEnabled(bool(stripped))
+        self._char_warning_label.setVisible(has_invalid_device_name_chars(stripped))
 
-        kind = self.classify(stripped)
+        # Existing/active-profile warning and the Save-enabled state both key
+        # off the name as it will actually be saved (post-sanitization), not
+        # the raw typed text -- otherwise a name that only differs from an
+        # existing profile by disallowed characters would misleadingly show
+        # no overwrite warning.
+        sanitized = sanitize_device_name(stripped).strip()
+        self._save_button.setEnabled(bool(sanitized))
+
+        kind = self.classify(sanitized)
         if kind == "active":
             self._warning_label.setText(_ACTIVE_WARNING)
             self._warning_label.setVisible(True)
         elif kind == "existing":
-            self._warning_label.setText(_EXISTING_WARNING.format(name=stripped))
+            self._warning_label.setText(_EXISTING_WARNING.format(name=sanitized))
             self._warning_label.setVisible(True)
         else:
             self._warning_label.setVisible(False)
 
     def _on_save_clicked(self) -> None:
-        """Emit name_confirmed with the trimmed profile name."""
-        name = self._name_input.text().strip()
+        """Emit name_confirmed with the sanitized, trimmed profile name.
+
+        Strips any character the device naming API doesn't accept (see
+        src/utils/device_name.py) so a push never fails on a rejected name.
+        """
+        name = sanitize_device_name(self._name_input.text().strip()).strip()
         if name:
             self.name_confirmed.emit(name)

@@ -36,6 +36,7 @@ from src.gui.constants import (
 )
 from src.models.channel_mode import ChannelMode
 from src.models.profile import Profile
+from src.utils.device_name import sanitize_device_name
 
 # Threshold: show search field when preset count exceeds this value.
 _SEARCH_THRESHOLD = 10
@@ -161,7 +162,36 @@ class MyPresetsView(QWidget):
         self._search_field.textChanged.connect(self._on_search_text_changed)
         content_layout.addWidget(self._search_field)
 
-        # Action toolbar (visible when an item is selected)
+        # Preset list (stretch factor 1 so it claims the page's spare
+        # vertical space, matching every other wizard/view's convention of
+        # letting its main content grow while the action row stays pinned
+        # below it at page bottom -- previously this toolbar sat above the
+        # list, the only view in the app whose actions weren't
+        # bottom-anchored, smoke #227).
+        self._list_widget = QListWidget(content)
+        self._list_widget.setObjectName("MyPresetsList")
+        self._list_widget.setProperty("class", "selectableList")
+        self._list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._list_widget.customContextMenuRequested.connect(self._show_context_menu)
+        self._list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self._list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self._list_widget.setSpacing(2)
+        self._list_widget.currentItemChanged.connect(self._on_selection_changed)
+        content_layout.addWidget(self._list_widget, 1)
+
+        # Empty state label
+        self._empty_label = QLabel("No saved presets yet.", content)
+        self._empty_label.setObjectName("MyPresetsEmpty")
+        self._empty_label.setProperty("class", "secondary")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setVisible(False)
+        content_layout.addWidget(self._empty_label)
+
+        # Action toolbar (visible when an item is selected), bottom-anchored
+        # below the list. Order: Load (primary recall action) first, then
+        # Copy to Another Device right after it -- grouping the two
+        # "send this preset somewhere" actions together -- then the local
+        # Rename/Duplicate edits, with the destructive Delete last.
         self._toolbar = QWidget(content)
         toolbar_layout = QHBoxLayout(self._toolbar)
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
@@ -177,6 +207,15 @@ class MyPresetsView(QWidget):
         self._load_btn.clicked.connect(self._on_load_clicked)
         toolbar_layout.addWidget(self._load_btn)
 
+        self._copy_btn = make_action_button(
+            "Copy to Another Device",
+            object_name="btn_copy_device_local",
+            style_class="secondary",
+            parent=self._toolbar,
+        )
+        self._copy_btn.clicked.connect(self._on_copy_clicked)
+        toolbar_layout.addWidget(self._copy_btn)
+
         self._rename_btn = make_action_button(
             "Rename", object_name="btn_rename_preset", style_class="secondary",
             parent=self._toolbar,
@@ -190,15 +229,6 @@ class MyPresetsView(QWidget):
         )
         self._duplicate_btn.clicked.connect(self._on_duplicate_clicked)
         toolbar_layout.addWidget(self._duplicate_btn)
-
-        self._copy_btn = make_action_button(
-            "Copy to Another Device",
-            object_name="btn_copy_device_local",
-            style_class="secondary",
-            parent=self._toolbar,
-        )
-        self._copy_btn.clicked.connect(self._on_copy_clicked)
-        toolbar_layout.addWidget(self._copy_btn)
 
         self._delete_btn = make_action_button(
             "Delete", object_name="btn_delete_preset_local", style_class="danger",
@@ -215,26 +245,6 @@ class MyPresetsView(QWidget):
         self._copy_btn.setEnabled(False)
         self._delete_btn.setEnabled(False)
         content_layout.addWidget(self._toolbar)
-
-        # Preset list
-        self._list_widget = QListWidget(content)
-        self._list_widget.setObjectName("MyPresetsList")
-        self._list_widget.setProperty("class", "selectableList")
-        self._list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._list_widget.customContextMenuRequested.connect(self._show_context_menu)
-        self._list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self._list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self._list_widget.setSpacing(2)
-        self._list_widget.currentItemChanged.connect(self._on_selection_changed)
-        content_layout.addWidget(self._list_widget)
-
-        # Empty state label
-        self._empty_label = QLabel("No saved presets yet.", content)
-        self._empty_label.setObjectName("MyPresetsEmpty")
-        self._empty_label.setProperty("class", "secondary")
-        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_label.setVisible(False)
-        content_layout.addWidget(self._empty_label)
 
         # Inline rename editor (floating, hidden by default)
         self._rename_editor = QLineEdit(self._list_widget.viewport())
@@ -329,7 +339,7 @@ class MyPresetsView(QWidget):
             return
 
         profile: Profile = self._rename_item.data(Qt.ItemDataRole.UserRole)
-        new_name = self._rename_editor.text().strip()
+        new_name = sanitize_device_name(self._rename_editor.text()).strip()
         old_name = profile.name
 
         self._rename_editor.setVisible(False)
@@ -370,6 +380,19 @@ class MyPresetsView(QWidget):
         if item is None:
             return
 
+        menu = self._build_context_menu(item)
+        menu.exec(self._list_widget.viewport().mapToGlobal(position))
+
+    def _build_context_menu(self, item: QListWidgetItem) -> QMenu:
+        """Build (without showing) the context menu for *item*.
+
+        Split from _show_context_menu() so the menu's action set/order can
+        be tested directly without exercising QMenu.exec()'s real modal
+        popup (which isn't safely mockable in headless test environments).
+
+        Action order matches the toolbar's: Load, Copy to Another Device,
+        Rename, Duplicate, Delete.
+        """
         profile: Profile = item.data(Qt.ItemDataRole.UserRole)
 
         menu = QMenu(self)
@@ -378,6 +401,12 @@ class MyPresetsView(QWidget):
         load_action = QAction("Load", menu)
         load_action.triggered.connect(lambda: self.load_requested.emit(profile))
         menu.addAction(load_action)
+
+        copy_action = QAction("Copy to Another Device", menu)
+        copy_action.triggered.connect(
+            lambda: self.copy_to_device_requested.emit(profile)
+        )
+        menu.addAction(copy_action)
 
         menu.addSeparator()
 
@@ -391,19 +420,13 @@ class MyPresetsView(QWidget):
         )
         menu.addAction(duplicate_action)
 
-        copy_action = QAction("Copy to Another Device", menu)
-        copy_action.triggered.connect(
-            lambda: self.copy_to_device_requested.emit(profile)
-        )
-        menu.addAction(copy_action)
-
         menu.addSeparator()
 
         delete_action = QAction("Delete", menu)
         delete_action.triggered.connect(lambda: self.delete_requested.emit(profile.name))
         menu.addAction(delete_action)
 
-        menu.exec(self._list_widget.viewport().mapToGlobal(position))
+        return menu
 
     # ------------------------------------------------------------------
     # Toolbar button handlers

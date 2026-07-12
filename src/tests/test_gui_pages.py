@@ -11,6 +11,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel
 
+from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.constants import FILTER_TABLE_MAX_WIDTH
 from src.gui.pages.connect_page import ConnectPage
 from src.gui.pages.eq_type_page import EQTypePage
@@ -449,6 +450,110 @@ class TestFiltersPage:
         page.resize(1000, 1200)
 
         assert page._file_import_actions.y() > y_at_700
+
+    def test_lr_continue_button_reachable_at_minimal_window_height(self, qtbot) -> None:
+        """In File Import's L/R mode (the tallest File Import sub-mode --
+        two file rows instead of one), the Continue button stays visible
+        and within the page's bounds even at a minimal window height,
+        instead of being pushed off below the visible window with no way
+        to reach it (smoke #232). `_file_import_section` shrinks/scrolls
+        first (it has the layout's stretch factor); the action row, header,
+        and toggles never do.
+
+        Replicates MainWindow's real compression mechanism (a parent with
+        an explicit setMinimumSize() smaller than the page's natural
+        content) rather than just resizing a bare top-level FiltersPage --
+        an isolated top-level widget's own layout silently overrides an
+        undersized resize() back to its natural minimum, so it can't
+        reproduce the clipping this guards against (same technique as
+        test_labels_dont_elide_at_min_window_width_with_sidebar,
+        test_gui_components.py)."""
+        from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+        window = QWidget()
+        qtbot.addWidget(window)
+        window.setMinimumSize(300, 300)
+        layout = QVBoxLayout(window)
+        layout.setContentsMargins(0, 0, 0, 0)
+        page = FiltersPage()
+        layout.addWidget(page)
+        page._lr_radio.setChecked(True)
+
+        window.resize(300, 300)
+        window.show()
+        qtbot.wait(20)
+
+        assert page._file_import_actions.isVisible()
+        continue_btn_bottom = page._import_lr_btn.mapTo(
+            window, page._import_lr_btn.rect().bottomLeft()
+        ).y()
+        assert continue_btn_bottom <= window.height()
+
+    def test_continue_button_same_bottom_position_in_both_modes(self, qtbot) -> None:
+        """The visible primary button's bottom edge sits at the same page
+        y-position in File Import mode (_next_btn) and Pull from REW API
+        mode (rew_pull_view's own _continue_btn) -- previously RewPullView
+        carried its own extra outer margins when embedded, competing with
+        FiltersPage's own bottom-anchoring stretch and leaving its Continue
+        row measurably higher than File Import's (smoke #220)."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.resize(1000, 900)
+        page.show()
+        qtbot.wait(20)
+
+        file_mode_bottom = page._next_btn.mapTo(
+            page, page._next_btn.rect().bottomLeft()
+        ).y()
+
+        page._rew_api_source_radio.setChecked(True)
+        page.rew_pull_view.set_measurements(
+            [MeasurementSummary(uuid="u0", name="Speaker", index=0)]
+        )
+        qtbot.wait(20)
+
+        api_mode_bottom = page.rew_pull_view._continue_btn.mapTo(
+            page, page.rew_pull_view._continue_btn.rect().bottomLeft()
+        ).y()
+
+        assert api_mode_bottom == file_mode_bottom
+
+    def test_no_gap_between_subtitle_and_rew_pull_toggle(self, qtbot) -> None:
+        """The vertical gap between FiltersPage's own instruction line and
+        the embedded RewPullView's Stereo/L-R toggle (its first visible
+        child, since header/title are suppressed) is a single layout
+        spacing gap, not doubled by RewPullView's own outer margins from
+        build_centered_content -- previously RewPullView applied its own
+        margins on top of FiltersPage's, leaving unused empty space between
+        the two (smoke #220)."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.resize(1000, 900)
+        page.show()
+        qtbot.wait(20)
+
+        page._rew_api_source_radio.setChecked(True)
+        page.rew_pull_view.set_measurements(
+            [MeasurementSummary(uuid="u0", name="Speaker", index=0)]
+        )
+        qtbot.wait(20)
+
+        subtitle_bottom = page._subtitle.mapTo(
+            page, page._subtitle.rect().bottomLeft()
+        ).y()
+        toggle_top = page.rew_pull_view._stereo_radio.mapTo(
+            page, page.rew_pull_view._stereo_radio.rect().topLeft()
+        ).y()
+
+        # Same single-spacing gap the file-import section gets below the
+        # subtitle (mode_section is its first visible child).
+        expected_gap = (
+            page._file_import_section.mapTo(
+                page, page._file_import_section.rect().topLeft()
+            ).y()
+            - subtitle_bottom
+        )
+        assert toggle_top - subtitle_bottom == expected_gap
 
     def test_set_rew_api_available_false_disables_and_falls_back(self, qtbot) -> None:
         """set_rew_api_available(False) disables the radio and reverts selection."""
@@ -1062,3 +1167,55 @@ class TestNameProfilePage:
         assert page._name_input.text() == "Night"
         assert page._warning_label.isVisible()
         assert "currently playing" in page._warning_label.text()
+
+    def test_char_warning_shown_for_disallowed_characters(self, qtbot) -> None:
+        """Typing a character outside the device-accepted set (letters,
+        numbers, space, - and _) shows the character warning; a name using
+        only allowed characters does not."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page._name_input.setText("Living Room!")
+        assert page._char_warning_label.isVisible()
+
+        page._name_input.setText("Living-Room_2")
+        assert not page._char_warning_label.isVisible()
+
+    def test_save_sanitizes_disallowed_characters(self, qtbot) -> None:
+        """Saving strips characters the device naming API doesn't accept,
+        so a push never fails on a rejected name (user-reported: the WiiM
+        Home app disallows anything but letters/numbers/underscore, though
+        dash and space are also confirmed to work -- see
+        src/utils/device_name.py)."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+
+        page._name_input.setText("Living Room! (Main)")
+
+        with qtbot.waitSignal(page.name_confirmed, timeout=1000) as blocker:
+            qtbot.mouseClick(page._save_button, Qt.MouseButton.LeftButton)
+
+        assert blocker.args == ["Living Room Main"]
+
+    def test_save_disabled_when_name_is_only_disallowed_characters(self, qtbot) -> None:
+        """Save stays disabled if sanitizing the typed name leaves nothing --
+        e.g. a name made entirely of disallowed characters."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+
+        page._name_input.setText("!!!")
+
+        assert not page._save_button.isEnabled()
+
+    def test_char_warning_does_not_block_typing_or_save(self, qtbot) -> None:
+        """The character warning is advisory, not a hard block -- Save stays
+        enabled and clickable as long as sanitizing leaves a non-empty name."""
+        page = NameProfilePage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page._name_input.setText("Living Room!")
+
+        assert page._char_warning_label.isVisible()
+        assert page._save_button.isEnabled()

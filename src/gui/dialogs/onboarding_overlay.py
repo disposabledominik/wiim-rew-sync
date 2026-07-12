@@ -23,9 +23,6 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.constants import (
-    FONT_SIZE_BODY,
-    FONT_SIZE_TITLE,
-    SPACING_LG,
     SPACING_MD,
     SPACING_SM,
     SPACING_XL,
@@ -107,14 +104,18 @@ class OnboardingOverlay(QWidget):
     def showEvent(self, event: object) -> None:
         """Ensure the overlay fills the parent's geometry when shown."""
         super().showEvent(event)  # type: ignore[arg-type]
-        if self.parent() is not None:
-            self.setGeometry(self.parent().rect())  # type: ignore[union-attr]
+        self._sync_geometry_to_parent()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         """Track the parent's geometry when it resizes (e.g. maximize)."""
         if watched is self.parent() and event.type() == QEvent.Type.Resize:
-            self.setGeometry(self.parent().rect())  # type: ignore[union-attr]
+            self._sync_geometry_to_parent()
         return super().eventFilter(watched, event)
+
+    def _sync_geometry_to_parent(self) -> None:
+        """Resize this overlay to fill its parent's current rect."""
+        if self.parent() is not None:
+            self.setGeometry(self.parent().rect())  # type: ignore[union-attr]
 
     def _setup_ui(self) -> None:
         """Build the overlay layout."""
@@ -151,14 +152,14 @@ class OnboardingOverlay(QWidget):
         card.setGraphicsEffect(shadow)
 
         card_layout = QVBoxLayout(card)
-        card_layout.setSpacing(SPACING_LG)
+        card_layout.setSpacing(SPACING_MD)
         card_layout.setContentsMargins(SPACING_XL, SPACING_XL, SPACING_XL, SPACING_XL)
 
         # --- Title ---
         title = QLabel("Welcome to WiiM PEQ Sync")
         title.setObjectName("onboarding_title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setMinimumHeight(FONT_SIZE_TITLE + SPACING_LG)
+        title.setMinimumHeight(0)
         card_layout.addWidget(title)
 
         # --- Subtitle ---
@@ -168,7 +169,7 @@ class OnboardingOverlay(QWidget):
         subtitle.setObjectName("onboarding_subtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
-        subtitle.setMinimumHeight(FONT_SIZE_BODY * 2 + SPACING_MD)
+        subtitle.setMinimumHeight(0)
         card_layout.addWidget(subtitle)
 
         # --- Capability cards row ---
@@ -176,7 +177,7 @@ class OnboardingOverlay(QWidget):
         cards_row.setObjectName("capability_cards_row")
         cards_layout = QHBoxLayout(cards_row)
         cards_layout.setSpacing(SPACING_MD)
-        cards_layout.setContentsMargins(0, SPACING_MD, 0, SPACING_MD)
+        cards_layout.setContentsMargins(0, SPACING_SM, 0, SPACING_SM)
 
         for emoji, cap_title, cap_desc in _CAPABILITY_CARDS:
             cap_card = self._build_capability_card(emoji, cap_title, cap_desc)
@@ -232,6 +233,7 @@ class OnboardingOverlay(QWidget):
         icon_label = QLabel(emoji)
         icon_label.setObjectName("onboarding_cap_icon")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setContentsMargins(0, 4, 0, 0)
         layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Title
@@ -246,6 +248,11 @@ class OnboardingOverlay(QWidget):
         desc_label.setProperty("class", "onboardingCapDesc")
         desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_label.setWordWrap(True)
+        # The card's own layout has SPACING_SM between the title and
+        # description, but the description itself needs a bit more breathing
+        # room below it before the next card starts. Add a small bottom margin
+        # to the description label to create that extra space.
+        desc_label.setContentsMargins(0, 0, 0, 12)
         layout.addWidget(desc_label)
 
         # Anchors content to the top of the card (matches the previous
@@ -254,29 +261,28 @@ class OnboardingOverlay(QWidget):
         # title/desc labels above (smoke #180).
         layout.addStretch()
 
-        # QWidget.sizeHint() does NOT factor in a fixed width when
-        # computing height for word-wrapped children -- it reports the
-        # single-line, unwrapped-preferred size regardless of
-        # setFixedWidth(). Pin the height explicitly via heightForWidth(),
-        # which *does* run the layout's real wrap calculation at the fixed
-        # width -- this is what previously clipped the "Push Safely" card's
-        # longer description once the outer card's Fixed size policy
-        # started trusting an inaccurate sizeHint().
-        card.setFixedHeight(card.heightForWidth(_CAP_CARD_WIDTH))
+        # Card height sizing: removed because it was causing the card to
+        # restrict its content, which was not desired. The card should size
+        # to its content naturally, without forcing a specific height.
         return card
 
     def _on_get_started(self) -> None:
         """Handle 'Get Started' click - dismiss overlay and signal."""
         self.get_started_clicked.emit()
-        self.hide()
+        self._dismiss()
 
     def _on_skip(self) -> None:
         """Handle 'Skip' click - dismiss overlay and signal."""
         self.skip_clicked.emit()
+        self._dismiss()
+
+    def _dismiss(self) -> None:
+        """Hide the overlay and stop watching the parent's resize events."""
         self.hide()
+        if self.parent() is not None:
+            self.parent().removeEventFilter(self)  # type: ignore[union-attr]
 
     def resizeEvent(self, event: object) -> None:
         """Resize overlay to match parent when parent is resized."""
         super().resizeEvent(event)  # type: ignore[arg-type]
-        if self.parent() is not None:
-            self.setGeometry(self.parent().rect())  # type: ignore[union-attr]
+        self._sync_geometry_to_parent()

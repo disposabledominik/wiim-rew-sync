@@ -583,6 +583,85 @@ class TestMyPresetsViewContextMenu:
         assert not view._copy_btn.isEnabled()
 
 
+class TestMyPresetsViewToolbarLayout:
+    """Tests for the toolbar's position and button order (smoke #227)."""
+
+    def test_toolbar_bottom_anchored_below_list(self, qtbot) -> None:
+        """The toolbar sits below the preset list, not above it -- matching
+        every other view's bottom-anchored action row convention (this was
+        previously the only view in the app where it wasn't)."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.resize(600, 700)
+        view.show()
+        view.set_presets([_make_profile("A Preset")])
+        qtbot.wait(20)
+
+        assert view._toolbar.y() > view._list_widget.y()
+
+    def test_toolbar_stays_at_bottom_when_view_grows(self, qtbot) -> None:
+        """The toolbar's position tracks the bottom of the page as the view
+        is given more height -- the list (not the toolbar) claims the
+        page's spare vertical space."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.resize(600, 500)
+        view.show()
+        view.set_presets([_make_profile("A Preset")])
+        qtbot.wait(20)
+        y_at_500 = view._toolbar.y()
+
+        view.resize(600, 900)
+        qtbot.wait(20)
+
+        assert view._toolbar.y() > y_at_500
+
+    def test_toolbar_button_order(self, qtbot) -> None:
+        """Toolbar buttons are ordered Load, Copy to Another Device, Rename,
+        Duplicate, Delete -- grouping the two "send this preset somewhere"
+        actions (Load into Editor, Copy to Another Device) together right
+        after each other, ahead of the local Rename/Duplicate edits, with
+        the destructive Delete last."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+
+        toolbar_layout = view._toolbar.layout()
+        assert toolbar_layout is not None
+        items = [toolbar_layout.itemAt(i) for i in range(toolbar_layout.count())]
+        buttons = [item.widget() for item in items if item is not None]
+        buttons = [w for w in buttons if w is not None]
+
+        assert buttons == [
+            view._load_btn,
+            view._copy_btn,
+            view._rename_btn,
+            view._duplicate_btn,
+            view._delete_btn,
+        ]
+
+    def test_context_menu_action_order_matches_toolbar(self, qtbot) -> None:
+        """Context menu action order matches the toolbar's: Load, Copy to
+        Another Device, Rename, Duplicate, Delete. Built via
+        _build_context_menu() directly (not _show_context_menu()) since
+        QMenu.exec()'s real modal popup isn't safely mockable headlessly."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+
+        view.set_presets([_make_profile("A Preset")])
+        item = view._list_widget.item(0)
+
+        menu = view._build_context_menu(item)
+
+        action_texts = [a.text() for a in menu.actions() if not a.isSeparator()]
+        assert action_texts == [
+            "Load",
+            "Copy to Another Device",
+            "Rename",
+            "Duplicate",
+            "Delete",
+        ]
+
+
 # ---------------------------------------------------------------------------
 # TestSettingsView
 # ---------------------------------------------------------------------------
@@ -814,6 +893,28 @@ class TestRewPullView:
 
         assert view._header.isVisible()
 
+    def test_embedded_true_uses_zero_outer_margins(self, qtbot) -> None:
+        """embedded=True skips this view's own outer margins (from
+        build_centered_content) since a host page like FiltersPage already
+        provides its own -- otherwise the two stack, leaving unaccounted-for
+        blank space around this view's content when embedded (smoke #220)."""
+        view = RewPullView(embedded=True)
+        qtbot.addWidget(view)
+
+        layout = view.layout()
+        assert layout is not None
+        assert layout.contentsMargins().top() == 0
+        assert layout.contentsMargins().left() == 0
+
+    def test_embedded_false_keeps_own_margins(self, qtbot) -> None:
+        """Default (standalone sidebar) construction keeps its own margins."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+
+        layout = view.layout()
+        assert layout is not None
+        assert layout.contentsMargins().top() > 0
+
     def test_set_message_shows_placeholder(self, qtbot) -> None:
         """set_message() switches back to the placeholder state with the given text."""
         view = RewPullView()
@@ -866,6 +967,131 @@ class TestRewPullView:
         assert view._list_left.count() == 2
         assert view._list_right.count() == 2
         assert not view.is_lr_mode
+
+    def test_measurement_list_scrollable_when_window_too_short(self, qtbot) -> None:
+        """Each measurement list keeps its own native scrollbar and scrolls
+        independently -- so every measurement stays reachable -- while the
+        header, Stereo/L-R toggle, and Back/Continue action bar stay fully
+        visible and reachable without scrolling, because only the list
+        (given a small floor minimumHeight) is compressed as the window
+        shrinks, never the fixed items around it (smoke #232)."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.resize(400, 900)
+        view.show()
+        measurements = [
+            _make_rew_measurement(f"Measurement {i}", i) for i in range(20)
+        ]
+        view.set_measurements(measurements)
+        qtbot.wait(20)
+
+        assert view._list_widget.verticalScrollBarPolicy() == (
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        assert view._list_widget.verticalScrollBar().maximum() == 0
+
+        view.resize(400, 250)
+        qtbot.wait(20)
+
+        assert view._list_widget.verticalScrollBar().maximum() > 0
+        assert view._header.isVisible()
+        assert view._stereo_radio.isVisible()
+        assert view._continue_btn.isVisible()
+        continue_btn_bottom = view._continue_btn.mapTo(
+            view, view._continue_btn.rect().bottomLeft()
+        ).y()
+        assert continue_btn_bottom <= view.height()
+
+    def test_lr_mode_continue_button_reachable_at_minimal_window_height(
+        self, qtbot
+    ) -> None:
+        """L/R mode's extra "Left Channel"/"Right Channel" labels (absent
+        in Stereo mode) make it the tallest content, most likely to force
+        the lists to compress down to their floor -- when they do, the
+        header/toggle/action-bar (fixed-size items in the same layout) must
+        stay visible and reachable regardless (smoke #232).
+
+        Replicates MainWindow's real compression mechanism (a parent with
+        an explicit setMinimumSize() smaller than the view's natural
+        content) rather than just resizing a bare top-level RewPullView --
+        an isolated top-level widget's own layout silently overrides an
+        undersized resize() back to its natural minimum, so it can't
+        reproduce the clipping this guards against (same technique as
+        test_labels_dont_elide_at_min_window_width_with_sidebar,
+        test_gui_components.py)."""
+        from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+        window = QWidget()
+        qtbot.addWidget(window)
+        window.setMinimumSize(300, 300)
+        layout = QVBoxLayout(window)
+        layout.setContentsMargins(0, 0, 0, 0)
+        view = RewPullView()
+        layout.addWidget(view)
+        view.set_measurements([_make_rew_measurement("Speaker", 0)])
+        view._lr_radio.setChecked(True)
+
+        window.resize(300, 300)
+        window.show()
+        qtbot.wait(20)
+
+        assert view._continue_btn.isVisible()
+        assert view._header.isVisible()
+        continue_btn_bottom = view._continue_btn.mapTo(
+            window, view._continue_btn.rect().bottomLeft()
+        ).y()
+        assert continue_btn_bottom <= window.height()
+
+    def test_lr_lists_scroll_independently_and_labels_stay_out_of_scroll(
+        self, qtbot
+    ) -> None:
+        """Each L/R list has its own scrollbar, scrolling that list's rows
+        only -- not the other list, and not the "Left Channel"/"Right
+        Channel" heading label above it (smoke #232 follow-up: a shared
+        outer QScrollArea previously scrolled both lists and their labels
+        together as a single unit, which is wrong)."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.resize(400, 150)
+        view.show()
+        measurements = [
+            _make_rew_measurement(f"Measurement {i}", i) for i in range(20)
+        ]
+        view.set_measurements(measurements)
+        view._lr_radio.setChecked(True)
+        qtbot.wait(20)
+
+        assert view._list_left.verticalScrollBarPolicy() == (
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        assert view._list_right.verticalScrollBarPolicy() == (
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        # The lists can scroll independently -- their scrollbars are
+        # distinct objects, not one shared scroll region.
+        assert (
+            view._list_left.verticalScrollBar()
+            is not view._list_right.verticalScrollBar()
+        )
+
+    def test_no_outer_scroll_area_wraps_the_lists(self, qtbot) -> None:
+        """No outer QScrollArea wraps the measurement lists -- each list is
+        the sole scrollable region for its own rows, so a heading label
+        never gets dragged into a scroll along with its list (smoke #232,
+        follow-up to #229's double-scrollbar bug and to the outer-scroll
+        approach that scrolled labels together with list content)."""
+        from PySide6.QtWidgets import QScrollArea
+
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.set_measurements([_make_rew_measurement("Speaker", 0)])
+
+        assert view._content_widget.findChildren(QScrollArea) == []
+        for list_widget in (view._list_widget, view._list_left, view._list_right):
+            assert (
+                list_widget.verticalScrollBarPolicy()
+                == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
 
     def test_continue_emits_measurement_selected_in_stereo_mode(self, qtbot) -> None:
         """Continue emits the selected MeasurementSummary in Stereo mode."""
