@@ -13,7 +13,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.gui.app_settings import AppSettings
+from src.gui.components.step_indicator import _StepState
 from src.gui.main_window import PAGE_INDICES, MainWindow
+from src.gui.wizard_controller import WizardStep
 from src.models.canonical import CanonicalFilter
 from src.tests.conftest import close_coroutine_tree
 
@@ -246,3 +248,38 @@ class TestProfileRecallUpdatesReviewPage:
 
             # Verify set_filters was called with our filters
             mock_set_filters.assert_called_once_with(filters)
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Profile recall invalidates a stale PUSH completion (#238)
+# ---------------------------------------------------------------------------
+
+
+class TestProfileRecallInvalidatesStalePush:
+    """Loading a different profile via the sidebar must not leave a later
+    step (PUSH) checked while REVIEW -- which precedes it -- is freshly
+    (re-)entered and unchecked. Same invariant-violation class as #238's
+    onboarding "Get Started" bug, reached via ``_jump_to_review()`` instead.
+    """
+
+    def test_recall_clears_stale_push_completion(self, make_window, qtbot) -> None:
+        """Simulate a completed push from a prior, unrelated flow, then
+        recall a different profile via the sidebar. PUSH must be dropped
+        from completed_steps and its StepIndicator pill un-checked.
+        """
+        window = make_window()
+
+        # Simulate a previously completed push (as _on_write_complete would
+        # leave behind after a successful push earlier in the session).
+        window._wizard_controller.set_step_summary(WizardStep.PUSH, "Pushed to Device X")
+        push_index = window._wizard_controller.get_steps().index(WizardStep.PUSH)
+        window.step_indicator.set_completed(push_index, "Pushed to Device X")
+        assert window.step_indicator._steps[push_index].state == _StepState.COMPLETED
+
+        filters = _make_filters(2)
+        profile = _make_profile(filters=filters, name="Different Profile")
+        window._secondary_workflows.recall_profile(profile)
+
+        assert WizardStep.PUSH not in window._wizard_controller.completed_steps
+        assert window.step_indicator._steps[push_index].state != _StepState.COMPLETED
+        assert window.stacked_widget.currentIndex() == PAGE_INDICES["review"]

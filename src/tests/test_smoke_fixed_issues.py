@@ -624,6 +624,29 @@ def test_sidebar_load_into_review_highlights_review_step(qtbot):
         assert window._step_indicator._steps[review_index]._dimmed is False
 
 
+# Fix: a sidebar load that resolves to zero filters (count == 0 in
+# _on_peq_ready) never reset _sidebar_load_in_progress -- only the count > 0
+# branch did. Left stuck True, the flag would corrupt the *next*, unrelated
+# peq_ready by jumping straight to Review instead of advancing normally.
+def test_sidebar_load_empty_filters_resets_sidebar_load_flag(qtbot):
+    from src.gui.main_window import MainWindow
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+
+        state = window._wizard_controller.state
+        state.selected_device = "device-1"
+        state.current_filters = []
+
+        window._sidebar_load_in_progress = True
+        window._on_peq_ready(SimpleNamespace())
+
+        assert window._sidebar_load_in_progress is False
+
+
 # Fix: "My Saved Presets" Load goes through a *different* handler
 # (_on_profile_recalled, via SecondaryWorkflowManager.recall_profile) than
 # Presets-on-Device / sidebar-"Pull from REW" Load (_on_peq_ready) — #144

@@ -1579,6 +1579,12 @@ class MainWindow(QMainWindow):
             state.pending_conversion_notes = {}
             state.pending_conversion_notes_l = {}
             state.pending_conversion_notes_r = {}
+            # Also clear the sidebar-load one-shot flag here -- the count > 0
+            # branch below is the only other place that resets it, so a
+            # sidebar load that resolves to zero filters would otherwise
+            # leave it stuck True and incorrectly jump a later, unrelated
+            # peq_ready straight to Review instead of advancing normally.
+            self._sidebar_load_in_progress = False
 
         if count > 0:
             # Determine device max_filters and supported filter types
@@ -3616,8 +3622,13 @@ class MainWindow(QMainWindow):
         """Handle onboarding Get Started: mark complete, save, navigate to connect."""
         self._settings.first_run_complete = True
         self._settings.save()
-        # Navigate to connect page (first wizard step)
-        self._stacked_widget.setCurrentIndex(PAGE_INDICES["connect"])
+        # Route through the controller (not a direct setCurrentIndex) so
+        # Connect's re-entry invalidates completed_steps for Connect and
+        # every step after it in the sequence -- otherwise later steps stay
+        # checked with stale context while Connect alone shows uncompleted,
+        # breaking the "no checked step may follow an unchecked one"
+        # invariant (docs/smoke_test_issues.md).
+        self._wizard_controller.go_to_step(WizardStep.CONNECT)
 
     @Slot()
     def _on_onboarding_skip(self) -> None:
@@ -4659,11 +4670,23 @@ class MainWindow(QMainWindow):
         Switching the page fires currentChanged, which _sync_navigation_chrome
         handles centrally (step pill highlight + undim, sidebar reset to
         "home") -- no manual sync needed here.
+
+        Routes through ``go_to_step()`` rather than assigning
+        ``state.current_step``/``setCurrentIndex`` directly, so REVIEW and
+        anything after it in the sequence (NAME_PROFILE, PUSH) is properly
+        invalidated in ``completed_steps`` and its StepIndicator badge
+        cleared -- otherwise a stale PUSH/NAME_PROFILE completion left over
+        from a previous, unrelated push stays checked while REVIEW itself is
+        freshly (re-)entered, violating "no checked step may follow an
+        unchecked one" (docs/smoke_test_issues.md #238). This transiently
+        clears CONNECT/EQ_TYPE/SOURCE/FILTERS badges too, since they aren't
+        back in ``completed_steps`` yet at that point -- but nothing repaints
+        before ``_mark_prior_steps_completed`` and the replay loop below
+        restore them, same reasoning as the FILTERS-recompute note above.
         """
         state = self._wizard_controller.state
+        self._wizard_controller.go_to_step(WizardStep.REVIEW)
         self._mark_prior_steps_completed(state)
-        state.current_step = WizardStep.REVIEW
-        self._stacked_widget.setCurrentIndex(PAGE_INDICES["review"])
         tooltips = state.completed_step_tooltips
         for step, summary in state.completed_steps.items():
             self._wizard_controller.step_summary_updated.emit(

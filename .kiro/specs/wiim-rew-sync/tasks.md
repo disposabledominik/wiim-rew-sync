@@ -352,7 +352,7 @@ Tasks marked with a ⚠️ note are phase gates requiring manual hardware valida
   - _Requirements: 19.1, 19.2, 19.3, 19.4_
 
 - [ ] 44. Final QA sign-off (release gate)
-  - Execute all QA scenarios from `docs/qa.md` against real hardware
+  - Execute all QA scenarios from `docs/qa_signoff.md` §5 (scenario traceability matrix) against real hardware
   - Run full test suite: confirm ≥ 90% coverage for `src/translator/`, ≥ 80% overall ✅ (470 passed, 96.52%)
   - Run `ruff check src/` and `mypy src/` with zero errors; document any deviations in `docs/corrections.md` ✅
   - Run `pip-audit` on dependencies to check for known vulnerabilities before distribution ✅ (no direct-dep vulns)

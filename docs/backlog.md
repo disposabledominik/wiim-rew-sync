@@ -67,7 +67,18 @@ current release but may be reconsidered in future versions. Backend support may 
 
 **Status:** ✅ Largely superseded by events, not "pending" anymore. `docs/qa_signoff.md` itself is a frozen pre-GUI snapshot (2026-06-15, 470 tests, translator-only coverage) and hasn't been re-run/updated since, but extensive GUI-era hardware/manual QA has happened since via a different mechanism: `docs/smoke_test_issues.md` now tracks 168 logged issues, of which 162 are `FIXED`, 3 `WONTFIX`, 1 `REASSIGNED`, and only **one remains genuinely `OPEN`** (#119, an intermittent window-restore-from-maximized clipping bug — low severity, needs a consistent repro). The automated suite has grown to 1181 tests (confirmed 2026-07-04) from the 470 at the original sign-off. CLAUDE.md's own phase-status line still says GUI-era hardware QA is "ongoing," which is technically true (#119 open, and `docs/wiim_api_notes.md`/`docs/corrections.md` hardware investigations are still adding findings weekly as of 2026-07-04) but understates how much has actually been validated against real devices at this point.
 
-**To reactivate:** Either (a) close out #119 and formally refresh `docs/qa_signoff.md` with current test counts/coverage to retire this item for good, or (b) decide the smoke-test log is the de facto ongoing sign-off mechanism going forward and archive this item as superseded.
+**Status update (2026-07-13):** `docs/qa.md`, the pre-GUI `docs/qa_signoff.md`, and
+`docs/smoke_test_procedure.md` have been consolidated into a single, current `docs/qa_signoff.md` —
+a manual QA & sign-off guide with automated-gate checklist, a manual test procedure corrected against
+the current GUI (`src/gui/pages/filters_page.py`, `presets_device_view.py`, `my_presets_view.py`,
+etc.), and a scenario traceability matrix. This item is now closed by option (a) below — the guide
+itself has a blank sign-off form to fill in per release rather than freezing numbers in this backlog
+entry.
+
+**To reactivate (historical — resolved above):** Either (a) close out #119 and formally refresh
+`docs/qa_signoff.md` with current test counts/coverage to retire this item for good, or (b) decide
+the smoke-test log is the de facto ongoing sign-off mechanism going forward and archive this item as
+superseded.
 
 ---
 

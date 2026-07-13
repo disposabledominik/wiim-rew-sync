@@ -20,10 +20,8 @@
 
 | Document | Description |
 |----------|-------------|
-| [qa.md](qa.md) | QA scenarios (Given-When-Then) — 35 formal test cases |
-| [qa_signoff.md](qa_signoff.md) | QA sign-off report — test results, coverage, dependency audit |
-| [smoke_test_procedure.md](smoke_test_procedure.md) | Manual GUI smoke test procedure (22 tests) |
-| [smoke_test_issues.md](smoke_test_issues.md) | Tracked issues from smoke testing (87 items) |
+| [qa_signoff.md](qa_signoff.md) | Manual QA & sign-off guide — quality gates, manual test procedure, scenario traceability, sign-off form |
+| [smoke_test_issues.md](smoke_test_issues.md) | Tracked issues from smoke testing |
 
 ## Development History
 

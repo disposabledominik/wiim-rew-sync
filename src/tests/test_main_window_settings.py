@@ -187,6 +187,33 @@ class TestOnboardingSignalWiring:
             assert window._settings.first_run_complete is True
             mock_save.assert_called()
 
+    def test_get_started_invalidates_all_completed_steps(self, make_window) -> None:
+        """Re-entering onboarding via Get Started must not leave a later step
+        checked while Connect (which precedes it in every flow) is not.
+
+        Reproduces the "Show onboarding again" -> "Get Started" bug: with
+        every step completed from a prior run, Get Started must invalidate
+        Connect *and everything after it* so no checked step ever follows an
+        unchecked one (#reported: Connect loses its checkmark/context while
+        later steps stay checked with stale data).
+        """
+        from src.gui.wizard_controller import WizardStep
+
+        settings = AppSettings(first_run_complete=True)
+        window = make_window(settings)
+        controller = window._wizard_controller
+        sequence = controller.get_steps()
+        for step in sequence:
+            controller.set_step_summary(step, f"{step.value} summary")
+        assert set(controller.completed_steps) == set(sequence)
+
+        with patch.object(window._settings, "save"):
+            window._onboarding_overlay.get_started_clicked.emit()
+
+        assert controller.completed_steps == {}
+        assert controller.current_step == WizardStep.CONNECT
+        assert window.stacked_widget.currentIndex() == PAGE_INDICES["connect"]
+
 
 class TestUserGuideAction:
     """Help > User Guide opens help dialog window."""
