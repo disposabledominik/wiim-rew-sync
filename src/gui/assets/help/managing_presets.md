@@ -23,6 +23,11 @@ Give your preset a descriptive name (e.g., "Living Room Correction" or
 "Headphone EQ v2"). The channel mode (Stereo or L/R) is saved automatically
 and displayed as a badge in the preset list.
 
+If you later push this preset to a device (directly, or via "Copy to
+another device"), only letters, numbers, spaces, `-`, and `_` survive —
+anything else is stripped from the name, since that's what the WiiM naming
+API accepts.
+
 ## Loading a Preset
 
 Open "My Saved Presets" from the sidebar. Select a preset and click "Load"

@@ -55,7 +55,7 @@ browse for your REW EQ text file:
 - **Stereo** — Select one .txt file. The same filters apply to both channels.
 - **L/R** — Select separate files for Left and Right channels.
 
-Click "Next" (or "Import" for L/R) to load the filters into the review step.
+Click "Continue" to load the filters into the review step.
 
 ### 5. Review and Push
 

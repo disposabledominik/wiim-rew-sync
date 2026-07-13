@@ -22,14 +22,19 @@ On the Filters page, choose your channel mode before importing:
 
 ## Loading Filters
 
+At the top of the Filters page, an "Import source" toggle switches between
+**File Import** and **Pull from REW API** — the rest of the page's content
+changes to match whichever is selected.
+
 ### Import from REW File
 
-On the Filters page, select your channel mode (Stereo or L/R) then click
-"Browse" to open a file dialog.
+With **File Import** selected, choose your channel mode (Stereo or L/R),
+then click "Browse..." to open a file dialog.
 
-- **Stereo mode** — Select one .txt file, then click "Next" to proceed.
-- **L/R mode** — Click "Browse L" and "Browse R" to select files for each
-  channel. Once both are selected, click "Import" to proceed.
+- **Stereo mode** — Select one .txt file, then click "Continue" to proceed.
+- **L/R mode** — Click "Browse..." next to each of "Left channel" and
+  "Right channel" to select a file for each. Once both are selected, click
+  "Continue" to proceed.
 
 The files must be REW EQ text exports (.txt). If the file is invalid, an
 error message appears with a "Try Again" button to reset and start over.
@@ -42,9 +47,10 @@ review step for editing or re-pushing.
 
 ### Pull from REW API
 
-If REW is running with its HTTP API enabled, access the "Pull from REW API"
-option through the sidebar workflow. A measurement picker dialog lets you
-choose which REW measurement to import.
+Select **Pull from REW API** in the Filters page's Import source toggle (or
+use the sidebar's "Pull from REW" entry, which shows the same measurement
+picker as its own step). If REW is running with its HTTP API enabled, the
+page connects automatically and lists available measurements to choose from.
 
 ## Reviewing Filters
 

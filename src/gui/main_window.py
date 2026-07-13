@@ -2039,11 +2039,14 @@ class MainWindow(QMainWindow):
         correct channel mode, persists it, and refreshes the MyPresetsView.
 
         Args:
-            name: Desired preset name (will be sanitized for filesystem).
+            name: Desired preset name (will be sanitized for filesystem and
+                for the WiiM device naming rule, since any local preset can
+                later be pushed to a device).
             filters: Combined filter list from wizard state.
             channel_mode: Channel mode (ChannelMode enum or legacy string).
         """
         state = self._wizard_controller.state
+        name = sanitize_device_name(name).strip()
         profile = build_profile(
             name, filters, channel_mode,
             filters_l=state.filters_l,

@@ -60,6 +60,9 @@ and Q values as you would for PEQ.
 Before pushing, you must provide a profile name (up to 32 characters). This
 is the name that appears in the WiiM Home app.
 
+- Only letters, numbers, spaces, `-`, and `_` are accepted by the device. If
+  you type any other character, a warning appears and it's automatically
+  stripped from the name before saving.
 - Whatever name you choose, saving will make that profile active on your
   device and turn RoomFit on if it's currently off.
 - If you enter the name of an existing profile, the app additionally warns

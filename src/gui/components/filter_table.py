@@ -336,7 +336,7 @@ class FilterTable(QWidget):
         )
         table.setItem(row, 2, freq_item)
 
-        # Gain \u2014 cell shows the value that will actually be written (clamped
+        # Gain -- cell shows the value that will actually be written (clamped
         # if needed); tooltip carries the original value and the reason.
         gain_clamped = False
         if is_clamped and clamping_map is not None:
@@ -361,7 +361,7 @@ class FilterTable(QWidget):
             gain_item.setForeground(self._warning_color())
         table.setItem(row, 3, gain_item)
 
-        # Q factor \u2014 same cell/tooltip swap as gain
+        # Q factor -- same cell/tooltip swap as gain
         q_clamped = False
         if is_clamped and clamping_map is not None:
             reasons = clamping_map[band_number]
