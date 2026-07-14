@@ -1228,7 +1228,7 @@ class TestPresets:
                 return_value=("/tmp/movie-night.txt", ""),
             ),
             patch.object(
-                window, "_do_preset_export", return_value=object()
+                window._primary_workflows, "_do_preset_export", return_value=object()
             ) as mock_export_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
             patch.object(
@@ -1256,7 +1256,7 @@ class TestPresets:
                 "src.gui.main_window.QFileDialog.getSaveFileName",
                 return_value=("", ""),
             ) as mock_dialog,
-            patch.object(window, "_do_preset_export", return_value=object()),
+            patch.object(window._primary_workflows, "_do_preset_export", return_value=object()),
             patch.object(window._bridge, "run_async", side_effect=close_coroutine_tree),
         ):
             window._presets_device_view.export_requested.emit([item])
@@ -1274,7 +1274,9 @@ class TestPresets:
                 "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
                 return_value=True,
             ),
-            patch.object(window, "_do_preset_save", return_value=object()) as mock_save_workflow,
+            patch.object(
+                window._primary_workflows, "_do_preset_save", return_value=object()
+            ) as mock_save_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
             patch.object(
                 window._bridge, "run_async", side_effect=close_coroutine_tree
@@ -1306,7 +1308,9 @@ class TestPresets:
             import asyncio
 
             asyncio.run(
-                window._do_preset_save("Movie Night", "PEQ", "WiiM - Movie Night")
+                window._primary_workflows._do_preset_save(
+                    "Movie Night", "PEQ", "WiiM - Movie Night"
+                )
             )
 
         mock_adapter.read_peq_preset_preview.assert_called_once()
@@ -1813,7 +1817,7 @@ class TestPresets:
 
         from src.gui.shared_helpers import build_profile as shared_build_profile
 
-        source = inspect.getsource(window._do_preset_save)
+        source = inspect.getsource(window._primary_workflows._do_preset_save)
         assert "build_profile(" in source
         assert shared_build_profile.__module__ == "src.gui.shared_helpers"
 

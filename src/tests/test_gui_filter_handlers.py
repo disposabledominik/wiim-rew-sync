@@ -388,9 +388,9 @@ class TestREWPullHappyPath:
 
         mock_client = AsyncMock()
         mock_client.list_measurements = AsyncMock(return_value=measurements)
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_list_measurements()
+        await window._primary_workflows._do_rew_list_measurements()
 
         window._bridge.rew_measurements_ready.emit.assert_called_once_with(measurements)
 
@@ -402,9 +402,9 @@ class TestREWPullHappyPath:
         """
         mock_client = AsyncMock()
         mock_client.list_measurements = AsyncMock(return_value=[])
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_list_measurements()
+        await window._primary_workflows._do_rew_list_measurements()
 
         window._bridge.rew_measurements_ready.emit.assert_not_called()
         window._bridge.progress_update.emit.assert_called_once()
@@ -421,9 +421,9 @@ class TestREWPullHappyPath:
         window.show()
         mock_client = AsyncMock()
         mock_client.list_measurements = AsyncMock(return_value=[])
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_list_measurements()
+        await window._primary_workflows._do_rew_list_measurements()
 
         msg = window._bridge.progress_update.emit.call_args[0][0]
         assert msg.startswith("__info__")
@@ -434,16 +434,21 @@ class TestREWPullHappyPath:
 
     @pytest.mark.asyncio
     async def test_rew_list_empty_resets_sidebar_load_flag(self, window) -> None:
-        """The empty-measurement early return must clear _sidebar_load_in_progress,
-        otherwise the flag stays stuck True and corrupts the step indicator on
-        the next sidebar-triggered load.
+        """The empty-measurement early return must clear _sidebar_load_in_progress
+        once the info message reaches _on_progress_update (the reset itself
+        now lives there, not in the manager, since the manager has no access
+        to MainWindow's plain attributes), otherwise the flag stays stuck
+        True and corrupts the step indicator on the next sidebar-triggered
+        load.
         """
         mock_client = AsyncMock()
         mock_client.list_measurements = AsyncMock(return_value=[])
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
         window._sidebar_load_in_progress = True
 
-        await window._do_rew_list_measurements()
+        await window._primary_workflows._do_rew_list_measurements()
+        msg = window._bridge.progress_update.emit.call_args[0][0]
+        window._on_progress_update(msg)
 
         assert window._sidebar_load_in_progress is False
 
@@ -457,10 +462,10 @@ class TestREWPullHappyPath:
         mock_client.list_measurements = AsyncMock(
             side_effect=REWNotConnectedError("Cannot connect to REW")
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
         await window._bridge_wrapper(
-            "rew_list", window._do_rew_list_measurements()
+            "rew_list", window._primary_workflows._do_rew_list_measurements()
         )
 
         window._bridge.operation_error.emit.assert_called_once()
@@ -496,9 +501,9 @@ class TestREWPullLR:
         mock_client.get_filters_with_rows = AsyncMock(
             side_effect=[(filters_l, rows_l, {}), (filters_r, rows_r, {})]
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_get_filters_lr("uuid-left", "uuid-right")
+        await window._primary_workflows._do_rew_get_filters_lr("uuid-left", "uuid-right")
 
         window._bridge.progress_update.emit.assert_called_once()
         msg = window._bridge.progress_update.emit.call_args[0][0]
@@ -514,9 +519,9 @@ class TestREWPullLR:
         mock_client.get_filters_with_rows = AsyncMock(
             return_value=(filters, list(filters), {})
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_get_filters_lr("uuid-left", "uuid-right")
+        await window._primary_workflows._do_rew_get_filters_lr("uuid-left", "uuid-right")
 
         window._bridge.progress_update.emit.assert_not_called()
 
@@ -637,9 +642,9 @@ class TestFiltersOrigin:
         mock_client.get_filters_with_rows = AsyncMock(
             return_value=(filters, list(filters), {})
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_get_filters("uuid-123", "Main Seat")
+        await window._primary_workflows._do_rew_get_filters("uuid-123", "Main Seat")
 
         assert window._wizard_controller.state.filters_origin == (
             "Pulled from REW measurement: Main Seat"
@@ -652,9 +657,9 @@ class TestFiltersOrigin:
         mock_client.get_filters_with_rows = AsyncMock(
             return_value=(filters, list(filters), {})
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_get_filters_lr(
+        await window._primary_workflows._do_rew_get_filters_lr(
             "uuid-left", "uuid-right", "Left Seat", "Right Seat"
         )
 
