@@ -90,12 +90,25 @@ class PrimaryWorkflowManager(QObject):
         independently of each other (#174) — one combined signal emitted
         after both finish would make the slower fetch block the faster
         one's UI update, changing that behavior.
+
+        name_profiles_ready(list, str, bool): RoomFit profile-name list +
+            active profile name + whether RoomFit is currently on, mirrors
+            NameProfilePage.set_existing_profiles() plus MainWindow's
+            _roomfit_enabled attribute. Distinct from roomfit_profiles_ready
+            above despite the similar name — that one already feeds
+            PresetsDeviceView with a different payload shape (PresetItem
+            objects, no enabled flag); reusing it here would misroute data.
+        filters_roomfit_profiles_ready(list): RoomFit profile-name list,
+            mirrors FiltersPage.set_roomfit_profiles() (no active name or
+            enabled flag — that page's dropdown doesn't need either).
     """
 
     peq_presets_ready = Signal(list, str)
     peq_presets_unavailable = Signal()
     roomfit_profiles_ready = Signal(list, str)
     roomfit_profiles_hidden = Signal()
+    name_profiles_ready = Signal(list, str, bool)
+    filters_roomfit_profiles_ready = Signal(list)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -989,3 +1002,59 @@ class PrimaryWorkflowManager(QObject):
         self._bridge.progress_update.emit(
             f"Saved '{profile.name}' to My Presets"
         )
+
+    # ------------------------------------------------------------------
+    # Workflow: RoomFit Dropdown Population (Phase 4)
+    # ------------------------------------------------------------------
+
+    def populate_name_profiles(self) -> None:
+        """Trigger a NameProfilePage profile-list refresh; result arrives via signal."""
+        self._dispatch("list_roomfit_for_naming", self._do_populate_name_profiles())
+
+    async def _do_populate_name_profiles(self) -> None:
+        """Fetch RoomFit profiles and emit name_profiles_ready for NameProfilePage."""
+        assert self._bridge is not None
+        wiim_adapter = self._require_adapter()
+        state = self._require_wizard_state()
+        source_name = state.primary_source
+
+        try:
+            if wiim_adapter.capabilities.supports_roomfit:
+                profiles = await wiim_adapter.list_roomfit_profiles(source_name)
+                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
+                try:
+                    roomfit_enabled, active_profile = await wiim_adapter.get_roomfit_status()
+                except Exception:
+                    roomfit_enabled, active_profile = False, ""
+                    logger.warning(
+                        "Failed to read RoomFit active-profile status", exc_info=True
+                    )
+                self.name_profiles_ready.emit(profile_names, active_profile, roomfit_enabled)
+            else:
+                self.name_profiles_ready.emit([], "", False)
+        except Exception:
+            logger.warning("Failed to list RoomFit profiles for naming", exc_info=True)
+            self.name_profiles_ready.emit([], "", False)
+
+    def refresh_roomfit_dropdown(self) -> None:
+        """Trigger a FiltersPage RoomFit-dropdown refresh; result arrives via signal."""
+        self._dispatch("list_roomfit", self._do_list_roomfit_profiles())
+
+    async def _do_list_roomfit_profiles(self) -> None:
+        """Fetch RoomFit profile names and emit filters_roomfit_profiles_ready
+        for FiltersPage."""
+        assert self._bridge is not None
+        wiim_adapter = self._require_adapter()
+        state = self._require_wizard_state()
+        source_name = state.primary_source
+
+        try:
+            if wiim_adapter.capabilities.supports_roomfit:
+                profiles = await wiim_adapter.list_roomfit_profiles(source_name)
+                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
+                self.filters_roomfit_profiles_ready.emit(profile_names)
+            else:
+                self.filters_roomfit_profiles_ready.emit([])
+        except Exception:
+            logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
+            self.filters_roomfit_profiles_ready.emit([])

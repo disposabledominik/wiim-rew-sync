@@ -696,3 +696,152 @@ class TestPresetSave:
             await manager._do_preset_save("Empty Preset", "PEQ", "WiiM - Empty Preset")
 
         manager._profile_repository.save.assert_not_called()
+
+
+def _capture_signal(signal: object) -> list[tuple[object, ...]]:
+    """Connect a plain list-collector to a manager-owned Signal (not a
+    mocked AsyncBridge) and return the list its emitted args land in.
+
+    name_profiles_ready/filters_roomfit_profiles_ready (like
+    peq_presets_ready/roomfit_profiles_ready before them) are real Qt
+    signals declared on PrimaryWorkflowManager itself, not routed through
+    the injected bridge mock -- so a mocked bridge's `.emit` is never
+    called for them and asserting on it silently checks nothing.
+    """
+    captured: list[tuple[object, ...]] = []
+    signal.connect(lambda *args: captured.append(args))  # type: ignore[attr-defined]
+    return captured
+
+
+# ---------------------------------------------------------------------------
+# RoomFit: populate NameProfilePage
+# ---------------------------------------------------------------------------
+
+
+class TestPopulateNameProfiles:
+    """Test PrimaryWorkflowManager._do_populate_name_profiles."""
+
+    @pytest.mark.asyncio
+    async def test_success_emits_profiles_active_and_enabled(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.name_profiles_ready)
+
+        manager._current_adapter = MagicMock(
+            capabilities=SimpleNamespace(supports_roomfit=True),
+            list_roomfit_profiles=AsyncMock(
+                return_value=[{"Name": "Living Room"}, {"Name": "Office"}]
+            ),
+            get_roomfit_status=AsyncMock(return_value=(True, "Living Room")),
+        )
+
+        await manager._do_populate_name_profiles()
+
+        assert captured == [(["Living Room", "Office"], "Living Room", True)]
+
+    @pytest.mark.asyncio
+    async def test_unsupported_emits_empty(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.name_profiles_ready)
+
+        manager._current_adapter = MagicMock(
+            capabilities=SimpleNamespace(supports_roomfit=False),
+        )
+
+        await manager._do_populate_name_profiles()
+
+        assert captured == [([], "", False)]
+
+    @pytest.mark.asyncio
+    async def test_status_failure_degrades_gracefully(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.name_profiles_ready)
+
+        manager._current_adapter = MagicMock(
+            capabilities=SimpleNamespace(supports_roomfit=True),
+            list_roomfit_profiles=AsyncMock(return_value=[{"Name": "Living Room"}]),
+            get_roomfit_status=AsyncMock(side_effect=RuntimeError("boom")),
+        )
+
+        await manager._do_populate_name_profiles()
+
+        assert captured == [(["Living Room"], "", False)]
+
+    @pytest.mark.asyncio
+    async def test_list_failure_emits_empty(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.name_profiles_ready)
+
+        manager._current_adapter = MagicMock(
+            capabilities=SimpleNamespace(supports_roomfit=True),
+            list_roomfit_profiles=AsyncMock(side_effect=RuntimeError("boom")),
+        )
+
+        await manager._do_populate_name_profiles()
+
+        assert captured == [([], "", False)]
+
+
+# ---------------------------------------------------------------------------
+# RoomFit: refresh FiltersPage dropdown
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshRoomfitDropdown:
+    """Test PrimaryWorkflowManager._do_list_roomfit_profiles."""
+
+    @pytest.mark.asyncio
+    async def test_success_emits_profile_names(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.filters_roomfit_profiles_ready)
+
+        manager._current_adapter = MagicMock(
+            capabilities=SimpleNamespace(supports_roomfit=True),
+            list_roomfit_profiles=AsyncMock(
+                return_value=[{"Name": "Living Room"}, {"Name": "Office"}]
+            ),
+        )
+
+        await manager._do_list_roomfit_profiles()
+
+        assert captured == [(["Living Room", "Office"],)]
+
+    @pytest.mark.asyncio
+    async def test_unsupported_emits_empty(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.filters_roomfit_profiles_ready)
+
+        manager._current_adapter = MagicMock(
+            capabilities=SimpleNamespace(supports_roomfit=False),
+        )
+
+        await manager._do_list_roomfit_profiles()
+
+        assert captured == [([],)]
+
+    @pytest.mark.asyncio
+    async def test_list_failure_emits_empty(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.filters_roomfit_profiles_ready)
+
+        manager._current_adapter = MagicMock(
+            capabilities=SimpleNamespace(supports_roomfit=True),
+            list_roomfit_profiles=AsyncMock(side_effect=RuntimeError("boom")),
+        )
+
+        await manager._do_list_roomfit_profiles()
+
+        assert captured == [([],)]
