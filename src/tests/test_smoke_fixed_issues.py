@@ -11,6 +11,7 @@ from src.adapters import wiim_adapter
 from src.gui import main_window
 from src.gui.components.sidebar_nav import SidebarNav
 from src.gui.pages.push_page import PushPage
+from src.gui.primary_workflows import PrimaryWorkflowManager
 from src.gui.shared_helpers import validate_filters_for_device
 from src.gui.wizard_controller import FlowType, WizardController, WizardState, WizardStep
 from src.logging.setup import configure_logging, install_crash_handler
@@ -133,9 +134,9 @@ def test_flat_array_to_band_params_start_band():
 # Issue 113: _do_load_peq_preset must update wizard state.channel_mode from device response
 @pytest.mark.asyncio
 async def test_do_load_peq_preset_updates_channel_mode_and_emits():
-    func = main_window.MainWindow._do_load_peq_preset
-
-    dummy_self = SimpleNamespace()
+    # _do_load_peq_preset moved to PrimaryWorkflowManager (docs/backlog.md
+    # item 2, Phase 2).
+    manager = PrimaryWorkflowManager()
 
     class DummyAdapter:
         async def load_peq_profile(self, source_name, preset_name):
@@ -152,8 +153,9 @@ async def test_do_load_peq_preset_updates_channel_mode_and_emits():
             # _do_load_peq_preset now reads via read_peq_preset_preview (#166)
             return await self.read_peq(source_name)
 
-    dummy_self._wiim_adapter = DummyAdapter()
-    dummy_self._wizard_controller = SimpleNamespace(state=WizardState())
+    manager._current_adapter = cast(Any, DummyAdapter())
+    wizard_controller = cast(Any, SimpleNamespace(state=WizardState()))
+    manager._wizard_controller = wizard_controller
 
     emitted = {}
 
@@ -161,12 +163,12 @@ async def test_do_load_peq_preset_updates_channel_mode_and_emits():
         def emit(self, value):
             emitted["val"] = value
 
-    dummy_self._bridge = SimpleNamespace(peq_ready=Emitter())
+    manager._bridge = cast(Any, SimpleNamespace(peq_ready=Emitter()))
 
-    await func(dummy_self, "preset-name")
+    await manager._do_load_peq_preset("preset-name")
 
-    assert dummy_self._wizard_controller.state.channel_mode == ChannelMode.LR
-    assert dummy_self._wizard_controller.state.current_filters
+    assert wizard_controller.state.channel_mode == ChannelMode.LR
+    assert wizard_controller.state.current_filters
     assert "val" in emitted
 
 

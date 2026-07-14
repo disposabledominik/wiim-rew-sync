@@ -992,9 +992,7 @@ class MainWindow(QMainWindow):
         # when no source was selected (RoomFit is device-global, or the
         # source step was skipped).
         self._status_banner.show_progress("Pulling filters from device...")
-        self._bridge.run_async(
-            self._bridge_wrapper("device_pull", self._do_device_pull())
-        )
+        self._primary_workflows.pull_device()
         logger.info("Device pull requested")
 
     @Slot()
@@ -1037,11 +1035,7 @@ class MainWindow(QMainWindow):
 
         self._wizard_controller.state.roomfit_profile_name = profile_name
         self._status_banner.show_progress(f"Loading RoomFit profile '{profile_name}'...")
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "roomfit_pull", self._do_roomfit_pull(profile_name)
-            )
-        )
+        self._primary_workflows.pull_roomfit(profile_name)
         logger.info("RoomFit profile selected: %s", profile_name)
 
     @Slot(bool)
@@ -2103,12 +2097,7 @@ class MainWindow(QMainWindow):
             state = self._wizard_controller.state
             filters_l, filters_r = get_lr_filters(state, filters)
 
-            self._bridge.run_async(
-                self._bridge_wrapper(
-                    "export_lr",
-                    self._do_export_lr(filters_l, filters_r, path_l, path_r),
-                )
-            )
+            self._primary_workflows.export_file_lr(filters_l, filters_r, path_l, path_r)
             logger.info("Export L/R REW: %s, %s", path_l, path_r)
         else:
             # Stereo mode: single file dialog
@@ -2129,109 +2118,22 @@ class MainWindow(QMainWindow):
             if not path.lower().endswith(".txt"):
                 path += ".txt"
 
-            self._bridge.run_async(
-                self._bridge_wrapper("export", self._do_export(filters, path))
-            )
+            self._primary_workflows.export_file(filters, path)
             logger.info("Export REW: %s", path)
 
     # ------------------------------------------------------------------
     # Async operation coroutines (Req 1.1-1.7, 2.1-2.7)
     # ------------------------------------------------------------------
 
-    # _do_discovery, _do_probe, _do_file_import, _do_file_import_lr moved to
-    # PrimaryWorkflowManager (src/gui/primary_workflows.py) — docs/backlog.md
-    # item 3, Phase 1a. Dispatch from _on_refresh_requested/_on_device_selected/
-    # _on_file_import_requested/_on_file_import_lr_requested now calls the
+    # _do_discovery, _do_probe, _do_file_import, _do_file_import_lr,
+    # _do_device_pull, _do_roomfit_pull, _do_load_peq_preset, _do_export,
+    # _do_export_lr moved to PrimaryWorkflowManager
+    # (src/gui/primary_workflows.py) — docs/backlog.md item 2, Phases 1-2.
+    # Dispatch from _on_refresh_requested/_on_device_selected/
+    # _on_file_import_requested/_on_file_import_lr_requested/
+    # _on_device_pull_requested/_on_roomfit_profile_selected/
+    # _on_preset_load_into_editor/_export_filters_as_rew now calls the
     # manager directly.
-
-    async def _do_device_pull(self) -> None:
-        """Pull PEQ settings from the connected device.
-
-        Reads PEQ bands via WiiMAdapter, converts to CanonicalFilter list,
-        stores in wizard state, and emits result signal.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        peq_settings = await self._wiim_adapter.read_peq(source_name)
-
-        # Extract filters based on channel mode
-        filters, _ = extract_filters(peq_settings)
-
-        # Store in wizard state
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.device_filters = filters
-        self._wizard_controller.state.filters_origin = (
-            f"Pulled from device (source: {source_name})"
-        )
-
-        # Emit result signal
-        self._bridge.peq_ready.emit(peq_settings)
-
-    async def _do_roomfit_pull(self, profile_name: str) -> None:
-        """Pull RoomFit profile filters from the device.
-
-        Reads the named RoomFit profile via WiiMAdapter, stores filters
-        in wizard state, and emits peq_ready to advance to Review.
-
-        Args:
-            profile_name: Name of the RoomFit profile to read.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
-            source_name, profile_name
-        )
-
-        # Extract filters based on channel mode
-        filters, _ = extract_filters(peq_settings)
-
-        # Store in wizard state
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.device_filters = filters
-        self._wizard_controller.state.filters_origin = f"RoomFit profile: {profile_name}"
-
-        # Emit result signal (triggers _on_peq_ready -> Review page)
-        self._bridge.peq_ready.emit(peq_settings)
-
-    async def _do_load_peq_preset(self, preset_name: str) -> None:
-        """Load a named PEQ preset from device and emit peq_ready.
-
-        Loads the preset via EQv2SourceLoad then reads the resulting bands,
-        then restores the source's original active preset (#166) -- the
-        confirmation dialog in _on_preset_load_into_editor already warned the
-        user this briefly changes what's playing. Sets channel_mode in wizard
-        state from the device response to avoid stale L/R state from a
-        previous load (smoke #111).
-
-        Args:
-            preset_name: Name of the PEQ preset to load.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        peq_settings = await self._wiim_adapter.read_peq_preset_preview(
-            source_name, preset_name
-        )
-
-        # Determine channel_mode from the device data and update wizard state
-        peq_channel = getattr(peq_settings, "channel_mode", None)
-        if is_lr_mode(peq_channel) if peq_channel else False:
-            self._wizard_controller.state.channel_mode = ChannelMode.LR
-        else:
-            self._wizard_controller.state.channel_mode = ChannelMode.STEREO
-
-        # Extract filters
-        filters, _ = extract_filters(peq_settings)
-
-        # Store in wizard state
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.device_filters = filters
-        self._wizard_controller.state.filters_origin = f"PEQ preset: {preset_name}"
-
-        # Emit result signal
-        self._bridge.peq_ready.emit(peq_settings)
 
     async def _read_preset_to_copy(
         self, preset_name: str, preset_type: str
@@ -2900,65 +2802,6 @@ class MainWindow(QMainWindow):
                     read_back=last_result.read_back,
                 )
                 self._bridge.write_complete.emit(result)
-
-    async def _do_export(self, filters: list[CanonicalFilter], path: str) -> None:
-        """Generate a REW EQ text file from current filters.
-
-        Calls REWGenerator.generate_file() and emits progress_update with
-        success message. Includes skip count if any bands were skipped.
-
-        Args:
-            filters: List of CanonicalFilter objects to export.
-            path: Destination file path chosen by the user.
-
-        Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
-        """
-        from src.translator.rew_generator import REWGenerator
-
-        generator = REWGenerator()
-        file_path = Path(path)
-        warnings = generator.generate_file(filters, file_path)
-
-        if warnings:
-            skip_count = len(warnings)
-            self._bridge.progress_update.emit(
-                f"File exported successfully ({skip_count} unsupported band(s) skipped)"
-            )
-        else:
-            self._bridge.progress_update.emit("File exported successfully")
-
-    async def _do_export_lr(
-        self,
-        filters_l: list[CanonicalFilter],
-        filters_r: list[CanonicalFilter],
-        path_l: Path,
-        path_r: Path,
-    ) -> None:
-        """Generate two REW EQ text files for L/R channel mode (smoke #29).
-
-        Uses REWGenerator.generate_file() for each channel independently.
-
-        Args:
-            filters_l: Left channel CanonicalFilter list.
-            filters_r: Right channel CanonicalFilter list.
-            path_l: Destination path for left channel file.
-            path_r: Destination path for right channel file.
-        """
-        from src.translator.rew_generator import REWGenerator
-
-        generator = REWGenerator()
-        warnings_l = generator.generate_file(filters_l, path_l)
-        warnings_r = generator.generate_file(filters_r, path_r)
-
-        total_warnings = len(warnings_l) + len(warnings_r)
-        if total_warnings:
-            self._bridge.progress_update.emit(
-                f"L/R files exported ({total_warnings} unsupported band(s) skipped)"
-            )
-        else:
-            self._bridge.progress_update.emit(
-                f"L/R files exported: {path_l.name} and {path_r.name}"
-            )
 
     def _load_device_presets(self) -> None:
         """Fetch and display device presets in the PresetsDeviceView.
@@ -4082,14 +3925,10 @@ class MainWindow(QMainWindow):
         self._sidebar_load_in_progress = True
         self._status_banner.show_progress(f"Loading preset '{name}'...")
         if preset_type == "RoomFit":
-            self._bridge.run_async(
-                self._bridge_wrapper("load_preset", self._do_roomfit_pull(name))
-            )
+            self._primary_workflows.pull_roomfit(name, operation_name="load_preset")
         else:
             # PEQ preset: load it via EQv2SourceLoad then read
-            self._bridge.run_async(
-                self._bridge_wrapper("load_preset", self._do_load_peq_preset(name))
-            )
+            self._primary_workflows.load_peq_preset(name)
         logger.info("Preset load into editor: %s (type=%s)", name, preset_type)
 
     def _format_preset_names(self, items: list[Any]) -> str:

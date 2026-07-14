@@ -320,7 +320,7 @@ class TestExportHappyPath:
             "src.translator.rew_generator.REWGenerator.generate_file",
             return_value=[],
         ) as mock_gen:
-            await window._do_export(filters, "/export/eq.txt")
+            await window._primary_workflows._do_export(filters, "/export/eq.txt")
 
             mock_gen.assert_called_once()
             call_args = mock_gen.call_args
@@ -355,7 +355,7 @@ class TestExportHappyPath:
             "src.translator.rew_generator.REWGenerator.generate_file",
             return_value=warnings,
         ):
-            await window._do_export(filters, "/export/eq.txt")
+            await window._primary_workflows._do_export(filters, "/export/eq.txt")
 
         window._bridge.progress_update.emit.assert_called_once()
         msg = window._bridge.progress_update.emit.call_args[0][0]
@@ -409,7 +409,7 @@ class TestExportIOError:
             side_effect=OSError("Permission denied"),
         ):
             await window._bridge_wrapper(
-                "export", window._do_export(filters, "/readonly/eq.txt")
+                "export", window._primary_workflows._do_export(filters, "/readonly/eq.txt")
             )
 
         window._bridge.operation_error.emit.assert_called_once()

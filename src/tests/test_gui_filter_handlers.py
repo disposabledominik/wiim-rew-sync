@@ -277,9 +277,10 @@ class TestDevicePullHappyPath:
         mock_adapter = AsyncMock()
         mock_adapter.read_peq = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_device_pull()
+        await window._primary_workflows._do_device_pull()
 
         window._bridge.peq_ready.emit.assert_called_once_with(peq_settings)
 
@@ -303,9 +304,10 @@ class TestDevicePullHappyPath:
         mock_adapter = AsyncMock()
         mock_adapter.read_peq = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_device_pull()
+        await window._primary_workflows._do_device_pull()
 
         # State should have combined L+R filters
         state_filters = window._wizard_controller.state.current_filters
@@ -583,9 +585,10 @@ class TestFiltersOrigin:
         mock_adapter = AsyncMock()
         mock_adapter.read_peq = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_device_pull()
+        await window._primary_workflows._do_device_pull()
 
         assert window._wizard_controller.state.filters_origin == (
             "Pulled from device (source: wifi)"
@@ -600,9 +603,10 @@ class TestFiltersOrigin:
         mock_adapter = AsyncMock()
         mock_adapter.read_roomfit_preset_preview = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_roomfit_pull("Living Room")
+        await window._primary_workflows._do_roomfit_pull("Living Room")
 
         assert window._wizard_controller.state.filters_origin == (
             "RoomFit profile: Living Room"
@@ -617,9 +621,10 @@ class TestFiltersOrigin:
         mock_adapter = AsyncMock()
         mock_adapter.read_peq_preset_preview = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_load_peq_preset("Movie Night")
+        await window._primary_workflows._do_load_peq_preset("Movie Night")
 
         assert window._wizard_controller.state.filters_origin == (
             "PEQ preset: Movie Night"

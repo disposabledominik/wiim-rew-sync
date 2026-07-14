@@ -763,7 +763,7 @@ class TestImportExport:
         # since run_async was mocked above (close_coroutine_tree only closes it).
         import asyncio
 
-        asyncio.run(window._do_export_lr(filters_l, filters_r, path_l, path_r))
+        asyncio.run(window._primary_workflows._do_export_lr(filters_l, filters_r, path_l, path_r))
         assert path_l.exists()
         assert path_r.exists()
         left_content = path_l.read_text()
@@ -854,7 +854,7 @@ class TestImportExport:
                 return_value=("/tmp/myfile", ""),
             ),
             patch.object(
-                window, "_do_export", side_effect=_fake_do_export
+                window._primary_workflows, "_do_export", side_effect=_fake_do_export
             ) as mock_do_export,
             patch.object(
                 window._bridge, "run_async", side_effect=close_coroutine_tree
@@ -1328,7 +1328,7 @@ class TestPresets:
             ),
             patch.object(window, "_ensure_wizard_state_for_load", return_value=True),
             patch.object(
-                window, "_do_load_peq_preset", return_value=object()
+                window._primary_workflows, "_do_load_peq_preset", return_value=object()
             ) as mock_load_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
             patch.object(
@@ -3380,7 +3380,7 @@ class TestIssue194SingleSourceOperations:
 
         import asyncio
 
-        asyncio.run(window._do_load_peq_preset("My Preset"))
+        asyncio.run(window._primary_workflows._do_load_peq_preset("My Preset"))
 
         adapter.read_peq_preset_preview.assert_awaited_once_with("wifi", "My Preset")
 
@@ -3392,7 +3392,7 @@ class TestIssue194SingleSourceOperations:
 
         import asyncio
 
-        asyncio.run(window._do_device_pull())
+        asyncio.run(window._primary_workflows._do_device_pull())
 
         adapter.read_peq.assert_awaited_once_with("wifi")
 
