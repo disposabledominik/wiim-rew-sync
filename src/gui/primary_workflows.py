@@ -16,18 +16,20 @@ rather than waiting for a device to be selected/probed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Signal
 
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
 
 if TYPE_CHECKING:
     from src.adapters.capability_prober import CapabilityProber
+    from src.adapters.wiim_adapter import WiiMAdapter
     from src.discovery.discovery_module import DiscoveryModule
     from src.gui.async_bridge import AsyncBridge
     from src.gui.wizard_controller import WizardController
@@ -50,9 +52,31 @@ class PrimaryWorkflowManager(QObject):
 
     Results are delivered via AsyncBridge's existing signals
     (discovery_progress, discovery_complete, capabilities_ready, peq_ready,
-    progress_update) — this manager declares no new signals of its own,
-    so MainWindow's existing `_on_*` slot connections need no rewiring.
+    progress_update) — this manager declares no new signals of its own for
+    those four workflows, so MainWindow's existing `_on_*` slot connections
+    need no rewiring. list_presets()/refresh_presets() is the exception: it
+    declares four signals of its own (see below), one per PresetsDeviceView
+    setter it used to call directly.
+
+    Signals:
+        peq_presets_ready(list, str): PEQ PresetItem list + active preset
+            name, mirrors PresetsDeviceView.set_peq_presets().
+        peq_presets_unavailable(): mirrors set_peq_unavailable().
+        roomfit_profiles_ready(list, str): RoomFit PresetItem list + active
+            profile name, mirrors set_roomfit_profiles().
+        roomfit_profiles_hidden(): mirrors set_roomfit_hidden().
+
+        Four signals rather than one combined result: the PEQ and RoomFit
+        fetches inside refresh_presets() run concurrently and update
+        independently of each other (#174) — one combined signal emitted
+        after both finish would make the slower fetch block the faster
+        one's UI update, changing that behavior.
     """
+
+    peq_presets_ready = Signal(list, str)
+    peq_presets_unavailable = Signal()
+    roomfit_profiles_ready = Signal(list, str)
+    roomfit_profiles_hidden = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -61,6 +85,7 @@ class PrimaryWorkflowManager(QObject):
         self._wizard_controller: WizardController | None = None
         self._bridge_wrapper: BridgeWrapper | None = None
         self._discovered_devices: list[DeviceInfo] = []
+        self._current_adapter: WiiMAdapter | None = None
         # Bumped on every device selection; lets a stale/superseded capability
         # probe (e.g. user selects a second device before the first probe
         # resolves) detect that it's no longer current and avoid corrupting
@@ -106,6 +131,20 @@ class PrimaryWorkflowManager(QObject):
         self._wizard_controller = wizard_controller
         self._bridge_wrapper = bridge_wrapper
         logger.info("PrimaryWorkflowManager configured")
+
+    def set_current_adapter(self, adapter: WiiMAdapter | None) -> None:
+        """Set the current device adapter for same-device workflows.
+
+        Called from MainWindow whenever the active device changes (mirrors
+        SecondaryWorkflowManager.set_current_adapter). Used by
+        list_presets()/refresh_presets(), the only workflow here that reads
+        the live device.
+
+        Args:
+            adapter: The WiiMAdapter for the currently connected device,
+                    or None to clear.
+        """
+        self._current_adapter = adapter
 
     @property
     def discovered_devices(self) -> list[DeviceInfo]:
@@ -314,3 +353,113 @@ class PrimaryWorkflowManager(QObject):
                 f"L/R import: Left {len(filters_l)} bands ({len(warnings_l)} skipped), "
                 f"Right {len(filters_r)} bands ({len(warnings_r)} skipped)"
             )
+
+    # ------------------------------------------------------------------
+    # Workflow: List Device Presets
+    # ------------------------------------------------------------------
+
+    def list_presets(self) -> None:
+        """Trigger a fire-and-forget presets refresh; results arrive via signals.
+
+        Used by MainWindow's bridge-wrapped dispatch point
+        (_load_device_presets). _do_delete_presets, which needs to await
+        the refresh inline as part of its own coroutine, calls
+        refresh_presets() directly instead — see that method's docstring.
+        """
+        assert self._bridge is not None
+        assert self._bridge_wrapper is not None
+        self._bridge.run_async(self._bridge_wrapper("list_presets", self.refresh_presets()))
+
+    async def refresh_presets(self) -> None:
+        """Fetch device PEQ preset list and RoomFit profiles, emit as signals.
+
+        The PEQ and RoomFit fetches are fully independent of each other, so
+        they run concurrently (#174) instead of one blocking the other —
+        each emits its own signal(s) the moment it resolves, rather than
+        waiting to combine both into one result (see class docstring).
+
+        Public (no leading underscore) because it's awaited directly from
+        two places: list_presets() above (fire-and-forget dispatch) and
+        MainWindow._do_delete_presets (which awaits it inline, mid-coroutine,
+        to refresh the view after a delete — unwrapped by bridge_wrapper
+        there, exactly as before this method moved).
+        """
+        assert self._current_adapter is not None
+        assert self._wizard_controller is not None
+        wiim_adapter = self._current_adapter
+
+        source_name = self._wizard_controller.state.primary_source
+        from src.gui.views.presets_device_view import PresetItem
+
+        async def _fetch_peq() -> None:
+            try:
+                if wiim_adapter.capabilities.supports_profile_enumeration:
+                    peq_presets = await wiim_adapter.list_peq_profiles(source_name)
+                    peq_items = [
+                        PresetItem(
+                            name=p.get("Name", "Unnamed"),
+                            preset_type="PEQ",
+                            channel_mode=p.get("channelMode", "Stereo"),
+                        )
+                        for p in peq_presets
+                    ]
+                    # read_peq() is a plain, harmless read, unlike
+                    # load_peq_profile()/EQv2SourceLoad.
+                    active_peq_name = await self._read_active_name_or_default(
+                        self._peq_name_for_highlight(source_name),
+                        "Failed to read active PEQ preset name",
+                    )
+                    self.peq_presets_ready.emit(peq_items, active_peq_name)
+                else:
+                    self.peq_presets_unavailable.emit()
+            except Exception:
+                logger.warning("Failed to list PEQ presets", exc_info=True)
+                self.peq_presets_unavailable.emit()
+
+        async def _fetch_roomfit() -> None:
+            try:
+                if wiim_adapter.capabilities.supports_roomfit:
+                    rf_profiles = await wiim_adapter.list_roomfit_profiles(source_name)
+                    rf_items = [
+                        PresetItem(
+                            name=p.get("Name", "Unnamed"),
+                            preset_type="RoomFit",
+                            channel_mode=p.get("channelMode", "Stereo"),
+                        )
+                        for p in rf_profiles
+                    ]
+                    active_roomfit_name = await self._read_active_name_or_default(
+                        self._roomfit_name_for_highlight(),
+                        "Failed to read active RoomFit profile name",
+                    )
+                    self.roomfit_profiles_ready.emit(rf_items, active_roomfit_name)
+                else:
+                    self.roomfit_profiles_hidden.emit()
+            except Exception:
+                logger.warning("Failed to list RoomFit profiles", exc_info=True)
+                self.roomfit_profiles_hidden.emit()
+
+        await asyncio.gather(_fetch_peq(), _fetch_roomfit())
+
+    async def _read_active_name_or_default(
+        self, coro: Coroutine[Any, Any, Any], log_msg: str
+    ) -> str:
+        """Await a read whose only purpose is an active-item name for
+        highlighting (#165c) -- a failure here means no highlight, not a
+        failed view, so it degrades to "" rather than propagating."""
+        try:
+            return str(await coro)
+        except Exception:
+            logger.warning(log_msg, exc_info=True)
+            return ""
+
+    async def _peq_name_for_highlight(self, source_name: str) -> str:
+        """The active PEQ preset's name, for #165c highlighting."""
+        assert self._current_adapter is not None
+        return (await self._current_adapter.read_peq(source_name)).name
+
+    async def _roomfit_name_for_highlight(self) -> str:
+        """The active RoomFit profile's name, for #165c highlighting."""
+        assert self._current_adapter is not None
+        _enabled, active_roomfit_name = await self._current_adapter.get_roomfit_status()
+        return active_roomfit_name

@@ -95,6 +95,7 @@ def _setup_device(window) -> MagicMock:
     mock_adapter = MagicMock()
     mock_adapter.capabilities = _make_caps()
     window._wiim_adapter = mock_adapter
+    window._primary_workflows.set_current_adapter(mock_adapter)
     window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, window._backup_manager)
     window._wizard_controller.state.selected_device = "192.168.1.100"
     window._wizard_controller.state.selected_source = "wifi"
@@ -1114,7 +1115,7 @@ class TestPresets:
 
         import asyncio
 
-        asyncio.run(window._do_list_presets())
+        asyncio.run(window._primary_workflows.refresh_presets())
         mock_adapter.list_peq_profiles.assert_called_once()
         mock_adapter.list_roomfit_profiles.assert_called_once()
 
@@ -1147,7 +1148,7 @@ class TestPresets:
         ) as mock_set_peq, patch.object(
             window._presets_device_view, "set_roomfit_profiles"
         ) as mock_set_roomfit:
-            asyncio.run(window._do_list_presets())
+            asyncio.run(window._primary_workflows.refresh_presets())
 
         mock_set_peq.assert_called_once()
         assert mock_set_peq.call_args[0][1] == "Movie Night"
@@ -1176,7 +1177,7 @@ class TestPresets:
         ) as mock_set_peq, patch.object(
             window._presets_device_view, "set_roomfit_profiles"
         ) as mock_set_roomfit:
-            asyncio.run(window._do_list_presets())
+            asyncio.run(window._primary_workflows.refresh_presets())
 
         # Still populated with the real items, just no active-name highlight.
         assert len(mock_set_peq.call_args[0][0]) == 1

@@ -10,7 +10,6 @@ Requirements referenced: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6,
 
 from __future__ import annotations
 
-import asyncio
 import html
 import json
 import logging
@@ -304,6 +303,9 @@ class MainWindow(QMainWindow):
 
         # --- Secondary workflows (Req 17, 18, 20, 21) ---
         self._setup_secondary_workflows()
+
+        # --- Primary workflows: presets_ready signal wiring (Phase 1b) ---
+        self._setup_primary_workflows()
 
         # --- Initialize step indicator with default flow ---
         sequence = self._wizard_controller.get_steps()
@@ -1475,6 +1477,7 @@ class MainWindow(QMainWindow):
             backup_manager=self._backup_manager,
         )
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)
+        self._primary_workflows.set_current_adapter(self._wiim_adapter)
 
         # Source names: resolved once, centrally, in merge_into() (#167) --
         # real enumeration via getAudioInputEnable where the device supports
@@ -2531,7 +2534,7 @@ class MainWindow(QMainWindow):
                 logger.exception("Delete preset '%s' (%s) failed", name, preset_type)
                 failed += 1
 
-        await self._do_list_presets()
+        await self._primary_workflows.refresh_presets()
 
         if failed == 0:
             self._status_banner.show_success(f"{succeeded} preset(s) deleted")
@@ -2974,9 +2977,7 @@ class MainWindow(QMainWindow):
             return
 
         # Fetch presets asynchronously
-        self._bridge.run_async(
-            self._bridge_wrapper("list_presets", self._do_list_presets())
-        )
+        self._primary_workflows.list_presets()
 
     def _populate_name_profile_page(self) -> None:
         """Fetch RoomFit profile names and populate NameProfilePage list.
@@ -3037,92 +3038,33 @@ class MainWindow(QMainWindow):
             logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
             self._filters_page.set_roomfit_profiles([])
 
-    async def _read_active_name_or_default(
-        self, coro: Coroutine[Any, Any, Any], log_msg: str
-    ) -> str:
-        """Await a read whose only purpose is an active-item name for
-        highlighting (#165c) -- a failure here means no highlight, not a
-        failed view, so it degrades to "" rather than propagating."""
-        try:
-            return str(await coro)
-        except Exception:
-            logger.warning(log_msg, exc_info=True)
-            return ""
+    # _read_active_name_or_default, _do_list_presets, _peq_name_for_highlight,
+    # _roomfit_name_for_highlight moved to PrimaryWorkflowManager
+    # (src/gui/primary_workflows.py) as refresh_presets() and its helpers —
+    # docs/backlog.md item 3, Phase 1b. See _on_peq_presets_ready /
+    # _on_peq_presets_unavailable / _on_roomfit_profiles_ready /
+    # _on_roomfit_profiles_hidden below for the thin pass-through into
+    # PresetsDeviceView that replaced this method's direct widget writes.
 
-    async def _do_list_presets(self) -> None:
-        """Fetch device PEQ preset list and RoomFit profiles, populate PresetsDeviceView.
+    @Slot(list, str)
+    def _on_peq_presets_ready(self, items: list[Any], active_name: str) -> None:
+        """Forward PrimaryWorkflowManager.peq_presets_ready into the view."""
+        self._presets_device_view.set_peq_presets(items, active_name)
 
-        The PEQ and RoomFit fetches are fully independent of each other, so
-        they run concurrently (#174) instead of one blocking the other.
-        """
-        assert self._wiim_adapter is not None
-        wiim_adapter = self._wiim_adapter
+    @Slot()
+    def _on_peq_presets_unavailable(self) -> None:
+        """Forward PrimaryWorkflowManager.peq_presets_unavailable into the view."""
+        self._presets_device_view.set_peq_unavailable()
 
-        source_name = self._wizard_controller.state.primary_source
-        from src.gui.views.presets_device_view import PresetItem
+    @Slot(list, str)
+    def _on_roomfit_profiles_ready(self, items: list[Any], active_name: str) -> None:
+        """Forward PrimaryWorkflowManager.roomfit_profiles_ready into the view."""
+        self._presets_device_view.set_roomfit_profiles(items, active_name)
 
-        async def _fetch_peq() -> None:
-            try:
-                if wiim_adapter.capabilities.supports_profile_enumeration:
-                    peq_presets = await wiim_adapter.list_peq_profiles(source_name)
-                    peq_items = [
-                        PresetItem(
-                            name=p.get("Name", "Unnamed"),
-                            preset_type="PEQ",
-                            channel_mode=p.get("channelMode", "Stereo"),
-                        )
-                        for p in peq_presets
-                    ]
-                    # read_peq() is a plain, harmless read, unlike
-                    # load_peq_profile()/EQv2SourceLoad.
-                    active_peq_name = await self._read_active_name_or_default(
-                        self._peq_name_for_highlight(source_name),
-                        "Failed to read active PEQ preset name",
-                    )
-                    self._presets_device_view.set_peq_presets(peq_items, active_peq_name)
-                else:
-                    self._presets_device_view.set_peq_unavailable()
-            except Exception:
-                logger.warning("Failed to list PEQ presets", exc_info=True)
-                self._presets_device_view.set_peq_unavailable()
-
-        async def _fetch_roomfit() -> None:
-            try:
-                if wiim_adapter.capabilities.supports_roomfit:
-                    rf_profiles = await wiim_adapter.list_roomfit_profiles(source_name)
-                    rf_items = [
-                        PresetItem(
-                            name=p.get("Name", "Unnamed"),
-                            preset_type="RoomFit",
-                            channel_mode=p.get("channelMode", "Stereo"),
-                        )
-                        for p in rf_profiles
-                    ]
-                    active_roomfit_name = await self._read_active_name_or_default(
-                        self._roomfit_name_for_highlight(),
-                        "Failed to read active RoomFit profile name",
-                    )
-                    self._presets_device_view.set_roomfit_profiles(
-                        rf_items, active_roomfit_name
-                    )
-                else:
-                    self._presets_device_view.set_roomfit_hidden()
-            except Exception:
-                logger.warning("Failed to list RoomFit profiles", exc_info=True)
-                self._presets_device_view.set_roomfit_hidden()
-
-        await asyncio.gather(_fetch_peq(), _fetch_roomfit())
-
-    async def _peq_name_for_highlight(self, source_name: str) -> str:
-        """The active PEQ preset's name, for #165c highlighting."""
-        assert self._wiim_adapter is not None
-        return (await self._wiim_adapter.read_peq(source_name)).name
-
-    async def _roomfit_name_for_highlight(self) -> str:
-        """The active RoomFit profile's name, for #165c highlighting."""
-        assert self._wiim_adapter is not None
-        _enabled, active_roomfit_name = await self._wiim_adapter.get_roomfit_status()
-        return active_roomfit_name
+    @Slot()
+    def _on_roomfit_profiles_hidden(self) -> None:
+        """Forward PrimaryWorkflowManager.roomfit_profiles_hidden into the view."""
+        self._presets_device_view.set_roomfit_hidden()
 
     # ------------------------------------------------------------------
     # Navigation handlers
@@ -3664,6 +3606,30 @@ class MainWindow(QMainWindow):
             # Cancel active operation
             self._feedback_manager.cancel_requested.emit()
             logger.debug("Keyboard shortcut: Escape — Operation cancelled")
+
+    # ------------------------------------------------------------------
+    # Primary Workflows — presets_ready signal wiring (Phase 1b)
+    # ------------------------------------------------------------------
+
+    def _setup_primary_workflows(self) -> None:
+        """Wire PrimaryWorkflowManager's list-presets signals to PresetsDeviceView.
+
+        The manager itself is constructed and configured earlier, in
+        __init__, right after WizardController (discover/probe/import_file
+        need no view wiring at all — they emit through AsyncBridge's
+        existing signals, already connected elsewhere). This method only
+        connects the four signals refresh_presets() added in Phase 1b.
+        """
+        self._primary_workflows.peq_presets_ready.connect(self._on_peq_presets_ready)
+        self._primary_workflows.peq_presets_unavailable.connect(
+            self._on_peq_presets_unavailable
+        )
+        self._primary_workflows.roomfit_profiles_ready.connect(
+            self._on_roomfit_profiles_ready
+        )
+        self._primary_workflows.roomfit_profiles_hidden.connect(
+            self._on_roomfit_profiles_hidden
+        )
 
     # ------------------------------------------------------------------
     # Secondary Workflows (Req 17, 18, 20, 21)
