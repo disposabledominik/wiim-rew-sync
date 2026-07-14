@@ -249,9 +249,10 @@ class MainWindow(QMainWindow):
         self._safe_write: SafeWrite | None = None
         self._roomfit_safe_write: RoomFitSafeWrite | None = None
         self._device_caps: object | None = None
-        # Set by _do_populate_name_profiles from get_roomfit_status() (#165) --
-        # whether RoomFit is currently on, gating the overwrite-active-profile
-        # confirmation in _on_name_confirmed.
+        # Set via _on_name_profiles_ready from get_roomfit_status() (#165) --
+        # whether RoomFit is currently on. Not currently read anywhere:
+        # _on_name_confirmed's overwrite-confirmation dialog is driven by
+        # NameProfilePage.classify() instead, not this flag.
         self._roomfit_enabled: bool = False
 
         # --- Window properties ---
@@ -790,10 +791,10 @@ class MainWindow(QMainWindow):
         # device must not linger into this one (#162d).
         state.filters_origin = ""
         # A stale "RoomFit is active" flag from the previous device must not
-        # linger either -- it gates the overwrite-active-profile confirmation
-        # in _on_name_confirmed, and a leftover True from device A would let
-        # device B's overwrite proceed without warning if reached before
-        # _do_populate_name_profiles() re-fetches device B's real status.
+        # linger either, even though nothing currently reads it (see the
+        # __init__ comment) -- reset defensively so device B's state is
+        # never contaminated by device A's, until populate_name_profiles()
+        # re-fetches device B's real status.
         self._roomfit_enabled = False
         # Clear completed steps beyond CONNECT
         for step in (
@@ -915,9 +916,7 @@ class MainWindow(QMainWindow):
             self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
             self._filters_page.set_roomfit_mode(True)
             # Populate RoomFit profile dropdown from device
-            self._bridge.run_async(
-                self._bridge_wrapper("list_roomfit", self._do_list_roomfit_profiles())
-            )
+            self._primary_workflows.refresh_roomfit_dropdown()
 
         # A stale "what current_filters came from" string from before this EQ
         # type switch must not linger into the new flow (#162d/#173) -- mirrors
@@ -2595,55 +2594,15 @@ class MainWindow(QMainWindow):
             self._name_profile_page.set_existing_profiles([])
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "list_roomfit_for_naming",
-                self._do_populate_name_profiles(),
-            )
-        )
+        self._primary_workflows.populate_name_profiles()
 
-    async def _do_populate_name_profiles(self) -> None:
-        """Fetch RoomFit profiles and populate the NameProfilePage."""
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        try:
-            if self._wiim_adapter.capabilities.supports_roomfit:
-                profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
-                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
-                try:
-                    self._roomfit_enabled, active_profile = (
-                        await self._wiim_adapter.get_roomfit_status()
-                    )
-                except Exception:
-                    self._roomfit_enabled, active_profile = False, ""
-                    logger.warning(
-                        "Failed to read RoomFit active-profile status", exc_info=True
-                    )
-                self._name_profile_page.set_existing_profiles(profile_names, active_profile)
-            else:
-                self._roomfit_enabled = False
-                self._name_profile_page.set_existing_profiles([])
-        except Exception:
-            logger.warning("Failed to list RoomFit profiles for naming", exc_info=True)
-            self._roomfit_enabled = False
-            self._name_profile_page.set_existing_profiles([])
-
-    async def _do_list_roomfit_profiles(self) -> None:
-        """Fetch RoomFit profile names and populate FiltersPage dropdown."""
-        assert self._wiim_adapter is not None
-
-        source_name = self._wizard_controller.state.primary_source
-        try:
-            if self._wiim_adapter.capabilities.supports_roomfit:
-                profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
-                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
-                self._filters_page.set_roomfit_profiles(profile_names)
-            else:
-                self._filters_page.set_roomfit_profiles([])
-        except Exception:
-            logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
-            self._filters_page.set_roomfit_profiles([])
+    # _do_populate_name_profiles, _do_list_roomfit_profiles moved to
+    # PrimaryWorkflowManager (src/gui/primary_workflows.py) —
+    # docs/backlog.md item 2, Phase 4. Dispatch from
+    # _populate_name_profile_page/_on_eq_type_selected now calls the
+    # manager directly; results arrive via name_profiles_ready/
+    # filters_roomfit_profiles_ready, see _on_name_profiles_ready/
+    # _on_filters_roomfit_profiles_ready.
 
     # _read_active_name_or_default, _do_list_presets, _peq_name_for_highlight,
     # _roomfit_name_for_highlight moved to PrimaryWorkflowManager
@@ -2672,6 +2631,19 @@ class MainWindow(QMainWindow):
     def _on_roomfit_profiles_hidden(self) -> None:
         """Forward PrimaryWorkflowManager.roomfit_profiles_hidden into the view."""
         self._presets_device_view.set_roomfit_hidden()
+
+    @Slot(list, str, bool)
+    def _on_name_profiles_ready(
+        self, profile_names: list[str], active_profile: str, roomfit_enabled: bool
+    ) -> None:
+        """Forward PrimaryWorkflowManager.name_profiles_ready into NameProfilePage."""
+        self._name_profile_page.set_existing_profiles(profile_names, active_profile)
+        self._roomfit_enabled = roomfit_enabled
+
+    @Slot(list)
+    def _on_filters_roomfit_profiles_ready(self, profile_names: list[str]) -> None:
+        """Forward PrimaryWorkflowManager.filters_roomfit_profiles_ready into FiltersPage."""
+        self._filters_page.set_roomfit_profiles(profile_names)
 
     # ------------------------------------------------------------------
     # Navigation handlers
@@ -3217,13 +3189,14 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _setup_primary_workflows(self) -> None:
-        """Wire PrimaryWorkflowManager's list-presets signals to PresetsDeviceView.
+        """Wire PrimaryWorkflowManager's view-bound signals to their widgets.
 
         The manager itself is constructed and configured earlier, in
         __init__, right after WizardController (discover/probe/import_file
         need no view wiring at all — they emit through AsyncBridge's
-        existing signals, already connected elsewhere). This method only
-        connects the four signals refresh_presets() added in Phase 1b.
+        existing signals, already connected elsewhere). This method connects
+        the four signals refresh_presets() added in Phase 1b, plus the two
+        RoomFit-dropdown signals added in Phase 4.
         """
         self._primary_workflows.peq_presets_ready.connect(self._on_peq_presets_ready)
         self._primary_workflows.peq_presets_unavailable.connect(
@@ -3234,6 +3207,12 @@ class MainWindow(QMainWindow):
         )
         self._primary_workflows.roomfit_profiles_hidden.connect(
             self._on_roomfit_profiles_hidden
+        )
+        self._primary_workflows.name_profiles_ready.connect(
+            self._on_name_profiles_ready
+        )
+        self._primary_workflows.filters_roomfit_profiles_ready.connect(
+            self._on_filters_roomfit_profiles_ready
         )
 
     # ------------------------------------------------------------------

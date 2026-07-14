@@ -459,7 +459,15 @@ class TestPushWriteOperations:
         window._bridge.run_async.assert_called_once()
 
     def test_165_populate_name_profiles_sets_active_and_enabled(self, window) -> None:
-        """_do_populate_name_profiles fetches roomfit status and applies it."""
+        """_do_populate_name_profiles fetches roomfit status and applies it.
+
+        Drives the real name_profiles_ready signal end-to-end (it's a
+        PrimaryWorkflowManager-owned QObject signal, always real regardless
+        of the mocked AsyncBridge, and is connected to
+        MainWindow._on_name_profiles_ready for real via
+        _setup_primary_workflows() during __init__) rather than asserting
+        on the coroutine's return value.
+        """
         import asyncio
 
         mock_adapter = _setup_device(window)
@@ -469,7 +477,7 @@ class TestPushWriteOperations:
         )
         mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
 
-        asyncio.run(window._do_populate_name_profiles())
+        asyncio.run(window._primary_workflows._do_populate_name_profiles())
 
         assert window._roomfit_enabled is True
         assert window._name_profile_page.active_profile == "Living Room"
@@ -488,7 +496,7 @@ class TestPushWriteOperations:
         )
         mock_adapter.get_roomfit_status = AsyncMock(side_effect=RuntimeError("boom"))
 
-        asyncio.run(window._do_populate_name_profiles())
+        asyncio.run(window._primary_workflows._do_populate_name_profiles())
 
         assert window._roomfit_enabled is False
         assert window._name_profile_page.active_profile == ""
