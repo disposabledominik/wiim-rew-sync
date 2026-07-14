@@ -1,17 +1,21 @@
-"""Primary workflow orchestration for discovery, capability probing, and file import.
+"""Primary workflow orchestration: discovery, probing, file import/export,
+device/preset reads, and device presets listing.
 
-Phase 1 of the MainWindow god-object extraction (docs/backlog.md item 3): moves
-the adapter-free `_do_*` methods out of MainWindow into a dedicated QObject
-manager, following the pattern established by SecondaryWorkflowManager
+Phases 1-2 of the MainWindow god-object extraction (docs/backlog.md item 2):
+moves `_do_*` methods out of MainWindow into a dedicated QObject manager,
+following the pattern established by SecondaryWorkflowManager
 (src/gui/secondary_workflows.py) — no direct Qt widget access, dependencies
-injected via configure(), workflow results delivered as signals or, for the
-four methods here, via AsyncBridge's existing signals directly (see
-_do_discovery/_do_probe/_do_file_import/_do_file_import_lr — none of them
-declare new signals of their own).
+injected via configure(), workflow results delivered as signals: mostly via
+AsyncBridge's existing signals directly (none of these methods declare a new
+signal of their own for that), except `list_presets()`/`refresh_presets()`,
+which owns four signals of its own (see class docstring) since it used to
+write directly to a view widget.
 
-Unlike SecondaryWorkflowManager, none of these four methods need a live
-device adapter, so configure() is called eagerly from MainWindow.__init__
-rather than waiting for a device to be selected/probed.
+`configure()` is called eagerly from MainWindow.__init__, since discovery/
+probing/file-import/export need no live device adapter; the methods that do
+(`pull_device`, `pull_roomfit`, `load_peq_preset`, `list_presets`/
+`refresh_presets`) instead wait on `set_current_adapter()`, called once a
+device is selected and probed — mirroring `SecondaryWorkflowManager`.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
+from src.gui.shared_helpers import extract_filters, is_lr_mode
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
 
@@ -32,7 +37,8 @@ if TYPE_CHECKING:
     from src.adapters.wiim_adapter import WiiMAdapter
     from src.discovery.discovery_module import DiscoveryModule
     from src.gui.async_bridge import AsyncBridge
-    from src.gui.wizard_controller import WizardController
+    from src.gui.wizard_controller import WizardController, WizardState
+    from src.models.canonical import CanonicalFilter
     from src.models.capabilities import DeviceInfo
 
 logger = logging.getLogger("wiim_rew_sync.primary_workflows")
@@ -43,18 +49,20 @@ BridgeWrapper = Callable[[str, "Coroutine[Any, Any, Any]"], "Coroutine[Any, Any,
 
 
 class PrimaryWorkflowManager(QObject):
-    """Orchestrates primary wizard workflows: discovery, probing, file import.
+    """Orchestrates primary wizard workflows: discovery, probing, file
+    import/export, device/preset reads, and device presets listing.
 
-    This manager coordinates the adapter-free half of MainWindow's `_do_*`
-    methods. It does NOT perform direct network calls itself for discovery
-    (that's DiscoveryModule) or file I/O (that's REWParser); it just
-    relocates the existing orchestration bodies verbatim out of MainWindow.
+    This manager coordinates most of MainWindow's `_do_*` methods. It does
+    NOT perform direct network calls itself for discovery (that's
+    DiscoveryModule), file I/O (that's REWParser/REWGenerator), or device
+    reads (that's WiiMAdapter); it just relocates the existing orchestration
+    bodies verbatim out of MainWindow.
 
     Results are delivered via AsyncBridge's existing signals
     (discovery_progress, discovery_complete, capabilities_ready, peq_ready,
     progress_update) — this manager declares no new signals of its own for
-    those four workflows, so MainWindow's existing `_on_*` slot connections
-    need no rewiring. list_presets()/refresh_presets() is the exception: it
+    those workflows, so MainWindow's existing `_on_*` slot connections need
+    no rewiring. list_presets()/refresh_presets() is the exception: it
     declares four signals of its own (see below), one per PresetsDeviceView
     setter it used to call directly.
 
@@ -108,9 +116,10 @@ class PrimaryWorkflowManager(QObject):
         """Inject dependencies for workflow execution.
 
         Called eagerly from MainWindow.__init__, right after the wizard
-        controller is constructed — unlike SecondaryWorkflowManager, none of
-        these four methods need a live device adapter, so there's no reason
-        to wait for device selection.
+        controller is constructed — unlike SecondaryWorkflowManager, these
+        four dependencies are all available before a device is selected;
+        the (smaller) set of methods that additionally need a live device
+        adapter get it separately via set_current_adapter().
 
         Args:
             bridge: The AsyncBridge for run_async calls and result signals.
@@ -136,9 +145,9 @@ class PrimaryWorkflowManager(QObject):
         """Set the current device adapter for same-device workflows.
 
         Called from MainWindow whenever the active device changes (mirrors
-        SecondaryWorkflowManager.set_current_adapter). Used by
-        list_presets()/refresh_presets(), the only workflow here that reads
-        the live device.
+        SecondaryWorkflowManager.set_current_adapter). Used by every
+        workflow here that reads the live device: pull_device, pull_roomfit,
+        load_peq_preset, and list_presets/refresh_presets.
 
         Args:
             adapter: The WiiMAdapter for the currently connected device,
@@ -156,15 +165,42 @@ class PrimaryWorkflowManager(QObject):
         """
         return self._discovered_devices
 
+    def _dispatch(self, operation_name: str, coro: Coroutine[Any, Any, Any]) -> None:
+        """Run a coroutine on the bridge, wrapped for error mapping.
+
+        Shared by every fire-and-forget entry point below — each one used to
+        repeat this same assert/assert/run_async line; consolidated here
+        once enough of them existed to justify it.
+        """
+        assert self._bridge is not None
+        assert self._bridge_wrapper is not None
+        self._bridge.run_async(self._bridge_wrapper(operation_name, coro))
+
+    def _require_adapter(self) -> WiiMAdapter:
+        """Return the current device adapter, asserting it's set.
+
+        Shared by every method below that needs a live device — each used
+        to repeat this same assert.
+        """
+        assert self._current_adapter is not None
+        return self._current_adapter
+
+    def _require_wizard_state(self) -> WizardState:
+        """Return the wizard's mutable state, asserting the controller is set.
+
+        Shared by every method below that reads/writes wizard state — each
+        used to repeat this same assert.
+        """
+        assert self._wizard_controller is not None
+        return self._wizard_controller.state
+
     # ------------------------------------------------------------------
     # Workflow: Discovery
     # ------------------------------------------------------------------
 
     def discover(self) -> None:
         """Trigger device discovery; results arrive via the bridge's discovery signals."""
-        assert self._bridge is not None
-        assert self._bridge_wrapper is not None
-        self._bridge.run_async(self._bridge_wrapper("discovery", self._do_discovery()))
+        self._dispatch("discovery", self._do_discovery())
 
     async def _do_discovery(self) -> None:
         """Run device discovery and emit results via bridge signal.
@@ -216,11 +252,7 @@ class PrimaryWorkflowManager(QObject):
             generation: Snapshot from bump_probe_generation() at selection
                 time, used by _do_probe to discard a stale result.
         """
-        assert self._bridge is not None
-        assert self._bridge_wrapper is not None
-        self._bridge.run_async(
-            self._bridge_wrapper("capability_probe", self._do_probe(prober, generation))
-        )
+        self._dispatch("capability_probe", self._do_probe(prober, generation))
 
     async def _do_probe(self, prober: CapabilityProber, generation: int) -> None:
         """Run capability probing and emit results via bridge signal.
@@ -258,9 +290,7 @@ class PrimaryWorkflowManager(QObject):
 
     def import_file(self, path: str) -> None:
         """Trigger a single-file (stereo) REW import."""
-        assert self._bridge is not None
-        assert self._bridge_wrapper is not None
-        self._bridge.run_async(self._bridge_wrapper("file_import", self._do_file_import(path)))
+        self._dispatch("file_import", self._do_file_import(path))
 
     async def _do_file_import(self, path: str) -> None:
         """Parse a REW EQ text file and populate filters.
@@ -274,14 +304,13 @@ class PrimaryWorkflowManager(QObject):
         from src.translator.rew_parser import REWParser
 
         assert self._bridge is not None
-        assert self._wizard_controller is not None
 
         file_path = Path(path)
         parser = REWParser()
         filters, warnings, rows, notes = parser.parse_file_with_rows(file_path)
 
         # Store in wizard state — explicitly set Stereo channel mode (smoke #72)
-        state = self._wizard_controller.state
+        state = self._require_wizard_state()
         state.current_filters = filters
         state.channel_mode = ChannelMode.STEREO
         state.pending_rows = rows
@@ -300,11 +329,7 @@ class PrimaryWorkflowManager(QObject):
 
     def import_file_lr(self, path_l: str, path_r: str) -> None:
         """Trigger an L/R (two-file) REW import."""
-        assert self._bridge is not None
-        assert self._bridge_wrapper is not None
-        self._bridge.run_async(
-            self._bridge_wrapper("file_import_lr", self._do_file_import_lr(path_l, path_r))
-        )
+        self._dispatch("file_import_lr", self._do_file_import_lr(path_l, path_r))
 
     async def _do_file_import_lr(self, path_l: str, path_r: str) -> None:
         """Parse two REW EQ text files as L/R channels.
@@ -319,7 +344,6 @@ class PrimaryWorkflowManager(QObject):
         from src.translator.rew_parser import REWParser
 
         assert self._bridge is not None
-        assert self._wizard_controller is not None
 
         parser = REWParser()
         filters_l, warnings_l, rows_l, notes_l = parser.parse_file_with_rows(Path(path_l))
@@ -327,7 +351,7 @@ class PrimaryWorkflowManager(QObject):
 
         # Combine L+R into flat list and set L/R channel mode
         filters = filters_l + filters_r
-        state = self._wizard_controller.state
+        state = self._require_wizard_state()
         state.current_filters = filters
         state.channel_mode = ChannelMode.LR
         state.pending_rows_l = rows_l
@@ -366,9 +390,7 @@ class PrimaryWorkflowManager(QObject):
         the refresh inline as part of its own coroutine, calls
         refresh_presets() directly instead — see that method's docstring.
         """
-        assert self._bridge is not None
-        assert self._bridge_wrapper is not None
-        self._bridge.run_async(self._bridge_wrapper("list_presets", self.refresh_presets()))
+        self._dispatch("list_presets", self.refresh_presets())
 
     async def refresh_presets(self) -> None:
         """Fetch device PEQ preset list and RoomFit profiles, emit as signals.
@@ -384,11 +406,8 @@ class PrimaryWorkflowManager(QObject):
         to refresh the view after a delete — unwrapped by bridge_wrapper
         there, exactly as before this method moved).
         """
-        assert self._current_adapter is not None
-        assert self._wizard_controller is not None
-        wiim_adapter = self._current_adapter
-
-        source_name = self._wizard_controller.state.primary_source
+        wiim_adapter = self._require_adapter()
+        source_name = self._require_wizard_state().primary_source
         from src.gui.views.presets_device_view import PresetItem
 
         async def _fetch_peq() -> None:
@@ -455,11 +474,206 @@ class PrimaryWorkflowManager(QObject):
 
     async def _peq_name_for_highlight(self, source_name: str) -> str:
         """The active PEQ preset's name, for #165c highlighting."""
-        assert self._current_adapter is not None
-        return (await self._current_adapter.read_peq(source_name)).name
+        return (await self._require_adapter().read_peq(source_name)).name
 
     async def _roomfit_name_for_highlight(self) -> str:
         """The active RoomFit profile's name, for #165c highlighting."""
-        assert self._current_adapter is not None
-        _enabled, active_roomfit_name = await self._current_adapter.get_roomfit_status()
+        _enabled, active_roomfit_name = await self._require_adapter().get_roomfit_status()
         return active_roomfit_name
+
+    # ------------------------------------------------------------------
+    # Workflow: Device / Preset Reads (Phase 2)
+    # ------------------------------------------------------------------
+
+    def pull_device(self) -> None:
+        """Trigger a pull-from-device; result arrives via peq_ready."""
+        self._dispatch("device_pull", self._do_device_pull())
+
+    async def _do_device_pull(self) -> None:
+        """Pull PEQ settings from the connected device.
+
+        Reads PEQ bands via WiiMAdapter, converts to CanonicalFilter list,
+        stores in wizard state, and emits result signal.
+        """
+        assert self._bridge is not None
+        wiim_adapter = self._require_adapter()
+        state = self._require_wizard_state()
+        source_name = state.primary_source
+
+        peq_settings = await wiim_adapter.read_peq(source_name)
+
+        # Extract filters based on channel mode
+        filters, _ = extract_filters(peq_settings)
+
+        # Store in wizard state
+        state.current_filters = filters
+        state.device_filters = filters
+        state.filters_origin = f"Pulled from device (source: {source_name})"
+
+        # Emit result signal
+        self._bridge.peq_ready.emit(peq_settings)
+
+    def pull_roomfit(self, profile_name: str, operation_name: str = "roomfit_pull") -> None:
+        """Trigger a RoomFit profile pull; result arrives via peq_ready.
+
+        Args:
+            profile_name: Name of the RoomFit profile to read.
+            operation_name: Log-context label for _bridge_wrapper — this
+                coroutine has two real callers today (selecting a RoomFit
+                profile in the Filters step vs. loading a preset from a
+                presets list), which want distinct labels in the failure
+                log even though the underlying read is identical.
+        """
+        self._dispatch(operation_name, self._do_roomfit_pull(profile_name))
+
+    async def _do_roomfit_pull(self, profile_name: str) -> None:
+        """Pull RoomFit profile filters from the device.
+
+        Reads the named RoomFit profile via WiiMAdapter, stores filters
+        in wizard state, and emits peq_ready to advance to Review.
+
+        Args:
+            profile_name: Name of the RoomFit profile to read.
+        """
+        assert self._bridge is not None
+        wiim_adapter = self._require_adapter()
+        state = self._require_wizard_state()
+        source_name = state.primary_source
+
+        peq_settings = await wiim_adapter.read_roomfit_preset_preview(
+            source_name, profile_name
+        )
+
+        # Extract filters based on channel mode
+        filters, _ = extract_filters(peq_settings)
+
+        # Store in wizard state
+        state.current_filters = filters
+        state.device_filters = filters
+        state.filters_origin = f"RoomFit profile: {profile_name}"
+
+        # Emit result signal (triggers _on_peq_ready -> Review page)
+        self._bridge.peq_ready.emit(peq_settings)
+
+    def load_peq_preset(self, preset_name: str) -> None:
+        """Trigger a named PEQ preset load; result arrives via peq_ready."""
+        self._dispatch("load_preset", self._do_load_peq_preset(preset_name))
+
+    async def _do_load_peq_preset(self, preset_name: str) -> None:
+        """Load a named PEQ preset from device and emit peq_ready.
+
+        Loads the preset via EQv2SourceLoad then reads the resulting bands,
+        then restores the source's original active preset (#166) -- the
+        confirmation dialog in _on_preset_load_into_editor already warned the
+        user this briefly changes what's playing. Sets channel_mode in wizard
+        state from the device response to avoid stale L/R state from a
+        previous load (smoke #111).
+
+        Args:
+            preset_name: Name of the PEQ preset to load.
+        """
+        assert self._bridge is not None
+        wiim_adapter = self._require_adapter()
+        state = self._require_wizard_state()
+        source_name = state.primary_source
+
+        peq_settings = await wiim_adapter.read_peq_preset_preview(
+            source_name, preset_name
+        )
+
+        # Determine channel_mode from the device data and update wizard state
+        peq_channel = getattr(peq_settings, "channel_mode", None)
+        if is_lr_mode(peq_channel) if peq_channel else False:
+            state.channel_mode = ChannelMode.LR
+        else:
+            state.channel_mode = ChannelMode.STEREO
+
+        # Extract filters
+        filters, _ = extract_filters(peq_settings)
+
+        # Store in wizard state
+        state.current_filters = filters
+        state.device_filters = filters
+        state.filters_origin = f"PEQ preset: {preset_name}"
+
+        # Emit result signal
+        self._bridge.peq_ready.emit(peq_settings)
+
+    # ------------------------------------------------------------------
+    # Workflow: Export to File (Phase 2)
+    # ------------------------------------------------------------------
+
+    def export_file(self, filters: list[CanonicalFilter], path: str) -> None:
+        """Trigger a stereo REW file export; progress arrives via progress_update."""
+        self._dispatch("export", self._do_export(filters, path))
+
+    async def _do_export(self, filters: list[CanonicalFilter], path: str) -> None:
+        """Generate a REW EQ text file from current filters.
+
+        Calls REWGenerator.generate_file() and emits progress_update with
+        success message. Includes skip count if any bands were skipped.
+
+        Args:
+            filters: List of CanonicalFilter objects to export.
+            path: Destination file path chosen by the user.
+        """
+        from src.translator.rew_generator import REWGenerator
+
+        assert self._bridge is not None
+
+        generator = REWGenerator()
+        file_path = Path(path)
+        warnings = generator.generate_file(filters, file_path)
+
+        if warnings:
+            skip_count = len(warnings)
+            self._bridge.progress_update.emit(
+                f"File exported successfully ({skip_count} unsupported band(s) skipped)"
+            )
+        else:
+            self._bridge.progress_update.emit("File exported successfully")
+
+    def export_file_lr(
+        self,
+        filters_l: list[CanonicalFilter],
+        filters_r: list[CanonicalFilter],
+        path_l: Path,
+        path_r: Path,
+    ) -> None:
+        """Trigger an L/R REW file export; progress arrives via progress_update."""
+        self._dispatch("export_lr", self._do_export_lr(filters_l, filters_r, path_l, path_r))
+
+    async def _do_export_lr(
+        self,
+        filters_l: list[CanonicalFilter],
+        filters_r: list[CanonicalFilter],
+        path_l: Path,
+        path_r: Path,
+    ) -> None:
+        """Generate two REW EQ text files for L/R channel mode (smoke #29).
+
+        Uses REWGenerator.generate_file() for each channel independently.
+
+        Args:
+            filters_l: Left channel CanonicalFilter list.
+            filters_r: Right channel CanonicalFilter list.
+            path_l: Destination path for left channel file.
+            path_r: Destination path for right channel file.
+        """
+        from src.translator.rew_generator import REWGenerator
+
+        assert self._bridge is not None
+
+        generator = REWGenerator()
+        warnings_l = generator.generate_file(filters_l, path_l)
+        warnings_r = generator.generate_file(filters_r, path_r)
+
+        total_warnings = len(warnings_l) + len(warnings_r)
+        if total_warnings:
+            self._bridge.progress_update.emit(
+                f"L/R files exported ({total_warnings} unsupported band(s) skipped)"
+            )
+        else:
+            self._bridge.progress_update.emit(
+                f"L/R files exported: {path_l.name} and {path_r.name}"
+            )
