@@ -6,23 +6,7 @@ current release but may be reconsidered in future versions. Backend support may 
 
 ---
 
-## 1. `ProfileRepository.list()` Shadows Builtin (Tech Debt)
-
-**Originally:** Code quality audit (2026-06-22)
-
-**What:** The `list()` method on `ProfileRepository` shadows the Python builtin `list`, requiring `import builtins` + `builtins.list[Profile]` for type annotations within the class. Renaming to `list_all()` or `get_all()` would eliminate this workaround.
-
-**Why deferred:** Renaming a public method on `ProfileRepository` would break the GUI layer, tests, and any code that calls `.list()`. Cosmetic improvement with non-trivial migration effort.
-
-**Status:** Reactivated 2026-07-14 — rename in progress. Confirmed present as of 2026-07-14, `src/repository/profile_repository.py:5,98`. Production call sites: 1 internal (`get_by_tag`, line 187), 1 in `main_window.py:2074` inside `_refresh_presets_view()`.
-
-**Correction (2026-07-14):** an earlier version of this entry claimed the production GUI call site was `main_window.py:1994` inside `_do_list_presets`, and that renaming would "come along for free" while extracting `_do_list_presets` for backlog item 3 below. That was stale/incorrect — verified against current code that `_do_list_presets` never calls `ProfileRepository.list()` at all (it lists device-side presets via `WiiMAdapter`, not the local repository). The real call site is `_refresh_presets_view()`, a small, unrelated method. This item has zero code overlap with item 3; treat them as independent work, not a bundle.
-
-**To reactivate:** Rename method to `list_all()`, update the 1 production call site (`_refresh_presets_view()`) + 1 internal call site (`get_by_tag`) + 4 test locations in `test_profile_repository.py`.
-
----
-
-## 2. Hardware QA Sign-off
+## 1. Hardware QA Sign-off
 
 **Originally:** `docs/qa_signoff.md` final verdict (2026-06-15)
 
@@ -47,7 +31,7 @@ current test counts/coverage.
 
 ---
 
-## 3. MainWindow God-Object — Extract Business Logic from GUI Layer (Tech Debt)
+## 2. MainWindow God-Object — Extract Business Logic from GUI Layer (Tech Debt)
 
 **Originally:** Code quality audit (2026-06-28)
 
@@ -99,33 +83,32 @@ handlers (same shape as `SecondaryWorkflowManager.undo_complete` etc.).
 ~Medium, best done incrementally (4-6 methods per pass) rather than
 big-bang, to keep each step independently testable.
 
-**Status:** Reactivated 2026-07-14 — Phase 1 extraction (`PrimaryWorkflowManager`,
-covering `_do_discovery`/`_do_probe`/`_do_file_import`/`_do_file_import_lr`/
-`_do_list_presets`) in progress. Prior status: file kept growing as new
-features landed directly in MainWindow (e.g. `_do_delete_presets`, and the
-2026-07-10/11 RoomFit-capability-model/prober-redesign pass); that pass's new
-orchestration (the Phase 5 source-slot diagnostic, `EQGetSourceModes`)
-deliberately did **not** add a new MainWindow `_do_*` method — it went into
-`SecondaryWorkflowManager` instead, demonstrating the target pattern this
-item recommends.
+**Status:** ✅ Phase 1 complete (2026-07-14). `PrimaryWorkflowManager`
+(`src/gui/primary_workflows.py`) now owns `_do_discovery`/`_do_probe`/
+`_do_file_import`/`_do_file_import_lr`/`_do_list_presets` (the last as
+`refresh_presets()`/`list_presets()`), plus the discovered-devices cache and
+probe-generation counter that existed only to serve them. `main_window.py`
+dropped from 4,739 to 4,569 lines across three commits (scaffold → wire →
+extract `_do_list_presets`), with `test_gui_integration_primary.py` added
+mirroring `test_gui_integration_secondary.py`'s structure. The PEQ/RoomFit
+concurrent-fetch behavior (#174) is preserved via four separate signals
+(`peq_presets_ready`/`peq_presets_unavailable`/`roomfit_profiles_ready`/
+`roomfit_profiles_hidden`) rather than one combined result, since the two
+fetches complete and update the view independently.
 
-**To reactivate:** Start with the Phase-1 methods (`_do_discovery`,
-`_do_probe`, `_do_file_import`, `_do_file_import_lr`, `_do_list_presets`),
-write `src/tests/test_gui_integration_primary.py` mirroring
-`src/tests/test_gui_integration_secondary.py`'s structure (**correction,
-2026-07-14:** the mirrored file is named `test_gui_integration_secondary.py`,
-not `test_secondary_workflows.py` as an earlier version of this entry
-stated — that file doesn't exist), wire signals in a
-`_setup_primary_workflows()`-style method, verify smoke tests still pass,
-then proceed to the next phase. **Correction (2026-07-14):** this item does
-**not** naturally bundle with item 1 above (`ProfileRepository.list()` →
-`list_all()`) — `_do_list_presets` never calls `ProfileRepository.list()`,
-so extracting it doesn't touch that rename's call site. The two are
-independent changes; do them separately.
+**To reactivate (next phase):** Continue with the remaining low-risk
+candidates (`_do_device_pull`, `_do_roomfit_pull`, `_do_load_peq_preset`,
+`_do_list_roomfit_profiles`, `_do_populate_name_profiles`,
+`_do_rew_list_measurements`, `_do_rew_get_filters`, `_do_rew_get_filters_lr`,
+`_do_export`, `_do_export_lr`, `_do_preset_export`, `_do_preset_save`,
+`_do_raw_command`), following the same pattern: verbatim move, reuse
+`_bridge_wrapper` via injection rather than reimplementing error handling,
+and check for any state (like the discovered-devices cache) that only
+existed to serve the method being moved.
 
 ---
 
-## 4. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)
+## 3. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)
 
 **Originally:** Surfaced via `/code-review ultra` during the 2026-07-12 dialog-consolidation session (`docs/smoke_test_issues.md` `#200`/`#201`).
 
@@ -156,6 +139,15 @@ and migrate `DevicePickerDialog`/`QuickSetupDialog` onto it at the same time.
 ---
 
 ## Completed / Closed Items (Archive)
+
+### `ProfileRepository.list()` Shadows Builtin (Tech Debt)
+**Completed:** 2026-07-14. Formerly backlog item "1. `ProfileRepository.list()` Shadows Builtin."
+Renamed to `list_all()`, removing the `import builtins` + `builtins.list[Profile]` workaround.
+Updated the one production call site (`_refresh_presets_view()`, `main_window.py`), the one
+internal call site (`get_by_tag`), and 4 test locations in `test_profile_repository.py`. An
+earlier version of this entry claimed the rename would "come along for free" while extracting
+`_do_list_presets` for the MainWindow god-object item — that was stale/incorrect (`_do_list_presets`
+never called `ProfileRepository.list()`); the two were done as fully independent commits.
 
 ### PEQ / RoomFit Enable/Disable Toggle in GUI
 **Closed:** 2026-07-14. Formerly backlog item "1. PEQ / RoomFit Enable/Disable Toggle in GUI."
