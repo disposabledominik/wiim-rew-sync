@@ -2395,41 +2395,11 @@ class MainWindow(QMainWindow):
                 f"Copied to {succeeded} of {n_devices} device(s) ({failed} failed)"
             )
 
-    async def _do_delete_presets(self, items: list[Any]) -> None:
-        """Delete selected PEQ presets / RoomFit profiles from the device.
-
-        Dispatches per item on preset_type to delete_peq_profile or
-        delete_roomfit_profile. One item's failure doesn't abort the rest;
-        the view is refreshed afterward regardless of partial failure.
-
-        Args:
-            items: List of PresetItem objects to delete.
-        """
-        assert self._wiim_adapter is not None
-        succeeded = 0
-        failed = 0
-
-        for item in items:
-            name = getattr(item, "name", "")
-            preset_type = getattr(item, "preset_type", "PEQ")
-            if not name:
-                continue
-            try:
-                if preset_type == "RoomFit":
-                    await self._wiim_adapter.delete_roomfit_profile(name)
-                else:
-                    await self._wiim_adapter.delete_peq_profile(name)
-                succeeded += 1
-            except Exception:
-                logger.exception("Delete preset '%s' (%s) failed", name, preset_type)
-                failed += 1
-
-        await self._primary_workflows.refresh_presets()
-
-        if failed == 0:
-            self._status_banner.show_success(f"{succeeded} preset(s) deleted")
-        else:
-            self._status_banner.show_error(f"Deleted {succeeded}, {failed} failed")
+    # _do_delete_presets moved to PrimaryWorkflowManager
+    # (src/gui/primary_workflows.py) — docs/backlog.md item 2, Phase 5.
+    # Dispatch from _on_preset_delete_requested now calls the manager
+    # directly; results arrive via presets_delete_complete, see
+    # _on_presets_delete_complete.
 
     # _do_preset_export, _do_preset_save, _do_rew_list_measurements,
     # _do_rew_get_filters, _do_rew_get_filters_lr moved to
@@ -2644,6 +2614,14 @@ class MainWindow(QMainWindow):
     def _on_filters_roomfit_profiles_ready(self, profile_names: list[str]) -> None:
         """Forward PrimaryWorkflowManager.filters_roomfit_profiles_ready into FiltersPage."""
         self._filters_page.set_roomfit_profiles(profile_names)
+
+    @Slot(int, int)
+    def _on_presets_delete_complete(self, succeeded: int, failed: int) -> None:
+        """Forward PrimaryWorkflowManager.presets_delete_complete into the status banner."""
+        if failed == 0:
+            self._status_banner.show_success(f"{succeeded} preset(s) deleted")
+        else:
+            self._status_banner.show_error(f"Deleted {succeeded}, {failed} failed")
 
     # ------------------------------------------------------------------
     # Navigation handlers
@@ -3195,8 +3173,9 @@ class MainWindow(QMainWindow):
         __init__, right after WizardController (discover/probe/import_file
         need no view wiring at all — they emit through AsyncBridge's
         existing signals, already connected elsewhere). This method connects
-        the four signals refresh_presets() added in Phase 1b, plus the two
-        RoomFit-dropdown signals added in Phase 4.
+        the four signals refresh_presets() added in Phase 1b, the two
+        RoomFit-dropdown signals added in Phase 4, and the delete-presets
+        completion signal added in Phase 5.
         """
         self._primary_workflows.peq_presets_ready.connect(self._on_peq_presets_ready)
         self._primary_workflows.peq_presets_unavailable.connect(
@@ -3213,6 +3192,9 @@ class MainWindow(QMainWindow):
         )
         self._primary_workflows.filters_roomfit_profiles_ready.connect(
             self._on_filters_roomfit_profiles_ready
+        )
+        self._primary_workflows.presets_delete_complete.connect(
+            self._on_presets_delete_complete
         )
 
     # ------------------------------------------------------------------
@@ -3807,9 +3789,7 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper("delete_presets", self._do_delete_presets(items))
-        )
+        self._primary_workflows.delete_presets(items)
         logger.info("Preset delete requested: %s", [getattr(i, "name", "") for i in items])
 
     # --- Outbound handlers (workflow manager → UI updates) ---

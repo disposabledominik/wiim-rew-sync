@@ -101,6 +101,13 @@ class PrimaryWorkflowManager(QObject):
         filters_roomfit_profiles_ready(list): RoomFit profile-name list,
             mirrors FiltersPage.set_roomfit_profiles() (no active name or
             enabled flag — that page's dropdown doesn't need either).
+        presets_delete_complete(int, int): succeeded/failed counts from a
+            delete_presets() batch. delete_presets() is otherwise a normal
+            _dispatch()-based entry point, but its two completion paths
+            (success, partial-failure) both used to call
+            MainWindow._status_banner directly rather than raising an
+            exception (partial failure isn't an error condition
+            _bridge_wrapper's mapping fits), so it needs a signal instead.
     """
 
     peq_presets_ready = Signal(list, str)
@@ -109,6 +116,7 @@ class PrimaryWorkflowManager(QObject):
     roomfit_profiles_hidden = Signal()
     name_profiles_ready = Signal(list, str, bool)
     filters_roomfit_profiles_ready = Signal(list)
+    presets_delete_complete = Signal(int, int)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -1058,3 +1066,44 @@ class PrimaryWorkflowManager(QObject):
         except Exception:
             logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
             self.filters_roomfit_profiles_ready.emit([])
+
+    # ------------------------------------------------------------------
+    # Workflow: Delete Presets (Phase 5)
+    # ------------------------------------------------------------------
+
+    def delete_presets(self, items: list[Any]) -> None:
+        """Trigger a device preset batch delete; result arrives via signal."""
+        self._dispatch("delete_presets", self._do_delete_presets(items))
+
+    async def _do_delete_presets(self, items: list[Any]) -> None:
+        """Delete selected PEQ presets / RoomFit profiles from the device.
+
+        Dispatches per item on preset_type to delete_peq_profile or
+        delete_roomfit_profile. One item's failure doesn't abort the rest;
+        the view is refreshed afterward regardless of partial failure.
+
+        Args:
+            items: List of PresetItem objects to delete.
+        """
+        assert self._bridge is not None
+        wiim_adapter = self._require_adapter()
+        succeeded = 0
+        failed = 0
+
+        for item in items:
+            name = getattr(item, "name", "")
+            preset_type = getattr(item, "preset_type", "PEQ")
+            if not name:
+                continue
+            try:
+                if preset_type == "RoomFit":
+                    await wiim_adapter.delete_roomfit_profile(name)
+                else:
+                    await wiim_adapter.delete_peq_profile(name)
+                succeeded += 1
+            except Exception:
+                logger.exception("Delete preset '%s' (%s) failed", name, preset_type)
+                failed += 1
+
+        await self.refresh_presets()
+        self.presets_delete_complete.emit(succeeded, failed)

@@ -1633,7 +1633,7 @@ class TestPresets:
         ]
 
         with patch.object(window._status_banner, "show_success") as mock_success:
-            asyncio.run(window._do_delete_presets(items))
+            asyncio.run(window._primary_workflows._do_delete_presets(items))
 
         mock_adapter.delete_peq_profile.assert_called_once_with("Movie")
         mock_adapter.delete_roomfit_profile.assert_called_once_with("Living Room")
@@ -1655,7 +1655,7 @@ class TestPresets:
         ]
 
         with patch.object(window._status_banner, "show_error") as mock_error:
-            asyncio.run(window._do_delete_presets(items))
+            asyncio.run(window._primary_workflows._do_delete_presets(items))
 
         mock_adapter.delete_roomfit_profile.assert_called_once_with("Living Room")
         mock_error.assert_called_once_with("Deleted 1, 1 failed")

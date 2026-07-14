@@ -845,3 +845,78 @@ class TestRefreshRoomfitDropdown:
         await manager._do_list_roomfit_profiles()
 
         assert captured == [([],)]
+
+
+# ---------------------------------------------------------------------------
+# Delete presets
+# ---------------------------------------------------------------------------
+
+
+class TestDeletePresets:
+    """Test PrimaryWorkflowManager._do_delete_presets."""
+
+    @pytest.mark.asyncio
+    async def test_success_emits_counts_and_refreshes(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.presets_delete_complete)
+
+        manager._current_adapter = MagicMock(
+            delete_peq_profile=AsyncMock(),
+            delete_roomfit_profile=AsyncMock(),
+        )
+        manager.refresh_presets = AsyncMock()
+
+        items = [
+            SimpleNamespace(name="Movie", preset_type="PEQ"),
+            SimpleNamespace(name="Living Room", preset_type="RoomFit"),
+        ]
+
+        await manager._do_delete_presets(items)
+
+        manager._current_adapter.delete_peq_profile.assert_awaited_once_with("Movie")
+        manager._current_adapter.delete_roomfit_profile.assert_awaited_once_with(
+            "Living Room"
+        )
+        manager.refresh_presets.assert_awaited_once()
+        assert captured == [(2, 0)]
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_emits_counts(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.presets_delete_complete)
+
+        manager._current_adapter = MagicMock(
+            delete_peq_profile=AsyncMock(side_effect=RuntimeError("boom")),
+            delete_roomfit_profile=AsyncMock(),
+        )
+        manager.refresh_presets = AsyncMock()
+
+        items = [
+            SimpleNamespace(name="Movie", preset_type="PEQ"),
+            SimpleNamespace(name="Living Room", preset_type="RoomFit"),
+        ]
+
+        await manager._do_delete_presets(items)
+
+        assert captured == [(1, 1)]
+
+    @pytest.mark.asyncio
+    async def test_skips_items_without_name(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.presets_delete_complete)
+
+        manager._current_adapter = MagicMock(
+            delete_peq_profile=AsyncMock(),
+            delete_roomfit_profile=AsyncMock(),
+        )
+        manager.refresh_presets = AsyncMock()
+
+        items = [SimpleNamespace(name="", preset_type="PEQ")]
+
+        await manager._do_delete_presets(items)
+
+        manager._current_adapter.delete_peq_profile.assert_not_awaited()
+        assert captured == [(0, 0)]
