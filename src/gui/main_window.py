@@ -1534,6 +1534,143 @@ class MainWindow(QMainWindow):
         # Populate diagnostics panel capabilities display
         self._diagnostics_panel.on_capabilities_ready(caps)  # type: ignore[arg-type]
 
+    def _clear_pending_lr_rows(self) -> None:
+        """Reset pending L/R skip-row/conversion-note state.
+
+        Shared by _validate_and_populate_review's L/R-success and
+        L/R-without-bands-guard branches, plus _on_peq_ready's count==0
+        early reset — this exact 4-field reset used to be duplicated three
+        times.
+        """
+        state = self._wizard_controller.state
+        state.pending_rows_l = []
+        state.pending_rows_r = []
+        state.pending_conversion_notes_l = {}
+        state.pending_conversion_notes_r = {}
+
+    def _clear_pending_stereo_rows(self) -> None:
+        """Reset pending stereo skip-row/conversion-note state.
+
+        Shared by _validate_and_populate_review's stereo-success branch and
+        _on_peq_ready's count==0 early reset — this exact 2-field reset
+        used to be duplicated twice.
+        """
+        state = self._wizard_controller.state
+        state.pending_rows = []
+        state.pending_conversion_notes = {}
+
+    def _validate_and_populate_review(
+        self, peq_data: object, state: WizardState
+    ) -> tuple[list[str], int] | None:
+        """Validate filters against device limits and populate ReviewPage.
+
+        Branches on channel mode (smoke #28): explicit L/R bands supplied
+        by peq_data, wizard-state L/R without explicit bands (a guard
+        against an invariant break, see below), or stereo.
+
+        Returns:
+            (warnings, validated_count) on success, or None if the
+            L/R-without-bands guard fired — it already showed its own
+            error banner; the caller must return without advancing the
+            wizard.
+        """
+        from src.gui.shared_helpers import validate_filters_for_device
+
+        # Determine device max_filters and supported filter types
+        max_filters = DEFAULT_MAX_BANDS
+        supported_filter_types: list[str] | None = None
+        if self._device_caps is not None:
+            # merge_into() (#167c) guarantees max_filters is always a valid
+            # positive int once capabilities are resolved -- no "or
+            # DEFAULT_MAX_BANDS" fallback needed here; that used to be a
+            # second, independently-drifting copy of the same default.
+            max_filters = getattr(self._device_caps, "max_filters", DEFAULT_MAX_BANDS)
+            supported_filter_types = (
+                getattr(self._device_caps, "supported_filter_types", None) or None
+            )
+
+        channel = state.channel_mode
+
+        # Check if peq_data carries explicit L/R bands
+        peq_channel = getattr(peq_data, "channel_mode", None)
+        bands_l = getattr(peq_data, "bands_l", None)
+        bands_r = getattr(peq_data, "bands_r", None)
+
+        if (
+            peq_channel is not None
+            and is_lr_mode(peq_channel)
+            and bands_l is not None
+            and bands_r is not None
+        ):
+            # Update wizard state to reflect actual L/R mode from device
+            state.channel_mode = ChannelMode.LR
+            channel = ChannelMode.LR
+
+            # Validate each channel independently
+            validated_l, warnings_l, clamping_l, rows_l = validate_filters_for_device(
+                list(bands_l), max_filters, state.pending_rows_l or None,
+                supported_filter_types,
+            )
+            validated_r, warnings_r, clamping_r, rows_r = validate_filters_for_device(
+                list(bands_r), max_filters, state.pending_rows_r or None,
+                supported_filter_types,
+            )
+            notes_l = state.pending_conversion_notes_l
+            notes_r = state.pending_conversion_notes_r
+            self._clear_pending_lr_rows()
+
+            # Merge warnings — prefix with channel so the combined status
+            # text (joined with " | ") doesn't leave the user guessing
+            # which side a truncation/clamping warning applies to.
+            all_warnings = [f"Left: {w}" for w in warnings_l] + [
+                f"Right: {w}" for w in warnings_r
+            ]
+
+            # Update state with truncated filters and separate L/R lists
+            state.current_filters = validated_l + validated_r
+            state.filters_l = validated_l
+            state.filters_r = validated_r
+
+            self._review_page.set_lr_filters(
+                validated_l,
+                validated_r,
+                clamping_l,
+                clamping_r,
+                rows_l,
+                rows_r,
+                notes_l,
+                notes_r,
+            )
+        elif channel.is_lr:
+            # Every producer of peq_ready in L/R mode (file_import_lr,
+            # device_pull, roomfit_pull, rew_get_filters_lr) always
+            # supplies explicit bands_l/bands_r — read_peq/read_roomfit
+            # raise rather than return L/R mode without both. Reaching
+            # this branch means that invariant broke; refuse to guess
+            # a channel split instead of silently writing wrong-channel
+            # data (same class of bug as smoke #92/#93).
+            logger.error(
+                "L/R mode without explicit bands_l/bands_r — refusing "
+                "to guess channel split"
+            )
+            self._status_banner.show_error(
+                "Could not determine L/R channel data for this source"
+            )
+            self._clear_pending_lr_rows()
+            return None
+        else:
+            # Stereo: validate the full list
+            validated, all_warnings, clamping_map, rows = validate_filters_for_device(
+                state.current_filters, max_filters, state.pending_rows or None,
+                supported_filter_types,
+            )
+            notes = state.pending_conversion_notes
+            self._clear_pending_stereo_rows()
+            state.current_filters = validated
+            self._review_page.set_filters(validated, clamping_map, rows, notes)
+
+        return all_warnings, len(state.current_filters)
+
     @Slot(object)
     def _on_peq_ready(self, peq_data: object) -> None:
         """Handle PEQ data ready — validate, populate ReviewPage, and advance wizard.
@@ -1549,132 +1686,32 @@ class MainWindow(QMainWindow):
         Args:
             peq_data: PEQ settings object or filter list from the operation.
         """
-        from src.gui.shared_helpers import validate_filters_for_device
-
         state = self._wizard_controller.state
-        filters = state.current_filters
-        count = len(filters)
+        count = len(state.current_filters)
 
         if count == 0:
             # No filters at all — nothing to show, so any pending skip rows
             # from this attempt are moot. Reset so they don't leak into a
             # later unrelated flow.
-            state.pending_rows = []
-            state.pending_rows_l = []
-            state.pending_rows_r = []
-            state.pending_conversion_notes = {}
-            state.pending_conversion_notes_l = {}
-            state.pending_conversion_notes_r = {}
-            # Also clear the sidebar-load one-shot flag here -- the count > 0
+            self._clear_pending_lr_rows()
+            self._clear_pending_stereo_rows()
+            # Also clear the sidebar-load one-shot flag here -- the else
             # branch below is the only other place that resets it, so a
             # sidebar load that resolves to zero filters would otherwise
             # leave it stuck True and incorrectly jump a later, unrelated
             # peq_ready straight to Review instead of advancing normally.
             self._sidebar_load_in_progress = False
-
-        if count > 0:
-            # Determine device max_filters and supported filter types
-            max_filters = DEFAULT_MAX_BANDS
-            supported_filter_types: list[str] | None = None
-            if self._device_caps is not None:
-                # merge_into() (#167c) guarantees max_filters is always a valid
-                # positive int once capabilities are resolved -- no "or
-                # DEFAULT_MAX_BANDS" fallback needed here; that used to be a
-                # second, independently-drifting copy of the same default.
-                max_filters = getattr(self._device_caps, "max_filters", DEFAULT_MAX_BANDS)
-                supported_filter_types = (
-                    getattr(self._device_caps, "supported_filter_types", None) or None
+            QTimer.singleShot(
+                150, lambda: self._status_banner.show_info(
+                    "Device has no active filters. Try importing from a REW file instead.",
+                    auto_dismiss=0,
                 )
-
-            # Populate ReviewPage — branch on channel mode (smoke #28)
-            channel = state.channel_mode
-
-            # Check if peq_data carries explicit L/R bands
-            peq_channel = getattr(peq_data, "channel_mode", None)
-            bands_l = getattr(peq_data, "bands_l", None)
-            bands_r = getattr(peq_data, "bands_r", None)
-
-            if (
-                peq_channel is not None
-                and is_lr_mode(peq_channel)
-                and bands_l is not None
-                and bands_r is not None
-            ):
-                # Update wizard state to reflect actual L/R mode from device
-                state.channel_mode = ChannelMode.LR
-                channel = ChannelMode.LR
-
-                # Validate each channel independently
-                validated_l, warnings_l, clamping_l, rows_l = validate_filters_for_device(
-                    list(bands_l), max_filters, state.pending_rows_l or None,
-                    supported_filter_types,
-                )
-                validated_r, warnings_r, clamping_r, rows_r = validate_filters_for_device(
-                    list(bands_r), max_filters, state.pending_rows_r or None,
-                    supported_filter_types,
-                )
-                notes_l = state.pending_conversion_notes_l
-                notes_r = state.pending_conversion_notes_r
-                state.pending_rows_l = []
-                state.pending_rows_r = []
-                state.pending_conversion_notes_l = {}
-                state.pending_conversion_notes_r = {}
-
-                # Merge warnings — prefix with channel so the combined status
-                # text (joined with " | ") doesn't leave the user guessing
-                # which side a truncation/clamping warning applies to.
-                all_warnings = [f"Left: {w}" for w in warnings_l] + [
-                    f"Right: {w}" for w in warnings_r
-                ]
-
-                # Update state with truncated filters and separate L/R lists
-                state.current_filters = validated_l + validated_r
-                state.filters_l = validated_l
-                state.filters_r = validated_r
-
-                self._review_page.set_lr_filters(
-                    validated_l,
-                    validated_r,
-                    clamping_l,
-                    clamping_r,
-                    rows_l,
-                    rows_r,
-                    notes_l,
-                    notes_r,
-                )
-            elif channel.is_lr:
-                # Every producer of peq_ready in L/R mode (file_import_lr,
-                # device_pull, roomfit_pull, rew_get_filters_lr) always
-                # supplies explicit bands_l/bands_r — read_peq/read_roomfit
-                # raise rather than return L/R mode without both. Reaching
-                # this branch means that invariant broke; refuse to guess
-                # a channel split instead of silently writing wrong-channel
-                # data (same class of bug as smoke #92/#93).
-                logger.error(
-                    "L/R mode without explicit bands_l/bands_r — refusing "
-                    "to guess channel split"
-                )
-                self._status_banner.show_error(
-                    "Could not determine L/R channel data for this source"
-                )
-                state.pending_rows_l = []
-                state.pending_rows_r = []
-                state.pending_conversion_notes_l = {}
-                state.pending_conversion_notes_r = {}
+            )
+        else:
+            result = self._validate_and_populate_review(peq_data, state)
+            if result is None:
                 return
-            else:
-                # Stereo: validate the full list
-                validated, all_warnings, clamping_map, rows = validate_filters_for_device(
-                    filters, max_filters, state.pending_rows or None,
-                    supported_filter_types,
-                )
-                notes = state.pending_conversion_notes
-                state.pending_rows = []
-                state.pending_conversion_notes = {}
-                state.current_filters = validated
-                self._review_page.set_filters(validated, clamping_map, rows, notes)
-
-            validated_count = len(state.current_filters)
+            all_warnings, validated_count = result
 
             # Advance wizard to REVIEW step
             if getattr(self, "_sidebar_load_in_progress", False):
@@ -1701,13 +1738,6 @@ class MainWindow(QMainWindow):
                         f"{validated_count} filters loaded — ready for review"
                     )
                 )
-        else:
-            QTimer.singleShot(
-                150, lambda: self._status_banner.show_info(
-                    "Device has no active filters. Try importing from a REW file instead.",
-                    auto_dismiss=0,
-                )
-            )
 
         logger.info(
             "PEQ data ready: %d raw filters, %d after validation, channel=%s",

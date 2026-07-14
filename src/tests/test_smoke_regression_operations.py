@@ -3308,6 +3308,29 @@ class TestSharedHelpers:
             filters_l, filters_r, {}, {}, filters_l, filters_r, {}, {}
         )
 
+    def test_on_peq_ready_lr_without_explicit_bands_shows_error_and_returns(
+        self, window
+    ) -> None:
+        """_on_peq_ready's L/R-without-bands guard shows an error banner and
+        returns without advancing the wizard, rather than guessing a
+        channel split (Phase 5 _validate_and_populate_review decomposition
+        -- this is the guard's `return None` path)."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter(100)]
+        state.channel_mode = ChannelMode.LR
+
+        with (
+            patch.object(window._status_banner, "show_error") as mock_error,
+            patch.object(window._wizard_controller, "advance") as mock_advance,
+        ):
+            window._on_peq_ready(object())
+
+        mock_error.assert_called_once_with(
+            "Could not determine L/R channel data for this source"
+        )
+        mock_advance.assert_not_called()
+
     def test_build_peq_settings_lr_without_explicit_filters_raises(self) -> None:
         """L/R mode without filters_l/filters_r must raise, never guess a split."""
         from src.gui.shared_helpers import build_peq_settings
