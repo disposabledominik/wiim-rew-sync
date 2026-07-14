@@ -83,23 +83,24 @@ handlers (same shape as `SecondaryWorkflowManager.undo_complete` etc.).
 ~Medium, best done incrementally (4-6 methods per pass) rather than
 big-bang, to keep each step independently testable.
 
-**Status:** ✅ Phases 1-3 complete (2026-07-14). `PrimaryWorkflowManager`
-(`src/gui/primary_workflows.py`) now owns `_do_discovery`/`_do_probe`/
-`_do_file_import`/`_do_file_import_lr`/`_do_list_presets` (Phase 1, the last
-as `refresh_presets()`/`list_presets()`), `_do_device_pull`/
-`_do_roomfit_pull`/`_do_load_peq_preset`/`_do_export`/`_do_export_lr`
-(Phase 2), and `_do_rew_list_measurements`/`_do_rew_get_filters`/
-`_do_rew_get_filters_lr`/`_do_preset_export`/`_do_preset_save` (Phase 3),
-plus the discovered-devices cache and probe-generation counter that existed
-only to serve Phase 1's methods. `main_window.py` dropped from 4,739 to
-4,161 lines across seven commits, with `test_gui_integration_primary.py`
-extended to cover all fifteen methods. The PEQ/RoomFit concurrent-fetch
-behavior (#174) is preserved via four separate signals (`peq_presets_ready`/
+**Status:** ✅ Done (2026-07-14) except `_do_raw_command`, permanently
+deferred (see below). `PrimaryWorkflowManager` (`src/gui/primary_workflows.py`)
+now owns `_do_discovery`/`_do_probe`/`_do_file_import`/`_do_file_import_lr`/
+`_do_list_presets` (Phase 1, the last as `refresh_presets()`/`list_presets()`),
+`_do_device_pull`/`_do_roomfit_pull`/`_do_load_peq_preset`/`_do_export`/
+`_do_export_lr` (Phase 2), `_do_rew_list_measurements`/`_do_rew_get_filters`/
+`_do_rew_get_filters_lr`/`_do_preset_export`/`_do_preset_save` (Phase 3), and
+`_do_populate_name_profiles`/`_do_list_roomfit_profiles` (Phase 4), plus the
+discovered-devices cache and probe-generation counter that existed only to
+serve Phase 1's methods. `main_window.py` dropped from 4,739 to 4,140 lines
+across nine commits, with `test_gui_integration_primary.py` extended to
+cover all seventeen methods. The PEQ/RoomFit concurrent-fetch behavior
+(#174) is preserved via four separate signals (`peq_presets_ready`/
 `peq_presets_unavailable`/`roomfit_profiles_ready`/`roomfit_profiles_hidden`)
 rather than one combined result, since the two fetches complete and update
 the view independently. Phase 2 introduced three small helpers once enough
 entry points existed to justify them — `_dispatch()` (collapses the
-repeated assert/assert/run_async dispatch line, now used by all fifteen
+repeated assert/assert/run_async dispatch line, now used by all seventeen
 entry points), `_require_adapter()` and `_require_wizard_state()` (collapse
 the repeated adapter/wizard-controller asserts). Phase 3 added a fourth,
 `_require_rew_client()` (same shape, three call sites), plus
@@ -117,21 +118,30 @@ Phase 3 also found and fixed a pre-existing 3x duplication: the
 sites switched to it, including `_read_preset_to_copy`, which stays in
 MainWindow.
 
-**To reactivate (next phase):** Two groups remain, deliberately deferred out
-of Phase 3 because they need actual design work, not just a verbatim move:
-`_do_populate_name_profiles`/`_do_list_roomfit_profiles` (RoomFit dropdown
-population — write to `_name_profile_page`/`_filters_page` directly via two
-different widget shapes, need their own new signals distinct from the
-existing `roomfit_profiles_ready`/`roomfit_profiles_hidden` pair, which are
-already wired to `PresetsDeviceView` via `refresh_presets()` and would
-collide if reused; also need a decision on where `_do_populate_name_profiles`'s
-`self._roomfit_enabled` side-effect attribute should live) and
-`_do_raw_command` (diagnostics-only, zero test coverage, low value — the
-backlog has already flagged this as skippable). Follow the same pattern
-used across all three phases where applicable: verbatim move, reuse
-`_bridge_wrapper`/`_dispatch()`/`_require_adapter()`/`_require_wizard_state()`
-rather than reimplementing, and check for any state that only exists to
-serve the method being moved.
+Phase 4 (the RoomFit-dropdown group) needed genuine design work rather than
+a verbatim move: `_do_populate_name_profiles`/`_do_list_roomfit_profiles`
+write to two different widgets (`NameProfilePage`/`FiltersPage`) with two
+different payload shapes, so the existing `roomfit_profiles_ready`/
+`roomfit_profiles_hidden` pair (already wired to `PresetsDeviceView` via
+`refresh_presets()`) couldn't be reused without misrouting data — two new,
+distinctly-named signals were added instead
+(`name_profiles_ready(list, str, bool)`/`filters_roomfit_profiles_ready(list)`).
+Investigating `_do_populate_name_profiles`'s `self._roomfit_enabled`
+side-effect turned up a pre-existing dead-state bug: it's written in four
+places but read in zero — `_on_name_confirmed`'s overwrite-confirmation
+dialog is actually driven by `NameProfilePage.classify()`, and two stale
+comments claimed `_roomfit_enabled` gates that dialog when it doesn't
+(confirmed by a test, `test_191_name_confirmed_dialog_shown_even_when_roomfit_disabled`,
+which sets it `False` and asserts the dialog still fires). Fixed the
+misleading comments in the same commit; left the dead attribute itself
+alone (removing or wiring it into real gating logic would be a behavior
+change beyond "move this method" — flagging here in case a future pass
+wants to pick it up).
+
+**To reactivate:** Only `_do_raw_command` remains (diagnostics-only, zero
+test coverage, low value) — permanently deferred per its own low-value
+note, not worth a phase on its own. No further extraction phases are
+planned for this item.
 
 ---
 
