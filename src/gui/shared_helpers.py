@@ -7,6 +7,8 @@ and Profile building.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.constants import DEFAULT_MAX_BANDS, GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
@@ -15,6 +17,9 @@ from src.models.profile import Profile
 from src.repository.backup_manager import load_backup_json, parse_backup_filters
 from src.translator._warnings import FilterRow, SkippedBand
 from src.utils.clamping import clamp_with_warning
+
+if TYPE_CHECKING:
+    from src.adapters.wiim_adapter import WiiMAdapter
 
 __all__ = [
     "load_backup_json",
@@ -32,6 +37,21 @@ def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], C
         filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
         return filters, ChannelMode.LR
     return list(peq_settings.bands), ChannelMode.STEREO
+
+
+async def read_preset_preview(
+    wiim_adapter: WiiMAdapter, preset_type: str, source_name: str, preset_name: str
+) -> PEQSettings:
+    """Read+preview a preset from the device, dispatching by preset_type.
+
+    Previewing briefly loads the preset onto the device's live DSP and
+    restores it after (see #166). Shared by MainWindow's copy flow
+    (_read_preset_to_copy) and PrimaryWorkflowManager's export/save flows,
+    which otherwise each independently reimplement this dispatch.
+    """
+    if preset_type == "RoomFit":
+        return await wiim_adapter.read_roomfit_preset_preview(source_name, preset_name)
+    return await wiim_adapter.read_peq_preset_preview(source_name, preset_name)
 
 
 def _require_lr_filters(

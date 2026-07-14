@@ -28,24 +28,35 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
-from src.gui.shared_helpers import extract_filters, is_lr_mode
+from src.gui.shared_helpers import build_profile, extract_filters, is_lr_mode, read_preset_preview
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
 
 if TYPE_CHECKING:
     from src.adapters.capability_prober import CapabilityProber
+    from src.adapters.rew_http_client import REWHttpApiClient
     from src.adapters.wiim_adapter import WiiMAdapter
     from src.discovery.discovery_module import DiscoveryModule
     from src.gui.async_bridge import AsyncBridge
     from src.gui.wizard_controller import WizardController, WizardState
     from src.models.canonical import CanonicalFilter
     from src.models.capabilities import DeviceInfo
+    from src.repository.profile_repository import ProfileRepository
 
 logger = logging.getLogger("wiim_rew_sync.primary_workflows")
 
 # Signature of MainWindow._bridge_wrapper, injected via configure() rather
 # than reimplemented here — see configure()'s docstring for why.
 BridgeWrapper = Callable[[str, "Coroutine[Any, Any, Any]"], "Coroutine[Any, Any, None]"]
+
+
+class EmptyPresetFiltersError(Exception):
+    """A device preset resolved to zero filters when read for export/save.
+
+    Raised instead of touching a widget directly (this manager has none) so
+    it flows through the injected bridge_wrapper's existing error-mapping
+    path (see MainWindow._map_error) to reach the status banner.
+    """
 
 
 class PrimaryWorkflowManager(QObject):
@@ -92,6 +103,8 @@ class PrimaryWorkflowManager(QObject):
         self._discovery_module: DiscoveryModule | None = None
         self._wizard_controller: WizardController | None = None
         self._bridge_wrapper: BridgeWrapper | None = None
+        self._rew_client: REWHttpApiClient | None = None
+        self._profile_repository: ProfileRepository | None = None
         self._discovered_devices: list[DeviceInfo] = []
         self._current_adapter: WiiMAdapter | None = None
         # Bumped on every device selection; lets a stale/superseded capability
@@ -112,13 +125,15 @@ class PrimaryWorkflowManager(QObject):
         discovery_module: DiscoveryModule,
         wizard_controller: WizardController,
         bridge_wrapper: BridgeWrapper,
+        rew_client: REWHttpApiClient,
+        profile_repository: ProfileRepository,
     ) -> None:
         """Inject dependencies for workflow execution.
 
         Called eagerly from MainWindow.__init__, right after the wizard
         controller is constructed — unlike SecondaryWorkflowManager, these
-        four dependencies are all available before a device is selected;
-        the (smaller) set of methods that additionally need a live device
+        dependencies are all available before a device is selected; the
+        (smaller) set of methods that additionally need a live device
         adapter get it separately via set_current_adapter().
 
         Args:
@@ -134,11 +149,17 @@ class PrimaryWorkflowManager(QObject):
                 on today (none has its own try/except) — duplicating that
                 logic inside this manager would just be two copies of the
                 same code to keep in sync.
+            rew_client: Shared REWHttpApiClient instance, for REW measurement
+                listing/filter reads.
+            profile_repository: Shared ProfileRepository instance, for saving
+                device presets into local storage.
         """
         self._bridge = bridge
         self._discovery_module = discovery_module
         self._wizard_controller = wizard_controller
         self._bridge_wrapper = bridge_wrapper
+        self._rew_client = rew_client
+        self._profile_repository = profile_repository
         logger.info("PrimaryWorkflowManager configured")
 
     def set_current_adapter(self, adapter: WiiMAdapter | None) -> None:
@@ -193,6 +214,15 @@ class PrimaryWorkflowManager(QObject):
         """
         assert self._wizard_controller is not None
         return self._wizard_controller.state
+
+    def _require_rew_client(self) -> REWHttpApiClient:
+        """Return the REW HTTP API client, asserting it's configured.
+
+        Shared by the three REW-workflow methods below — each used to
+        repeat this same assert.
+        """
+        assert self._rew_client is not None
+        return self._rew_client
 
     # ------------------------------------------------------------------
     # Workflow: Discovery
@@ -677,3 +707,285 @@ class PrimaryWorkflowManager(QObject):
             self._bridge.progress_update.emit(
                 f"L/R files exported: {path_l.name} and {path_r.name}"
             )
+
+    # ------------------------------------------------------------------
+    # Workflow: REW Measurements (Phase 3)
+    # ------------------------------------------------------------------
+
+    def list_rew_measurements(self) -> None:
+        """Trigger a REW measurement list fetch; results arrive via signals."""
+        self._dispatch("rew_list", self._do_rew_list_measurements())
+
+    async def _do_rew_list_measurements(self) -> None:
+        """List available measurements from REW API.
+
+        Calls REWHttpApiClient.list_measurements() and emits the result.
+        If empty, emits an info message instead of the measurement list.
+        """
+        assert self._bridge is not None
+        rew_client = self._require_rew_client()
+
+        measurements = await rew_client.list_measurements()
+
+        if not measurements:
+            self._bridge.progress_update.emit(
+                "__info__No measurements found in REW. "
+                "Load or import measurement(s) in REW's Measurements pane, then try again."
+            )
+            return
+
+        # Emit measurement list for the picker dialog
+        self._bridge.rew_measurements_ready.emit(measurements)
+
+    def get_rew_filters(self, uuid: str, measurement_name: str = "") -> None:
+        """Trigger a REW filter fetch for one measurement; result arrives via signal."""
+        self._dispatch("rew_filters", self._do_rew_get_filters(uuid, measurement_name))
+
+    async def _do_rew_get_filters(self, uuid: str, measurement_name: str = "") -> None:
+        """Fetch filters for a specific REW measurement.
+
+        Calls REWHttpApiClient.get_filters(uuid), stores in wizard state,
+        and emits result signal.
+
+        Args:
+            uuid: The measurement UUID selected by the user.
+            measurement_name: Display name of the measurement, for the
+                Filters step tooltip (#162d) -- referenced by UUID for the
+                actual fetch since names aren't stable identifiers.
+        """
+        assert self._bridge is not None
+        rew_client = self._require_rew_client()
+        state = self._require_wizard_state()
+
+        filters, rows, notes = await rew_client.get_filters_with_rows(uuid)
+
+        # Store in wizard state
+        state.current_filters = filters
+        state.channel_mode = ChannelMode.STEREO
+        state.pending_rows = rows
+        state.pending_conversion_notes = notes
+        state.filters_origin = f"Pulled from REW measurement: {measurement_name}"
+
+        # Emit result signal
+        self._bridge.rew_filters_ready.emit(filters)
+
+    def get_rew_filters_lr(
+        self,
+        uuid_l: str,
+        uuid_r: str,
+        measurement_name_l: str = "",
+        measurement_name_r: str = "",
+    ) -> None:
+        """Trigger a REW filter fetch for L/R measurements; result arrives via signal."""
+        self._dispatch(
+            "rew_filters_lr",
+            self._do_rew_get_filters_lr(uuid_l, uuid_r, measurement_name_l, measurement_name_r),
+        )
+
+    async def _do_rew_get_filters_lr(
+        self,
+        uuid_l: str,
+        uuid_r: str,
+        measurement_name_l: str = "",
+        measurement_name_r: str = "",
+    ) -> None:
+        """Fetch filters for Left and Right REW measurements.
+
+        Calls get_filters for each UUID, combines into L+R format,
+        and emits peq_ready with the combined result.
+
+        Args:
+            uuid_l: UUID of the Left channel measurement.
+            uuid_r: UUID of the Right channel measurement.
+            measurement_name_l: Display name of the Left measurement, for
+                the Filters step tooltip (#162d).
+            measurement_name_r: Display name of the Right measurement.
+        """
+        from src.translator._warnings import SkippedBand
+
+        assert self._bridge is not None
+        rew_client = self._require_rew_client()
+        state = self._require_wizard_state()
+
+        filters_l, rows_l, notes_l = await rew_client.get_filters_with_rows(uuid_l)
+        filters_r, rows_r, notes_r = await rew_client.get_filters_with_rows(uuid_r)
+
+        # Combine L+R into flat list and set L/R channel mode
+        filters = filters_l + filters_r
+        state.current_filters = filters
+        state.channel_mode = ChannelMode.LR
+        state.pending_rows_l = rows_l
+        state.pending_rows_r = rows_r
+        state.pending_conversion_notes_l = notes_l
+        state.pending_conversion_notes_r = notes_r
+        state.filters_origin = (
+            f"Pulled from REW measurements: L={measurement_name_l}, R={measurement_name_r}"
+        )
+
+        # Emit peq_ready with a PEQSettings carrying L/R bands
+        peq_data = PEQSettings(
+            source_name=state.primary_source,
+            channel_mode=ChannelMode.LR,
+            bands_l=filters_l,
+            bands_r=filters_r,
+        )
+        self._bridge.peq_ready.emit(peq_data)
+
+        skipped_l = sum(1 for r in rows_l if isinstance(r, SkippedBand))
+        skipped_r = sum(1 for r in rows_r if isinstance(r, SkippedBand))
+        if skipped_l or skipped_r:
+            self._bridge.progress_update.emit(
+                f"L/R import: Left {len(filters_l)} bands ({skipped_l} skipped), "
+                f"Right {len(filters_r)} bands ({skipped_r} skipped)"
+            )
+
+    # ------------------------------------------------------------------
+    # Workflow: Preset Export/Save (Phase 3)
+    # ------------------------------------------------------------------
+
+    def export_preset(self, preset_name: str, preset_type: str, path: str) -> None:
+        """Trigger a device preset export to file; progress arrives via progress_update."""
+        self._dispatch(
+            "preset_export", self._do_preset_export(preset_name, preset_type, path)
+        )
+
+    async def _do_preset_export(
+        self, preset_name: str, preset_type: str, path: str
+    ) -> None:
+        """Read a preset from device and export as REW file.
+
+        For L/R mode, generates two files (_L.txt and _R.txt) from the base path.
+
+        Args:
+            preset_name: Name of the preset to export.
+            preset_type: "PEQ" or "RoomFit".
+            path: Destination file path.
+
+        Raises:
+            EmptyPresetFiltersError: if the preset resolves to zero filters
+                (mapped to a status-banner error by MainWindow._map_error).
+        """
+        from src.translator.rew_generator import REWGenerator
+
+        assert self._bridge is not None
+        wiim_adapter = self._require_adapter()
+        state = self._require_wizard_state()
+        source_name = state.primary_source
+
+        # Read preset filters from device (previewing + restoring -- the
+        # confirmation dialog in _on_preset_export_requested already warned
+        # the user this briefly changes what's playing, see #166)
+        peq_settings = await read_preset_preview(
+            wiim_adapter, preset_type, source_name, preset_name
+        )
+
+        generator = REWGenerator()
+        file_path = Path(path)
+
+        # Ensure .txt extension
+        if file_path.suffix.lower() != ".txt":
+            file_path = file_path.with_suffix(".txt")
+
+        if is_lr_mode(peq_settings.channel_mode):
+            # L/R mode: generate two files
+            filters_l = peq_settings.bands_l or []
+            filters_r = peq_settings.bands_r or []
+
+            if not filters_l and not filters_r:
+                raise EmptyPresetFiltersError(
+                    f"Preset '{preset_name}' has no filters to export"
+                )
+
+            left_path = file_path.with_stem(file_path.stem + "_L")
+            right_path = file_path.with_stem(file_path.stem + "_R")
+            warnings_l = generator.generate_file(filters_l, left_path)
+            warnings_r = generator.generate_file(filters_r, right_path)
+            total_warnings = len(warnings_l) + len(warnings_r)
+
+            if total_warnings:
+                self._bridge.progress_update.emit(
+                    f"Exported '{preset_name}' L/R ({total_warnings} band(s) skipped)"
+                )
+            else:
+                self._bridge.progress_update.emit(
+                    f"Exported '{preset_name}' as {left_path.name} and {right_path.name}"
+                )
+        else:
+            # Stereo mode: single file
+            filters = peq_settings.bands
+            if not filters:
+                raise EmptyPresetFiltersError(
+                    f"Preset '{preset_name}' has no filters to export"
+                )
+
+            warnings = generator.generate_file(filters, file_path)
+            if warnings:
+                self._bridge.progress_update.emit(
+                    f"Exported '{preset_name}' ({len(warnings)} band(s) skipped)"
+                )
+            else:
+                self._bridge.progress_update.emit(
+                    f"Exported '{preset_name}' to {file_path.name}"
+                )
+
+    def save_preset(self, preset_name: str, preset_type: str, saved_name: str) -> None:
+        """Trigger a device preset save to local storage; progress arrives via progress_update."""
+        self._dispatch(
+            "preset_save", self._do_preset_save(preset_name, preset_type, saved_name)
+        )
+
+    async def _do_preset_save(
+        self, preset_name: str, preset_type: str, saved_name: str
+    ) -> None:
+        """Read a preset from device and save to local profile repository.
+
+        Uses build_profile helper for consistent Profile construction.
+        Note: the helper is safe to call here because AsyncBridge signals
+        are delivered via QueuedConnection (thread-safe).
+
+        Args:
+            preset_name: Name of the preset to read from the device --
+                the exact on-device identifier, never prefixed.
+            preset_type: "PEQ" or "RoomFit".
+            saved_name: Name for the resulting local Profile (device-name
+                prefixed by the caller); independent of preset_name so the
+                device read always uses the real on-device preset name.
+
+        Raises:
+            EmptyPresetFiltersError: if the preset resolves to zero filters
+                (mapped to a status-banner error by MainWindow._map_error).
+        """
+        assert self._bridge is not None
+        assert self._profile_repository is not None
+        wiim_adapter = self._require_adapter()
+        state = self._require_wizard_state()
+        source_name = state.primary_source
+
+        # Read preset filters from device (previewing + restoring -- the
+        # confirmation dialog in _on_preset_save_requested already warned the
+        # user this briefly changes what's playing, see #166)
+        peq_settings = await read_preset_preview(
+            wiim_adapter, preset_type, source_name, preset_name
+        )
+
+        # Determine channel mode and filter list
+        filters, channel_mode = extract_filters(peq_settings)
+
+        if not filters:
+            raise EmptyPresetFiltersError(
+                f"Preset '{preset_name}' has no filters to save"
+            )
+
+        # Save directly (Profile construction + file write is thread-safe)
+        # For L/R, pass explicit channel lists from peq_settings
+        profile = build_profile(
+            saved_name, filters, channel_mode,
+            filters_l=peq_settings.bands_l,
+            filters_r=peq_settings.bands_r,
+        )
+
+        self._profile_repository.save(profile)
+        # UI updates via progress_update signal (thread-safe)
+        self._bridge.progress_update.emit(
+            f"Saved '{profile.name}' to My Presets"
+        )

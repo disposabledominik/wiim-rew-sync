@@ -63,7 +63,7 @@ from src.gui.pages.push_page import PushPage
 from src.gui.pages.review_page import ReviewPage
 from src.gui.pages.source_page import SourcePage
 from src.gui.panels.diagnostics_panel import DiagnosticsPanel
-from src.gui.primary_workflows import PrimaryWorkflowManager
+from src.gui.primary_workflows import EmptyPresetFiltersError, PrimaryWorkflowManager
 from src.gui.secondary_workflows import (
     SecondaryWorkflowManager,
 )
@@ -73,6 +73,7 @@ from src.gui.shared_helpers import (
     extract_filters,
     get_lr_filters,
     is_lr_mode,
+    read_preset_preview,
 )
 from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
@@ -270,6 +271,8 @@ class MainWindow(QMainWindow):
             discovery_module=self._discovery_module,
             wizard_controller=self._wizard_controller,
             bridge_wrapper=self._bridge_wrapper,
+            rew_client=self._rew_client,
+            profile_repository=self._profile_repository,
         )
 
         # --- Build UI ---
@@ -1806,6 +1809,7 @@ class MainWindow(QMainWindow):
         # never auto-dismisses and has no close button, so it looks stuck.
         if message.startswith("__info__"):
             info_text = message[len("__info__"):]
+            self._sidebar_load_in_progress = False
             self._status_banner.show_info(info_text)
             self._show_rew_pull_message(info_text, icon=ICON_NO_DATA)
             return
@@ -1979,6 +1983,8 @@ class MainWindow(QMainWindow):
             return f"Could not read file: {exc}"
         if isinstance(exc, ValidationError):
             return f"Invalid data: {exc}"
+        if isinstance(exc, EmptyPresetFiltersError):
+            return str(exc)
         if isinstance(exc, OSError):
             return "File could not be written"
 
@@ -2154,14 +2160,9 @@ class MainWindow(QMainWindow):
         # Reading (previewing + restoring) -- the confirmation dialog in
         # _on_copy_to_device_requested already warned the user this briefly
         # changes what's playing, see #166.
-        if preset_type == "RoomFit":
-            peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
-                source_name, preset_name
-            )
-        else:
-            peq_settings = await self._wiim_adapter.read_peq_preset_preview(
-                source_name, preset_name
-            )
+        peq_settings = await read_preset_preview(
+            self._wiim_adapter, preset_type, source_name, preset_name
+        )
         filters, channel_mode = extract_filters(peq_settings)
 
         if not filters:

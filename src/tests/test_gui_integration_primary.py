@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.gui.primary_workflows import PrimaryWorkflowManager
+from src.gui.primary_workflows import EmptyPresetFiltersError, PrimaryWorkflowManager
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
@@ -451,3 +451,248 @@ class TestExportLr:
         mock_bridge.progress_update.emit.assert_called_once_with(
             "L/R files exported (3 unsupported band(s) skipped)"
         )
+
+
+# ---------------------------------------------------------------------------
+# REW: list measurements
+# ---------------------------------------------------------------------------
+
+
+class TestRewListMeasurements:
+    """Test PrimaryWorkflowManager._do_rew_list_measurements."""
+
+    @pytest.mark.asyncio
+    async def test_success_emits_measurements_ready(self) -> None:
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        measurement = SimpleNamespace(uuid="abc-123", name="Living Room")
+        manager._rew_client = MagicMock(
+            list_measurements=AsyncMock(return_value=[measurement])
+        )
+
+        await manager._do_rew_list_measurements()
+
+        mock_bridge.rew_measurements_ready.emit.assert_called_once_with([measurement])
+        mock_bridge.progress_update.emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_result_emits_info_progress_update(self) -> None:
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        manager._rew_client = MagicMock(list_measurements=AsyncMock(return_value=[]))
+
+        await manager._do_rew_list_measurements()
+
+        mock_bridge.rew_measurements_ready.emit.assert_not_called()
+        args, _ = mock_bridge.progress_update.emit.call_args
+        assert args[0].startswith("__info__No measurements found in REW.")
+
+
+# ---------------------------------------------------------------------------
+# REW: get filters (stereo)
+# ---------------------------------------------------------------------------
+
+
+class TestRewGetFilters:
+    """Test PrimaryWorkflowManager._do_rew_get_filters."""
+
+    @pytest.mark.asyncio
+    async def test_success_populates_wizard_state_and_emits_filters_ready(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
+        manager._rew_client = MagicMock(
+            get_filters_with_rows=AsyncMock(return_value=(filters, filters, []))
+        )
+
+        await manager._do_rew_get_filters("uuid-1", "Living Room")
+
+        state = manager._wizard_controller.state
+        assert state.current_filters == filters
+        assert state.channel_mode == ChannelMode.STEREO
+        assert state.filters_origin == "Pulled from REW measurement: Living Room"
+        mock_bridge.rew_filters_ready.emit.assert_called_once_with(filters)
+
+
+# ---------------------------------------------------------------------------
+# REW: get filters (L/R)
+# ---------------------------------------------------------------------------
+
+
+class TestRewGetFiltersLr:
+    """Test PrimaryWorkflowManager._do_rew_get_filters_lr."""
+
+    @pytest.mark.asyncio
+    async def test_success_combines_lr_and_emits_peq_ready(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+
+        filters_l = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)]
+        filters_r = [CanonicalFilter(type="PEAK", frequency_hz=200.0, gain_db=1.0, q=1.0)]
+        manager._rew_client = MagicMock(
+            get_filters_with_rows=AsyncMock(
+                side_effect=[(filters_l, filters_l, []), (filters_r, filters_r, [])]
+            )
+        )
+
+        await manager._do_rew_get_filters_lr("uuid-l", "uuid-r", "Left", "Right")
+
+        state = manager._wizard_controller.state
+        assert state.current_filters == filters_l + filters_r
+        assert state.channel_mode == ChannelMode.LR
+        assert state.filters_origin == "Pulled from REW measurements: L=Left, R=Right"
+        emitted_settings = mock_bridge.peq_ready.emit.call_args[0][0]
+        assert emitted_settings.bands_l == filters_l
+        assert emitted_settings.bands_r == filters_r
+        mock_bridge.progress_update.emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skipped_bands_emit_progress_update(self) -> None:
+        from src.translator._warnings import SkippedBand
+
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+
+        filters_l = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)]
+        filters_r: list[CanonicalFilter] = []
+        skipped = SkippedBand(
+            original_type="LP", reason="unsupported", frequency_hz=50.0, gain_db=0.0, q=1.0
+        )
+        manager._rew_client = MagicMock(
+            get_filters_with_rows=AsyncMock(
+                side_effect=[
+                    (filters_l, filters_l, []),
+                    (filters_r, [skipped], []),
+                ]
+            )
+        )
+
+        await manager._do_rew_get_filters_lr("uuid-l", "uuid-r")
+
+        mock_bridge.progress_update.emit.assert_called_once_with(
+            "L/R import: Left 1 bands (0 skipped), Right 0 bands (1 skipped)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Preset export
+# ---------------------------------------------------------------------------
+
+
+class TestPresetExport:
+    """Test PrimaryWorkflowManager._do_preset_export."""
+
+    @pytest.mark.asyncio
+    async def test_stereo_success_emits_progress_update(self, tmp_path) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=filters)
+        manager._current_adapter = MagicMock(
+            read_peq_preset_preview=AsyncMock(return_value=settings)
+        )
+        path = tmp_path / "movie-night.txt"
+
+        with patch(
+            "src.translator.rew_generator.REWGenerator.generate_file", return_value=[]
+        ):
+            await manager._do_preset_export("Movie Night", "PEQ", str(path))
+
+        mock_bridge.progress_update.emit.assert_called_once_with(
+            f"Exported 'Movie Night' to {path.name}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stereo_empty_filters_raises(self, tmp_path) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        manager._current_adapter = MagicMock(
+            read_peq_preset_preview=AsyncMock(return_value=settings)
+        )
+
+        with pytest.raises(EmptyPresetFiltersError, match="has no filters to export"):
+            await manager._do_preset_export(
+                "Empty Preset", "PEQ", str(tmp_path / "empty.txt")
+            )
+
+    @pytest.mark.asyncio
+    async def test_lr_empty_filters_raises(self, tmp_path) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+
+        settings = PEQSettings(
+            source_name="wifi", channel_mode=ChannelMode.LR, bands_l=[], bands_r=[]
+        )
+        manager._current_adapter = MagicMock(
+            read_roomfit_preset_preview=AsyncMock(return_value=settings)
+        )
+
+        with pytest.raises(EmptyPresetFiltersError, match="has no filters to export"):
+            await manager._do_preset_export(
+                "Empty LR", "RoomFit", str(tmp_path / "empty.txt")
+            )
+
+
+# ---------------------------------------------------------------------------
+# Preset save
+# ---------------------------------------------------------------------------
+
+
+class TestPresetSave:
+    """Test PrimaryWorkflowManager._do_preset_save."""
+
+    @pytest.mark.asyncio
+    async def test_success_saves_and_emits_progress_update(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        manager._profile_repository = MagicMock()
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=filters)
+        manager._current_adapter = MagicMock(
+            read_peq_preset_preview=AsyncMock(return_value=settings)
+        )
+
+        await manager._do_preset_save("Movie Night", "PEQ", "WiiM - Movie Night")
+
+        manager._profile_repository.save.assert_called_once()
+        saved_profile = manager._profile_repository.save.call_args[0][0]
+        assert saved_profile.name == "WiiM - Movie Night"
+        mock_bridge.progress_update.emit.assert_called_once_with(
+            "Saved 'WiiM - Movie Night' to My Presets"
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_filters_raises(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        manager._profile_repository = MagicMock()
+
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        manager._current_adapter = MagicMock(
+            read_peq_preset_preview=AsyncMock(return_value=settings)
+        )
+
+        with pytest.raises(EmptyPresetFiltersError, match="has no filters to save"):
+            await manager._do_preset_save("Empty Preset", "PEQ", "WiiM - Empty Preset")
+
+        manager._profile_repository.save.assert_not_called()

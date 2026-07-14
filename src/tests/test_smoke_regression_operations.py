@@ -22,6 +22,7 @@ from src.gui.shared_helpers import (
     build_profile,
     is_lr_mode,
     parse_backup_filters,
+    read_preset_preview,
 )
 from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep
@@ -3331,6 +3332,38 @@ class TestSharedHelpers:
         profile = build_profile("Test", filters, "Stereo")
         assert profile.filters is not None
         assert len(profile.filters) == 2
+
+    # --- read_preset_preview ---
+
+    @pytest.mark.asyncio
+    async def test_read_preset_preview_roomfit_dispatches_to_roomfit_read(self) -> None:
+        """preset_type=='RoomFit' dispatches to read_roomfit_preset_preview."""
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        adapter = MagicMock(
+            read_roomfit_preset_preview=AsyncMock(return_value=settings),
+            read_peq_preset_preview=AsyncMock(),
+        )
+
+        result = await read_preset_preview(adapter, "RoomFit", "wifi", "Living Room")
+
+        assert result is settings
+        adapter.read_roomfit_preset_preview.assert_awaited_once_with("wifi", "Living Room")
+        adapter.read_peq_preset_preview.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_read_preset_preview_peq_dispatches_to_peq_read(self) -> None:
+        """preset_type=='PEQ' (or anything else) dispatches to read_peq_preset_preview."""
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        adapter = MagicMock(
+            read_roomfit_preset_preview=AsyncMock(),
+            read_peq_preset_preview=AsyncMock(return_value=settings),
+        )
+
+        result = await read_preset_preview(adapter, "PEQ", "wifi", "Movie Night")
+
+        assert result is settings
+        adapter.read_peq_preset_preview.assert_awaited_once_with("wifi", "Movie Night")
+        adapter.read_roomfit_preset_preview.assert_not_awaited()
 
     # --- parse_backup_filters ---
 
