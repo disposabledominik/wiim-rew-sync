@@ -83,28 +83,37 @@ handlers (same shape as `SecondaryWorkflowManager.undo_complete` etc.).
 ~Medium, best done incrementally (4-6 methods per pass) rather than
 big-bang, to keep each step independently testable.
 
-**Status:** ✅ Phase 1 complete (2026-07-14). `PrimaryWorkflowManager`
+**Status:** ✅ Phases 1-2 complete (2026-07-14). `PrimaryWorkflowManager`
 (`src/gui/primary_workflows.py`) now owns `_do_discovery`/`_do_probe`/
-`_do_file_import`/`_do_file_import_lr`/`_do_list_presets` (the last as
-`refresh_presets()`/`list_presets()`), plus the discovered-devices cache and
-probe-generation counter that existed only to serve them. `main_window.py`
-dropped from 4,739 to 4,569 lines across three commits (scaffold → wire →
-extract `_do_list_presets`), with `test_gui_integration_primary.py` added
-mirroring `test_gui_integration_secondary.py`'s structure. The PEQ/RoomFit
-concurrent-fetch behavior (#174) is preserved via four separate signals
-(`peq_presets_ready`/`peq_presets_unavailable`/`roomfit_profiles_ready`/
-`roomfit_profiles_hidden`) rather than one combined result, since the two
-fetches complete and update the view independently.
+`_do_file_import`/`_do_file_import_lr`/`_do_list_presets` (Phase 1, the last
+as `refresh_presets()`/`list_presets()`) and `_do_device_pull`/
+`_do_roomfit_pull`/`_do_load_peq_preset`/`_do_export`/`_do_export_lr`
+(Phase 2), plus the discovered-devices cache and probe-generation counter
+that existed only to serve Phase 1's methods. `main_window.py` dropped from
+4,739 to 4,408 lines across five commits, with `test_gui_integration_primary.py`
+extended to cover all ten methods. The PEQ/RoomFit concurrent-fetch behavior
+(#174) is preserved via four separate signals (`peq_presets_ready`/
+`peq_presets_unavailable`/`roomfit_profiles_ready`/`roomfit_profiles_hidden`)
+rather than one combined result, since the two fetches complete and update
+the view independently. Phase 2 also introduced three small helpers once
+enough entry points existed to justify them — `_dispatch()` (collapses the
+repeated assert/assert/run_async dispatch line, now used by all ten entry
+points), `_require_adapter()` and `_require_wizard_state()` (collapse the
+repeated adapter/wizard-controller asserts, used by every method that needs
+them, including a retrofit of the Phase-1 methods that had the same pattern).
 
 **To reactivate (next phase):** Continue with the remaining low-risk
-candidates (`_do_device_pull`, `_do_roomfit_pull`, `_do_load_peq_preset`,
-`_do_list_roomfit_profiles`, `_do_populate_name_profiles`,
-`_do_rew_list_measurements`, `_do_rew_get_filters`, `_do_rew_get_filters_lr`,
-`_do_export`, `_do_export_lr`, `_do_preset_export`, `_do_preset_save`,
-`_do_raw_command`), following the same pattern: verbatim move, reuse
-`_bridge_wrapper` via injection rather than reimplementing error handling,
-and check for any state (like the discovered-devices cache) that only
-existed to serve the method being moved.
+candidates: `_do_rew_list_measurements`/`_do_rew_get_filters`/
+`_do_rew_get_filters_lr` (REW-client group, same shape as Phase 2 — natural
+next batch), `_do_preset_export`/`_do_preset_save` (device-preset read +
+file/repo write), `_do_populate_name_profiles`/`_do_list_roomfit_profiles`
+(RoomFit dropdown population — these write to `_name_profile_page`/
+`_filters_page` directly, so need the signal treatment `_do_list_presets`
+got in Phase 1, not the signal-free treatment Phase 2's methods got),
+`_do_raw_command` (diagnostics-only, low value). Follow the same pattern:
+verbatim move, reuse `_bridge_wrapper`/`_dispatch()`/`_require_adapter()`/
+`_require_wizard_state()` rather than reimplementing, and check for any
+state that only exists to serve the method being moved.
 
 ---
 
