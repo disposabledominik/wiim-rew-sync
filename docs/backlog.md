@@ -89,12 +89,13 @@ now owns `_do_discovery`/`_do_probe`/`_do_file_import`/`_do_file_import_lr`/
 `_do_list_presets` (Phase 1, the last as `refresh_presets()`/`list_presets()`),
 `_do_device_pull`/`_do_roomfit_pull`/`_do_load_peq_preset`/`_do_export`/
 `_do_export_lr` (Phase 2), `_do_rew_list_measurements`/`_do_rew_get_filters`/
-`_do_rew_get_filters_lr`/`_do_preset_export`/`_do_preset_save` (Phase 3), and
-`_do_populate_name_profiles`/`_do_list_roomfit_profiles` (Phase 4), plus the
-discovered-devices cache and probe-generation counter that existed only to
-serve Phase 1's methods. `main_window.py` dropped from 4,739 to 4,140 lines
-across nine commits, with `test_gui_integration_primary.py` extended to
-cover all seventeen methods. The PEQ/RoomFit concurrent-fetch behavior
+`_do_rew_get_filters_lr`/`_do_preset_export`/`_do_preset_save` (Phase 3),
+`_do_populate_name_profiles`/`_do_list_roomfit_profiles` (Phase 4), and
+`_do_delete_presets` (Phase 5), plus the discovered-devices cache and
+probe-generation counter that existed only to serve Phase 1's methods.
+`main_window.py` dropped from 4,739 to 4,169 lines across twelve commits,
+with `test_gui_integration_primary.py` extended to cover all eighteen
+methods. The PEQ/RoomFit concurrent-fetch behavior
 (#174) is preserved via four separate signals (`peq_presets_ready`/
 `peq_presets_unavailable`/`roomfit_profiles_ready`/`roomfit_profiles_hidden`)
 rather than one combined result, since the two fetches complete and update
@@ -137,6 +138,41 @@ misleading comments in the same commit; left the dead attribute itself
 alone (removing or wiring it into real gating logic would be a behavior
 change beyond "move this method" — flagging here in case a future pass
 wants to pick it up).
+
+**Phase 5** was a follow-up code-quality pass prompted by the user asking
+"did we really remove all application logic, why is it still huge" after
+Phase 4 — a fresh audit found three loose ends, addressed on their own
+merits rather than by mechanically reapplying the "move to
+PrimaryWorkflowManager" template everywhere:
+- `_do_delete_presets` was flagged as a low-risk candidate in the original
+  2026-06-28 audit but was simply missed by Phases 1-4 — moved now, same
+  shape as everything else. Its two completion paths (success,
+  partial-failure) called `status_banner` directly rather than raising an
+  exception, so it needed a new `presets_delete_complete(int, int)` signal
+  rather than the `EmptyPresetFiltersError` pattern from Phase 3.
+- Five direct `self._profile_repository.*` calls in `_on_*` handlers
+  (rename/duplicate/delete/save-to-presets) were **not** moved to
+  `PrimaryWorkflowManager` — these are synchronous local-disk I/O, not
+  network calls, so the async bridge/dispatch pattern doesn't fit; moving
+  them would have added cross-file indirection without reducing
+  complexity. Instead, the exact try/except/refresh/banner shape
+  duplicated three times across the rename/duplicate/delete handlers was
+  consolidated into one `_run_profile_action()` private helper, which also
+  absorbed the fourth call site (`_save_filters_to_presets`) — that one
+  had no try/except at all, so a failing save previously propagated
+  uncaught instead of showing an error banner like its siblings; now
+  fixed for free.
+- `_on_peq_ready` (182 lines, the largest method in the file) was **not**
+  moved either — it's a synchronous Qt slot reacting to data a signal
+  already delivered, making no adapter/network calls itself (the actual
+  validation math already lives in `shared_helpers.validate_filters_for_device()`).
+  Decomposed in place into `_validate_and_populate_review()` plus two tiny
+  `_clear_pending_lr_rows()`/`_clear_pending_stereo_rows()` helpers, which
+  also deduped a pending-state reset block copy-pasted three times (L/R
+  fields) and twice (stereo fields) across the original method. Verified
+  against the full existing 177-test surface across three test files
+  before committing, plus one new test for a previously-uncovered guard
+  path (L/R mode without explicit bands_l/bands_r).
 
 **To reactivate:** Only `_do_raw_command` remains (diagnostics-only, zero
 test coverage, low value) — permanently deferred per its own low-value
