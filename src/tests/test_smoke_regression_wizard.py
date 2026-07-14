@@ -227,7 +227,9 @@ class TestCtrlRRescanShortcut:
     def test_shortcut_reaches_discovery(self, window) -> None:
         """_on_shortcut_refresh delegates to _on_refresh_requested, which
         schedules the real discovery coroutine via the bridge."""
-        with patch.object(window, "_do_discovery") as mock_do_discovery:
+        with patch.object(
+            window._primary_workflows, "_do_discovery"
+        ) as mock_do_discovery:
             window._on_shortcut_refresh()
 
         window._bridge.run_async.assert_called_once()
@@ -528,7 +530,7 @@ class TestIssue73StereoImportChannelMode:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(mock_filters, [], list(mock_filters), {}),
         ):
-            await window._do_file_import("/tmp/stereo_eq.txt")
+            await window._primary_workflows._do_file_import("/tmp/stereo_eq.txt")
 
         # channel_mode should now be "Stereo" (not stale "L/R")
         assert window._wizard_controller.state.channel_mode == ChannelMode.STEREO

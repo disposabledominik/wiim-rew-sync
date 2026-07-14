@@ -64,6 +64,7 @@ from src.gui.pages.push_page import PushPage
 from src.gui.pages.review_page import ReviewPage
 from src.gui.pages.source_page import SourcePage
 from src.gui.panels.diagnostics_panel import DiagnosticsPanel
+from src.gui.primary_workflows import PrimaryWorkflowManager
 from src.gui.secondary_workflows import (
     SecondaryWorkflowManager,
 )
@@ -252,14 +253,6 @@ class MainWindow(QMainWindow):
         # whether RoomFit is currently on, gating the overwrite-active-profile
         # confirmation in _on_name_confirmed.
         self._roomfit_enabled: bool = False
-        # Bumped on every device selection; lets a stale/superseded capability
-        # probe (e.g. user selects a second device before the first probe
-        # resolves) detect that it's no longer current and avoid corrupting
-        # wizard state (double-advance, wrong "Connected" step).
-        self._probe_generation = 0
-
-        # Discovered devices cache (populated by discovery, used by device picker)
-        self._discovered_devices: list[DeviceInfo] = []
 
         # --- Window properties ---
         self.setWindowTitle("WiiM \u2194 REW PEQ Sync")
@@ -268,6 +261,17 @@ class MainWindow(QMainWindow):
 
         # --- Create controller ---
         self._wizard_controller = WizardController(self)
+
+        # --- Primary workflows (discovery, probing, file import) ---
+        # Configured eagerly, unlike SecondaryWorkflowManager: none of these
+        # workflows need a live device adapter (see primary_workflows.py).
+        self._primary_workflows = PrimaryWorkflowManager(parent=self)
+        self._primary_workflows.configure(
+            bridge=self._bridge,
+            discovery_module=self._discovery_module,
+            wizard_controller=self._wizard_controller,
+            bridge_wrapper=self._bridge_wrapper,
+        )
 
         # --- Build UI ---
         self._setup_central_widget()
@@ -804,15 +808,8 @@ class MainWindow(QMainWindow):
         # Bump generation so a still-in-flight probe from a previous device
         # selection is discarded instead of advancing the wizard out from
         # under the user (see _do_probe).
-        self._probe_generation += 1
-        generation = self._probe_generation
-
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "capability_probe",
-                self._do_probe(self._capability_prober, generation),
-            )
-        )
+        generation = self._primary_workflows.bump_probe_generation()
+        self._primary_workflows.probe(self._capability_prober, generation)
         logger.info("Device selected: %s", device_ip)
 
     @Slot()
@@ -822,9 +819,7 @@ class MainWindow(QMainWindow):
             return
 
         self._connect_page.set_scanning(True)
-        self._bridge.run_async(
-            self._bridge_wrapper("discovery", self._do_discovery())
-        )
+        self._primary_workflows.discover()
         logger.debug("Discovery refresh requested")
 
     # ------------------------------------------------------------------
@@ -838,7 +833,7 @@ class MainWindow(QMainWindow):
         `default` if not found -- shared by every call site that needs a
         device name for display (step summaries, default export/preset
         filenames), so they can't independently drift (#176)."""
-        for d in self._discovered_devices:
+        for d in self._primary_workflows.discovered_devices:
             if d.ip == ip:
                 return d.name
         return default
@@ -959,9 +954,7 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper("file_import", self._do_file_import(path))
-        )
+        self._primary_workflows.import_file(path)
         logger.info("File import requested: %s", path)
 
     @Slot(str, str)
@@ -978,11 +971,7 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "file_import_lr", self._do_file_import_lr(path_l, path_r)
-            )
-        )
+        self._primary_workflows.import_file_lr(path_l, path_r)
         logger.info("L/R file import requested: L=%s, R=%s", path_l, path_r)
 
     @Slot()
@@ -2146,136 +2135,11 @@ class MainWindow(QMainWindow):
     # Async operation coroutines (Req 1.1-1.7, 2.1-2.7)
     # ------------------------------------------------------------------
 
-    async def _do_discovery(self) -> None:
-        """Run device discovery and emit results via bridge signal.
-
-        Uses progressive discovery — devices appear in the UI as soon as
-        they're found rather than waiting for the full scan to complete.
-        """
-
-        def _on_found(devices: list[DeviceInfo]) -> None:
-            """Progressive callback — emit partial results to the UI."""
-            device_list = [
-                {"name": d.name, "ip": d.ip, "model": d.model}
-                for d in devices
-            ]
-            self._bridge.discovery_progress.emit(device_list)
-
-        devices = await self._discovery_module.discover(on_found=_on_found)
-        # Cache raw DeviceInfo objects for device picker dialogs
-        self._discovered_devices = devices
-        device_list = [
-            {"name": d.name, "ip": d.ip, "model": d.model}
-            for d in devices
-        ]
-        self._bridge.discovery_complete.emit(device_list)
-
-    async def _do_probe(self, prober: CapabilityProber, generation: int) -> None:
-        """Run capability probing and emit results via bridge signal.
-
-        Calls CapabilityProber.probe() and emits the DeviceCapabilities
-        object for flow-type determination and wizard advancement.
-
-        The *prober* instance and *generation* are passed in explicitly
-        (rather than read from ``self``) so a probe started for a previously
-        selected device can't pick up a different device's prober if the
-        user reselects before this one resolves. If *generation* no longer
-        matches the most recent selection, the result is discarded —
-        otherwise a stale probe could advance the wizard for a device the
-        user already navigated away from, corrupting the Connect step's
-        completed/checkmark state.
-
-        Args:
-            prober: The CapabilityProber for the device this probe targets.
-            generation: Snapshot of ``self._probe_generation`` at selection time.
-        """
-        caps = await prober.probe()
-        if generation != self._probe_generation:
-            logger.debug(
-                "Discarding stale capability probe result (generation %d, current %d)",
-                generation,
-                self._probe_generation,
-            )
-            return
-        self._bridge.capabilities_ready.emit(caps)
-
-    async def _do_file_import(self, path: str) -> None:
-        """Parse a REW EQ text file and populate filters.
-
-        Calls REWParser.parse_file_with_rows() for full result including
-        skipped bands. Stores filters in wizard state, shows warnings if any.
-
-        Args:
-            path: Path to the REW text file.
-        """
-        from src.translator.rew_parser import REWParser
-
-        file_path = Path(path)
-        parser = REWParser()
-        filters, warnings, rows, notes = parser.parse_file_with_rows(file_path)
-
-        # Store in wizard state — explicitly set Stereo channel mode (smoke #72)
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = ChannelMode.STEREO
-        self._wizard_controller.state.pending_rows = rows
-        self._wizard_controller.state.pending_conversion_notes = notes
-        self._wizard_controller.state.filters_origin = (
-            f"Imported from REW file: {file_path.name}"
-        )
-
-        # Notify FiltersPage of success via peq_ready signal
-        self._bridge.peq_ready.emit(filters)
-
-        # If there were skipped/unsupported bands, show info message
-        if warnings:
-            skip_count = len(warnings)
-            self._bridge.progress_update.emit(
-                f"{len(filters)} filters loaded, {skip_count} unsupported band(s) skipped"
-            )
-
-    async def _do_file_import_lr(self, path_l: str, path_r: str) -> None:
-        """Parse two REW EQ text files as L/R channels.
-
-        Parses each file independently, combines into a flat filter list (L+R),
-        and sets channel_mode to "L/R" in wizard state.
-
-        Args:
-            path_l: Path to the left channel REW text file.
-            path_r: Path to the right channel REW text file.
-        """
-        from src.translator.rew_parser import REWParser
-
-        parser = REWParser()
-        filters_l, warnings_l, rows_l, notes_l = parser.parse_file_with_rows(Path(path_l))
-        filters_r, warnings_r, rows_r, notes_r = parser.parse_file_with_rows(Path(path_r))
-
-        # Combine L+R into flat list and set L/R channel mode
-        filters = filters_l + filters_r
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = ChannelMode.LR
-        self._wizard_controller.state.pending_rows_l = rows_l
-        self._wizard_controller.state.pending_rows_r = rows_r
-        self._wizard_controller.state.pending_conversion_notes_l = notes_l
-        self._wizard_controller.state.pending_conversion_notes_r = notes_r
-        self._wizard_controller.state.filters_origin = (
-            f"Imported from REW files: L={Path(path_l).name}, R={Path(path_r).name}"
-        )
-
-        # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
-        peq_data = PEQSettings(
-            source_name=self._wizard_controller.state.primary_source,
-            channel_mode=ChannelMode.LR,
-            bands_l=filters_l,
-            bands_r=filters_r,
-        )
-        self._bridge.peq_ready.emit(peq_data)
-
-        total_warnings = len(warnings_l) + len(warnings_r)
-        if total_warnings:
-            self._bridge.progress_update.emit(
-                f"L/R import: Left {len(filters_l)} bands ({len(warnings_l)} skipped), "
-                f"Right {len(filters_r)} bands ({len(warnings_r)} skipped)"
-            )
+    # _do_discovery, _do_probe, _do_file_import, _do_file_import_lr moved to
+    # PrimaryWorkflowManager (src/gui/primary_workflows.py) — docs/backlog.md
+    # item 3, Phase 1a. Dispatch from _on_refresh_requested/_on_device_selected/
+    # _on_file_import_requested/_on_file_import_lr_requested now calls the
+    # manager directly.
 
     async def _do_device_pull(self) -> None:
         """Pull PEQ settings from the connected device.
@@ -3909,7 +3773,7 @@ class MainWindow(QMainWindow):
         current_ip = state.selected_device or ""
 
         # Need discovered devices for the picker
-        if not self._discovered_devices:
+        if not self._primary_workflows.discovered_devices:
             self._status_banner.show_error("No other devices discovered")
             return
 
@@ -3925,7 +3789,7 @@ class MainWindow(QMainWindow):
         # Open device picker dialog for target device selection, with the
         # combined warning embedded above the list
         selected_devices = DevicePickerDialog.get_devices(
-            self, self._discovered_devices, current_ip, warning
+            self, self._primary_workflows.discovered_devices, current_ip, warning
         )
 
         # User cancelled the dialog
@@ -3970,7 +3834,7 @@ class MainWindow(QMainWindow):
         Args:
             profile: Profile object selected in My Saved Presets.
         """
-        if not self._discovered_devices:
+        if not self._primary_workflows.discovered_devices:
             self._status_banner.show_error("No other devices discovered")
             return
 
@@ -3999,7 +3863,7 @@ class MainWindow(QMainWindow):
         )
 
         selected_devices = DevicePickerDialog.get_devices(
-            self, self._discovered_devices, "", warning
+            self, self._primary_workflows.discovered_devices, "", warning
         )
         if selected_devices is None:
             return

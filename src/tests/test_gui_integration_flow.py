@@ -161,7 +161,7 @@ class TestFullWizardFlow:
         window._bridge.run_async.assert_called()
 
         # --- Step d: Directly call _do_discovery() and verify signal ---
-        await window._do_discovery()
+        await window._primary_workflows._do_discovery()
 
         # Verify discovery_complete emitted with transformed device dicts
         window._bridge.discovery_complete.emit.assert_called_once()
@@ -174,7 +174,7 @@ class TestFullWizardFlow:
         assert emitted_devices[1]["ip"] == "192.168.1.101"
 
         # Verify discovered devices cached for picker dialogs
-        assert len(window._discovered_devices) == 2
+        assert len(window._primary_workflows.discovered_devices) == 2
 
         # --- Step e: Simulate device selection ---
         window._on_device_selected("192.168.1.100")
@@ -187,7 +187,9 @@ class TestFullWizardFlow:
         # --- Step f: Mock and call _do_probe() ---
         caps = _make_caps(roomfit_level=0)
         window._capability_prober.probe = AsyncMock(return_value=caps)
-        await window._do_probe(window._capability_prober, window._probe_generation)
+        await window._primary_workflows._do_probe(
+            window._capability_prober, window._primary_workflows._probe_generation
+        )
 
         # Verify capabilities_ready emitted
         window._bridge.capabilities_ready.emit.assert_called_once_with(caps)
@@ -267,7 +269,7 @@ class TestDiscoveryError:
         )
 
         # Call via _bridge_wrapper to exercise the error mapping path
-        await window._bridge_wrapper("discovery", window._do_discovery())
+        await window._bridge_wrapper("discovery", window._primary_workflows._do_discovery())
 
         # Verify operation_error emitted with correct error type and mapped message
         window._bridge.operation_error.emit.assert_called_once()
@@ -299,7 +301,9 @@ class TestProbeError:
         # Call via _bridge_wrapper to exercise the error mapping path
         await window._bridge_wrapper(
             "capability_probe",
-            window._do_probe(window._capability_prober, window._probe_generation),
+            window._primary_workflows._do_probe(
+                window._capability_prober, window._primary_workflows._probe_generation
+            ),
         )
 
         # Verify operation_error emitted with correct error type and mapped message

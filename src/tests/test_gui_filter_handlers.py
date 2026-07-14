@@ -92,7 +92,7 @@ class TestFileImportHappyPath:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, [], list(filters), {}),
         ):
-            await window._do_file_import("/fake/path/eq.txt")
+            await window._primary_workflows._do_file_import("/fake/path/eq.txt")
 
         window._bridge.peq_ready.emit.assert_called_once_with(filters)
 
@@ -120,7 +120,7 @@ class TestFileImportHappyPath:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, warnings, list(filters), {}),
         ):
-            await window._do_file_import("/fake/path/eq.txt")
+            await window._primary_workflows._do_file_import("/fake/path/eq.txt")
 
         window._bridge.peq_ready.emit.assert_called_once_with(filters)
         window._bridge.progress_update.emit.assert_called_once()
@@ -160,7 +160,7 @@ class TestFileImportLR:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             side_effect=_fake_parse,
         ):
-            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+            await window._primary_workflows._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
 
         window._bridge.progress_update.emit.assert_called_once()
         msg = window._bridge.progress_update.emit.call_args[0][0]
@@ -176,7 +176,7 @@ class TestFileImportLR:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, [], list(filters), {}),
         ):
-            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+            await window._primary_workflows._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
 
         window._bridge.progress_update.emit.assert_not_called()
 
@@ -201,7 +201,7 @@ class TestFileImportErrors:
         ):
             # Call the wrapper which catches exceptions
             await window._bridge_wrapper(
-                "file_import", window._do_file_import("/nonexistent/file.txt")
+                "file_import", window._primary_workflows._do_file_import("/nonexistent/file.txt")
             )
 
         window._bridge.operation_error.emit.assert_called_once()
@@ -222,7 +222,7 @@ class TestFileImportErrors:
             ),
         ):
             await window._bridge_wrapper(
-                "file_import", window._do_file_import("/bad/file.txt")
+                "file_import", window._primary_workflows._do_file_import("/bad/file.txt")
             )
 
         window._bridge.operation_error.emit.assert_called_once()
@@ -555,7 +555,7 @@ class TestFiltersOrigin:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, [], list(filters), {}),
         ):
-            await window._do_file_import("/fake/path/my_eq.txt")
+            await window._primary_workflows._do_file_import("/fake/path/my_eq.txt")
 
         assert window._wizard_controller.state.filters_origin == (
             "Imported from REW file: my_eq.txt"
@@ -568,7 +568,7 @@ class TestFiltersOrigin:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, [], list(filters), {}),
         ):
-            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+            await window._primary_workflows._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
 
         assert window._wizard_controller.state.filters_origin == (
             "Imported from REW files: L=left.txt, R=right.txt"

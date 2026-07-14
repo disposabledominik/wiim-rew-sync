@@ -1448,7 +1448,9 @@ class TestPresets:
         beforehand, so "declining" is now expressed as the user cancelling
         that single dialog -- DevicePickerDialog.get_devices returning None."""
         _setup_device(window)
-        window._discovered_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
         items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
 
         with (
@@ -1526,7 +1528,9 @@ class TestPresets:
         abort before any run_async call, and the warning text passed to the
         picker must name the RoomFit item and mention RoomFit specifically."""
         _setup_device(window)
-        window._discovered_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
         items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
 
         with (
@@ -1703,7 +1707,7 @@ class TestPresets:
         and the My Presets view is refreshed with it.
 
         Real behavior-level coverage of the refresh mechanics (repository
-        .list() -> view.set_presets()) already lives in
+        .list_all() -> view.set_presets()) already lives in
         test_issue48_save_filters_to_presets_callable; this test instead
         exercises the real _on_review_save_preset() -> _save_filters_to_presets()
         call chain end-to-end (name generation included) rather than mocking
@@ -1714,12 +1718,12 @@ class TestPresets:
         state.current_filters = [_make_filter()]
         state.channel_mode = ChannelMode.STEREO
         state.selected_source = "wifi"
-        window._discovered_devices = []
+        window._primary_workflows._discovered_devices = []
 
         with (
             patch.object(window._profile_repository, "save") as mock_save,
             patch.object(
-                window._profile_repository, "list", return_value=[]
+                window._profile_repository, "list_all", return_value=[]
             ) as mock_list,
             patch.object(window._my_presets_view, "set_presets") as mock_set_presets,
         ):
@@ -2812,7 +2816,7 @@ class TestSettingsUIState:
 
         with (
             patch.object(window._profile_repository, "save") as mock_save,
-            patch.object(window._profile_repository, "list", return_value=[]) as mock_list,
+            patch.object(window._profile_repository, "list_all", return_value=[]) as mock_list,
             patch.object(window._my_presets_view, "set_presets") as mock_set_presets,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):

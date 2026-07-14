@@ -93,7 +93,7 @@ def test_mark_prior_steps_completed_marks_connect_and_sources():
     dummy_self = SimpleNamespace()
     dummy_self._wizard_controller = SimpleNamespace(flow_type=FlowType.PEQ, state=state)
     dummy_self._device_caps = None
-    dummy_self._discovered_devices = []
+    dummy_self._primary_workflows = SimpleNamespace(discovered_devices=[])
     dummy_self._lookup_device_name = (
         main_window.MainWindow._lookup_device_name.__get__(dummy_self)
     )
@@ -736,9 +736,11 @@ async def test_stale_capability_probe_is_discarded():
         window = MainWindow(async_bridge=mock_bridge)
 
         stale_prober = SimpleNamespace(probe=AsyncMock(return_value=MagicMock()))
-        stale_generation = window._probe_generation  # snapshot before "reselection"
-        window._probe_generation += 1  # simulates a newer _on_device_selected call
+        # snapshot before "reselection"
+        stale_generation = window._primary_workflows._probe_generation
+        # simulates a newer _on_device_selected call
+        window._primary_workflows.bump_probe_generation()
 
-        await window._do_probe(cast(Any, stale_prober), stale_generation)
+        await window._primary_workflows._do_probe(cast(Any, stale_prober), stale_generation)
 
         mock_bridge.capabilities_ready.emit.assert_not_called()
