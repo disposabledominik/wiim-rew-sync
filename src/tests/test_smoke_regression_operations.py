@@ -2845,6 +2845,28 @@ class TestSettingsUIState:
         mock_set_presets.assert_called_once_with([])
         mock_success.assert_called_once_with("Saved 'Thread Safe Preset' to My Presets")
 
+    def test_save_filters_to_presets_shows_error_banner_on_failure(self, window) -> None:
+        """A failing ProfileRepository.save() must show an error banner, not
+        propagate uncaught -- this path previously had no try/except at all
+        (Phase 5 consolidation via _run_profile_action)."""
+        filters = [_make_filter(100)]
+        state = window._wizard_controller.state
+        state.filters_l = []
+        state.filters_r = []
+
+        with (
+            patch.object(
+                window._profile_repository, "save", side_effect=OSError("disk full")
+            ) as mock_save,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            window._save_filters_to_presets("Broken Preset", filters, ChannelMode.STEREO)
+
+        mock_save.assert_called_once()
+        mock_refresh.assert_not_called()
+        mock_error.assert_called_once_with("Save failed: disk full")
+
     # --- Issue #49: recall_profile handles L/R profiles ---
 
     def test_issue49_recall_profile_lr(self, window) -> None:

@@ -15,7 +15,7 @@ import json
 import logging
 import sys
 import traceback
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
@@ -2015,6 +2015,30 @@ class MainWindow(QMainWindow):
     # Shared action helpers (used by multiple trigger points)
     # ------------------------------------------------------------------
 
+    def _run_profile_action(
+        self, action: Callable[[], object], success_message: str, failure_verb: str
+    ) -> None:
+        """Run a synchronous ProfileRepository action, showing success/error
+        feedback.
+
+        Shared by MyPresetsView's rename/duplicate/delete handlers and the
+        save-to-presets flow -- these are local-disk I/O, not network calls,
+        so they don't need the async bridge/dispatch pattern used elsewhere;
+        this only consolidates the repeated try/except/refresh/banner shape.
+
+        Args:
+            action: Zero-arg callable performing the repository write (and
+                anything that must only happen on success, e.g. logging).
+            success_message: Shown in the status banner on success.
+            failure_verb: Prefixes the error banner, e.g. "Rename failed: {exc}".
+        """
+        try:
+            action()
+            self._refresh_presets_view()
+            self._status_banner.show_success(success_message)
+        except Exception as exc:
+            self._status_banner.show_error(f"{failure_verb} failed: {exc}")
+
     def _save_filters_to_presets(
         self, name: str, filters: list[CanonicalFilter], channel_mode: str | ChannelMode
     ) -> None:
@@ -2038,15 +2062,13 @@ class MainWindow(QMainWindow):
             filters_r=state.filters_r,
         )
 
-        self._profile_repository.save(profile)
+        def _save() -> None:
+            self._profile_repository.save(profile)
+            logger.info("Saved preset: %s (%s)", profile.name, channel_mode)
 
-        # Refresh MyPresetsView
-        self._refresh_presets_view()
-
-        self._status_banner.show_success(
-            f"Saved '{profile.name}' to My Presets"
+        self._run_profile_action(
+            _save, f"Saved '{profile.name}' to My Presets", "Save"
         )
-        logger.info("Saved preset: %s (%s)", profile.name, channel_mode)
 
     def _refresh_presets_view(self) -> None:
         """Refresh MyPresetsView from the profile repository."""
@@ -3476,23 +3498,21 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def _on_profile_rename_requested(self, old_name: str, new_name: str) -> None:
         """Handle MyPresetsView rename action."""
-        try:
-            self._profile_repository.rename(old_name, new_name)
-            self._refresh_presets_view()
-            self._status_banner.show_success(f"Renamed '{old_name}' to '{new_name}'")
-        except Exception as exc:
-            self._status_banner.show_error(f"Rename failed: {exc}")
+        self._run_profile_action(
+            lambda: self._profile_repository.rename(old_name, new_name),
+            f"Renamed '{old_name}' to '{new_name}'",
+            "Rename",
+        )
 
     @Slot(str)
     def _on_profile_duplicate_requested(self, name: str) -> None:
         """Handle MyPresetsView duplicate action."""
-        try:
-            new_name = sanitize_device_name(f"{name} (copy)").strip()
-            self._profile_repository.duplicate(name, new_name)
-            self._refresh_presets_view()
-            self._status_banner.show_success(f"Duplicated '{name}'")
-        except Exception as exc:
-            self._status_banner.show_error(f"Duplicate failed: {exc}")
+        new_name = sanitize_device_name(f"{name} (copy)").strip()
+        self._run_profile_action(
+            lambda: self._profile_repository.duplicate(name, new_name),
+            f"Duplicated '{name}'",
+            "Duplicate",
+        )
 
     @Slot(str)
     def _on_profile_delete_requested(self, name: str) -> None:
@@ -3508,12 +3528,11 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        try:
-            self._profile_repository.delete(name)
-            self._refresh_presets_view()
-            self._status_banner.show_success(f"Deleted '{name}'")
-        except Exception as exc:
-            self._status_banner.show_error(f"Delete failed: {exc}")
+        self._run_profile_action(
+            lambda: self._profile_repository.delete(name),
+            f"Deleted '{name}'",
+            "Delete",
+        )
 
     @Slot(list)
     def _on_preset_export_requested(self, items: list[Any]) -> None:
