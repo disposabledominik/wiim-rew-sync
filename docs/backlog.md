@@ -174,10 +174,32 @@ PrimaryWorkflowManager" template everywhere:
   before committing, plus one new test for a previously-uncovered guard
   path (L/R mode without explicit bands_l/bands_r).
 
-**To reactivate:** Only `_do_raw_command` remains (diagnostics-only, zero
-test coverage, low value) — permanently deferred per its own low-value
-note, not worth a phase on its own. No further extraction phases are
-planned for this item.
+**To reactivate:** Only `_do_raw_command` remains as a genuine standalone
+candidate (diagnostics-only, zero test coverage, low value) — permanently
+deferred per its own low-value note, not worth a phase on its own.
+
+**Post-Phase-5 audit (2026-07-14):** confirmed via a full sweep of every
+remaining `self._wiim_adapter.`/`self._profile_repository.`/`self._rew_client.`
+call site in `main_window.py` that the six "Must stay in MainWindow"
+methods above are the *only* remaining business-logic extraction
+candidates — everything else outside them is either already-consolidated
+(`_run_profile_action`'s three call sites), `_do_raw_command`, or a single
+harmless attribute read (`_profile_repository.storage_root`, used only to
+seed a file-dialog default path, not data manipulation). If those six were
+ever extracted, `_read_preset_to_copy` (32 lines) and
+`_write_preset_copies_to_devices` (46 lines) would go with them — both
+exist solely to serve the copy-to-device methods and have no other
+callers. Exact current sizes: `_do_push` 127, `_do_copy_preset_to_device`
+85, `_do_copy_presets_batch_multi` 63, `_do_copy_local_profile_to_devices`
+55, `_do_undo_roomfit` 49, `_do_undo_multi_source` 38, plus the two shared
+helpers above — **495 lines total** (~12% of the file), which would drop
+`main_window.py` from 4,169 to roughly 3,674 lines. **Decision: not
+pursued.** This group is what runs through the 5-step safety protocol
+(Backup → Write → Read Back → Verify → Rollback) — CLAUDE.md's "Safety
+before convenience" principle argues for a much more careful, dedicated
+effort than a routine extraction pass if this is ever revisited, not
+something to fold into an incremental phase. No further extraction phases
+are planned for this item.
 
 ---
 
