@@ -109,11 +109,11 @@ class TestSaveLoadRoundTrip:
         assert "filters" not in data
 
 
-# --- list ---
+# --- list_all ---
 
 
-class TestList:
-    """Test list() returns case-insensitive sorted names."""
+class TestListAll:
+    """Test list_all() returns case-insensitive sorted names."""
 
     def test_list_returns_sorted_case_insensitive(self, repo: ProfileRepository) -> None:
         """Profiles are sorted lexicographically, case-insensitive."""
@@ -121,13 +121,13 @@ class TestList:
         repo.save(_make_stereo_profile("alpha"))
         repo.save(_make_stereo_profile("Beta"))
 
-        profiles = repo.list()
+        profiles = repo.list_all()
         names = [p.name for p in profiles]
         assert names == ["alpha", "Beta", "Zebra"]
 
     def test_list_empty(self, repo: ProfileRepository) -> None:
         """Empty repository returns empty list."""
-        assert repo.list() == []
+        assert repo.list_all() == []
 
 
 # --- delete ---
@@ -142,7 +142,7 @@ class TestDelete:
         repo.save(profile)
         repo.delete("test-profile")
 
-        assert repo.list() == []
+        assert repo.list_all() == []
 
     def test_delete_missing_raises(self, repo: ProfileRepository) -> None:
         """Deleting a non-existent profile raises ProfileNotFoundError."""
@@ -397,7 +397,7 @@ def test_list_sort_order_invariant(names: list[str], tmp_path: object) -> None:
         repo.save(profile)
         saved_names.append(name)
 
-    listed = repo.list()
+    listed = repo.list_all()
     listed_names = [p.name for p in listed]
     expected = sorted(saved_names, key=lambda n: (n.lower(), n))
     assert listed_names == expected

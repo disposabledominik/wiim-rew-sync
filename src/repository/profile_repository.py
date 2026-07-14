@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 import json
 import unicodedata
 from pathlib import Path
@@ -95,7 +94,7 @@ class ProfileRepository:
         # Validate via Pydantic (enforces channel-mode/filter-key consistency)
         return Profile.model_validate(raw)
 
-    def list(self) -> list[Profile]:
+    def list_all(self) -> list[Profile]:
         """Return all profiles sorted by name (lexicographic, case-insensitive)."""
         profiles: list[Profile] = []
         for path in self._profiles_dir.glob("*.json"):
@@ -182,6 +181,6 @@ class ProfileRepository:
             profile.tags.remove(tag)
             self.save(profile)
 
-    def get_by_tag(self, tag: str) -> builtins.list[Profile]:
+    def get_by_tag(self, tag: str) -> list[Profile]:
         """Return all profiles that have the given tag."""
-        return [p for p in self.list() if tag in p.tags]
+        return [p for p in self.list_all() if tag in p.tags]

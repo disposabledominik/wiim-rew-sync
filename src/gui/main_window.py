@@ -2071,7 +2071,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_presets_view(self) -> None:
         """Refresh MyPresetsView from the profile repository."""
-        all_profiles = self._profile_repository.list()
+        all_profiles = self._profile_repository.list_all()
         self._my_presets_view.set_presets(all_profiles)
 
     def _export_filters_as_rew(
