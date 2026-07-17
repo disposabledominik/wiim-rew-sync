@@ -488,6 +488,17 @@ class SecondaryWorkflowManager(QObject):
         _read_preset_to_copy() -- shared across every target device this
         preset is being copied to (#171).
 
+        No per-item success banner: earlier (pre-Phase-D) code showed a
+        StatusBanner success message after every individual (preset,
+        device) write. That's intentionally not reproduced here -- with
+        this manager, per-item feedback is the existing progress_update
+        message ("Copying '{preset}' to {device}...") emitted by the
+        caller, and the final result is the batch-level summary
+        (copy_batch_complete/copy_local_profile_complete). A banner per
+        item would flicker/spam for a multi-preset, multi-device batch;
+        consolidating into one summary is a deliberate UX choice, not a
+        dropped feature (branch-quality review, 2026-07-17).
+
         Args:
             preset_name: Name of the preset/profile to copy.
             preset_type: "PEQ" or "RoomFit".
