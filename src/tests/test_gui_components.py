@@ -743,6 +743,29 @@ class TestFilterTable:
         bg = item.background().color()
         assert bg.alpha() != 40  # No accent highlight -- OFF bands match regardless of drift
 
+    def test_comparison_gain_diff_annotation_uses_canonical_tolerance(self, qtbot) -> None:
+        """The "+X dB" diff annotation on a changed row must not appear when
+        the gain component alone is within fp_compare.GAIN_TOLERANCE_DB
+        (0.05 dB), even though the row is highlighted as changed overall due
+        to a frequency drift outside tolerance. Previously used a hardcoded
+        0.01 dB threshold, independently invented and tighter than the
+        canonical one."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        before = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)]
+        # Frequency drifts well outside tolerance (row is "changed"), but the
+        # gain drifts only 0.02 dB -- within tolerance, outside the old
+        # hardcoded 0.01 dB threshold.
+        after = [CanonicalFilter(type="PEAK", frequency_hz=1010.0, gain_db=3.02, q=1.0)]
+
+        table.set_comparison(before, after)
+
+        assert table._table is not None
+        gain_item = table._table.item(0, 3)
+        assert gain_item is not None
+        assert "dB)" not in gain_item.text()  # No diff suffix for the in-tolerance gain
+
     def test_clear_removes_all(self, qtbot) -> None:
         """clear() removes the table widget."""
         table = FilterTable()

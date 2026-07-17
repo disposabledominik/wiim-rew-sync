@@ -29,7 +29,7 @@ from src.models.canonical import CanonicalFilter
 from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.translator._warnings import FilterRow, SkippedBand
 from src.utils.clamping import clamp
-from src.utils.fp_compare import band_matches
+from src.utils.fp_compare import band_matches, gain_matches
 
 _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
 
@@ -487,11 +487,15 @@ class FilterTable(QWidget):
 
             # Gain with diff indicator
             gain_text = self._format_gain(display_filt.gain_db)
-            if changed and before_filt is not None and after_filt is not None:
+            if (
+                changed
+                and before_filt is not None
+                and after_filt is not None
+                and not gain_matches(before_filt.gain_db, after_filt.gain_db)
+            ):
                 diff = after_filt.gain_db - before_filt.gain_db
-                if abs(diff) > 0.01:
-                    diff_str = f"+{diff:.1f}" if diff > 0 else f"{diff:.1f}"
-                    gain_text = f"{gain_text} ({diff_str} dB)"
+                diff_str = f"+{diff:.1f}" if diff > 0 else f"{diff:.1f}"
+                gain_text = f"{gain_text} ({diff_str} dB)"
             gain_item = QTableWidgetItem(gain_text)
             gain_item.setTextAlignment(
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
