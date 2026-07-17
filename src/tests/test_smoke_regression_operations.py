@@ -212,9 +212,9 @@ class TestPushWriteOperations:
         device2 = MagicMock(ip="192.168.1.202", name="Device B")
 
         with (
-            patch("src.gui.main_window.WiiMHttpClient"),
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.adapter_factories.WiiMHttpClient"),
+            patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
             patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
         ):
             mock_prober = MagicMock()
@@ -234,7 +234,7 @@ class TestPushWriteOperations:
 
             import asyncio
 
-            with patch("src.gui.main_window.WiiMHttpClient", return_value=mock_target_client):
+            with patch("src.gui.adapter_factories.WiiMHttpClient", return_value=mock_target_client):
                 asyncio.run(
                     window._do_copy_presets_batch_multi(items, [device1, device2], "wifi")
                 )
@@ -2339,9 +2339,9 @@ class TestSettingsUIState:
         peq_settings = MagicMock(channel_mode="stereo", bands=filters)
 
         with (
-            patch("src.gui.main_window.WiiMHttpClient"),
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.adapter_factories.WiiMHttpClient"),
+            patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
             patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
         ):
             mock_prober = MagicMock()
@@ -2367,7 +2367,7 @@ class TestSettingsUIState:
             import asyncio
 
             mock_wiim_http = MagicMock(return_value=mock_target_client)
-            with patch("src.gui.main_window.WiiMHttpClient", mock_wiim_http):
+            with patch("src.gui.adapter_factories.WiiMHttpClient", mock_wiim_http):
                 with pytest.raises(RuntimeError):
                     asyncio.run(
                         window._do_copy_preset_to_device(
@@ -2521,9 +2521,9 @@ class TestSettingsUIState:
         peq_settings = MagicMock(channel_mode="stereo", bands=filters)
 
         with (
-            patch("src.gui.main_window.WiiMHttpClient") as mock_client_cls,
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.adapter_factories.WiiMHttpClient") as mock_client_cls,
+            patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
             patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
             patch.object(window._status_banner, "show_success") as mock_show_success,
         ):
@@ -2586,9 +2586,9 @@ class TestSettingsUIState:
         )
 
         with (
-            patch("src.gui.main_window.WiiMHttpClient"),
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.adapter_factories.WiiMHttpClient"),
+            patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
             patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
         ):
             mock_prober = MagicMock()
@@ -2608,7 +2608,7 @@ class TestSettingsUIState:
 
             import asyncio
 
-            with patch("src.gui.main_window.WiiMHttpClient", return_value=mock_target_client):
+            with patch("src.gui.adapter_factories.WiiMHttpClient", return_value=mock_target_client):
                 asyncio.run(
                     window._do_copy_preset_to_device(
                         "LR Preset", "PEQ", "192.168.1.200", "wifi",
@@ -2638,9 +2638,9 @@ class TestSettingsUIState:
         )
 
         with (
-            patch("src.gui.main_window.WiiMHttpClient"),
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.adapter_factories.WiiMHttpClient"),
+            patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
             patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
             patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls,
         ):
@@ -2667,7 +2667,7 @@ class TestSettingsUIState:
 
             import asyncio
 
-            with patch("src.gui.main_window.WiiMHttpClient", mock_wiim_http):
+            with patch("src.gui.adapter_factories.WiiMHttpClient", mock_wiim_http):
                 asyncio.run(
                     window._do_copy_preset_to_device(
                         "Movie Night", "PEQ", "192.168.1.200", "wifi",
@@ -3121,9 +3121,9 @@ class TestSettingsUIState:
 
         # Mock the target device connection
         with (
-            patch("src.gui.main_window.WiiMHttpClient") as mock_client_cls,
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
+            patch("src.gui.adapter_factories.WiiMHttpClient") as mock_client_cls,
+            patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
             patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls,
         ):
             mock_client = AsyncMock()

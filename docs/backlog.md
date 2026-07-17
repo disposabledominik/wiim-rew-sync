@@ -235,6 +235,30 @@ and migrate `DevicePickerDialog`/`QuickSetupDialog` onto it at the same time.
 
 ## Completed / Closed Items (Archive)
 
+### Adapters Instantiated Directly in `main_window.py` (Tech Debt)
+**Completed:** 2026-07-17. Found during a code-quality audit alongside item 2 (MainWindow
+God-Object) above, but a distinct violation: 4 sites in `main_window.py` called
+`WiiMHttpClient(...)`/`CapabilityProber(...)`/`WiiMAdapter(...)`/`REWHttpApiClient()` directly,
+against CLAUDE.md's "Adapters are injected via constructor... never instantiate an adapter inside
+business logic." Fixed by adding a new `src/gui/adapter_factories.py` module (the sole place in
+`src/gui/` allowed to call the real constructors) and threading 4 constructor-injected factory
+parameters through `MainWindow.__init__` (`rew_client_factory`, `wiim_http_client_factory`,
+`capability_prober_factory`, `wiim_adapter_factory`), each defaulting to the matching
+`adapter_factories.py` function and reused at all 4 call sites. Also collapsed two duplicated
+`# type: ignore[arg-type]` suppressions (masking `@Slot(object)`'s type erasure on the probed
+capabilities) into a single `cast(DeviceCapabilities, caps)` at the top of
+`_on_capabilities_ready()`. A grep-based guard test
+(`test_gui_adapter_injection.py::TestNoDirectAdapterInstantiationInGui`, mirroring
+`test_safe_write.py::TestNoDirectWriteBypass`'s pattern — its `iter_src_python_files()` helper was
+promoted from a private copy in that file to `conftest.py` so both tests share it) now fails CI if
+any file under `src/gui/` other than `adapter_factories.py` instantiates one of these classes
+directly. Required updating 11 `unittest.mock.patch("src.gui.main_window.<Class>")` call sites
+across `test_smoke_regression_operations.py` to patch `src.gui.adapter_factories.<Class>` instead
+— the class names are still imported into `main_window.py` for type annotations, so the old patch
+target silently stopped intercepting the call instead of raising an import error, and 3 of the 11
+were live network-call regressions (real `httpx.ProxyError`s) until caught by actually running the
+affected tests, not just by inspection.
+
 ### `ProfileRepository.list()` Shadows Builtin (Tech Debt)
 **Completed:** 2026-07-14. Formerly backlog item "1. `ProfileRepository.list()` Shadows Builtin."
 Renamed to `list_all()`, removing the `import builtins` + `builtins.list[Profile]` workaround.

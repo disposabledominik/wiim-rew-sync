@@ -10,11 +10,22 @@ Strategies defined here (used across multiple PBT tasks):
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 from hypothesis import strategies as st
 
 from src.models.canonical import CanonicalFilter
+
+
+def iter_src_python_files() -> list[Path]:
+    """Return every .py file under src/, sorted -- shared by grep-based
+    architecture-rule guard tests (e.g. test_safe_write.py's
+    TestNoDirectWriteBypass, test_gui_adapter_injection.py) so each new rule
+    adds its own pattern/allowlist without re-implementing the source-tree
+    walk."""
+    repo_root = Path(__file__).resolve().parents[2]
+    return sorted((repo_root / "src").rglob("*.py"))
 
 
 def close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:

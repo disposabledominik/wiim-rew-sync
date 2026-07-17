@@ -18,7 +18,7 @@ import traceback
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from PySide6.QtCore import QSize, Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
@@ -42,6 +42,12 @@ from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
+from src.gui.adapter_factories import (
+    make_capability_prober,
+    make_rew_client,
+    make_wiim_adapter,
+    make_wiim_http_client,
+)
 from src.gui.app_settings import AppSettings
 from src.gui.async_bridge import AsyncBridge
 from src.gui.components.page_layout import ICON_NO_CONNECTION, ICON_NO_DATA
@@ -89,7 +95,7 @@ from src.gui.wizard_controller import (
     parse_source_list,
 )
 from src.models.canonical import CanonicalFilter
-from src.models.capabilities import DeviceInfo
+from src.models.capabilities import DeviceCapabilities, DeviceInfo
 from src.models.channel_mode import ChannelMode
 from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE, DEFAULT_SOURCE_NAMES
 from src.models.errors import (
@@ -206,12 +212,40 @@ class MainWindow(QMainWindow):
         +-- QDockWidget (Diagnostics, hidden by default)
     """
 
-    def __init__(self, async_bridge: AsyncBridge | None = None) -> None:
+    def __init__(
+        self,
+        async_bridge: AsyncBridge | None = None,
+        *,
+        rew_client_factory: Callable[[], REWHttpApiClient] = make_rew_client,
+        wiim_http_client_factory: Callable[[str], WiiMHttpClient] = make_wiim_http_client,
+        capability_prober_factory: Callable[
+            [WiiMHttpClient], CapabilityProber
+        ] = make_capability_prober,
+        wiim_adapter_factory: Callable[
+            [WiiMHttpClient, DeviceCapabilities], WiiMAdapter
+        ] = make_wiim_adapter,
+    ) -> None:
         """Initialize the main window.
 
         Args:
             async_bridge: The async bridge for background operations.
                          If None, a new one is created and started.
+            rew_client_factory: Constructs the REW HTTP API client.
+                Overridable for tests; defaults to the real adapter
+                (src.gui.adapter_factories.make_rew_client).
+            wiim_http_client_factory: Constructs a WiiM HTTP client for a
+                given device IP. Overridable for tests; defaults to the
+                real adapter (make_wiim_http_client).
+            capability_prober_factory: Constructs a capability prober for a
+                given WiiM HTTP client. Overridable for tests; defaults to
+                the real adapter (make_capability_prober).
+            wiim_adapter_factory: Constructs a WiiM adapter for a given
+                client + probed capabilities. Overridable for tests;
+                defaults to the real adapter (make_wiim_adapter). Distinct
+                from the per-connection `wiim_adapter_factory` lambda passed
+                to PrimaryWorkflowManager/SecondaryWorkflowManager below --
+                that one captures a specific `caps` value per device
+                connection and calls this one internally.
         """
         super().__init__()
 
@@ -228,12 +262,19 @@ class MainWindow(QMainWindow):
         else:
             self._bridge = async_bridge
 
+        # --- Adapter construction factories (dependency injection; see
+        # src/gui/adapter_factories.py and test_gui_adapter_injection.py) ---
+        self._rew_client_factory = rew_client_factory
+        self._wiim_http_client_factory = wiim_http_client_factory
+        self._capability_prober_factory = capability_prober_factory
+        self._wiim_adapter_factory = wiim_adapter_factory
+
         # --- Backend adapter instances (Req 14.1-14.6) ---
         # Eagerly created at startup:
         self._discovery_module = DiscoveryModule(
             timeout=float(self._settings.discovery_timeout),
         )
-        self._rew_client = REWHttpApiClient()
+        self._rew_client = self._rew_client_factory()
         presets_dir = (
             Path(self._settings.presets_directory)
             if self._settings.presets_directory
@@ -808,8 +849,8 @@ class MainWindow(QMainWindow):
             state.completed_step_tooltips.pop(step, None)
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
-        self._wiim_http_client = WiiMHttpClient(device_ip)
-        self._capability_prober = CapabilityProber(self._wiim_http_client)
+        self._wiim_http_client = self._wiim_http_client_factory(device_ip)
+        self._capability_prober = self._capability_prober_factory(self._wiim_http_client)
 
         # Bump generation so a still-in-flight probe from a previous device
         # selection is discarded instead of advancing the wizard out from
@@ -1455,17 +1496,24 @@ class MainWindow(QMainWindow):
         # Store capabilities (caps has supports_roomfit*, source_names, etc.)
         roomfit_readable = bool(getattr(caps, "supports_roomfit_read", False))
 
+        # @Slot(object) erases the static type to satisfy PySide6's signal
+        # registration -- probe() itself is properly typed as returning
+        # DeviceCapabilities, so this narrows once here rather than
+        # suppressing mypy separately at each of the two call sites below
+        # that need the real type.
+        device_caps = cast(DeviceCapabilities, caps)
+
         # Create WiiMAdapter and SafeWrite now that we have a connected client (Req 14.2, 14.3)
         assert self._wiim_http_client is not None
-        self._wiim_adapter = WiiMAdapter(self._wiim_http_client, caps)  # type: ignore[arg-type]
+        self._wiim_adapter = self._wiim_adapter_factory(self._wiim_http_client, device_caps)
         self._safe_write = SafeWrite(self._wiim_adapter, self._backup_manager)
         self._roomfit_safe_write = RoomFitSafeWrite(self._wiim_adapter, self._backup_manager)
 
         # Configure SecondaryWorkflowManager with adapter factories (Req 8.1, 9.3, 10.3, 15.3)
         self._secondary_workflows.configure(
             bridge=self._bridge,
-            wiim_adapter_factory=lambda ip: WiiMAdapter(
-                WiiMHttpClient(ip), caps,  # type: ignore[arg-type]
+            wiim_adapter_factory=lambda ip: self._wiim_adapter_factory(
+                self._wiim_http_client_factory(ip), device_caps
             ),
             safe_write_factory=lambda adapter: SafeWrite(adapter, self._backup_manager),
             backup_manager=self._backup_manager,
@@ -2243,10 +2291,10 @@ class MainWindow(QMainWindow):
                 bands_l/bands_r for L/R mode).
         """
         # Connect to target device and save as named preset
-        target_client = WiiMHttpClient(target_ip)
+        target_client = self._wiim_http_client_factory(target_ip)
         try:
-            target_caps = await CapabilityProber(target_client).probe()
-            target_adapter = WiiMAdapter(target_client, target_caps)
+            target_caps = await self._capability_prober_factory(target_client).probe()
+            target_adapter = self._wiim_adapter_factory(target_client, target_caps)
 
             if preset_type == "RoomFit":
                 # RoomFit: write as RoomFit profile on target (smoke #34, #79),
