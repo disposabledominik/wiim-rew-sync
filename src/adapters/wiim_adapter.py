@@ -469,12 +469,12 @@ class WiiMAdapter:
             )
             await self._write_bands(
                 partial(
-                    self._write_peq_batch_lr,
-                    source_name, band_array_l, band_array_r,
+                    self._write_peq_batch,
+                    source_name, band_array_l, "L/R", band_array_r,
                 ),
                 partial(
-                    self._write_peq_sequential_lr,
-                    source_name, band_array_l, band_array_r, queue,
+                    self._write_peq_sequential,
+                    source_name, band_array_l, "L/R", queue, band_array_r,
                 ),
             )
         else:
@@ -548,19 +548,32 @@ class WiiMAdapter:
         source_name: str,
         band_array: list[float],
         channel_mode: str,
+        band_array_r: list[float] | None = None,
     ) -> object:
         """Write all bands in a single EQSetLV2SourceBand payload.
+
+        Stereo when `band_array_r` is None (`band_array` becomes `EQBand`);
+        L/R when given (`band_array`/`band_array_r` become `EQBandL`/
+        `EQBandR`, `channel_mode` is expected to be "L/R").
 
         Returns the raw device response so _write_bands() can inspect it
         for an explicit rejection when batch capability is still unknown.
         """
-        eq_band_params = _flat_array_to_band_params(
-            band_array, self._capabilities.max_filters
-        )
+        num_bands = self._capabilities.max_filters
+        payload: dict[str, object]
+        if band_array_r is not None:
+            payload = {
+                "channelMode": channel_mode,
+                "EQBandL": _flat_array_to_band_params(band_array, num_bands),
+                "EQBandR": _flat_array_to_band_params(band_array_r, num_bands),
+            }
+        else:
+            payload = {
+                "channelMode": channel_mode,
+                "EQBand": _flat_array_to_band_params(band_array, num_bands),
+            }
         command = encode_wiim_command(
-            "EQSetLV2SourceBand",
-            {"channelMode": channel_mode, "EQBand": eq_band_params},
-            source_name=source_name,
+            "EQSetLV2SourceBand", payload, source_name=source_name
         )
         return await self._client.command(command)
 
@@ -570,8 +583,13 @@ class WiiMAdapter:
         band_array: list[float],
         channel_mode: str,
         queue: WiiMCommandQueue | None,
+        band_array_r: list[float] | None = None,
     ) -> None:
         """Write bands one at a time via queue with 100ms inter-command delay.
+
+        Stereo when `band_array_r` is None (one `EQBand` per command); L/R
+        when given (one command per band, carrying that band's L+R params
+        together as `EQBandL`/`EQBandR`).
 
         # TODO (low-priority tech debt): when this write changes the source's
         # channelMode, each call before the last leaves not-yet-sent bands holding
@@ -583,13 +601,26 @@ class WiiMAdapter:
         """
         num_bands = self._capabilities.max_filters
         for i in range(num_bands):
-            band_params = _flat_array_to_band_params(
-                band_array[i * 4:(i + 1) * 4], 1, start_band=i
-            )
+            payload: dict[str, object]
+            if band_array_r is not None:
+                payload = {
+                    "channelMode": channel_mode,
+                    "EQBandL": _flat_array_to_band_params(
+                        band_array[i * 4:(i + 1) * 4], 1, start_band=i
+                    ),
+                    "EQBandR": _flat_array_to_band_params(
+                        band_array_r[i * 4:(i + 1) * 4], 1, start_band=i
+                    ),
+                }
+            else:
+                payload = {
+                    "channelMode": channel_mode,
+                    "EQBand": _flat_array_to_band_params(
+                        band_array[i * 4:(i + 1) * 4], 1, start_band=i
+                    ),
+                }
             command = encode_wiim_command(
-                "EQSetLV2SourceBand",
-                {"channelMode": channel_mode, "EQBand": band_params},
-                source_name=source_name,
+                "EQSetLV2SourceBand", payload, source_name=source_name
             )
 
             if queue is not None:
@@ -598,63 +629,6 @@ class WiiMAdapter:
                 await self._client.command(command)
 
             # 100ms delay between sequential band writes
-            if i < num_bands - 1:
-                await asyncio.sleep(0.1)
-
-    async def _write_peq_batch_lr(
-        self,
-        source_name: str,
-        band_array_l: list[float],
-        band_array_r: list[float],
-    ) -> object:
-        """Write L/R bands in a single EQSetLV2SourceBand payload.
-
-        Returns the raw device response so _write_bands() can inspect it
-        for an explicit rejection when batch capability is still unknown.
-        """
-        num_bands = self._capabilities.max_filters
-        eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
-        eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
-        command = encode_wiim_command(
-            "EQSetLV2SourceBand",
-            {"channelMode": "L/R", "EQBandL": eq_band_l, "EQBandR": eq_band_r},
-            source_name=source_name,
-        )
-        return await self._client.command(command)
-
-    async def _write_peq_sequential_lr(
-        self,
-        source_name: str,
-        band_array_l: list[float],
-        band_array_r: list[float],
-        queue: WiiMCommandQueue | None,
-    ) -> None:
-        """Write L/R bands one at a time via queue with 100ms inter-command delay.
-
-        Each command writes one band's L+R params together.
-
-        # TODO (low-priority tech debt): same mode-switch corner case as
-        # _write_peq_sequential -- see docs/corrections.md, 2026-07-04.
-        """
-        num_bands = self._capabilities.max_filters
-        for i in range(num_bands):
-            band_l = _flat_array_to_band_params(
-                band_array_l[i * 4:(i + 1) * 4], 1, start_band=i
-            )
-            band_r = _flat_array_to_band_params(
-                band_array_r[i * 4:(i + 1) * 4], 1, start_band=i
-            )
-            command = encode_wiim_command(
-                "EQSetLV2SourceBand",
-                {"channelMode": "L/R", "EQBandL": band_l, "EQBandR": band_r},
-                source_name=source_name,
-            )
-
-            if queue is not None:
-                await queue.enqueue(command)
-            else:
-                await self._client.command(command)
-
             if i < num_bands - 1:
                 await asyncio.sleep(0.1)
 
