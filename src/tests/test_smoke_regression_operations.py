@@ -2867,6 +2867,41 @@ class TestSettingsUIState:
         mock_refresh.assert_not_called()
         mock_error.assert_called_once_with("Save failed: disk full")
 
+    def test_issue235_save_filters_to_presets_sanitizes_device_name(self, window) -> None:
+        """Smoke #235: _save_filters_to_presets() must sanitize its `name`
+        argument via sanitize_device_name() before building the Profile --
+        for the Review-page trigger this argument is an auto-generated
+        default like "wifi (Stereo)", so every preset saved this way
+        carried disallowed characters from the moment it was created,
+        before any rename ever touched it."""
+        filters = [_make_filter(100)]
+        state = window._wizard_controller.state
+        state.filters_l = []
+        state.filters_r = []
+
+        with (
+            patch.object(window._profile_repository, "save") as mock_save,
+            patch.object(window._profile_repository, "list_all", return_value=[]),
+            patch.object(window._my_presets_view, "set_presets"),
+            patch.object(window._status_banner, "show_success"),
+        ):
+            window._save_filters_to_presets("wifi (Stereo)", filters, ChannelMode.STEREO)
+
+        saved_profile = mock_save.call_args[0][0]
+        assert saved_profile.name == "wifi Stereo"
+
+    def test_issue235_profile_duplicate_sanitizes_device_name(self, window) -> None:
+        """Smoke #235: _on_profile_duplicate_requested() synthesizes
+        f"{name} (copy)" -- parentheses are disallowed by the WiiM device
+        naming rule, so the synthesized name must be sanitized before
+        reaching ProfileRepository.duplicate()."""
+        with patch.object(window._profile_repository, "duplicate") as mock_duplicate, patch.object(
+            window, "_refresh_presets_view"
+        ), patch.object(window._status_banner, "show_success"):
+            window._on_profile_duplicate_requested("My Preset")
+
+        mock_duplicate.assert_called_once_with("My Preset", "My Preset copy")
+
     # --- Issue #49: recall_profile handles L/R profiles ---
 
     def test_issue49_recall_profile_lr(self, window) -> None:

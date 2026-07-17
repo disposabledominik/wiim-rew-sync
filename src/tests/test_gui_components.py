@@ -755,6 +755,25 @@ class TestFilterTable:
         table.clear()
         assert table._table is None
 
+    def test_clear_resets_maximum_height_to_unbounded(self, qtbot) -> None:
+        """Smoke #237: clear() must reset maximumHeight() back to
+        unbounded (16777215, the literal value of Qt's QWIDGETSIZE_MAX --
+        not importable from PySide6, a C++-only macro) after set_filters()
+        capped it. A first attempted fix used setMaximumHeight(-1) intending
+        "unbounded", but Qt clamps negative setMaximumHeight() arguments to
+        0, which would collapse a cleared-then-repopulated table to zero
+        height instead."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        filters = self._make_filters()
+        table.set_filters(filters)
+        assert table.maximumHeight() < 16777215  # capped by set_filters()
+
+        table.clear()
+
+        assert table.maximumHeight() == 16777215
+
     def test_vertical_scrollbar_policy_is_dynamic(self, qtbot) -> None:
         """The vertical scrollbar policy is ScrollBarAsNeeded (Qt decides
         based on actual content vs. viewport height), not force-disabled --
