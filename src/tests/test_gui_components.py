@@ -699,6 +699,50 @@ class TestFilterTable:
         bg = item.background().color()
         assert bg.alpha() > 0  # Highlight applied
 
+    def test_comparison_uses_fp_compare_tolerance_not_stricter(self, qtbot) -> None:
+        """A band within fp_compare's match tolerance (±0.1 Hz / ±0.05 dB /
+        ±0.01 Q -- the same tolerance Safe-Write verification uses to decide
+        a write "matched") must not be highlighted as changed, even though
+        it would have failed the table's old, tighter hardcoded thresholds
+        (0.01 Hz / 0.01 dB / 0.001 Q). Otherwise the Review table can flag a
+        band as "changed" that Safe-Write itself considers a verified match."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        before = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)]
+        # 0.03 Hz, 0.02 dB, 0.005 Q of drift: within fp_compare tolerance,
+        # outside the old hardcoded one.
+        after = [CanonicalFilter(type="PEAK", frequency_hz=1000.03, gain_db=3.02, q=1.005)]
+
+        table.set_comparison(before, after)
+
+        assert table._table is not None
+        item = table._table.item(0, 0)
+        assert item is not None
+        bg = item.background().color()
+        assert bg.alpha() != 40  # No accent highlight applied -- within match tolerance
+
+    def test_comparison_off_bands_never_highlighted_regardless_of_placeholder_values(
+        self, qtbot
+    ) -> None:
+        """OFF-type bands are considered matching regardless of their
+        freq/gain/q placeholder values (mirrors fp_compare.band_matches'
+        OFF special-case, so the display and Safe-Write's own verification
+        stay in agreement)."""
+        table = FilterTable()
+        qtbot.addWidget(table)
+
+        before = [CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0)]
+        after = [CanonicalFilter(type="OFF", frequency_hz=500.0, gain_db=5.0, q=3.0)]
+
+        table.set_comparison(before, after)
+
+        assert table._table is not None
+        item = table._table.item(0, 0)
+        assert item is not None
+        bg = item.background().color()
+        assert bg.alpha() != 40  # No accent highlight -- OFF bands match regardless of drift
+
     def test_clear_removes_all(self, qtbot) -> None:
         """clear() removes the table widget."""
         table = FilterTable()

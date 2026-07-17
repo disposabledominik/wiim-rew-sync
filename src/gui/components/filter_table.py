@@ -28,6 +28,8 @@ from src.gui.theme import get_active_theme
 from src.models.canonical import CanonicalFilter
 from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.translator._warnings import FilterRow, SkippedBand
+from src.utils.clamping import clamp
+from src.utils.fp_compare import band_matches
 
 _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
 
@@ -342,9 +344,7 @@ class FilterTable(QWidget):
         if is_clamped and clamping_map is not None:
             reasons = clamping_map[band_number]
             gain_clamped = any("gain" in r.lower() for r in reasons)
-        display_gain = (
-            max(GAIN_MIN, min(GAIN_MAX, filt.gain_db)) if gain_clamped else filt.gain_db
-        )
+        display_gain = clamp(filt.gain_db, GAIN_MIN, GAIN_MAX) if gain_clamped else filt.gain_db
         gain_text = self._format_gain(display_gain)
         if gain_clamped:
             gain_text = f"\u25cf {gain_text}"  # Orange dot prefix
@@ -367,7 +367,7 @@ class FilterTable(QWidget):
             reasons = clamping_map[band_number]
             q_clamped = any("q" in r.lower() for r in reasons)
         band_notes = notes_map.get(band_number, []) if notes_map else []
-        display_q = max(Q_MIN, min(Q_MAX, filt.q)) if q_clamped else filt.q
+        display_q = clamp(filt.q, Q_MIN, Q_MAX) if q_clamped else filt.q
         q_text = f"{display_q:.2f}"
         if q_clamped or band_notes:
             q_text = f"\u25cf {q_text}"  # Dot prefix (orange=clamped, accent=note)
@@ -514,15 +514,16 @@ class FilterTable(QWidget):
         a: CanonicalFilter | None,
         b: CanonicalFilter | None,
     ) -> bool:
-        """Check if two filters differ in any visible parameter."""
+        """Check if two filters differ in any visible parameter.
+
+        Uses the same tolerances Safe-Write verification uses to decide a
+        write "matched" (src.utils.fp_compare.band_matches) so this display
+        can't flag a band as changed that Safe-Write itself already
+        considers a verified match.
+        """
         if a is None or b is None:
             return True
-        return (
-            a.type != b.type
-            or abs(a.frequency_hz - b.frequency_hz) > 0.01
-            or abs(a.gain_db - b.gain_db) > 0.01
-            or abs(a.q - b.q) > 0.001
-        )
+        return not band_matches(a, b)
 
     @staticmethod
     def _warning_color() -> QColor:

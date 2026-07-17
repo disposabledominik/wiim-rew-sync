@@ -10,6 +10,20 @@ up disagreeing about what counts as out of range.
 from __future__ import annotations
 
 
+def clamp(value: float, lo: float, hi: float) -> float:
+    """Clamp `value` into [lo, hi], returning the clamped number only.
+
+    Bare arithmetic shared by `clamp_with_warning()` (which also builds a
+    human-readable reason string) and callers that only need the resulting
+    display value, e.g. the Review table's clamped-value column.
+    """
+    if value > hi:
+        return hi
+    if value < lo:
+        return lo
+    return value
+
+
 def clamp_with_warning(
     value: float,
     lo: float,
@@ -32,9 +46,9 @@ def clamp_with_warning(
     if value > hi:
         bound = format(hi, bound_fmt)
         reason = f"{label} {value:g}{unit} exceeds {bound}{unit} limit, clamped to {bound}{unit}"
-        return hi, reason
+        return clamp(value, lo, hi), reason
     if value < lo:
         bound = format(lo, bound_fmt)
         reason = f"{label} {value:g}{unit} exceeds {bound}{unit} limit, clamped to {bound}{unit}"
-        return lo, reason
+        return clamp(value, lo, hi), reason
     return value, None
