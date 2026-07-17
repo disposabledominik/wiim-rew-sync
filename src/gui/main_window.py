@@ -87,7 +87,12 @@ from src.gui.wizard_controller import (
 )
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
-from src.models.channel_mode import ChannelMode, get_lr_filters, is_lr_mode
+from src.models.channel_mode import (
+    ChannelMode,
+    coerce_channel_mode,
+    get_lr_filters,
+    is_lr_mode,
+)
 from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE, DEFAULT_SOURCE_NAMES
 from src.models.errors import (
     ParseError,
@@ -3034,9 +3039,9 @@ class MainWindow(QMainWindow):
             return
 
         # Set channel_mode in wizard state from profile BEFORE recall emits
-        channel_mode = getattr(profile, "channel_mode", ChannelMode.STEREO)
-        if isinstance(channel_mode, str):
-            channel_mode = ChannelMode.from_any(channel_mode)
+        channel_mode = coerce_channel_mode(
+            getattr(profile, "channel_mode", ChannelMode.STEREO)
+        )
         self._wizard_controller.state.channel_mode = channel_mode
         self._secondary_workflows.recall_profile(profile)
 

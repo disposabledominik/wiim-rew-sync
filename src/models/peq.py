@@ -5,7 +5,13 @@ from __future__ import annotations
 from pydantic import BaseModel, model_validator
 
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode, ChannelModeField, is_lr_mode, require_lr_filters
+from src.models.channel_mode import (
+    ChannelMode,
+    ChannelModeField,
+    coerce_channel_mode,
+    is_lr_mode,
+    require_lr_filters,
+)
 
 
 class PEQSettings(BaseModel):
@@ -75,11 +81,7 @@ def build_peq_settings(
     Raises:
         ValueError: L/R mode without explicit filters_l/filters_r.
     """
-    mode = (
-        channel_mode
-        if isinstance(channel_mode, ChannelMode)
-        else ChannelMode.from_any(channel_mode)
-    )
+    mode = coerce_channel_mode(channel_mode)
 
     if mode.is_lr:
         left, right = require_lr_filters(filters_l, filters_r)

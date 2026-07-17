@@ -30,7 +30,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from src.gui.primary_workflows import EmptyPresetFiltersError
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode, is_lr_mode
+from src.models.channel_mode import ChannelMode, coerce_channel_mode, is_lr_mode
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.repository.backup_manager import load_backup_json, parse_backup_restore_metadata
 
@@ -212,9 +212,9 @@ class SecondaryWorkflowManager(QObject):
         Requirement 17.2: Profile Recall & Push flow.
         """
         profile_name: str = getattr(profile, "name", "Unknown")
-        channel_mode = getattr(profile, "channel_mode", ChannelMode.STEREO)
-        if isinstance(channel_mode, str):
-            channel_mode = ChannelMode.from_any(channel_mode)
+        channel_mode = coerce_channel_mode(
+            getattr(profile, "channel_mode", ChannelMode.STEREO)
+        )
 
         # Extract filters based on channel mode
         if channel_mode.is_lr:

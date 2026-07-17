@@ -7,7 +7,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, model_validator
 
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode, ChannelModeField, require_lr_filters
+from src.models.channel_mode import (
+    ChannelMode,
+    ChannelModeField,
+    coerce_channel_mode,
+    require_lr_filters,
+)
 
 
 class Profile(BaseModel):
@@ -113,11 +118,7 @@ def build_profile(
     if not safe_name:
         safe_name = "Untitled Preset"
 
-    mode = (
-        channel_mode
-        if isinstance(channel_mode, ChannelMode)
-        else ChannelMode.from_any(channel_mode)
-    )
+    mode = coerce_channel_mode(channel_mode)
 
     if mode.is_lr:
         left, right = require_lr_filters(filters_l, filters_r)

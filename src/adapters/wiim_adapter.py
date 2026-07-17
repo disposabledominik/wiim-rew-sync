@@ -24,7 +24,7 @@ from src.adapters.wiim_commands import (
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
-from src.models.channel_mode import ChannelMode
+from src.models.channel_mode import ChannelMode, coerce_channel_mode
 from src.models.errors import (
     RoomFitUnsupportedError,
     WiiMResponseError,
@@ -1066,11 +1066,7 @@ class WiiMAdapter:
         self._require_roomfit("read", "write")
 
         num_bands = self._capabilities.max_filters
-        mode = (
-            channel_mode
-            if isinstance(channel_mode, ChannelMode)
-            else ChannelMode.from_any(channel_mode)
-        )
+        mode = coerce_channel_mode(channel_mode)
 
         band_payload: dict[str, object]
         if mode.is_lr and filters_l and filters_r:
