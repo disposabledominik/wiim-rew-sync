@@ -12,6 +12,8 @@ from typing import Annotated
 
 from pydantic import BeforeValidator
 
+from src.models.canonical import CanonicalFilter
+
 
 class ChannelMode(Enum):
     """Canonical channel mode for PEQ settings.
@@ -92,3 +94,24 @@ def _coerce_channel_mode(value: str | ChannelMode) -> ChannelMode:
 # Annotated type for use in Pydantic model fields.
 # Accepts str or ChannelMode at runtime and coerces to ChannelMode.
 ChannelModeField = Annotated[ChannelMode, BeforeValidator(_coerce_channel_mode)]
+
+
+def require_lr_filters(
+    filters_l: list[CanonicalFilter] | None,
+    filters_r: list[CanonicalFilter] | None,
+) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
+    """Require explicit per-channel filter lists; never guess a split.
+
+    Shared by PEQSettings/Profile construction from a combined filter list
+    plus channel mode (see build_peq_settings/build_profile).
+
+    Raises:
+        ValueError: if either filters_l or filters_r is missing. There is
+            no safe way to reconstruct a channel boundary from a combined
+            list -- a positional 50/50 split is correct only by coincidence
+            when both channels happen to have equal length, and silently
+            wrong otherwise.
+    """
+    if filters_l is None or filters_r is None:
+        raise ValueError("L/R filters missing; refusing to guess channel split")
+    return filters_l, filters_r

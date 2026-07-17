@@ -3240,25 +3240,26 @@ class TestSharedHelpers:
         it locally.
 
         Behavior-level coverage of each individual function already exists
-        elsewhere in this file (is_lr_mode, build_profile, build_peq_settings,
-        parse_backup_filters, get_lr_filters tests above); this test is
-        specifically about the "single source of truth" claim: that the
-        module exists with the right surface and that call-sites import
-        from it instead of duplicating the logic inline.
+        elsewhere in this file (is_lr_mode, build_profile, parse_backup_filters,
+        get_lr_filters tests above; build_peq_settings tests now live in
+        test_models.py, see below); this test is specifically about the
+        "single source of truth" claim: that the module exists with the
+        right surface and that call-sites import from it instead of
+        duplicating the logic inline.
         """
         import inspect
 
         from src.gui import main_window, secondary_workflows, shared_helpers
+        from src.models import peq
         from src.translator import wiim_generator
 
         # The documented shared surface (get_lr_filters, is_lr_mode,
-        # build_peq_settings, build_profile, parse_backup_filters) plus the
-        # closely related helpers that grew out of the same consolidation
-        # (extract_filters, load_backup_json).
+        # build_profile, parse_backup_filters) plus the closely related
+        # helpers that grew out of the same consolidation (extract_filters,
+        # load_backup_json).
         for name in (
             "get_lr_filters",
             "is_lr_mode",
-            "build_peq_settings",
             "build_profile",
             "parse_backup_filters",
             "extract_filters",
@@ -3275,6 +3276,13 @@ class TestSharedHelpers:
         assert hasattr(wiim_generator, "validate_filters_for_device")
         assert callable(wiim_generator.validate_filters_for_device)
         assert not hasattr(shared_helpers, "validate_filters_for_device")
+
+        # build_peq_settings() constructs a PEQSettings domain model with no
+        # Qt dependency, so it moved to models.peq alongside PEQSettings --
+        # same relocation as validate_filters_for_device above.
+        assert hasattr(peq, "build_peq_settings")
+        assert callable(peq.build_peq_settings)
+        assert not hasattr(shared_helpers, "build_peq_settings")
 
         # main_window.py imports from shared_helpers rather than defining its
         # own local copies of the same logic.
@@ -3374,14 +3382,6 @@ class TestSharedHelpers:
             "Could not determine L/R channel data for this source"
         )
         mock_advance.assert_not_called()
-
-    def test_build_peq_settings_lr_without_explicit_filters_raises(self) -> None:
-        """L/R mode without filters_l/filters_r must raise, never guess a split."""
-        from src.gui.shared_helpers import build_peq_settings
-
-        filters = [_make_filter(100 * (i + 1)) for i in range(5)]
-        with pytest.raises(ValueError, match="refusing to guess channel split"):
-            build_peq_settings("wifi", filters, "L/R")
 
     def test_get_lr_filters_without_state_data_raises(self) -> None:
         """get_lr_filters must raise when wizard state has no filters_l/filters_r."""

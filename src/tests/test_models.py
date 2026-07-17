@@ -18,6 +18,7 @@ from src.models.errors import (
     WiiMREWSyncError,
     WiiMTimeoutError,
 )
+from src.models.peq import build_peq_settings
 from src.models.profile import BackupRecord, Profile
 from src.translator import ValidationWarning
 
@@ -84,6 +85,44 @@ class TestCanonicalFilter:
     def test_invalid_type_rejected(self) -> None:
         with pytest.raises(PydanticValidationError):
             CanonicalFilter(type="NOTCH", frequency_hz=1000.0, gain_db=0.0, q=1.0)
+
+
+# ---------------------------------------------------------------------------
+# build_peq_settings tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPeqSettings:
+    """Tests for build_peq_settings() -- PEQSettings construction from a
+    combined filter list plus channel mode, moved here from
+    src.gui.shared_helpers (no Qt dependency, belongs with the model it
+    constructs)."""
+
+    def test_lr_without_explicit_filters_raises(self) -> None:
+        """L/R mode without filters_l/filters_r must raise, never guess a split."""
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0 * (i + 1), gain_db=0.0, q=1.0)
+            for i in range(5)
+        ]
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            build_peq_settings("wifi", filters, "L/R")
+
+    def test_stereo_uses_combined_filters(self) -> None:
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)]
+        settings = build_peq_settings("wifi", filters, "Stereo")
+        assert settings.bands == filters
+        assert settings.bands_l == []
+        assert settings.bands_r == []
+
+    def test_lr_with_explicit_filters_splits_correctly(self) -> None:
+        left = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=1.0, q=1.0)]
+        right = [CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=2.0, q=1.0)]
+        settings = build_peq_settings(
+            "wifi", [], "L/R", filters_l=left, filters_r=right
+        )
+        assert settings.bands_l == left
+        assert settings.bands_r == right
+        assert settings.bands == []
 
 
 # ---------------------------------------------------------------------------

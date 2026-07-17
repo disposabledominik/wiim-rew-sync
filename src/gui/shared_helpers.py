@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode
+from src.models.channel_mode import ChannelMode, require_lr_filters
 from src.models.peq import PEQSettings
 from src.models.profile import Profile
 from src.repository.backup_manager import load_backup_json, parse_backup_filters
@@ -51,26 +51,6 @@ async def read_preset_preview(
     return await wiim_adapter.read_peq_preset_preview(source_name, preset_name)
 
 
-def _require_lr_filters(
-    filters_l: list[CanonicalFilter] | None,
-    filters_r: list[CanonicalFilter] | None,
-) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
-    """Require explicit per-channel filter lists; never guess a split.
-
-    Raises:
-        ValueError: if either filters_l or filters_r is missing. There is
-            no safe way to reconstruct a channel boundary from a combined
-            list — a positional 50/50 split is correct only by coincidence
-            when both channels happen to have equal length, and silently
-            wrong otherwise.
-    """
-    if filters_l is None or filters_r is None:
-        raise ValueError(
-            "L/R filters missing; refusing to guess channel split"
-        )
-    return filters_l, filters_r
-
-
 def get_lr_filters(
     state: object,
     combined: list[CanonicalFilter],
@@ -92,7 +72,7 @@ def get_lr_filters(
     del combined
     left = getattr(state, "filters_l", None)
     right = getattr(state, "filters_r", None)
-    return _require_lr_filters(left, right)
+    return require_lr_filters(left, right)
 
 
 def is_lr_mode(channel_mode: str | ChannelMode) -> bool:
@@ -104,43 +84,6 @@ def is_lr_mode(channel_mode: str | ChannelMode) -> bool:
     if isinstance(channel_mode, ChannelMode):
         return channel_mode.is_lr
     return ChannelMode.from_any(channel_mode).is_lr
-
-
-def build_peq_settings(
-    source_name: str,
-    filters: list[CanonicalFilter],
-    channel_mode: str | ChannelMode,
-    filters_l: list[CanonicalFilter] | None = None,
-    filters_r: list[CanonicalFilter] | None = None,
-) -> PEQSettings:
-    """Construct PEQSettings with correct channel splitting.
-
-    For L/R mode: requires explicit filters_l/filters_r (raises ValueError
-    if missing — never guesses a channel split).
-    For stereo: uses the full list as bands.
-
-    Raises:
-        ValueError: L/R mode without explicit filters_l/filters_r.
-    """
-    mode = (
-        channel_mode
-        if isinstance(channel_mode, ChannelMode)
-        else ChannelMode.from_any(channel_mode)
-    )
-
-    if mode.is_lr:
-        left, right = _require_lr_filters(filters_l, filters_r)
-        return PEQSettings(
-            source_name=source_name,
-            channel_mode=ChannelMode.LR,
-            bands_l=left,
-            bands_r=right,
-        )
-    return PEQSettings(
-        source_name=source_name,
-        channel_mode=ChannelMode.STEREO,
-        bands=filters,
-    )
 
 
 def build_profile(
@@ -171,7 +114,7 @@ def build_profile(
     )
 
     if mode.is_lr:
-        left, right = _require_lr_filters(filters_l, filters_r)
+        left, right = require_lr_filters(filters_l, filters_r)
         return Profile(
             name=safe_name,
             channel_mode=ChannelMode.LR,

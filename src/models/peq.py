@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, model_validator
 
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode, ChannelModeField
+from src.models.channel_mode import ChannelMode, ChannelModeField, require_lr_filters
 
 
 class PEQSettings(BaseModel):
@@ -40,3 +40,40 @@ class PEQSettings(BaseModel):
             if self.bands:
                 raise ValueError("L/R PEQSettings must not have 'bands'")
         return self
+
+
+def build_peq_settings(
+    source_name: str,
+    filters: list[CanonicalFilter],
+    channel_mode: str | ChannelMode,
+    filters_l: list[CanonicalFilter] | None = None,
+    filters_r: list[CanonicalFilter] | None = None,
+) -> PEQSettings:
+    """Construct PEQSettings with correct channel splitting.
+
+    For L/R mode: requires explicit filters_l/filters_r (raises ValueError
+    if missing -- never guesses a channel split).
+    For stereo: uses the full list as bands.
+
+    Raises:
+        ValueError: L/R mode without explicit filters_l/filters_r.
+    """
+    mode = (
+        channel_mode
+        if isinstance(channel_mode, ChannelMode)
+        else ChannelMode.from_any(channel_mode)
+    )
+
+    if mode.is_lr:
+        left, right = require_lr_filters(filters_l, filters_r)
+        return PEQSettings(
+            source_name=source_name,
+            channel_mode=ChannelMode.LR,
+            bands_l=left,
+            bands_r=right,
+        )
+    return PEQSettings(
+        source_name=source_name,
+        channel_mode=ChannelMode.STEREO,
+        bands=filters,
+    )
