@@ -18,16 +18,13 @@ from src.adapters.rew_http_client import MeasurementSummary
 from src.adapters.safe_write import RoomFitSafeWrite, WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
-from src.gui.shared_helpers import (
-    parse_backup_filters,
-    read_preset_preview,
-)
 from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
 from src.models.profile import build_profile
+from src.repository.backup_manager import parse_backup_filters
 from src.tests.conftest import close_coroutine_tree
 
 # ---------------------------------------------------------------------------
@@ -94,6 +91,19 @@ def _setup_device(window) -> MagicMock:
     """Set up a mocked device adapter on the window."""
     mock_adapter = MagicMock()
     mock_adapter.capabilities = _make_caps()
+
+    async def _dispatch_preview(preset_type: str, source_name: str, preset_name: str):
+        # Mirrors WiiMAdapter.read_preset_preview()'s real dispatch, against
+        # whichever of read_roomfit_preset_preview/read_peq_preset_preview a
+        # test configures below -- so tests only need to mock the one they
+        # actually exercise, same as before this became a real adapter
+        # method rather than a free function taking the adapter as its
+        # first argument.
+        if preset_type == "RoomFit":
+            return await mock_adapter.read_roomfit_preset_preview(source_name, preset_name)
+        return await mock_adapter.read_peq_preset_preview(source_name, preset_name)
+
+    mock_adapter.read_preset_preview = AsyncMock(side_effect=_dispatch_preview)
     window._wiim_adapter = mock_adapter
     window._primary_workflows.set_current_adapter(mock_adapter)
     window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, window._backup_manager)
@@ -3189,92 +3199,59 @@ class TestSettingsUIState:
 
 
 class TestSharedHelpers:
-    """Direct unit tests for shared_helpers functions (no Qt needed)."""
+    """Direct unit tests guarding against business logic re-accumulating in
+    src/gui/ (no Qt needed for any of it).
 
-    # --- Issue #64: shared_helpers.py is the single source of truth ---
+    #64 originally required a src/gui/shared_helpers.py module as the single
+    source of truth for channel-mode/profile logic that had been duplicated
+    across call sites. That module has since been fully emptied out one
+    function at a time (build_peq_settings/build_profile/is_lr_mode/
+    get_lr_filters/extract_filters/read_preset_preview -- see test_models.py,
+    test_wiim_adapter.py for their behavior-level coverage) and deleted
+    entirely once nothing imported it any more; parse_backup_filters/
+    load_backup_json, its last re-exports, already had direct importers in
+    src.repository.backup_manager. This test's job now is to confirm that
+    outcome and guard against any of these creeping back into src/gui/ as a
+    second copy.
+    """
 
-    def test_issue64_shared_helpers_created(self) -> None:
-        """#64: src/gui/shared_helpers.py exports the documented shared
-        functions, and main_window.py (which still needs channel-mode/
-        profile logic directly) imports from it rather than reimplementing
-        it locally.
-
-        Behavior-level coverage of each individual function already exists
-        elsewhere (is_lr_mode/get_lr_filters/build_peq_settings/build_profile
-        tests now live in test_models.py, see below); this test is
-        specifically about the "single source of truth" claim: that the
-        module exists with the right surface and that call-sites import from
-        it instead of duplicating the logic inline.
-        """
+    def test_issue64_business_logic_not_reduplicated_in_gui(self) -> None:
+        """#64: shared_helpers.py is gone, and none of the business logic it
+        used to hold has been reimplemented locally in main_window.py or
+        secondary_workflows.py."""
+        import importlib
         import inspect
 
-        from src.gui import main_window, secondary_workflows, shared_helpers
+        from src.gui import main_window, secondary_workflows
         from src.models import channel_mode as channel_mode_module
         from src.models import peq
         from src.models import profile as profile_module
         from src.translator import wiim_generator
 
-        # The documented shared surface remaining in shared_helpers itself
-        # (parse_backup_filters/load_backup_json re-exports).
-        for name in ("parse_backup_filters", "load_backup_json"):
-            assert hasattr(shared_helpers, name), f"shared_helpers missing {name}"
-            assert callable(getattr(shared_helpers, name))
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("src.gui.shared_helpers")
 
-        # validate_filters_for_device() has no Qt dependency and is business
-        # logic (filter-type exclusion, truncation, clamp-detection), so it
-        # moved to translator.wiim_generator -- same single-source-of-truth
-        # requirement as the loop above, just relocated with the function.
-        # Guard against it creeping back into shared_helpers as a second copy.
+        # Each function shared_helpers.py used to hold now lives with the
+        # domain model/module it belongs to, and nowhere else.
         assert hasattr(wiim_generator, "validate_filters_for_device")
         assert callable(wiim_generator.validate_filters_for_device)
-        assert not hasattr(shared_helpers, "validate_filters_for_device")
-
-        # build_peq_settings() constructs a PEQSettings domain model with no
-        # Qt dependency, so it moved to models.peq alongside PEQSettings --
-        # same relocation as validate_filters_for_device above.
         assert hasattr(peq, "build_peq_settings")
         assert callable(peq.build_peq_settings)
-        assert not hasattr(shared_helpers, "build_peq_settings")
-
-        # build_profile() constructs a Profile domain model with no Qt
-        # dependency, so it moved to models.profile alongside Profile --
-        # same relocation, same reasoning.
+        assert hasattr(peq, "extract_filters")
+        assert callable(peq.extract_filters)
         assert hasattr(profile_module, "build_profile")
         assert callable(profile_module.build_profile)
-        assert not hasattr(shared_helpers, "build_profile")
-
-        # is_lr_mode()/get_lr_filters() are channel-mode helpers with no Qt
-        # dependency, so they moved to models.channel_mode alongside
-        # ChannelMode.
         for name in ("is_lr_mode", "get_lr_filters", "require_lr_filters"):
             assert hasattr(channel_mode_module, name)
             assert callable(getattr(channel_mode_module, name))
-        assert not hasattr(shared_helpers, "is_lr_mode")
-        assert not hasattr(shared_helpers, "get_lr_filters")
 
-        # extract_filters() stays a plain function taking PEQSettings as its
-        # only argument (not a PEQSettings method) -- deliberately, since
-        # many call sites (and their tests) pass a duck-typed stand-in with
-        # only channel_mode/bands/bands_l/bands_r set, and attribute access
-        # keeps working against those the same way a method call would not.
-        # It moves to models.peq alongside PEQSettings, the model it reads.
-        assert hasattr(peq, "extract_filters")
-        assert callable(peq.extract_filters)
-        assert not hasattr(shared_helpers, "extract_filters")
-
-        # main_window.py imports from shared_helpers rather than defining its
-        # own local copies of the same logic.
-        main_window_source = inspect.getsource(main_window)
-        assert "from src.gui.shared_helpers import" in main_window_source
-
-        # secondary_workflows.py legitimately has no shared_helpers import
-        # now (PEQ redesign, mirrors #191): _do_undo() delegates backup
-        # parsing and PEQSettings reconstruction entirely to
-        # SafeWrite.undo() rather than calling build_peq_settings()/
-        # parse_backup_filters() locally -- zero shared_helpers usage here
-        # is the correct outcome of that delegation, not reimplementation.
+        # secondary_workflows.py legitimately has no equivalent local logic
+        # (PEQ redesign, mirrors #191): _do_undo() delegates backup parsing
+        # and PEQSettings reconstruction entirely to SafeWrite.undo() rather
+        # than calling build_peq_settings()/parse_backup_filters() locally.
         # Assert the delegation instead: no local re-parsing logic
         # duplicating what SafeWrite.undo() now owns.
+        main_window_source = inspect.getsource(main_window)
         secondary_workflows_source = inspect.getsource(secondary_workflows)
         for reimplemented_name in (
             "build_peq_settings", "parse_backup_filters", "load_backup_json",
@@ -3361,37 +3338,6 @@ class TestSharedHelpers:
         )
         mock_advance.assert_not_called()
 
-    # --- read_preset_preview ---
-
-    @pytest.mark.asyncio
-    async def test_read_preset_preview_roomfit_dispatches_to_roomfit_read(self) -> None:
-        """preset_type=='RoomFit' dispatches to read_roomfit_preset_preview."""
-        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
-        adapter = MagicMock(
-            read_roomfit_preset_preview=AsyncMock(return_value=settings),
-            read_peq_preset_preview=AsyncMock(),
-        )
-
-        result = await read_preset_preview(adapter, "RoomFit", "wifi", "Living Room")
-
-        assert result is settings
-        adapter.read_roomfit_preset_preview.assert_awaited_once_with("wifi", "Living Room")
-        adapter.read_peq_preset_preview.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_read_preset_preview_peq_dispatches_to_peq_read(self) -> None:
-        """preset_type=='PEQ' (or anything else) dispatches to read_peq_preset_preview."""
-        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
-        adapter = MagicMock(
-            read_roomfit_preset_preview=AsyncMock(),
-            read_peq_preset_preview=AsyncMock(return_value=settings),
-        )
-
-        result = await read_preset_preview(adapter, "PEQ", "wifi", "Movie Night")
-
-        assert result is settings
-        adapter.read_peq_preset_preview.assert_awaited_once_with("wifi", "Movie Night")
-        adapter.read_roomfit_preset_preview.assert_not_awaited()
 
     # --- parse_backup_filters ---
 

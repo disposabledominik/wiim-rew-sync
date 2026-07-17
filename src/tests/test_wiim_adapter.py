@@ -9,7 +9,7 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from urllib.parse import unquote
 
 import pytest
@@ -2014,6 +2014,46 @@ class TestReadRoomfitPresetPreview:
 
         assert result.name == "Preview"
         assert any("Failed to restore" in rec.message for rec in caplog.records)
+
+
+class TestReadPresetPreview:
+    """Test read_preset_preview() -- dispatches by preset_type to
+    read_roomfit_preset_preview()/read_peq_preset_preview(). Moved here
+    from src.gui.shared_helpers (no Qt/GUI dependency, and it does device
+    I/O, so it belongs on WiiMAdapter itself rather than a free function
+    taking an adapter as its first argument)."""
+
+    async def test_roomfit_dispatches_to_roomfit_read(
+        self, adapter: WiiMAdapter
+    ) -> None:
+        """preset_type=='RoomFit' dispatches to read_roomfit_preset_preview."""
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        with (
+            patch.object(
+                adapter, "read_roomfit_preset_preview", AsyncMock(return_value=settings)
+            ) as mock_roomfit,
+            patch.object(adapter, "read_peq_preset_preview", AsyncMock()) as mock_peq,
+        ):
+            result = await adapter.read_preset_preview("RoomFit", "wifi", "Living Room")
+
+        assert result is settings
+        mock_roomfit.assert_awaited_once_with("wifi", "Living Room")
+        mock_peq.assert_not_awaited()
+
+    async def test_peq_dispatches_to_peq_read(self, adapter: WiiMAdapter) -> None:
+        """preset_type=='PEQ' (or anything else) dispatches to read_peq_preset_preview."""
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        with (
+            patch.object(adapter, "read_roomfit_preset_preview", AsyncMock()) as mock_roomfit,
+            patch.object(
+                adapter, "read_peq_preset_preview", AsyncMock(return_value=settings)
+            ) as mock_peq,
+        ):
+            result = await adapter.read_preset_preview("PEQ", "wifi", "Movie Night")
+
+        assert result is settings
+        mock_peq.assert_awaited_once_with("wifi", "Movie Night")
+        mock_roomfit.assert_not_awaited()
 
 
 class TestRestoreRoomfitActiveProfile:

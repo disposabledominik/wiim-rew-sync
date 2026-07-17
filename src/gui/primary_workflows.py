@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
-from src.gui.shared_helpers import read_preset_preview
 from src.models.channel_mode import ChannelMode, is_lr_mode
 from src.models.peq import PEQSettings, extract_filters
 from src.models.profile import build_profile
@@ -897,8 +896,8 @@ class PrimaryWorkflowManager(QObject):
         # Read preset filters from device (previewing + restoring -- the
         # confirmation dialog in _on_preset_export_requested already warned
         # the user this briefly changes what's playing, see #166)
-        peq_settings = await read_preset_preview(
-            wiim_adapter, preset_type, source_name, preset_name
+        peq_settings = await wiim_adapter.read_preset_preview(
+            preset_type, source_name, preset_name
         )
 
         generator = REWGenerator()
@@ -986,8 +985,8 @@ class PrimaryWorkflowManager(QObject):
         # Read preset filters from device (previewing + restoring -- the
         # confirmation dialog in _on_preset_save_requested already warned the
         # user this briefly changes what's playing, see #166)
-        peq_settings = await read_preset_preview(
-            wiim_adapter, preset_type, source_name, preset_name
+        peq_settings = await wiim_adapter.read_preset_preview(
+            preset_type, source_name, preset_name
         )
 
         # Determine channel mode and filter list

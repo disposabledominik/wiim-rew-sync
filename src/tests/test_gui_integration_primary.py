@@ -601,7 +601,8 @@ class TestPresetExport:
         filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
         settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=filters)
         manager._current_adapter = MagicMock(
-            read_peq_preset_preview=AsyncMock(return_value=settings)
+            read_peq_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview=AsyncMock(return_value=settings),
         )
         path = tmp_path / "movie-night.txt"
 
@@ -622,7 +623,8 @@ class TestPresetExport:
 
         settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
         manager._current_adapter = MagicMock(
-            read_peq_preset_preview=AsyncMock(return_value=settings)
+            read_peq_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview=AsyncMock(return_value=settings),
         )
 
         with pytest.raises(EmptyPresetFiltersError, match="has no filters to export"):
@@ -640,7 +642,8 @@ class TestPresetExport:
             source_name="wifi", channel_mode=ChannelMode.LR, bands_l=[], bands_r=[]
         )
         manager._current_adapter = MagicMock(
-            read_roomfit_preset_preview=AsyncMock(return_value=settings)
+            read_roomfit_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview=AsyncMock(return_value=settings),
         )
 
         with pytest.raises(EmptyPresetFiltersError, match="has no filters to export"):
@@ -668,7 +671,8 @@ class TestPresetSave:
         filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
         settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=filters)
         manager._current_adapter = MagicMock(
-            read_peq_preset_preview=AsyncMock(return_value=settings)
+            read_peq_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview=AsyncMock(return_value=settings),
         )
 
         await manager._do_preset_save("Movie Night", "PEQ", "WiiM - Movie Night")
@@ -689,7 +693,8 @@ class TestPresetSave:
 
         settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
         manager._current_adapter = MagicMock(
-            read_peq_preset_preview=AsyncMock(return_value=settings)
+            read_peq_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview=AsyncMock(return_value=settings),
         )
 
         with pytest.raises(EmptyPresetFiltersError, match="has no filters to save"):

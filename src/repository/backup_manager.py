@@ -167,7 +167,7 @@ class BackupManager:
             # callers (e.g. RoomFit, which isn't per-channel) can hand us
             # settings where these are None rather than an empty list --
             # normalise with `or []` here, matching the rest of the codebase
-            # (see safe_write.py, shared_helpers.py).
+            # (see safe_write.py, models/peq.py's extract_filters()).
             bands_l = settings.bands_l or []
             bands_r = settings.bands_r or []
             if not bands_l or not bands_r:

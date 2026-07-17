@@ -73,7 +73,6 @@ from src.gui.primary_workflows import EmptyPresetFiltersError, PrimaryWorkflowMa
 from src.gui.secondary_workflows import (
     SecondaryWorkflowManager,
 )
-from src.gui.shared_helpers import read_preset_preview
 from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
 from src.gui.views.my_presets_view import MyPresetsView
@@ -2241,8 +2240,8 @@ class MainWindow(QMainWindow):
         # Reading (previewing + restoring) -- the confirmation dialog in
         # _on_copy_to_device_requested already warned the user this briefly
         # changes what's playing, see #166.
-        peq_settings = await read_preset_preview(
-            self._wiim_adapter, preset_type, source_name, preset_name
+        peq_settings = await self._wiim_adapter.read_preset_preview(
+            preset_type, source_name, preset_name
         )
         filters, channel_mode = extract_filters(peq_settings)
 

@@ -943,6 +943,20 @@ class WiiMAdapter:
         )
         return preview
 
+    async def read_preset_preview(
+        self, preset_type: str, source_name: str, preset_name: str
+    ) -> PEQSettings:
+        """Read+preview a preset, dispatching by preset_type.
+
+        Previewing briefly loads the preset onto the device's live DSP and
+        restores it after (see #166). Shared by every call site that reads
+        a named preset for export/save/copy, which otherwise each
+        independently reimplement this dispatch.
+        """
+        if preset_type == "RoomFit":
+            return await self.read_roomfit_preset_preview(source_name, preset_name)
+        return await self.read_peq_preset_preview(source_name, preset_name)
+
     async def restore_roomfit_active_profile(
         self, original_name: str, current_name: str, *, context: str
     ) -> None:
