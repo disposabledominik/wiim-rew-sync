@@ -78,8 +78,10 @@ src/
   [docs/architecture.md](docs/architecture.md)): Backup → Write → Read Back → Verify →
   Commit/Rollback. No exceptions.
 - Phase status: Models/Translator, Network/Discovery, Adapters/Repository, and CLI proof-of-concept
-  are complete and hardware-validated (2026-06-14). GUI layer is built; hardware QA for GUI-era
-  flows is still ongoing — see [docs/smoke_test_issues.md](docs/smoke_test_issues.md).
+  are complete and hardware-validated. GUI layer is built and under continuous hardware-backed QA;
+  current status/counts live in [docs/backlog.md](docs/backlog.md)'s Hardware QA Sign-off item and
+  [docs/smoke_test_issues.md](docs/smoke_test_issues.md) — check those rather than this line, which
+  is deliberately not pinned to a snapshot date/count so it can't go stale the way it previously did.
 
 ## Code quality discipline
 

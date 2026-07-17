@@ -251,11 +251,14 @@ the WiiM Home app already provides this, and adding it to the sync tool would be
 enabling a workflow that isn't already covered. Backend support remains available if reactivated —
 `WiiMAdapter.enable_peq()`/`disable_peq()`/`get_peq_enabled()` and CLI `peq-toggle` are implemented;
 the RoomFit DSP toggle mechanism (`EQChangeSourceFX`/`EQSourceOff` at `EQLevel:2`, empty
-`source_name`) is hardware-confirmed but not wired into `WiiMAdapter`. **Known follow-up, not
-actioned here:** `docs/architecture.md:208`, a `# TODO: RoomFit toggle` marker in
-`wiim_adapter.py`, and a GUI tooltip referenced in `docs/corrections.md` (2026-06-15 row) still
-describe RoomFit toggling as unsupported, which is now factually stale (it's supported, just
-intentionally unbuilt) — worth a small standalone doc-correction pass.
+`source_name`) is hardware-confirmed but not wired into `WiiMAdapter`. **Correction (verified
+current):** this entry previously flagged `docs/architecture.md`, a `# TODO: RoomFit toggle`
+marker in `wiim_adapter.py`, and a GUI tooltip as stale artifacts describing RoomFit toggling as
+unsupported. All three are already resolved as of this check: `docs/architecture.md`'s "Design
+Notes" section already states the toggle "has a confirmed working API... but it is not wired into
+`WiiMAdapter` or the GUI — this is an intentional product decision"; no `# TODO: RoomFit toggle`
+marker exists anywhere in `wiim_adapter.py`; and no RoomFit-toggle tooltip exists anywhere under
+`src/gui/`. No further doc-correction pass needed for this item.
 
 ### HP/LP Capability Detection and Write-Time Validation
 **Closed:** 2026-07-14. Formerly backlog item "2. HP/LP Capability Detection and Write-Time
