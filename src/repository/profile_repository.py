@@ -41,13 +41,20 @@ class ProfileRepository:
         """
         return self._profiles_dir / f"{unicodedata.normalize('NFC', name)}.json"
 
-    def save(self, profile: Profile) -> Path:
+    def save(self, profile: Profile, *, expected_existing_name: str | None = None) -> Path:
         """Save a profile to disk as JSON.
 
         Stereo profiles use the ``filters`` key only.
         L/R profiles use ``filters_l`` and ``filters_r`` only.
         The Pydantic model_validator already enforces this, so we serialize
         and exclude None fields to keep the JSON clean.
+
+        Args:
+            expected_existing_name: If the path already holds a profile with
+                exactly this name, it's not treated as a foreign collision --
+                used by ``rename()`` so renaming a profile to a differently
+                -composed (NFC/NFD) but visually-identical form of its own
+                current name doesn't raise against itself.
 
         Raises:
             ProfileNameCollisionError: If ``profile.name`` normalizes to the
@@ -58,7 +65,11 @@ class ProfileRepository:
         if path.exists():
             existing_raw = json.loads(path.read_text(encoding="utf-8"))
             existing_name = existing_raw.get("name")
-            if existing_name is not None and existing_name != profile.name:
+            if (
+                existing_name is not None
+                and existing_name != profile.name
+                and existing_name != expected_existing_name
+            ):
                 raise ProfileNameCollisionError(
                     f"Profile name '{profile.name}' collides with existing "
                     f"profile '{existing_name}' (same filename after Unicode "
@@ -136,10 +147,15 @@ class ProfileRepository:
         data = profile.model_dump(mode="python")
         data["name"] = new_name
         new_profile = Profile.model_validate(data)
-        self.save(new_profile)
+        self.save(new_profile, expected_existing_name=old_name)
 
-        # Remove old file (only if new_name != old_name)
-        if old_name != new_name:
+        # Remove the old file only if it's a *different* file on disk than
+        # what save() just wrote -- comparing normalized paths, not raw
+        # names, since a rename to an NFC/NFD-equivalent form of the same
+        # name normalizes to the same path save() just overwrote in place;
+        # unlinking by raw-name inequality alone would delete the profile
+        # that was just renamed.
+        if self._profile_path(old_name) != self._profile_path(new_name):
             old_path.unlink()
 
     def duplicate(self, name: str, new_name: str) -> Profile:

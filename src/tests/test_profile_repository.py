@@ -171,6 +171,59 @@ class TestRename:
         assert loaded.filters is not None
         assert len(loaded.filters) == 2
 
+    def test_rename_to_nfc_nfd_equivalent_of_own_name_does_not_raise_or_lose_data(
+        self, repo: ProfileRepository
+    ) -> None:
+        """Renaming a profile to a differently-composed (NFC vs NFD) but
+        visually-identical form of its own current name must not raise
+        ProfileNameCollisionError against itself, and -- critically -- must
+        not delete the profile in the process. _profile_path() normalizes
+        to NFC before building the path, so both names map to the same
+        on-disk file; naively fixing only the collision check would leave
+        rename()'s unconditional `if old_name != new_name: old_path.unlink()`
+        deleting the file save() just wrote (old_name/new_name differ as raw
+        strings even though they're the same file), silently destroying the
+        renamed profile. This test only passes if the profile still loads
+        correctly afterward -- checking for "no exception" alone would not
+        have caught that data-loss bug."""
+        nfc_name = unicodedata.normalize("NFC", "café")
+        nfd_name = unicodedata.normalize("NFD", "café")
+        assert nfc_name != nfd_name  # sanity: genuinely different raw strings
+        assert unicodedata.normalize("NFC", nfd_name) == nfc_name  # same normalized path
+
+        repo.save(_make_stereo_profile(nfc_name))
+
+        repo.rename(nfc_name, nfd_name)  # must not raise
+
+        loaded = repo.load(nfd_name)
+        assert loaded.name == nfd_name
+        assert loaded.filters is not None
+        assert len(loaded.filters) == 2
+
+    def test_rename_to_name_colliding_with_unrelated_profile_still_raises(
+        self, repo: ProfileRepository
+    ) -> None:
+        """A rename whose target normalizes to the same path as a
+        genuinely unrelated, separately-saved profile must still raise --
+        the NFC/NFD self-rename fix (expected_existing_name) must only
+        exempt the caller's own known prior name, not any name. Renaming
+        "widget" to the NFC form of "café" while an unrelated profile
+        already occupies the NFD-equivalent (same normalized path) of
+        "café" is a real foreign collision, not a self-rename."""
+        nfc_name = unicodedata.normalize("NFC", "café")
+        nfd_name = unicodedata.normalize("NFD", "café")
+        assert unicodedata.normalize("NFC", nfd_name) == nfc_name  # same normalized path
+
+        repo.save(_make_stereo_profile("widget"))
+        repo.save(_make_stereo_profile(nfd_name))
+
+        with pytest.raises(ProfileNameCollisionError):
+            repo.rename("widget", nfc_name)
+
+        # Neither profile should have been touched by the failed rename.
+        assert repo.load("widget").name == "widget"
+        assert repo.load(nfd_name).name == nfd_name
+
 
 # --- duplicate ---
 
