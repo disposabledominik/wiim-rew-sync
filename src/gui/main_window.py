@@ -275,6 +275,14 @@ class MainWindow(QMainWindow):
         )
         self._profile_repository = ProfileRepository(storage_root=presets_dir)
         self._backup_manager = BackupManager(storage_root=presets_dir)
+        # Built once, shared by both PrimaryWorkflowManager and
+        # SecondaryWorkflowManager's configure() calls below -- avoids
+        # defining the same two lambdas twice (branch-quality review,
+        # 2026-07-17).
+        self._safe_write_factory = lambda adapter: SafeWrite(adapter, self._backup_manager)
+        self._roomfit_safe_write_factory = lambda adapter: RoomFitSafeWrite(
+            adapter, self._backup_manager
+        )
 
         # Lazily created on device selection (Req 14.2, 14.3):
         self._wiim_http_client: WiiMHttpClient | None = None
@@ -308,10 +316,8 @@ class MainWindow(QMainWindow):
             bridge_wrapper=self._bridge_wrapper,
             rew_client=self._rew_client,
             profile_repository=self._profile_repository,
-            safe_write_factory=lambda adapter: SafeWrite(adapter, self._backup_manager),
-            roomfit_safe_write_factory=lambda adapter: RoomFitSafeWrite(
-                adapter, self._backup_manager
-            ),
+            safe_write_factory=self._safe_write_factory,
+            roomfit_safe_write_factory=self._roomfit_safe_write_factory,
         )
 
         # --- Build UI ---
@@ -1413,10 +1419,8 @@ class MainWindow(QMainWindow):
             wiim_adapter_factory=lambda ip: self._wiim_adapter_factory(
                 self._wiim_http_client_factory(ip), device_caps
             ),
-            safe_write_factory=lambda adapter: SafeWrite(adapter, self._backup_manager),
-            roomfit_safe_write_factory=lambda adapter: RoomFitSafeWrite(
-                adapter, self._backup_manager
-            ),
+            safe_write_factory=self._safe_write_factory,
+            roomfit_safe_write_factory=self._roomfit_safe_write_factory,
             backup_manager=self._backup_manager,
             wiim_http_client_factory=self._wiim_http_client_factory,
             capability_prober_factory=self._capability_prober_factory,
