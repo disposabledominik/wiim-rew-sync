@@ -98,11 +98,7 @@ from src.models.errors import (
 )
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.models.profile import build_profile
-from src.repository.backup_manager import (
-    BackupManager,
-    load_backup_json,
-    parse_backup_restore_metadata,
-)
+from src.repository.backup_manager import BackupManager
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
 from src.utils.device_name import sanitize_device_name
@@ -1218,114 +1214,17 @@ class MainWindow(QMainWindow):
             # RoomFit undo: restore backed-up bands to the same profile name
             source_name = self._wizard_controller.state.primary_source
             profile_name = self._wizard_controller.state.roomfit_profile_name
-            self._bridge.run_async(
-                self._bridge_wrapper(
-                    "undo_roomfit",
-                    self._do_undo_roomfit(backup_path, source_name, profile_name),
-                )
-            )
+            self._secondary_workflows.undo_roomfit(backup_path, source_name, profile_name)
         else:
             # PEQ undo: handle multi-source backup paths (smoke #77)
             # Format: "source1=/path/to/backup1;source2=/path/to/backup2"
             if ";" in backup_path or "=" in backup_path:
                 # Multi-source undo
-                self._bridge.run_async(
-                    self._bridge_wrapper(
-                        "undo_multi_source",
-                        self._do_undo_multi_source(backup_path),
-                    )
-                )
+                self._secondary_workflows.undo_multi_source(backup_path)
             else:
                 # Single source undo (legacy format)
                 source_name = self._wizard_controller.state.primary_source
                 self._secondary_workflows.undo_last_push(source_name, backup_path)
-
-    async def _do_undo_roomfit(
-        self, backup_path: str, source_name: str, profile_name: str
-    ) -> None:
-        """Restore a RoomFit profile from backup — thin pass-through to
-        RoomFitSafeWrite.undo(), which owns all orchestration (backup
-        parsing, new-vs-overwrite branching, selection/enable-state
-        restore to the state before the *original* push). GUI layer
-        performs no data manipulation (CLAUDE.md).
-        """
-        assert self._wiim_adapter is not None
-
-        path = Path(backup_path) if backup_path else Path(".")
-        if not path.exists() or not path.is_file():
-            self._status_banner.show_error("No backup available for undo")
-            return
-
-        try:
-            self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
-            roomfit_safe_write = RoomFitSafeWrite(self._wiim_adapter, self._backup_manager)
-            result = await roomfit_safe_write.undo(path, source_name, profile_name)
-            if not result.success:
-                self._status_banner.show_error(
-                    result.error_message or "RoomFit undo verification failed"
-                )
-                return
-            self._clear_pushed_snapshot()
-            self._push_page.mark_undo_complete(True)
-            # was_new_profile determines what undo() actually did: for a
-            # brand-new profile it skips the bands-restore entirely (there
-            # was nothing to restore) and only re-activates the
-            # previously-active profile, leaving the new one on the device.
-            # Read the same metadata undo() itself used, so the message
-            # matches what happened instead of always claiming a restore.
-            _, _, was_new_profile, _ = parse_backup_restore_metadata(
-                load_backup_json(path)
-            )
-            if was_new_profile is True:
-                self._status_banner.show_success(
-                    f"Original profile re-activated. Profile '{profile_name}' was "
-                    "kept, but deactivated."
-                )
-            else:
-                self._status_banner.show_success(
-                    f"Profile '{profile_name}' restored from backup"
-                )
-        except Exception as exc:
-            logger.exception("RoomFit undo failed")
-            self._status_banner.show_error(f"Undo failed: {exc}")
-
-    async def _do_undo_multi_source(self, backup_paths_str: str) -> None:
-        """Undo a multi-source push by restoring each source's backup.
-
-        Args:
-            backup_paths_str: Semicolon-separated "source=/path" entries.
-        """
-        entries = [e.strip() for e in backup_paths_str.split(";") if e.strip()]
-        succeeded = 0
-        failed = 0
-
-        for entry in entries:
-            if "=" not in entry:
-                continue
-            source_name, bp = entry.split("=", 1)
-            source_name = source_name.strip()
-            bp = bp.strip()
-
-            try:
-                self._bridge.progress_update.emit(f"Restoring {source_name}...")
-                self._secondary_workflows.undo_last_push(source_name, bp)
-                succeeded += 1
-            except Exception:
-                logger.exception("Undo source '%s' failed", source_name)
-                failed += 1
-
-        if succeeded > 0:
-            self._clear_pushed_snapshot()
-
-        if failed == 0:
-            self._push_page.mark_undo_complete(True)
-            self._status_banner.show_success(
-                f"All {succeeded} source(s) restored from backup"
-            )
-        else:
-            self._status_banner.show_error(
-                f"Undo: {succeeded} restored, {failed} failed"
-            )
 
     def _clear_pushed_snapshot(self) -> None:
         """Forget the last-successful-push snapshot after an undo.
@@ -1500,8 +1399,8 @@ class MainWindow(QMainWindow):
         # reader (_do_push) now builds them on demand via the factories
         # passed to PrimaryWorkflowManager.configure() below; the remaining
         # direct SafeWrite(...)/RoomFitSafeWrite(...) construction still in
-        # this class (undo/copy-to-device) already builds its own instances
-        # per call rather than reading these cached ones.
+        # this class (copy-to-device) already builds its own instances per
+        # call rather than reading these cached ones.
         assert self._wiim_http_client is not None
         self._wiim_adapter = self._wiim_adapter_factory(self._wiim_http_client, device_caps)
 
@@ -1512,6 +1411,9 @@ class MainWindow(QMainWindow):
                 self._wiim_http_client_factory(ip), device_caps
             ),
             safe_write_factory=lambda adapter: SafeWrite(adapter, self._backup_manager),
+            roomfit_safe_write_factory=lambda adapter: RoomFitSafeWrite(
+                adapter, self._backup_manager
+            ),
             backup_manager=self._backup_manager,
         )
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)

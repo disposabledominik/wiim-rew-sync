@@ -106,7 +106,16 @@ def _setup_device(window) -> MagicMock:
     mock_adapter.read_preset_preview = AsyncMock(side_effect=_dispatch_preview)
     window._wiim_adapter = mock_adapter
     window._primary_workflows.set_current_adapter(mock_adapter)
-    window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, window._backup_manager)
+    # _do_undo_roomfit/_do_undo_multi_source now live on SecondaryWorkflowManager
+    # (docs/backlog.md item 2, Phase D) and read self._current_adapter/
+    # self._bridge there -- normally wired by the real (not exercised here)
+    # _on_capabilities_ready -> SecondaryWorkflowManager.configure() call,
+    # which this helper bypasses like it already does for PrimaryWorkflowManager.
+    window._secondary_workflows._bridge = window._bridge
+    window._secondary_workflows.set_current_adapter(mock_adapter)
+    window._secondary_workflows._roomfit_safe_write_factory = (
+        lambda adapter: RoomFitSafeWrite(adapter, window._backup_manager)
+    )
     window._wizard_controller.state.selected_device = "192.168.1.100"
     window._wizard_controller.state.selected_source = "wifi"
     return mock_adapter
@@ -2094,13 +2103,17 @@ class TestPresets:
         mock_backup = MagicMock()
         mock_backup.create_backup = MagicMock(return_value="/tmp/pre_undo_backup.json")
         window._backup_manager = mock_backup
-        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: RoomFitSafeWrite(adapter, mock_backup)
+        )
 
         import asyncio
 
         with patch.object(window._status_banner, "show_success") as mock_success:
             asyncio.run(
-                window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+                window._secondary_workflows._do_undo_roomfit(
+                    str(backup_path), "wifi", "My Profile"
+                )
             )
 
         mock_adapter.write_roomfit.assert_called_once()
@@ -2152,14 +2165,19 @@ class TestPresets:
 
         with (
             patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(window._push_page, "mark_undo_complete") as mock_mark,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
             import asyncio
 
-            asyncio.run(window._do_undo_multi_source("wifi=/tmp/backup_wifi.json"))
+            asyncio.run(
+                window._secondary_workflows._do_undo_multi_source(
+                    "wifi=/tmp/backup_wifi.json"
+                )
+            )
 
         mock_undo.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
-        assert window._push_page._undo_button is not None
+        mock_mark.assert_called_once_with(True)
         mock_success.assert_called_once_with("All 1 source(s) restored from backup")
 
     def test_undo_multi_source_multi_entry_all_scheduled_reports_success(
@@ -2177,7 +2195,7 @@ class TestPresets:
         ):
             import asyncio
 
-            asyncio.run(window._do_undo_multi_source(backup_str))
+            asyncio.run(window._secondary_workflows._do_undo_multi_source(backup_str))
 
         assert mock_undo.call_count == 2
         mock_undo.assert_any_call("wifi", "/tmp/backup_wifi.json")
@@ -2196,7 +2214,7 @@ class TestPresets:
         ):
             import asyncio
 
-            asyncio.run(window._do_undo_multi_source(backup_str))
+            asyncio.run(window._secondary_workflows._do_undo_multi_source(backup_str))
 
         mock_undo.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
         mock_success.assert_called_once_with("All 1 source(s) restored from backup")
@@ -2204,31 +2222,52 @@ class TestPresets:
     def test_undo_multi_source_completes_before_real_undo_outcome_is_known(
         self, window
     ) -> None:
-        """Golden-master for the race itself: _do_undo_multi_source reports
-        success and returns having never touched the undo_complete signal
-        that the real per-source restore eventually emits -- proving its
-        own completion is decoupled from (and can precede) the actual
-        outcome. undo_last_push is mocked as a no-op scheduling call here
-        (it never invokes undo_complete), the same shape a real call has at
-        the instant it returns, before its scheduled coroutine has run."""
+        """Golden-master for the race itself: _do_undo_multi_source's own
+        summary is what the status banner shows -- there's no waiting for
+        the real per-source undo_complete signal each scheduled
+        undo_last_push() call will emit later. undo_last_push is mocked as
+        a no-op scheduling call here (it never itself emits undo_complete),
+        the same shape a real call has at the instant it returns, before
+        its scheduled coroutine has run.
+
+        Before this move, _do_undo_multi_source (a MainWindow method) never
+        touched the undo_complete signal at all -- it called
+        _push_page.mark_undo_complete()/_status_banner.show_success()
+        directly. After the move (docs/backlog.md item 2, Phase D), it
+        necessarily emits undo_complete for its own summary too, since it
+        no longer has direct widget access -- both this method's own
+        summary and each source's real outcome now share one signal. This
+        test captures that emission directly (real signal connection, not
+        a mocked-out one) to confirm it fires exactly once, synchronously,
+        with the scheduling-based tally -- the race itself (this summary
+        potentially preceding or duplicating a later real per-source
+        emission) is unchanged, just now visible on the same signal
+        instead of bypassing it.
+        """
         _setup_device(window)
+
+        captured: list[tuple[bool, str]] = []
+        window._secondary_workflows.undo_complete.connect(
+            lambda ok, msg: captured.append((ok, msg))
+        )
 
         with (
             patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
-            patch.object(
-                window._secondary_workflows, "undo_complete"
-            ) as mock_undo_complete_signal,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
             import asyncio
 
-            asyncio.run(window._do_undo_multi_source("wifi=/tmp/backup_wifi.json"))
+            asyncio.run(
+                window._secondary_workflows._do_undo_multi_source(
+                    "wifi=/tmp/backup_wifi.json"
+                )
+            )
 
         mock_undo.assert_called_once()
         mock_success.assert_called_once()
-        # The real per-source result -- not yet known -- would arrive via
-        # this signal; _do_undo_multi_source neither waits for nor emits it.
-        mock_undo_complete_signal.emit.assert_not_called()
+        # Exactly one emission -- this method's own summary -- since
+        # undo_last_push is mocked and never emits its own (real) result.
+        assert captured == [(True, "All 1 source(s) restored from backup")]
 
 
 # ===========================================================================
@@ -2474,19 +2513,22 @@ class TestSettingsUIState:
             encoding="utf-8",
         )
 
-        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
 
-            import asyncio
+        import asyncio
 
-            asyncio.run(
-                window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+        asyncio.run(
+            window._secondary_workflows._do_undo_roomfit(
+                str(backup_path), "wifi", "My Profile"
             )
+        )
 
-            roomfit_safe_write.undo.assert_called_once()
-            window._wiim_adapter.write_roomfit.assert_not_called()
+        roomfit_safe_write.undo.assert_called_once()
+        window._wiim_adapter.write_roomfit.assert_not_called()
 
     def test_issue154_undo_roomfit_surfaces_verification_failure(
         self, window, tmp_path
@@ -2501,27 +2543,30 @@ class TestSettingsUIState:
             encoding="utf-8",
         )
 
-        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.undo = AsyncMock(
-                return_value=WriteResult(
-                    success=False,
-                    rollback_success=True,
-                    error_message="RoomFit verification failed; original profile restored.",
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.undo = AsyncMock(
+            return_value=WriteResult(
+                success=False,
+                rollback_success=True,
+                error_message="RoomFit verification failed; original profile restored.",
+            )
+        )
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
+
+        with patch.object(window._status_banner, "show_error") as mock_show_error, \
+             patch.object(window._status_banner, "show_success") as mock_show_success:
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_undo_roomfit(
+                    str(backup_path), "wifi", "My Profile"
                 )
             )
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
 
-            with patch.object(window._status_banner, "show_error") as mock_show_error, \
-                 patch.object(window._status_banner, "show_success") as mock_show_success:
-                import asyncio
-
-                asyncio.run(
-                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
-                )
-
-                mock_show_success.assert_not_called()
-                mock_show_error.assert_called_once()
+            mock_show_success.assert_not_called()
+            mock_show_error.assert_called_once()
 
     def test_undo_roomfit_new_profile_shows_reactivation_message(
         self, window, tmp_path
@@ -2539,17 +2584,20 @@ class TestSettingsUIState:
             encoding="utf-8",
         )
 
-        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
 
-            import asyncio
+        import asyncio
 
-            with patch.object(window._status_banner, "show_success") as mock_success:
-                asyncio.run(
-                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            asyncio.run(
+                window._secondary_workflows._do_undo_roomfit(
+                    str(backup_path), "wifi", "My Profile"
                 )
+            )
 
         message = mock_success.call_args[0][0]
         assert "restored from backup" not in message
@@ -2571,17 +2619,20 @@ class TestSettingsUIState:
             encoding="utf-8",
         )
 
-        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
 
-            import asyncio
+        import asyncio
 
-            with patch.object(window._status_banner, "show_success") as mock_success:
-                asyncio.run(
-                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            asyncio.run(
+                window._secondary_workflows._do_undo_roomfit(
+                    str(backup_path), "wifi", "My Profile"
                 )
+            )
 
         message = mock_success.call_args[0][0]
         assert message == "Profile 'My Profile' restored from backup"

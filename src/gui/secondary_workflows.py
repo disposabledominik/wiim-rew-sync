@@ -29,9 +29,10 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.repository.backup_manager import load_backup_json, parse_backup_restore_metadata
 
 if TYPE_CHECKING:
-    from src.adapters.safe_write import SafeWrite
+    from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
     from src.adapters.wiim_adapter import WiiMAdapter
     from src.gui.async_bridge import AsyncBridge
     from src.repository.backup_manager import BackupManager
@@ -76,6 +77,7 @@ class SecondaryWorkflowManager(QObject):
         self._bridge: AsyncBridge | None = None
         self._wiim_adapter_factory: Callable[[str], WiiMAdapter] | None = None
         self._safe_write_factory: Callable[[WiiMAdapter], SafeWrite] | None = None
+        self._roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite] | None = None
         self._backup_manager: BackupManager | None = None
         self._current_adapter: WiiMAdapter | None = None
 
@@ -88,6 +90,7 @@ class SecondaryWorkflowManager(QObject):
         bridge: AsyncBridge,
         wiim_adapter_factory: Callable[[str], WiiMAdapter],
         safe_write_factory: Callable[[WiiMAdapter], SafeWrite],
+        roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite],
         backup_manager: BackupManager,
     ) -> None:
         """Inject adapter dependencies for real async workflow execution.
@@ -100,6 +103,8 @@ class SecondaryWorkflowManager(QObject):
                 Currently unused by any remaining workflow, retained for
                 future per-device adapter needs.
             safe_write_factory: Factory creating a SafeWrite from a WiiMAdapter.
+            roomfit_safe_write_factory: Factory creating a RoomFitSafeWrite
+                from a WiiMAdapter, for undo_roomfit().
             backup_manager: The backup manager instance for state snapshots.
 
         Requirements: 8.1.
@@ -107,6 +112,7 @@ class SecondaryWorkflowManager(QObject):
         self._bridge = bridge
         self._wiim_adapter_factory = wiim_adapter_factory
         self._safe_write_factory = safe_write_factory
+        self._roomfit_safe_write_factory = roomfit_safe_write_factory
         self._backup_manager = backup_manager
         logger.info("SecondaryWorkflowManager configured with adapter factories")
 
@@ -117,6 +123,7 @@ class SecondaryWorkflowManager(QObject):
             self._bridge is not None
             and self._wiim_adapter_factory is not None
             and self._safe_write_factory is not None
+            and self._roomfit_safe_write_factory is not None
             and self._backup_manager is not None
         )
 
@@ -253,6 +260,112 @@ class SecondaryWorkflowManager(QObject):
         except Exception as exc:
             logger.exception("Undo last push failed")
             self.undo_complete.emit(False, str(exc))
+
+    @Slot(str)
+    def undo_roomfit(self, backup_path: str, source_name: str, profile_name: str) -> None:
+        """Restore a RoomFit profile from backup."""
+        assert self._bridge is not None
+        self._bridge.run_async(
+            self._do_undo_roomfit(backup_path, source_name, profile_name)
+        )
+
+    async def _do_undo_roomfit(
+        self, backup_path: str, source_name: str, profile_name: str
+    ) -> None:
+        """Restore a RoomFit profile from backup — thin pass-through to
+        RoomFitSafeWrite.undo(), which owns all orchestration (backup
+        parsing, new-vs-overwrite branching, selection/enable-state
+        restore to the state before the *original* push). No widget
+        access here (moved out of MainWindow, docs/backlog.md item 2 Phase
+        D) -- results reported via undo_complete, same signal
+        undo_last_push()/_do_undo() above already use.
+        """
+        assert self._bridge is not None
+        assert self._roomfit_safe_write_factory is not None
+        assert self._current_adapter is not None
+
+        path = Path(backup_path) if backup_path else Path(".")
+        if not path.exists() or not path.is_file():
+            self.undo_complete.emit(False, "No backup available for undo")
+            return
+
+        try:
+            self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
+            roomfit_safe_write = self._roomfit_safe_write_factory(self._current_adapter)
+            result = await roomfit_safe_write.undo(path, source_name, profile_name)
+            if not result.success:
+                self.undo_complete.emit(
+                    False, result.error_message or "RoomFit undo verification failed"
+                )
+                return
+            # was_new_profile determines what undo() actually did: for a
+            # brand-new profile it skips the bands-restore entirely (there
+            # was nothing to restore) and only re-activates the
+            # previously-active profile, leaving the new one on the device.
+            # Read the same metadata undo() itself used, so the message
+            # matches what happened instead of always claiming a restore.
+            _, _, was_new_profile, _ = parse_backup_restore_metadata(
+                load_backup_json(path)
+            )
+            if was_new_profile is True:
+                message = (
+                    f"Original profile re-activated. Profile '{profile_name}' was "
+                    "kept, but deactivated."
+                )
+            else:
+                message = f"Profile '{profile_name}' restored from backup"
+            self.undo_complete.emit(True, message)
+        except Exception as exc:
+            logger.exception("RoomFit undo failed")
+            self.undo_complete.emit(False, str(exc))
+
+    @Slot(str)
+    def undo_multi_source(self, backup_paths_str: str) -> None:
+        """Undo a multi-source push by restoring each source's backup."""
+        assert self._bridge is not None
+        self._bridge.run_async(self._do_undo_multi_source(backup_paths_str))
+
+    async def _do_undo_multi_source(self, backup_paths_str: str) -> None:
+        """Undo a multi-source push by restoring each source's backup.
+
+        Args:
+            backup_paths_str: Semicolon-separated "source=/path" entries.
+
+        Note (pre-existing behavior, preserved as-is by this move --
+        docs/backlog.md item 2 Phase D): undo_last_push() below only
+        *schedules* each source's real restore via run_async() and returns
+        immediately, so this method's own succeeded/failed tally and
+        undo_complete emit reflect scheduling success, not each source's
+        actual outcome -- which arrives later via undo_last_push's own
+        undo_complete emit (per source), potentially after this method's
+        own summary already fired. Characterized in
+        test_smoke_regression_operations.py before this move; not fixed
+        here.
+        """
+        assert self._bridge is not None
+        entries = [e.strip() for e in backup_paths_str.split(";") if e.strip()]
+        succeeded = 0
+        failed = 0
+
+        for entry in entries:
+            if "=" not in entry:
+                continue
+            source_name, bp = entry.split("=", 1)
+            source_name = source_name.strip()
+            bp = bp.strip()
+
+            try:
+                self._bridge.progress_update.emit(f"Restoring {source_name}...")
+                self.undo_last_push(source_name, bp)
+                succeeded += 1
+            except Exception:
+                logger.exception("Undo source '%s' failed", source_name)
+                failed += 1
+
+        if failed == 0:
+            self.undo_complete.emit(True, f"All {succeeded} source(s) restored from backup")
+        else:
+            self.undo_complete.emit(False, f"{succeeded} restored, {failed} failed")
 
     # ------------------------------------------------------------------
     # Workflow: Source-Slot Overview (#194 follow-up diagnostic)

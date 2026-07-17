@@ -197,3 +197,147 @@ class TestFetchSourceSlots:
         await manager._do_fetch_source_slots()
 
         assert errors == ["device rejected EQGetSourceModes"]
+
+
+# ---------------------------------------------------------------------------
+# Undo RoomFit profile (moved here from MainWindow, docs/backlog.md item 2
+# Phase D -- was _do_undo_roomfit)
+# ---------------------------------------------------------------------------
+
+
+class TestUndoRoomfit:
+    """Test SecondaryWorkflowManager._do_undo_roomfit."""
+
+    @pytest.mark.asyncio
+    async def test_missing_backup_file_emits_failure(self) -> None:
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._current_adapter = MagicMock()
+        manager._roomfit_safe_write_factory = MagicMock()
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_roomfit("/nonexistent/backup.json", "wifi", "My Profile")
+
+        assert undo_signals == [(False, "No backup available for undo")]
+        manager._roomfit_safe_write_factory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_success_emits_restored_message(self, tmp_path) -> None:
+        backup_file = tmp_path / "roomfit_backup.json"
+        backup_file.write_text('{"was_new_profile": false}', encoding="utf-8")
+
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._current_adapter = MagicMock()
+        mock_roomfit_safe_write = AsyncMock()
+        mock_roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        manager._roomfit_safe_write_factory = MagicMock(
+            return_value=mock_roomfit_safe_write
+        )
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_roomfit(str(backup_file), "wifi", "My Profile")
+
+        assert undo_signals == [(True, "Profile 'My Profile' restored from backup")]
+        mock_roomfit_safe_write.undo.assert_called_once()
+        call_args = mock_roomfit_safe_write.undo.call_args
+        assert call_args[0][0] == backup_file
+        assert call_args[0][1] == "wifi"
+        assert call_args[0][2] == "My Profile"
+
+    @pytest.mark.asyncio
+    async def test_verification_failure_emits_error_message(self, tmp_path) -> None:
+        backup_file = tmp_path / "roomfit_backup.json"
+        backup_file.write_text('{"was_new_profile": false}', encoding="utf-8")
+
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._current_adapter = MagicMock()
+        mock_roomfit_safe_write = AsyncMock()
+        mock_roomfit_safe_write.undo = AsyncMock(
+            return_value=WriteResult(success=False, error_message="Rollback failed")
+        )
+        manager._roomfit_safe_write_factory = MagicMock(
+            return_value=mock_roomfit_safe_write
+        )
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_roomfit(str(backup_file), "wifi", "My Profile")
+
+        assert undo_signals == [(False, "Rollback failed")]
+
+    @pytest.mark.asyncio
+    async def test_exception_emits_failure_with_exception_text(self, tmp_path) -> None:
+        backup_file = tmp_path / "roomfit_backup.json"
+        backup_file.write_text('{"was_new_profile": false}', encoding="utf-8")
+
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._current_adapter = MagicMock()
+        mock_roomfit_safe_write = AsyncMock()
+        mock_roomfit_safe_write.undo = AsyncMock(
+            side_effect=ConnectionError("device unreachable")
+        )
+        manager._roomfit_safe_write_factory = MagicMock(
+            return_value=mock_roomfit_safe_write
+        )
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_roomfit(str(backup_file), "wifi", "My Profile")
+
+        assert undo_signals == [(False, "device unreachable")]
+
+
+# ---------------------------------------------------------------------------
+# Undo multi-source push (moved here from MainWindow, docs/backlog.md item 2
+# Phase D -- was _do_undo_multi_source)
+# ---------------------------------------------------------------------------
+
+
+class TestUndoMultiSource:
+    """Test SecondaryWorkflowManager._do_undo_multi_source.
+
+    Full characterization of the pre-existing scheduling-vs-outcome race
+    lives in test_smoke_regression_operations.py (captured before this
+    method moved here); these tests cover the same core behavior directly
+    against the manager, matching this file's convention for the other
+    moved/native workflows.
+    """
+
+    @pytest.mark.asyncio
+    async def test_single_entry_schedules_and_emits_success(self) -> None:
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        scheduled: list[tuple[str, str]] = []
+        manager.undo_last_push = MagicMock(
+            side_effect=lambda src, path: scheduled.append((src, path))
+        )
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
+
+        assert scheduled == [("wifi", "/tmp/backup_wifi.json")]
+        assert undo_signals == [(True, "All 1 source(s) restored from backup")]
+
+    @pytest.mark.asyncio
+    async def test_scheduling_failure_emits_failure_tally(self) -> None:
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager.undo_last_push = MagicMock(side_effect=RuntimeError("bridge unavailable"))
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
+
+        assert undo_signals == [(False, "0 restored, 1 failed")]
