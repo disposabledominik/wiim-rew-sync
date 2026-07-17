@@ -1395,12 +1395,10 @@ class MainWindow(QMainWindow):
         device_caps = cast(DeviceCapabilities, caps)
 
         # Create WiiMAdapter now that we have a connected client (Req 14.2, 14.3).
-        # SafeWrite/RoomFitSafeWrite are no longer cached here -- the last
-        # reader (_do_push) now builds them on demand via the factories
-        # passed to PrimaryWorkflowManager.configure() below; the remaining
-        # direct SafeWrite(...)/RoomFitSafeWrite(...) construction still in
-        # this class (copy-to-device) already builds its own instances per
-        # call rather than reading these cached ones.
+        # SafeWrite/RoomFitSafeWrite are no longer cached here -- every
+        # reader (push, undo, copy-to-device) now builds them on demand via
+        # the factories passed to PrimaryWorkflowManager.configure()/
+        # SecondaryWorkflowManager.configure() below.
         assert self._wiim_http_client is not None
         self._wiim_adapter = self._wiim_adapter_factory(self._wiim_http_client, device_caps)
 
@@ -1415,6 +1413,9 @@ class MainWindow(QMainWindow):
                 adapter, self._backup_manager
             ),
             backup_manager=self._backup_manager,
+            wiim_http_client_factory=self._wiim_http_client_factory,
+            capability_prober_factory=self._capability_prober_factory,
+            target_adapter_factory=self._wiim_adapter_factory,
         )
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)
         self._primary_workflows.set_current_adapter(self._wiim_adapter)
@@ -2117,122 +2118,10 @@ class MainWindow(QMainWindow):
     # _on_preset_load_into_editor/_export_filters_as_rew now calls the
     # manager directly.
 
-    async def _read_preset_to_copy(
-        self, preset_name: str, preset_type: str
-    ) -> tuple[list[CanonicalFilter], ChannelMode, PEQSettings] | None:
-        """Read+preview a preset from the currently connected (source) device.
-
-        Shared by both copy flows so the read/preview -- which briefly loads
-        the preset onto the source device's live DSP and restores it after,
-        see #166 -- happens exactly once per preset, not once per target
-        device it's copied to (#171).
-
-        Returns None (after showing an error banner) if the preset has no
-        filters to copy.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        # Reading (previewing + restoring) -- the confirmation dialog in
-        # _on_copy_to_device_requested already warned the user this briefly
-        # changes what's playing, see #166.
-        peq_settings = await self._wiim_adapter.read_preset_preview(
-            preset_type, source_name, preset_name
-        )
-        filters, channel_mode = extract_filters(peq_settings)
-
-        if not filters:
-            self._status_banner.show_error(
-                f"Preset '{preset_name}' has no filters to copy"
-            )
-            return None
-
-        return filters, channel_mode, peq_settings
-
-    async def _do_copy_preset_to_device(
-        self,
-        preset_name: str,
-        preset_type: str,
-        target_ip: str,
-        target_source: str,
-        filters: list[CanonicalFilter],
-        channel_mode: ChannelMode,
-        peq_settings: PEQSettings,
-    ) -> None:
-        """Write an already-read preset to a target device, as a named preset.
-
-        1. Connects to target device
-        2. Writes + verifies (SafeWrite/RoomFitSafeWrite)
-        3. Saves as a named preset (same name) on the target device
-
-        The read/preview step happens once, earlier, via
-        _read_preset_to_copy() -- shared across every target device this
-        preset is being copied to (#171).
-
-        Args:
-            preset_name: Name of the preset/profile to copy.
-            preset_type: "PEQ" or "RoomFit".
-            target_ip: IP address of the target device.
-            target_source: Target source name on the remote device.
-            filters: Filters read from the source preset (see _read_preset_to_copy).
-            channel_mode: Channel mode of the source preset.
-            peq_settings: Full PEQSettings read from the source preset (carries
-                bands_l/bands_r for L/R mode).
-        """
-        # Connect to target device and save as named preset
-        target_client = self._wiim_http_client_factory(target_ip)
-        try:
-            target_caps = await self._capability_prober_factory(target_client).probe()
-            target_adapter = self._wiim_adapter_factory(target_client, target_caps)
-
-            if preset_type == "RoomFit":
-                # RoomFit: write as RoomFit profile on target (smoke #34, #79),
-                # verified and rolled back on mismatch via RoomFitSafeWrite --
-                # same protocol as the main Push flow (smoke #153), not a bare
-                # write_roomfit() with no verification at all.
-                roomfit_safe_write = RoomFitSafeWrite(target_adapter, self._backup_manager)
-                if is_lr_mode(channel_mode):
-                    # Use the L/R bands just read from the source preset —
-                    # not wizard state, which may be stale or unrelated to
-                    # this preset (e.g. never populated in this session).
-                    result = await roomfit_safe_write.execute(
-                        target_source, preset_name, filters,
-                        channel_mode=ChannelMode.LR,
-                        filters_l=peq_settings.bands_l,
-                        filters_r=peq_settings.bands_r,
-                    )
-                else:
-                    result = await roomfit_safe_write.execute(
-                        target_source, preset_name, filters,
-                        channel_mode=ChannelMode.STEREO,
-                    )
-                if not result.success:
-                    raise RuntimeError(
-                        result.error_message or "RoomFit copy verification failed"
-                    )
-            else:
-                # PEQ: write filters (verified via SafeWrite, smoke #153), then
-                # save as named PEQ preset -- only if the write actually verified.
-                settings = build_peq_settings(
-                    target_source, filters, channel_mode,
-                    filters_l=peq_settings.bands_l,
-                    filters_r=peq_settings.bands_r,
-                )
-                safe_write = SafeWrite(target_adapter, self._backup_manager)
-                result = await safe_write.execute(target_source, settings)
-                if not result.success:
-                    raise RuntimeError(
-                        result.error_message or "PEQ copy verification failed"
-                    )
-                await target_adapter.save_peq_profile(
-                    target_source, preset_name
-                )
-
-            self._status_banner.show_success(
-                f"Preset '{preset_name}' saved to {target_ip} on source '{target_source}'"
-            )
-        finally:
-            await target_client.close()
+    # _read_preset_to_copy, _do_copy_preset_to_device moved to
+    # SecondaryWorkflowManager (src/gui/secondary_workflows.py) —
+    # docs/backlog.md item 2, Phase D. _write_preset_copies_to_devices below
+    # now calls self._secondary_workflows._do_copy_preset_to_device(...).
 
     async def _write_preset_copies_to_devices(
         self,
@@ -2267,7 +2156,7 @@ class MainWindow(QMainWindow):
                     f"Copying '{preset_name}' to {device.name}..."
                 )
                 try:
-                    await self._do_copy_preset_to_device(
+                    await self._secondary_workflows._do_copy_preset_to_device(
                         preset_name, preset_type, device.ip, target_source,
                         filters, channel_mode, peq_settings,
                     )
@@ -2302,6 +2191,7 @@ class MainWindow(QMainWindow):
         """
         reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
         read_failed = 0
+        source_name = self._wizard_controller.state.primary_source
 
         for item in items:
             preset_name = getattr(item, "name", "")
@@ -2311,7 +2201,11 @@ class MainWindow(QMainWindow):
 
             self._bridge.progress_update.emit(f"Reading '{preset_name}'...")
             try:
-                read_result = await self._read_preset_to_copy(preset_name, preset_type)
+                filters, channel_mode, peq_settings = (
+                    await self._secondary_workflows._read_preset_to_copy(
+                        source_name, preset_name, preset_type
+                    )
+                )
             except Exception:
                 logger.exception("Read preset '%s' for copy failed", preset_name)
                 self._bridge.progress_update.emit(
@@ -2319,10 +2213,6 @@ class MainWindow(QMainWindow):
                 )
                 read_failed += len(target_devices)
                 continue
-            if read_result is None:
-                read_failed += len(target_devices)
-                continue
-            filters, channel_mode, peq_settings = read_result
             reads.append((preset_name, preset_type, filters, channel_mode, peq_settings))
 
         succeeded, write_failed = await self._write_preset_copies_to_devices(
@@ -3045,9 +2935,10 @@ class MainWindow(QMainWindow):
         """Create the SecondaryWorkflowManager and wire its signals.
 
         Connects:
-        - PresetsDeviceView "Copy to Another Device" → handled directly by
-          MainWindow's own _do_copy_presets_batch_multi /
-          _do_copy_preset_to_device (not via SecondaryWorkflowManager).
+        - PresetsDeviceView "Copy to Another Device" → dispatched from
+          MainWindow's own _do_copy_presets_batch_multi, which calls the
+          read/write primitives on SecondaryWorkflowManager
+          (_read_preset_to_copy / _do_copy_preset_to_device).
         - MyPresetsView "Load" → profile recall → populate ReviewPage
         - PushPage "Undo" → undo_last_push flow
         - SecondaryWorkflowManager completion signals → UI updates

@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.rew_http_client import MeasurementSummary
-from src.adapters.safe_write import RoomFitSafeWrite, WriteResult
+from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.gui.views.presets_device_view import PresetItem
@@ -116,6 +116,23 @@ def _setup_device(window) -> MagicMock:
     window._secondary_workflows._roomfit_safe_write_factory = (
         lambda adapter: RoomFitSafeWrite(adapter, window._backup_manager)
     )
+    # _do_copy_preset_to_device/_read_preset_to_copy (also Phase D) need the
+    # same PEQ safe_write factory plus the 3 target-device connection
+    # factories -- reuse MainWindow's real ones (default to
+    # adapter_factories.make_*) so the existing
+    # patch("src.gui.adapter_factories.<Class>") tests below keep working
+    # unchanged; only the SafeWrite/RoomFitSafeWrite factories need
+    # per-test overrides since those wrap window._backup_manager directly.
+    window._secondary_workflows._safe_write_factory = (
+        lambda adapter: SafeWrite(adapter, window._backup_manager)
+    )
+    window._secondary_workflows._wiim_http_client_factory = (
+        window._wiim_http_client_factory
+    )
+    window._secondary_workflows._capability_prober_factory = (
+        window._capability_prober_factory
+    )
+    window._secondary_workflows._target_adapter_factory = window._wiim_adapter_factory
     window._wizard_controller.state.selected_device = "192.168.1.100"
     window._wizard_controller.state.selected_source = "wifi"
     return mock_adapter
@@ -215,7 +232,6 @@ class TestPushWriteOperations:
             patch("src.gui.adapter_factories.WiiMHttpClient"),
             patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
             patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
         ):
             mock_prober = MagicMock()
             mock_prober.probe = AsyncMock(return_value=_make_caps())
@@ -230,7 +246,7 @@ class TestPushWriteOperations:
 
             safe_write = MagicMock()
             safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_safe_write_cls.return_value = safe_write
+            window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
 
             import asyncio
 
@@ -2461,7 +2477,6 @@ class TestSettingsUIState:
             patch("src.gui.adapter_factories.WiiMHttpClient"),
             patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
             patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
         ):
             mock_prober = MagicMock()
             mock_prober.probe = AsyncMock(return_value=_make_caps())
@@ -2481,7 +2496,7 @@ class TestSettingsUIState:
                     error_message="Write verification failed; original state restored.",
                 )
             )
-            mock_safe_write_cls.return_value = safe_write
+            window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
 
             import asyncio
 
@@ -2489,7 +2504,7 @@ class TestSettingsUIState:
             with patch("src.gui.adapter_factories.WiiMHttpClient", mock_wiim_http):
                 with pytest.raises(RuntimeError):
                     asyncio.run(
-                        window._do_copy_preset_to_device(
+                        window._secondary_workflows._do_copy_preset_to_device(
                             "Movie Night", "PEQ", "192.168.1.200", "wifi",
                             filters, ChannelMode.STEREO, peq_settings,
                         )
@@ -2642,10 +2657,13 @@ class TestSettingsUIState:
     def test_issue26_copy_preset_to_device_writes_to_target(self, window) -> None:
         """#26: A full successful "Copy to Another Device" for a PEQ preset
         must actually write the target device's data (via SafeWrite.execute,
-        then save_peq_profile) and show a success status -- not just pick
-        the right branch (that narrower claim is already covered by #34's
-        test). This is the end-to-end happy path: read from source, connect
-        to target, write+verify, persist as a named preset, report success.
+        then save_peq_profile) -- not just pick the right branch (that
+        narrower claim is already covered by #34's test). This is the
+        happy path for the shared primitive: read from source, connect to
+        target, write+verify, persist as a named preset. (The per-item
+        success banner was deleted -- docs/backlog.md item 2 Phase D --
+        since it was redundant with the batch-level summary shown by
+        _do_copy_presets_batch_multi.)
         """
         _setup_device(window)
         filters = [_make_filter(100), _make_filter(200)]
@@ -2655,8 +2673,6 @@ class TestSettingsUIState:
             patch("src.gui.adapter_factories.WiiMHttpClient") as mock_client_cls,
             patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
             patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
-            patch.object(window._status_banner, "show_success") as mock_show_success,
         ):
             mock_target_client = MagicMock()
             mock_target_client.close = AsyncMock()
@@ -2672,12 +2688,12 @@ class TestSettingsUIState:
 
             safe_write = MagicMock()
             safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_safe_write_cls.return_value = safe_write
+            window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
 
             import asyncio
 
             asyncio.run(
-                window._do_copy_preset_to_device(
+                window._secondary_workflows._do_copy_preset_to_device(
                     "Movie Night", "PEQ", "192.168.1.200", "wifi",
                     filters, ChannelMode.STEREO, peq_settings,
                 )
@@ -2690,8 +2706,6 @@ class TestSettingsUIState:
         assert written_settings.bands == peq_settings.bands
         # And the write must be saved as a named preset on the target.
         target_adapter.save_peq_profile.assert_called_once_with("wifi", "Movie Night")
-        mock_show_success.assert_called_once()
-        assert "Movie Night" in mock_show_success.call_args[0][0]
 
     # --- Issue #69: Copy preset to device carries channel_mode through (PEQ) ---
 
@@ -2705,7 +2719,8 @@ class TestSettingsUIState:
         source" / "Apply to multiple devices" were removed as dead code
         (see src/gui/secondary_workflows.py module docstring, 2026-06-28
         audit). The live copy-to-device implementation is
-        MainWindow._do_copy_preset_to_device(), which already takes
+        SecondaryWorkflowManager._do_copy_preset_to_device() (moved from
+        MainWindow, docs/backlog.md item 2 Phase D), which already takes
         channel_mode from the source read rather than a hardcoded default --
         this test targets that current path.
         """
@@ -2720,7 +2735,6 @@ class TestSettingsUIState:
             patch("src.gui.adapter_factories.WiiMHttpClient"),
             patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
             patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
         ):
             mock_prober = MagicMock()
             mock_prober.probe = AsyncMock(return_value=_make_caps())
@@ -2735,13 +2749,13 @@ class TestSettingsUIState:
 
             safe_write = MagicMock()
             safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_safe_write_cls.return_value = safe_write
+            window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
 
             import asyncio
 
             with patch("src.gui.adapter_factories.WiiMHttpClient", return_value=mock_target_client):
                 asyncio.run(
-                    window._do_copy_preset_to_device(
+                    window._secondary_workflows._do_copy_preset_to_device(
                         "LR Preset", "PEQ", "192.168.1.200", "wifi",
                         filters_l + filters_r, ChannelMode.LR, peq_settings,
                     )
@@ -2772,8 +2786,6 @@ class TestSettingsUIState:
             patch("src.gui.adapter_factories.WiiMHttpClient"),
             patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
             patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
-            patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls,
         ):
             mock_prober = MagicMock()
             mock_prober.probe = AsyncMock(return_value=_make_caps())
@@ -2790,17 +2802,19 @@ class TestSettingsUIState:
 
             safe_write = MagicMock()
             safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_safe_write_cls.return_value = safe_write
+            window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
 
             roomfit_safe_write = MagicMock()
             roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+            window._secondary_workflows._roomfit_safe_write_factory = (
+                lambda adapter: roomfit_safe_write
+            )
 
             import asyncio
 
             with patch("src.gui.adapter_factories.WiiMHttpClient", mock_wiim_http):
                 asyncio.run(
-                    window._do_copy_preset_to_device(
+                    window._secondary_workflows._do_copy_preset_to_device(
                         "Movie Night", "PEQ", "192.168.1.200", "wifi",
                         peq_settings.bands, ChannelMode.STEREO, peq_settings,
                     )
@@ -2816,7 +2830,7 @@ class TestSettingsUIState:
                 roomfit_safe_write.execute.reset_mock()
 
                 asyncio.run(
-                    window._do_copy_preset_to_device(
+                    window._secondary_workflows._do_copy_preset_to_device(
                         "RoomFit A", "RoomFit", "192.168.1.200", "wifi",
                         roomfit_settings.bands, ChannelMode.LR, roomfit_settings,
                     )
@@ -3211,11 +3225,12 @@ class TestSettingsUIState:
 
         with (
             patch.object(
-                window, "_read_preset_to_copy", new_callable=AsyncMock,
-                return_value=read_result,
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
             ) as mock_read,
             patch.object(
-                window, "_do_copy_preset_to_device", new_callable=AsyncMock
+                window._secondary_workflows, "_do_copy_preset_to_device",
+                new_callable=AsyncMock,
             ) as mock_copy,
         ):
             import asyncio
@@ -3255,11 +3270,12 @@ class TestSettingsUIState:
 
         with (
             patch.object(
-                window, "_read_preset_to_copy", new_callable=AsyncMock,
-                return_value=read_result,
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
             ),
             patch.object(
-                window, "_do_copy_preset_to_device", new_callable=AsyncMock
+                window._secondary_workflows, "_do_copy_preset_to_device",
+                new_callable=AsyncMock,
             ),
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
@@ -3290,7 +3306,6 @@ class TestSettingsUIState:
             patch("src.gui.adapter_factories.WiiMHttpClient") as mock_client_cls,
             patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
             patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls,
         ):
             mock_client = AsyncMock()
             mock_client_cls.return_value = mock_client
@@ -3302,12 +3317,14 @@ class TestSettingsUIState:
 
             roomfit_safe_write = MagicMock()
             roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+            window._secondary_workflows._roomfit_safe_write_factory = (
+                lambda adapter: roomfit_safe_write
+            )
 
             import asyncio
 
             asyncio.run(
-                window._do_copy_preset_to_device(
+                window._secondary_workflows._do_copy_preset_to_device(
                     "My RoomFit", "RoomFit", "192.168.1.200", "wifi",
                     peq_settings.bands_l + peq_settings.bands_r,
                     ChannelMode.LR, peq_settings,
@@ -3566,16 +3583,24 @@ class TestIssue194SingleSourceOperations:
 
     def test_issue194_read_preset_to_copy_uses_single_source(self, window) -> None:
         """The shared copy-flow read uses the first selected source -- not a
-        hardcoded 'wifi', and never the raw comma string."""
+        hardcoded 'wifi', and never the raw comma string. source_name is
+        resolved by the caller (MainWindow, from wizard state) and passed
+        in explicitly -- SecondaryWorkflowManager has no wizard state of
+        its own (docs/backlog.md item 2 Phase D)."""
         adapter = _setup_device(window)
         window._wizard_controller.state.selected_source = "bluetooth,wifi"
         adapter.read_peq_preset_preview = AsyncMock(
             return_value=self._preview_settings()
         )
+        source_name = window._wizard_controller.state.primary_source
 
         import asyncio
 
-        result = asyncio.run(window._read_preset_to_copy("My Preset", "PEQ"))
+        result = asyncio.run(
+            window._secondary_workflows._read_preset_to_copy(
+                source_name, "My Preset", "PEQ"
+            )
+        )
 
         assert result is not None
         adapter.read_peq_preset_preview.assert_awaited_once_with(

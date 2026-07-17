@@ -11,9 +11,12 @@ they are modal sub-flows or inline operations.
 Note: "Copy to another source" (Req 20) and "Apply to multiple devices"
 (Req 21) were never wired to any UI trigger and have been removed as dead
 code (code quality audit, 2026-06-28) — see docs/backlog.md if those
-features are revisited. "Copy preset to another device" (Req 15.11,
-17.3) is implemented directly in MainWindow
-(_do_copy_presets_batch_multi / _do_copy_preset_to_device), not here.
+features are revisited. "Copy preset to another device" (Req 15.11, 17.3)
+has its read/write primitives here (_read_preset_to_copy,
+_do_copy_preset_to_device — docs/backlog.md item 2 Phase D); the batch
+dispatchers that call them (_do_copy_presets_batch_multi,
+_do_copy_local_profile_to_devices) are still in MainWindow pending a
+follow-up move.
 
 Requirements referenced: 17.2, 18.1, 18.2, 18.3, 18.4, 18.6.
 """
@@ -27,14 +30,19 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from src.gui.primary_workflows import EmptyPresetFiltersError
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode
+from src.models.channel_mode import ChannelMode, is_lr_mode
+from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.repository.backup_manager import load_backup_json, parse_backup_restore_metadata
 
 if TYPE_CHECKING:
+    from src.adapters.capability_prober import CapabilityProber
     from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
     from src.adapters.wiim_adapter import WiiMAdapter
+    from src.adapters.wiim_http import WiiMHttpClient
     from src.gui.async_bridge import AsyncBridge
+    from src.models.capabilities import DeviceCapabilities
     from src.repository.backup_manager import BackupManager
 
 logger = logging.getLogger("wiim_rew_sync.secondary_workflows")
@@ -80,6 +88,13 @@ class SecondaryWorkflowManager(QObject):
         self._roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite] | None = None
         self._backup_manager: BackupManager | None = None
         self._current_adapter: WiiMAdapter | None = None
+        self._wiim_http_client_factory: Callable[[str], WiiMHttpClient] | None = None
+        self._capability_prober_factory: (
+            Callable[[WiiMHttpClient], CapabilityProber] | None
+        ) = None
+        self._target_adapter_factory: (
+            Callable[[WiiMHttpClient, DeviceCapabilities], WiiMAdapter] | None
+        ) = None
 
     # ------------------------------------------------------------------
     # Configuration (adapter injection for async execution)
@@ -92,6 +107,9 @@ class SecondaryWorkflowManager(QObject):
         safe_write_factory: Callable[[WiiMAdapter], SafeWrite],
         roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite],
         backup_manager: BackupManager,
+        wiim_http_client_factory: Callable[[str], WiiMHttpClient],
+        capability_prober_factory: Callable[[WiiMHttpClient], CapabilityProber],
+        target_adapter_factory: Callable[[WiiMHttpClient, DeviceCapabilities], WiiMAdapter],
     ) -> None:
         """Inject adapter dependencies for real async workflow execution.
 
@@ -106,6 +124,16 @@ class SecondaryWorkflowManager(QObject):
             roomfit_safe_write_factory: Factory creating a RoomFitSafeWrite
                 from a WiiMAdapter, for undo_roomfit().
             backup_manager: The backup manager instance for state snapshots.
+            wiim_http_client_factory: Factory creating a WiiMHttpClient for a
+                target device IP, for copy-to-device's target connection.
+            capability_prober_factory: Factory creating a CapabilityProber
+                for a WiiMHttpClient, to probe an unfamiliar target device
+                before connecting to it (async, unlike wiim_adapter_factory
+                above which assumes already-known capabilities).
+            target_adapter_factory: Factory creating a WiiMAdapter from a
+                probed target client + capabilities. Deliberately a separate
+                param from wiim_adapter_factory above -- that one has an
+                incompatible same-device, synchronous-reconnect signature.
 
         Requirements: 8.1.
         """
@@ -114,6 +142,9 @@ class SecondaryWorkflowManager(QObject):
         self._safe_write_factory = safe_write_factory
         self._roomfit_safe_write_factory = roomfit_safe_write_factory
         self._backup_manager = backup_manager
+        self._wiim_http_client_factory = wiim_http_client_factory
+        self._capability_prober_factory = capability_prober_factory
+        self._target_adapter_factory = target_adapter_factory
         logger.info("SecondaryWorkflowManager configured with adapter factories")
 
     @property
@@ -125,6 +156,9 @@ class SecondaryWorkflowManager(QObject):
             and self._safe_write_factory is not None
             and self._roomfit_safe_write_factory is not None
             and self._backup_manager is not None
+            and self._wiim_http_client_factory is not None
+            and self._capability_prober_factory is not None
+            and self._target_adapter_factory is not None
         )
 
     def set_current_adapter(self, adapter: WiiMAdapter | None) -> None:
@@ -366,6 +400,128 @@ class SecondaryWorkflowManager(QObject):
             self.undo_complete.emit(True, f"All {succeeded} source(s) restored from backup")
         else:
             self.undo_complete.emit(False, f"{succeeded} restored, {failed} failed")
+
+    # ------------------------------------------------------------------
+    # Workflow: Copy Preset to Device (Req 15.11, 17.3)
+    # ------------------------------------------------------------------
+
+    async def _read_preset_to_copy(
+        self, source_name: str, preset_name: str, preset_type: str
+    ) -> tuple[list[CanonicalFilter], ChannelMode, PEQSettings]:
+        """Read+preview a preset from the currently connected (source) device.
+
+        Shared by both copy flows so the read/preview -- which briefly loads
+        the preset onto the source device's live DSP and restores it after,
+        see #166 -- happens exactly once per preset, not once per target
+        device it's copied to (#171).
+
+        Raises:
+            EmptyPresetFiltersError: if the preset resolves to zero filters.
+                No widget access here (moved out of MainWindow, docs/backlog.md
+                item 2 Phase D) -- raising lets the caller's existing
+                exception handling treat it like any other read failure.
+        """
+        assert self._current_adapter is not None
+
+        # Reading (previewing + restoring) -- the confirmation dialog shown
+        # before this is triggered already warned the user this briefly
+        # changes what's playing, see #166.
+        peq_settings = await self._current_adapter.read_preset_preview(
+            preset_type, source_name, preset_name
+        )
+        filters, channel_mode = extract_filters(peq_settings)
+
+        if not filters:
+            raise EmptyPresetFiltersError(f"Preset '{preset_name}' has no filters to copy")
+
+        return filters, channel_mode, peq_settings
+
+    async def _do_copy_preset_to_device(
+        self,
+        preset_name: str,
+        preset_type: str,
+        target_ip: str,
+        target_source: str,
+        filters: list[CanonicalFilter],
+        channel_mode: ChannelMode,
+        peq_settings: PEQSettings,
+    ) -> None:
+        """Write an already-read preset to a target device, as a named preset.
+
+        1. Connects to target device
+        2. Writes + verifies (SafeWrite/RoomFitSafeWrite)
+        3. Saves as a named preset (same name) on the target device
+
+        The read/preview step happens once, earlier, via
+        _read_preset_to_copy() -- shared across every target device this
+        preset is being copied to (#171).
+
+        Args:
+            preset_name: Name of the preset/profile to copy.
+            preset_type: "PEQ" or "RoomFit".
+            target_ip: IP address of the target device.
+            target_source: Target source name on the remote device.
+            filters: Filters read from the source preset (see _read_preset_to_copy).
+            channel_mode: Channel mode of the source preset.
+            peq_settings: Full PEQSettings read from the source preset (carries
+                bands_l/bands_r for L/R mode).
+        """
+        assert self._wiim_http_client_factory is not None
+        assert self._capability_prober_factory is not None
+        assert self._target_adapter_factory is not None
+        assert self._safe_write_factory is not None
+        assert self._roomfit_safe_write_factory is not None
+
+        # Connect to target device and save as named preset
+        target_client = self._wiim_http_client_factory(target_ip)
+        try:
+            target_caps = await self._capability_prober_factory(target_client).probe()
+            target_adapter = self._target_adapter_factory(target_client, target_caps)
+
+            if preset_type == "RoomFit":
+                # RoomFit: write as RoomFit profile on target (smoke #34, #79),
+                # verified and rolled back on mismatch via RoomFitSafeWrite --
+                # same protocol as the main Push flow (smoke #153), not a bare
+                # write_roomfit() with no verification at all.
+                roomfit_safe_write = self._roomfit_safe_write_factory(target_adapter)
+                if is_lr_mode(channel_mode):
+                    # Use the L/R bands just read from the source preset —
+                    # not wizard state, which may be stale or unrelated to
+                    # this preset (e.g. never populated in this session).
+                    result = await roomfit_safe_write.execute(
+                        target_source, preset_name, filters,
+                        channel_mode=ChannelMode.LR,
+                        filters_l=peq_settings.bands_l,
+                        filters_r=peq_settings.bands_r,
+                    )
+                else:
+                    result = await roomfit_safe_write.execute(
+                        target_source, preset_name, filters,
+                        channel_mode=ChannelMode.STEREO,
+                    )
+                if not result.success:
+                    raise RuntimeError(
+                        result.error_message or "RoomFit copy verification failed"
+                    )
+            else:
+                # PEQ: write filters (verified via SafeWrite, smoke #153), then
+                # save as named PEQ preset -- only if the write actually verified.
+                settings = build_peq_settings(
+                    target_source, filters, channel_mode,
+                    filters_l=peq_settings.bands_l,
+                    filters_r=peq_settings.bands_r,
+                )
+                safe_write = self._safe_write_factory(target_adapter)
+                result = await safe_write.execute(target_source, settings)
+                if not result.success:
+                    raise RuntimeError(
+                        result.error_message or "PEQ copy verification failed"
+                    )
+                await target_adapter.save_peq_profile(
+                    target_source, preset_name
+                )
+        finally:
+            await target_client.close()
 
     # ------------------------------------------------------------------
     # Workflow: Source-Slot Overview (#194 follow-up diagnostic)
