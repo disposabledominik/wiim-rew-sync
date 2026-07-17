@@ -970,6 +970,66 @@ class TestWriteRoomfit:
         save_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
         assert "source_name" not in save_payload
 
+    async def test_write_roomfit_lr_success(
+        self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """L/R mode writes EQBandL/EQBandR with channelMode "L/R" -- same
+        shape as the stereo path (test_write_roomfit_success) other than
+        the band-payload keys, confirming the stereo/L-R branch
+        consolidation didn't change either wire payload."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters_l = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+        filters_r = [CanonicalFilter(type="LS", frequency_hz=120.0, gain_db=2.0, q=0.71)]
+
+        mock_client.command.side_effect = ["OK", "OK"]
+
+        await adapter.write_roomfit(
+            "wifi",
+            "REW Export",
+            filters=[],
+            channel_mode="left",
+            filters_l=filters_l,
+            filters_r=filters_r,
+        )
+
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 2
+        write_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        assert write_payload["channelMode"] == "L/R"
+        assert "EQBandL" in write_payload
+        assert "EQBandR" in write_payload
+        assert "EQBand" not in write_payload
+        assert write_payload["source_name"] == ""
+        assert write_payload["rc_output"] == "AUDIO_OUTPUT_SPEAKER_MODE"
+
+    async def test_write_roomfit_rejected_band_write_raises_before_save(
+        self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """An explicit device-side rejection of the band write (the same
+        {"status": "Failed"} shape _is_write_rejection() already detects
+        for the PEQ batch path) must raise WiiMResponseError immediately,
+        before EQSourceSave is ever issued -- previously the response was
+        discarded and the write proceeded straight to save regardless."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+
+        mock_client.command.return_value = {"status": "Failed"}
+
+        with pytest.raises(WiiMResponseError, match="rejected"):
+            await adapter.write_roomfit("wifi", "REW Export", filters)
+
+        # Only the band write was attempted -- EQSourceSave must not fire.
+        assert mock_client.command.call_count == 1
+        assert "EQSetLV2SourceBand:" in mock_client.command.call_args_list[0][0][0]
+
 
 class TestRequireRoomfit:
     """Test the shared _require_roomfit() gate used by every RoomFit method
