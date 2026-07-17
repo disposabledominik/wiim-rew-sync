@@ -19,7 +19,6 @@ from src.adapters.safe_write import RoomFitSafeWrite, WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.gui.shared_helpers import (
-    is_lr_mode,
     parse_backup_filters,
     read_preset_preview,
 )
@@ -149,24 +148,6 @@ class TestPushWriteOperations:
         window._on_peq_ready(peq_data)
 
         assert window._wizard_controller.state.current_step == WizardStep.REVIEW
-
-    # --- Issue #55: _do_push checks both "lr" and "l/r" via is_lr_mode ---
-
-    def test_issue55_is_lr_mode_detects_lr(self) -> None:
-        """#55: is_lr_mode returns True for 'lr'."""
-        assert is_lr_mode("lr") is True
-
-    def test_issue55_is_lr_mode_detects_l_slash_r(self) -> None:
-        """#55: is_lr_mode returns True for 'l/r'."""
-        assert is_lr_mode("l/r") is True
-
-    def test_issue55_is_lr_mode_detects_uppercase(self) -> None:
-        """#55: is_lr_mode returns True for 'L/R'."""
-        assert is_lr_mode("L/R") is True
-
-    def test_issue55_is_lr_mode_stereo_false(self) -> None:
-        """#55: is_lr_mode returns False for 'Stereo'."""
-        assert is_lr_mode("Stereo") is False
 
     # --- Issue #58: Multi-device push respects channel_mode (live equivalent) ---
 
@@ -3219,30 +3200,23 @@ class TestSharedHelpers:
         it locally.
 
         Behavior-level coverage of each individual function already exists
-        elsewhere in this file (is_lr_mode, parse_backup_filters, get_lr_filters
-        tests above; build_peq_settings/build_profile tests now live in
-        test_models.py, see below); this test is specifically about the
-        "single source of truth" claim: that the module exists with the
-        right surface and that call-sites import from it instead of
-        duplicating the logic inline.
+        elsewhere (is_lr_mode/get_lr_filters/build_peq_settings/build_profile
+        tests now live in test_models.py, see below); this test is
+        specifically about the "single source of truth" claim: that the
+        module exists with the right surface and that call-sites import from
+        it instead of duplicating the logic inline.
         """
         import inspect
 
         from src.gui import main_window, secondary_workflows, shared_helpers
+        from src.models import channel_mode as channel_mode_module
         from src.models import peq
         from src.models import profile as profile_module
         from src.translator import wiim_generator
 
-        # The documented shared surface (get_lr_filters, is_lr_mode,
-        # parse_backup_filters) plus the closely related helpers that grew
-        # out of the same consolidation (extract_filters, load_backup_json).
-        for name in (
-            "get_lr_filters",
-            "is_lr_mode",
-            "parse_backup_filters",
-            "extract_filters",
-            "load_backup_json",
-        ):
+        # The documented shared surface remaining in shared_helpers itself
+        # (parse_backup_filters/load_backup_json re-exports).
+        for name in ("parse_backup_filters", "load_backup_json"):
             assert hasattr(shared_helpers, name), f"shared_helpers missing {name}"
             assert callable(getattr(shared_helpers, name))
 
@@ -3269,6 +3243,25 @@ class TestSharedHelpers:
         assert callable(profile_module.build_profile)
         assert not hasattr(shared_helpers, "build_profile")
 
+        # is_lr_mode()/get_lr_filters() are channel-mode helpers with no Qt
+        # dependency, so they moved to models.channel_mode alongside
+        # ChannelMode.
+        for name in ("is_lr_mode", "get_lr_filters", "require_lr_filters"):
+            assert hasattr(channel_mode_module, name)
+            assert callable(getattr(channel_mode_module, name))
+        assert not hasattr(shared_helpers, "is_lr_mode")
+        assert not hasattr(shared_helpers, "get_lr_filters")
+
+        # extract_filters() stays a plain function taking PEQSettings as its
+        # only argument (not a PEQSettings method) -- deliberately, since
+        # many call sites (and their tests) pass a duck-typed stand-in with
+        # only channel_mode/bands/bands_l/bands_r set, and attribute access
+        # keeps working against those the same way a method call would not.
+        # It moves to models.peq alongside PEQSettings, the model it reads.
+        assert hasattr(peq, "extract_filters")
+        assert callable(peq.extract_filters)
+        assert not hasattr(shared_helpers, "extract_filters")
+
         # main_window.py imports from shared_helpers rather than defining its
         # own local copies of the same logic.
         main_window_source = inspect.getsource(main_window)
@@ -3291,12 +3284,12 @@ class TestSharedHelpers:
 
         # Spot-check: no duplicate local reimplementation of is_lr_mode's
         # channel-string matching (the specific bug pattern smoke #55/#69
-        # were about) anywhere outside shared_helpers.py itself.
+        # were about) anywhere outside models.channel_mode itself.
         assert "def is_lr_mode" not in main_window_source
         assert "def is_lr_mode" not in secondary_workflows_source
-        assert inspect.getsourcefile(shared_helpers.is_lr_mode) == inspect.getsourcefile(
-            shared_helpers
-        )
+        assert inspect.getsourcefile(
+            channel_mode_module.is_lr_mode
+        ) == inspect.getsourcefile(channel_mode_module)
 
     # --- Issue #93: Ensure filter values are rounded to expected precision ---
 
@@ -3367,31 +3360,6 @@ class TestSharedHelpers:
             "Could not determine L/R channel data for this source"
         )
         mock_advance.assert_not_called()
-
-    def test_get_lr_filters_without_state_data_raises(self) -> None:
-        """get_lr_filters must raise when wizard state has no filters_l/filters_r."""
-        from src.gui.shared_helpers import get_lr_filters
-
-        state = MagicMock()
-        state.filters_l = None
-        state.filters_r = None
-        with pytest.raises(ValueError, match="refusing to guess channel split"):
-            get_lr_filters(state, [])
-
-    # --- is_lr_mode comprehensive ---
-
-    def test_is_lr_mode_left(self) -> None:
-        """is_lr_mode returns True for 'left'."""
-        assert is_lr_mode("left") is True
-
-    def test_is_lr_mode_right(self) -> None:
-        """is_lr_mode returns True for 'right'."""
-        assert is_lr_mode("right") is True
-
-    def test_is_lr_mode_mixed_case(self) -> None:
-        """is_lr_mode is case-insensitive."""
-        assert is_lr_mode("LR") is True
-        assert is_lr_mode("Lr") is True
 
     # --- read_preset_preview ---
 

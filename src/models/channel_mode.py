@@ -84,8 +84,13 @@ class ChannelMode(Enum):
         return cls.STEREO
 
 
-def _coerce_channel_mode(value: str | ChannelMode) -> ChannelMode:
-    """Pydantic BeforeValidator: coerce str → ChannelMode for model fields."""
+def coerce_channel_mode(value: str | ChannelMode) -> ChannelMode:
+    """Coerce str or ChannelMode -> ChannelMode.
+
+    Used both as a Pydantic BeforeValidator for model fields (below) and by
+    is_lr_mode() -- the single place this str-or-ChannelMode coercion is
+    implemented, so the two callers can't drift apart.
+    """
     if isinstance(value, ChannelMode):
         return value
     return ChannelMode.from_any(value)
@@ -93,7 +98,16 @@ def _coerce_channel_mode(value: str | ChannelMode) -> ChannelMode:
 
 # Annotated type for use in Pydantic model fields.
 # Accepts str or ChannelMode at runtime and coerces to ChannelMode.
-ChannelModeField = Annotated[ChannelMode, BeforeValidator(_coerce_channel_mode)]
+ChannelModeField = Annotated[ChannelMode, BeforeValidator(coerce_channel_mode)]
+
+
+def is_lr_mode(channel_mode: str | ChannelMode) -> bool:
+    """Check if a channel mode represents L/R (dual-channel) mode.
+
+    Accepts both ChannelMode enum values and legacy string variants.
+    Handles all variants: "lr", "l/r", "L/R", "left", "right", ChannelMode.LR.
+    """
+    return coerce_channel_mode(channel_mode).is_lr
 
 
 def require_lr_filters(
@@ -115,3 +129,23 @@ def require_lr_filters(
     if filters_l is None or filters_r is None:
         raise ValueError("L/R filters missing; refusing to guess channel split")
     return filters_l, filters_r
+
+
+def get_lr_filters(state: object) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
+    """Get L/R filter lists from wizard state.
+
+    Requires explicit state.filters_l/filters_r (set during validation) --
+    never guesses a channel split.
+
+    Args:
+        state: WizardState object with filters_l/filters_r fields.
+
+    Returns:
+        Tuple of (left_filters, right_filters).
+
+    Raises:
+        ValueError: if state has no filters_l/filters_r set.
+    """
+    left = getattr(state, "filters_l", None)
+    right = getattr(state, "filters_r", None)
+    return require_lr_filters(left, right)

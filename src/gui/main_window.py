@@ -73,12 +73,7 @@ from src.gui.primary_workflows import EmptyPresetFiltersError, PrimaryWorkflowMa
 from src.gui.secondary_workflows import (
     SecondaryWorkflowManager,
 )
-from src.gui.shared_helpers import (
-    extract_filters,
-    get_lr_filters,
-    is_lr_mode,
-    read_preset_preview,
-)
+from src.gui.shared_helpers import read_preset_preview
 from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
 from src.gui.views.my_presets_view import MyPresetsView
@@ -94,7 +89,7 @@ from src.gui.wizard_controller import (
 )
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
-from src.models.channel_mode import ChannelMode
+from src.models.channel_mode import ChannelMode, get_lr_filters, is_lr_mode
 from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE, DEFAULT_SOURCE_NAMES
 from src.models.errors import (
     ParseError,
@@ -103,7 +98,7 @@ from src.models.errors import (
     WiiMConnectionError,
     WiiMTimeoutError,
 )
-from src.models.peq import PEQSettings, build_peq_settings
+from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.models.profile import build_profile
 from src.repository.backup_manager import (
     BackupManager,
@@ -2187,7 +2182,7 @@ class MainWindow(QMainWindow):
             path_l, path_r = paths
             # Use stored L/R lists; fallback only for defensive safety
             state = self._wizard_controller.state
-            filters_l, filters_r = get_lr_filters(state, filters)
+            filters_l, filters_r = get_lr_filters(state)
 
             self._primary_workflows.export_file_lr(filters_l, filters_r, path_l, path_r)
             logger.info("Export L/R REW: %s, %s", path_l, path_r)
@@ -2560,7 +2555,7 @@ class MainWindow(QMainWindow):
                 )
                 if channel_mode.is_lr:
                     # Use stored L/R lists if available (avoids naive 50/50 split)
-                    left, right = get_lr_filters(state, filters)
+                    left, right = get_lr_filters(state)
                     result = await self._roomfit_safe_write.execute(
                         source_name,
                         profile_name,
@@ -3922,7 +3917,7 @@ class MainWindow(QMainWindow):
         channel = state.channel_mode
         if channel.is_lr:
             # Use stored L/R lists (set by recall_profile before emitting signal)
-            left, right = get_lr_filters(state, filters)
+            left, right = get_lr_filters(state)
             self._review_page.set_lr_filters(left, right)
         else:
             self._review_page.set_filters(filters)

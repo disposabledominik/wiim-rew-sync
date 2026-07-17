@@ -1,10 +1,13 @@
 """Unit tests for core Pydantic models — validation rejection and Profile channel-mode validator."""
 
+from types import SimpleNamespace
+
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
+from src.models.channel_mode import get_lr_filters, is_lr_mode
 from src.models.errors import (
     BackupError,
     ParseError,
@@ -85,6 +88,42 @@ class TestCanonicalFilter:
     def test_invalid_type_rejected(self) -> None:
         with pytest.raises(PydanticValidationError):
             CanonicalFilter(type="NOTCH", frequency_hz=1000.0, gain_db=0.0, q=1.0)
+
+
+# ---------------------------------------------------------------------------
+# is_lr_mode / get_lr_filters tests
+# ---------------------------------------------------------------------------
+
+
+class TestIsLrMode:
+    """Tests for is_lr_mode() -- accepts both ChannelMode enum values and
+    legacy string variants, moved here from src.gui.shared_helpers (no Qt
+    dependency, belongs with ChannelMode)."""
+
+    @pytest.mark.parametrize(
+        "value", ["lr", "l/r", "L/R", "left", "right", "LR", "Lr"]
+    )
+    def test_lr_variants_detected(self, value: str) -> None:
+        assert is_lr_mode(value) is True
+
+    def test_stereo_string_is_false(self) -> None:
+        assert is_lr_mode("Stereo") is False
+
+
+class TestGetLrFilters:
+    """Tests for get_lr_filters() -- requires explicit wizard-state
+    filters_l/filters_r, never guesses a channel split."""
+
+    def test_without_state_data_raises(self) -> None:
+        state = SimpleNamespace(filters_l=None, filters_r=None)
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            get_lr_filters(state)
+
+    def test_returns_explicit_state_filters(self) -> None:
+        left = _sample_filters()
+        right = [CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=0.0, q=1.0)]
+        state = SimpleNamespace(filters_l=left, filters_r=right)
+        assert get_lr_filters(state) == (left, right)
 
 
 # ---------------------------------------------------------------------------

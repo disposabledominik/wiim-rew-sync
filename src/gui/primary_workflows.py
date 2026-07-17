@@ -28,9 +28,9 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
-from src.gui.shared_helpers import extract_filters, is_lr_mode, read_preset_preview
-from src.models.channel_mode import ChannelMode
-from src.models.peq import PEQSettings
+from src.gui.shared_helpers import read_preset_preview
+from src.models.channel_mode import ChannelMode, is_lr_mode
+from src.models.peq import PEQSettings, extract_filters
 from src.models.profile import build_profile
 
 if TYPE_CHECKING:
