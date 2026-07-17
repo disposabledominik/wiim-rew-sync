@@ -37,7 +37,8 @@ def close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
     collector eventually reclaims it (often during an unrelated later test).
     Use this as the mock's ``side_effect`` to dispose of the coroutine (and
     any inner coroutine it captured as a local, e.g. ``_bridge_wrapper``
-    wrapping ``self._do_push()``) the moment the mock is called.
+    wrapping one of the ``_do_*`` workflow coroutines) the moment the mock
+    is called.
     """
     if not inspect.iscoroutine(value):
         return

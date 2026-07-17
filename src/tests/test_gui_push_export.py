@@ -1,8 +1,11 @@
 """Unit tests for MainWindow push and export handlers.
 
 Tests the push and export handler flows:
-- _on_push_requested() -> guards busy, advances wizard, calls _bridge_wrapper
-- _do_push() -> creates PEQSettings from state, calls safe_write.execute()
+- _on_push_requested() -> guards busy, advances wizard, dispatches to
+  PrimaryWorkflowManager.push()
+- PrimaryWorkflowManager._do_push() -> creates PEQSettings from state,
+  calls safe_write.execute() (moved out of MainWindow, docs/backlog.md
+  item 2 Phase D)
 - _on_export_requested() -> guards busy, opens QFileDialog, calls _bridge_wrapper
 - _do_export(filters, path) -> calls REWGenerator().generate_file()
 
@@ -82,14 +85,19 @@ def _setup_push_state(window) -> AsyncMock:
     window._wizard_controller.state.channel_mode = ChannelMode.STEREO
     window._wizard_controller.state.dry_run = False
 
-    # Provide a mocked WiiMAdapter (required by _do_push assert)
+    # Provide a mocked WiiMAdapter as PrimaryWorkflowManager's current
+    # adapter (required by _do_push's _require_adapter() call) -- _do_push
+    # now lives on the manager, not MainWindow, so window._wiim_adapter
+    # itself is no longer what it reads.
     mock_adapter = MagicMock()
     mock_adapter.capabilities = MagicMock()
     window._wiim_adapter = mock_adapter
+    window._primary_workflows.set_current_adapter(mock_adapter)
 
-    # Provide a mocked SafeWrite
+    # Provide a mocked SafeWrite via the factory _do_push now builds it
+    # from, rather than a cached window._safe_write attribute.
     mock_safe_write = AsyncMock()
-    window._safe_write = mock_safe_write
+    window._primary_workflows._safe_write_factory = lambda adapter: mock_safe_write
     return mock_safe_write
 
 
@@ -115,7 +123,7 @@ class TestPushHappyPath:
         )
         mock_safe_write.execute = AsyncMock(return_value=result)
 
-        await window._do_push()
+        await window._primary_workflows._do_push()
 
         mock_safe_write.execute.assert_called_once()
         # Verify source_name passed correctly
@@ -143,7 +151,7 @@ class TestPushHappyPath:
         )
         mock_safe_write.execute = AsyncMock(return_value=result)
 
-        await window._do_push()
+        await window._primary_workflows._do_push()
 
         window._bridge.write_complete.emit.assert_called_once_with(result)
 
@@ -162,7 +170,7 @@ class TestPushHappyPath:
         )
         mock_safe_write.execute = AsyncMock(return_value=result)
 
-        await window._do_push()
+        await window._primary_workflows._do_push()
 
         window._bridge.write_complete.emit.assert_called_once_with(result)
 
@@ -182,7 +190,7 @@ class TestPushMultiSourceRound:
         result = WriteResult(success=True, rollback_success=None, backup_path=None)
         mock_safe_write.execute = AsyncMock(return_value=result)
 
-        await window._do_push()
+        await window._primary_workflows._do_push()
 
         window._bridge.push_round_changed.emit.assert_not_called()
 
@@ -195,7 +203,7 @@ class TestPushMultiSourceRound:
         result = WriteResult(success=True, rollback_success=None, backup_path=None)
         mock_safe_write.execute = AsyncMock(return_value=result)
 
-        await window._do_push()
+        await window._primary_workflows._do_push()
 
         calls = [c.args for c in window._bridge.push_round_changed.emit.call_args_list]
         assert calls == [("wifi", 1, 2), ("optical", 2, 2)]
@@ -220,7 +228,7 @@ class TestPushException:
             side_effect=ConnectionError("Device lost connection")
         )
 
-        await window._bridge_wrapper("push", window._do_push())
+        await window._bridge_wrapper("push", window._primary_workflows._do_push())
 
         window._bridge.operation_error.emit.assert_called_once()
         error_type, _message = window._bridge.operation_error.emit.call_args[0]
@@ -265,7 +273,7 @@ class TestPushChannelMode:
         result = WriteResult(success=True, rollback_success=None)
         mock_safe_write.execute = AsyncMock(return_value=result)
 
-        await window._do_push()
+        await window._primary_workflows._do_push()
 
         call_args = mock_safe_write.execute.call_args
         settings = call_args[0][1]
@@ -291,7 +299,7 @@ class TestPushChannelMode:
         result = WriteResult(success=True, rollback_success=None)
         mock_safe_write.execute = AsyncMock(return_value=result)
 
-        await window._do_push()
+        await window._primary_workflows._do_push()
 
         call_args = mock_safe_write.execute.call_args
         settings = call_args[0][1]

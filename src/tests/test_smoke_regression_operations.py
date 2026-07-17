@@ -535,12 +535,14 @@ class TestPushWriteOperations:
         mock_backup = MagicMock()
         mock_backup.create_backup = MagicMock(return_value="/tmp/backup.json")
         window._backup_manager = mock_backup
-        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
+        window._primary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: RoomFitSafeWrite(adapter, mock_backup)
+        )
 
         # _do_push is a coroutine; we verify write_roomfit gets channel_mode
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
         mock_adapter.write_roomfit.assert_called_once()
         call_kwargs = mock_adapter.write_roomfit.call_args
         assert call_kwargs.kwargs.get("channel_mode") == ChannelMode.LR
@@ -560,11 +562,11 @@ class TestPushWriteOperations:
         result1 = MagicMock(success=True, backup_path="/tmp/backup_wifi.json")
         result2 = MagicMock(success=True, backup_path="/tmp/backup_optical.json")
         mock_safe_write.execute = AsyncMock(side_effect=[result1, result2])
-        window._safe_write = mock_safe_write
+        window._primary_workflows._safe_write_factory = lambda adapter: mock_safe_write
 
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
         # write_complete should be emitted with combined backup path
         call_args = window._bridge.write_complete.emit.call_args[0][0]
         assert "wifi=" in call_args.backup_path
@@ -589,11 +591,11 @@ class TestPushWriteOperations:
         mock_safe_write.execute = AsyncMock(
             return_value=MagicMock(success=True, backup_path="/tmp/backup.json")
         )
-        window._safe_write = mock_safe_write
+        window._primary_workflows._safe_write_factory = lambda adapter: mock_safe_write
 
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
 
         mock_safe_write.execute.assert_called_once()
         call_kwargs = mock_safe_write.execute.call_args.kwargs
@@ -613,11 +615,13 @@ class TestPushWriteOperations:
         mock_roomfit_safe_write.execute = AsyncMock(
             return_value=MagicMock(success=True, backup_path=None)
         )
-        window._roomfit_safe_write = mock_roomfit_safe_write
+        window._primary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: mock_roomfit_safe_write
+        )
 
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
 
         mock_roomfit_safe_write.execute.assert_called_once()
         call_kwargs = mock_roomfit_safe_write.execute.call_args.kwargs
@@ -2022,11 +2026,13 @@ class TestPresets:
         mock_backup = MagicMock()
         mock_backup.create_backup = MagicMock(return_value="/tmp/backup.json")
         window._backup_manager = mock_backup
-        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
+        window._primary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: RoomFitSafeWrite(adapter, mock_backup)
+        )
 
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
         # Backup should have been created for the existing profile
         mock_backup.create_backup.assert_called_once()
 

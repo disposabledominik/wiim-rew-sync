@@ -126,10 +126,11 @@ class TestFullWizardFlow:
         d. Directly call _do_discovery() and verify discovery_complete emitted
         e. Simulate device selection → verify WiiMHttpClient created, probe launched
         f. Directly call _do_probe() (mock CapabilityProber.probe())
-        g. Verify _on_capabilities_ready creates WiiMAdapter/SafeWrite, determines flow
+        g. Verify _on_capabilities_ready creates WiiMAdapter, wires it into
+           PrimaryWorkflowManager, determines flow
         h. Verify wizard advances past CONNECT step
         i. Set up wizard state for push (source selected, filters loaded)
-        j. Directly call _do_push() (mock SafeWrite.execute)
+        j. Directly call PrimaryWorkflowManager._do_push() (mock SafeWrite.execute)
         k. Verify write_complete emitted
 
         Requirements: 1.1-1.7, 2.1-2.7, 6.1-6.7
@@ -197,9 +198,11 @@ class TestFullWizardFlow:
         # --- Step g: Call _on_capabilities_ready to process probe results ---
         window._on_capabilities_ready(caps)
 
-        # Verify WiiMAdapter and SafeWrite created
+        # Verify WiiMAdapter created and wired through to PrimaryWorkflowManager
+        # (SafeWrite itself is no longer cached on MainWindow -- push() now
+        # builds it on demand via the factory injected at configure()-time).
         assert window._wiim_adapter is not None
-        assert window._safe_write is not None
+        assert window._primary_workflows._current_adapter is not None
 
         # --- Step h: Verify wizard advances past CONNECT ---
         assert window._wizard_controller.flow_type == FlowType.PEQ_ONLY
@@ -230,9 +233,9 @@ class TestFullWizardFlow:
             backup_path=Path("/backups/wifi_backup.json"),
         )
         mock_safe_write.execute = AsyncMock(return_value=push_result)
-        window._safe_write = mock_safe_write
+        window._primary_workflows._safe_write_factory = lambda adapter: mock_safe_write
 
-        await window._do_push()
+        await window._primary_workflows._do_push()
 
         # --- Step k: Verify write_complete emitted ---
         window._bridge.write_complete.emit.assert_called_once()

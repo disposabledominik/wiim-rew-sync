@@ -29,13 +29,16 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal
 
-from src.models.channel_mode import ChannelMode, is_lr_mode
-from src.models.peq import PEQSettings, extract_filters
+from src.adapters.safe_write import WriteResult
+from src.gui.wizard_controller import FlowType
+from src.models.channel_mode import ChannelMode, get_lr_filters, is_lr_mode
+from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.models.profile import build_profile
 
 if TYPE_CHECKING:
     from src.adapters.capability_prober import CapabilityProber
     from src.adapters.rew_http_client import REWHttpApiClient
+    from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
     from src.adapters.wiim_adapter import WiiMAdapter
     from src.discovery.discovery_module import DiscoveryModule
     from src.gui.async_bridge import AsyncBridge
@@ -129,6 +132,8 @@ class PrimaryWorkflowManager(QObject):
         self._profile_repository: ProfileRepository | None = None
         self._discovered_devices: list[DeviceInfo] = []
         self._current_adapter: WiiMAdapter | None = None
+        self._safe_write_factory: Callable[[WiiMAdapter], SafeWrite] | None = None
+        self._roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite] | None = None
         # Bumped on every device selection; lets a stale/superseded capability
         # probe (e.g. user selects a second device before the first probe
         # resolves) detect that it's no longer current and avoid corrupting
@@ -149,6 +154,8 @@ class PrimaryWorkflowManager(QObject):
         bridge_wrapper: BridgeWrapper,
         rew_client: REWHttpApiClient,
         profile_repository: ProfileRepository,
+        safe_write_factory: Callable[[WiiMAdapter], SafeWrite],
+        roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite],
     ) -> None:
         """Inject dependencies for workflow execution.
 
@@ -175,6 +182,12 @@ class PrimaryWorkflowManager(QObject):
                 listing/filter reads.
             profile_repository: Shared ProfileRepository instance, for saving
                 device presets into local storage.
+            safe_write_factory: Factory creating a SafeWrite from a
+                WiiMAdapter, for push()'s PEQ path — same shape as
+                SecondaryWorkflowManager's factory of the same name, so
+                both managers inject this dependency the same way.
+            roomfit_safe_write_factory: Factory creating a RoomFitSafeWrite
+                from a WiiMAdapter, for push()'s RoomFit path.
         """
         self._bridge = bridge
         self._discovery_module = discovery_module
@@ -182,6 +195,8 @@ class PrimaryWorkflowManager(QObject):
         self._bridge_wrapper = bridge_wrapper
         self._rew_client = rew_client
         self._profile_repository = profile_repository
+        self._safe_write_factory = safe_write_factory
+        self._roomfit_safe_write_factory = roomfit_safe_write_factory
         logger.info("PrimaryWorkflowManager configured")
 
     def set_current_adapter(self, adapter: WiiMAdapter | None) -> None:
@@ -190,7 +205,7 @@ class PrimaryWorkflowManager(QObject):
         Called from MainWindow whenever the active device changes (mirrors
         SecondaryWorkflowManager.set_current_adapter). Used by every
         workflow here that reads the live device: pull_device, pull_roomfit,
-        load_peq_preset, and list_presets/refresh_presets.
+        load_peq_preset, list_presets/refresh_presets, and push.
 
         Args:
             adapter: The WiiMAdapter for the currently connected device,
@@ -1108,6 +1123,146 @@ class PrimaryWorkflowManager(QObject):
 
         await self.refresh_presets()
         self.presets_delete_complete.emit(succeeded, failed)
+
+    # ------------------------------------------------------------------
+    # Workflow: Push (the safety-critical core write path)
+    # ------------------------------------------------------------------
+
+    def push(self) -> None:
+        """Trigger a push to the connected device; result arrives via signal."""
+        self._dispatch("push", self._do_push())
+
+    async def _do_push(self) -> None:
+        """Execute push to device — PEQ via SafeWrite, or RoomFit via write_roomfit.
+
+        For PEQ flow: constructs PEQSettings and uses SafeWrite protocol.
+        Pushes to ALL selected sources (state.selected_sources).
+        For RoomFit flow: uses write_roomfit with the named profile.
+
+        Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
+        """
+        assert self._bridge is not None
+        state = self._require_wizard_state()
+
+        # Safety net: never write to device in dry-run mode
+        if state.dry_run:
+            logger.warning("_do_push called in dry-run mode — aborting write")
+            return
+
+        wiim_adapter = self._require_adapter()
+        assert self._safe_write_factory is not None
+        assert self._roomfit_safe_write_factory is not None
+
+        assert self._wizard_controller is not None
+        filters = state.current_filters
+        channel_mode = state.channel_mode
+        flow_type = self._wizard_controller.flow_type
+
+        # The push flow is the one deliberately multi-source operation:
+        # one write per selected source. Empty selection falls back to the
+        # single default source (#194).
+        source_list = state.selected_sources or [state.primary_source]
+
+        logger.info(
+            "Push initiated: flow=%s, channel=%s, filters=%d, sources=%s",
+            flow_type.value, channel_mode.value, len(filters), source_list,
+        )
+
+        on_stage = self._bridge.stage_changed.emit
+
+        if flow_type == FlowType.ROOMFIT:
+            # RoomFit: write as named profile via write_roomfit
+            # RoomFit is device-global, so source doesn't matter — use first
+            source_name = source_list[0]
+            profile_name = state.roomfit_profile_name
+            if not profile_name:
+                result = WriteResult(
+                    success=False, error_message="No profile name specified", backup_path=None
+                )
+                self._bridge.write_complete.emit(result)
+                return
+
+            roomfit_safe_write = self._roomfit_safe_write_factory(wiim_adapter)
+            try:
+                self._bridge.progress_update.emit(
+                    f"Writing RoomFit profile '{profile_name}'..."
+                )
+                if channel_mode.is_lr:
+                    # Use stored L/R lists if available (avoids naive 50/50 split)
+                    left, right = get_lr_filters(state)
+                    result = await roomfit_safe_write.execute(
+                        source_name,
+                        profile_name,
+                        filters,
+                        channel_mode=ChannelMode.LR,
+                        filters_l=left,
+                        filters_r=right,
+                        on_stage=on_stage,
+                    )
+                else:
+                    result = await roomfit_safe_write.execute(
+                        source_name,
+                        profile_name,
+                        filters,
+                        channel_mode=ChannelMode.STEREO,
+                        on_stage=on_stage,
+                    )
+
+                if result.success:
+                    self._bridge.progress_update.emit(
+                        f"RoomFit profile '{profile_name}' saved"
+                    )
+                self._bridge.write_complete.emit(result)
+            except Exception as exc:
+                result = WriteResult(success=False, error_message=str(exc), backup_path=None)
+                self._bridge.write_complete.emit(result)
+        else:
+            # PEQ: use SafeWrite protocol — push to ALL selected sources
+            safe_write = self._safe_write_factory(wiim_adapter)
+
+            last_result = None
+            backup_paths: list[str] = []
+            for i, source_name in enumerate(source_list):
+                if len(source_list) > 1:
+                    self._bridge.progress_update.emit(
+                        f"Pushing to {source_name} ({i + 1}/{len(source_list)})..."
+                    )
+                    self._bridge.push_round_changed.emit(
+                        source_name, i + 1, len(source_list)
+                    )
+
+                settings = build_peq_settings(
+                    source_name, filters, channel_mode,
+                    filters_l=state.filters_l,
+                    filters_r=state.filters_r,
+                )
+                result = await safe_write.execute(source_name, settings, on_stage=on_stage)
+                last_result = result
+
+                # Collect backup path for undo (smoke #77)
+                bp_path = result.backup_path
+                if bp_path:
+                    backup_paths.append(f"{source_name}={bp_path}")
+
+                if not result.success:
+                    # Abort on first failure
+                    self._bridge.write_complete.emit(result)
+                    return
+
+            # All sources succeeded — store all backup paths as semicolon-joined
+            if last_result and last_result.success:
+                # Encode multi-source backup paths for undo
+                # Format: "source1=/path;source2=/path" — consumed by _do_undo_multi_source
+                combined_backup = ";".join(backup_paths) if backup_paths else None
+                result = WriteResult(
+                    success=True,
+                    backup_path=combined_backup,
+                    # Same filters/channel_mode were pushed to every source
+                    # in this loop, so the last source's read-back is
+                    # representative of what's now on every one of them.
+                    read_back=last_result.read_back,
+                )
+                self._bridge.write_complete.emit(result)
 
     # ------------------------------------------------------------------
     # Workflow: Raw Command (Diagnostics panel)
