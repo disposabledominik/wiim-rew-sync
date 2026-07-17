@@ -32,6 +32,7 @@ from src.discovery.discovery_module import DiscoveryModule
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
 from src.models.channel_mode import ChannelMode
+from src.models.constants import DEFAULT_SOURCE
 from src.models.errors import (
     ParseError,
     RoomFitUnsupportedError,
@@ -45,12 +46,6 @@ from src.translator import TranslationEngine
 from src.utils.app_dirs import get_app_data_dir
 
 logger = logging.getLogger("wiim_rew_sync.app")
-
-# Default source used when the device exposes no input list and the user did
-# not pass --source.
-# ASSUMPTION: "wifi" is always a valid WiiM input source name (confirmed by the
-# WiiM HTTP API InputList examples in docs/wiim_api_notes.md).
-_DEFAULT_SOURCE = "wifi"
 
 _FILTER_HEADERS = ["Band", "Type", "Frequency (Hz)", "Gain (dB)", "Q"]
 
@@ -133,7 +128,7 @@ async def _read_filters(
     client = WiiMHttpClient(device, timeout=timeout)
     try:
         capabilities = await CapabilityProber(client).probe()
-        resolved_source = source or _DEFAULT_SOURCE
+        resolved_source = source or DEFAULT_SOURCE
         if source is None:
             print(
                 f"Note: No --source specified, defaulting to '{resolved_source}'. "
@@ -157,7 +152,7 @@ async def _list_peq_profiles(device: str, timeout: float) -> list[dict[str, str]
                 "Device does not support profile enumeration."
             )
         adapter = WiiMAdapter(client, capabilities)
-        return await adapter.list_peq_profiles(_DEFAULT_SOURCE)
+        return await adapter.list_peq_profiles(DEFAULT_SOURCE)
     finally:
         await client.close()
 
@@ -360,21 +355,21 @@ async def _set_filters(
         # L/R mode: --file is left channel, --file-right is right channel
         filters_r = TranslationEngine.parse_rew_file(Path(file_right))
         settings = PEQSettings(
-            source_name=source or _DEFAULT_SOURCE,
+            source_name=source or DEFAULT_SOURCE,
             channel_mode=ChannelMode.LR,
             bands_l=filters,
             bands_r=filters_r,
         )
     elif channel in ("left", "right"):
         settings = PEQSettings(
-            source_name=source or _DEFAULT_SOURCE,
+            source_name=source or DEFAULT_SOURCE,
             channel_mode=ChannelMode.LR,
             bands_l=filters if channel == "left" else [],
             bands_r=filters if channel == "right" else [],
         )
     else:
         settings = PEQSettings(
-            source_name=source or _DEFAULT_SOURCE,
+            source_name=source or DEFAULT_SOURCE,
             channel_mode=ChannelMode.STEREO,
             bands=filters,
         )
@@ -387,7 +382,7 @@ async def _set_filters(
         resolved_source = source or (
             capabilities.source_names[0]
             if capabilities.source_names
-            else _DEFAULT_SOURCE
+            else DEFAULT_SOURCE
         )
 
         adapter = WiiMAdapter(client, capabilities)
