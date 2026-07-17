@@ -21,6 +21,7 @@ device is selected and probed — mirroring `SecondaryWorkflowManager`.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable, Coroutine
 from pathlib import Path
@@ -1107,3 +1108,37 @@ class PrimaryWorkflowManager(QObject):
 
         await self.refresh_presets()
         self.presets_delete_complete.emit(succeeded, failed)
+
+    # ------------------------------------------------------------------
+    # Workflow: Raw Command (Diagnostics panel)
+    # ------------------------------------------------------------------
+
+    def raw_command(self, command: str) -> None:
+        """Trigger a raw httpapi command against the connected device."""
+        self._dispatch("raw_command", self._do_raw_command(command))
+
+    async def _do_raw_command(self, command: str) -> None:
+        """Execute a raw httpapi command against the connected device.
+
+        Catches its own exceptions (rather than letting bridge_wrapper's
+        usual error-mapping handle them) since the diagnostics panel wants
+        the error text displayed as a formatted response, not routed
+        through the status-banner error path.
+
+        Args:
+            command: The command string (e.g. "getStatusEx").
+        """
+        assert self._bridge is not None
+        wiim_adapter = self._require_adapter()
+
+        try:
+            response = await wiim_adapter.raw_command(command)
+            # Format the response as JSON if possible
+            if isinstance(response, dict):
+                formatted = json.dumps(response, indent=2, ensure_ascii=False)
+            else:
+                formatted = str(response)
+            # Emit via signal to avoid cross-thread GUI access (smoke #85 segfault fix)
+            self._bridge.progress_update.emit(f"__raw_response__{formatted}")
+        except Exception as exc:
+            self._bridge.progress_update.emit(f"__raw_response__Error: {exc}")

@@ -925,3 +925,52 @@ class TestDeletePresets:
 
         manager._current_adapter.delete_peq_profile.assert_not_awaited()
         assert captured == [(0, 0)]
+
+
+class TestRawCommand:
+    """Test PrimaryWorkflowManager._do_raw_command."""
+
+    @pytest.mark.asyncio
+    async def test_dict_response_formatted_as_json(self) -> None:
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        manager._current_adapter = MagicMock(
+            raw_command=AsyncMock(return_value={"foo": "bar"})
+        )
+
+        await manager._do_raw_command("getStatusEx")
+
+        manager._current_adapter.raw_command.assert_awaited_once_with("getStatusEx")
+        emitted = mock_bridge.progress_update.emit.call_args[0][0]
+        assert emitted.startswith("__raw_response__")
+        assert '"foo": "bar"' in emitted
+
+    @pytest.mark.asyncio
+    async def test_string_response_passed_through(self) -> None:
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        manager._current_adapter = MagicMock(raw_command=AsyncMock(return_value="OK"))
+
+        await manager._do_raw_command("EQPowerOn")
+
+        mock_bridge.progress_update.emit.assert_called_once_with("__raw_response__OK")
+
+    @pytest.mark.asyncio
+    async def test_exception_caught_and_formatted_as_error(self) -> None:
+        """The exception is caught here (not left to bridge_wrapper's usual
+        error-mapping) so the diagnostics panel gets a formatted error
+        response instead of a status-banner error."""
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        manager._current_adapter = MagicMock(
+            raw_command=AsyncMock(side_effect=RuntimeError("device unreachable"))
+        )
+
+        await manager._do_raw_command("getStatusEx")
+
+        mock_bridge.progress_update.emit.assert_called_once_with(
+            "__raw_response__Error: device unreachable"
+        )

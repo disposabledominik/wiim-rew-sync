@@ -11,7 +11,6 @@ Requirements referenced: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6,
 from __future__ import annotations
 
 import html
-import json
 import logging
 import sys
 import traceback
@@ -2742,29 +2741,7 @@ class MainWindow(QMainWindow):
             self._diagnostics_panel.on_raw_response("Error: No device connected")
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper("raw_command", self._do_raw_command(command))
-        )
-
-    async def _do_raw_command(self, command: str) -> None:
-        """Execute a raw httpapi command against the connected device.
-
-        Args:
-            command: The command string (e.g. "getStatusEx").
-        """
-        assert self._wiim_adapter is not None
-
-        try:
-            response = await self._wiim_adapter.raw_command(command)
-            # Format the response as JSON if possible
-            if isinstance(response, dict):
-                formatted = json.dumps(response, indent=2, ensure_ascii=False)
-            else:
-                formatted = str(response)
-            # Emit via signal to avoid cross-thread GUI access (smoke #85 segfault fix)
-            self._bridge.progress_update.emit(f"__raw_response__{formatted}")
-        except Exception as exc:
-            self._bridge.progress_update.emit(f"__raw_response__Error: {exc}")
+        self._primary_workflows.raw_command(command)
 
     @Slot(str)
     def _on_navigation_requested(self, view_key: str) -> None:
