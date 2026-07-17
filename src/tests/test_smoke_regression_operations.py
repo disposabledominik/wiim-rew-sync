@@ -252,7 +252,9 @@ class TestPushWriteOperations:
 
             with patch("src.gui.adapter_factories.WiiMHttpClient", return_value=mock_target_client):
                 asyncio.run(
-                    window._do_copy_presets_batch_multi(items, [device1, device2], "wifi")
+                    window._secondary_workflows._do_copy_presets_batch_multi(
+                        items, [device1, device2], "wifi", "wifi"
+                    )
                 )
 
             assert safe_write.execute.call_count == 2
@@ -3236,7 +3238,9 @@ class TestSettingsUIState:
             import asyncio
 
             asyncio.run(
-                window._do_copy_presets_batch_multi(items, devices, "wifi")
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
             )
             assert mock_read.call_count == 2
             assert mock_copy.call_count == 4
@@ -3282,7 +3286,9 @@ class TestSettingsUIState:
             import asyncio
 
             asyncio.run(
-                window._do_copy_presets_batch_multi(items, devices, "wifi")
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
             )
             mock_success.assert_called_once()
             msg = mock_success.call_args[0][0]

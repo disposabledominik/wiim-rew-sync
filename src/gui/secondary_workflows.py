@@ -12,11 +12,9 @@ Note: "Copy to another source" (Req 20) and "Apply to multiple devices"
 (Req 21) were never wired to any UI trigger and have been removed as dead
 code (code quality audit, 2026-06-28) — see docs/backlog.md if those
 features are revisited. "Copy preset to another device" (Req 15.11, 17.3)
-has its read/write primitives here (_read_preset_to_copy,
-_do_copy_preset_to_device — docs/backlog.md item 2 Phase D); the batch
-dispatchers that call them (_do_copy_presets_batch_multi,
-_do_copy_local_profile_to_devices) are still in MainWindow pending a
-follow-up move.
+lives here in full, including the batch dispatchers
+(copy_presets_to_devices / copy_local_profile_to_devices — docs/backlog.md
+item 2 Phase D).
 
 Requirements referenced: 17.2, 18.1, 18.2, 18.3, 18.4, 18.6.
 """
@@ -26,7 +24,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal, Slot
 
@@ -42,7 +40,7 @@ if TYPE_CHECKING:
     from src.adapters.wiim_adapter import WiiMAdapter
     from src.adapters.wiim_http import WiiMHttpClient
     from src.gui.async_bridge import AsyncBridge
-    from src.models.capabilities import DeviceCapabilities
+    from src.models.capabilities import DeviceCapabilities, DeviceInfo
     from src.repository.backup_manager import BackupManager
 
 logger = logging.getLogger("wiim_rew_sync.secondary_workflows")
@@ -72,6 +70,14 @@ class SecondaryWorkflowManager(QObject):
             device's EQGetSourceModes overview (diagnostic-only).
         source_slots_error(str): Error message when the slot overview
             couldn't be fetched (e.g. device doesn't support the command).
+        copy_batch_complete(int, int, int, int): n_items, n_devices,
+            succeeded, failed counts from a multi-preset/multi-device copy.
+        copy_local_profile_complete(str, int, int, int): profile_name,
+            n_devices, succeeded, failed counts from copying a local
+            profile to one or more devices. A separate signal from
+            copy_batch_complete rather than a shared one -- the two
+            summaries need genuinely different data shapes (an item count
+            vs. a single profile name).
     """
 
     # --- Signals ---
@@ -79,6 +85,8 @@ class SecondaryWorkflowManager(QObject):
     undo_complete = Signal(bool, str)
     source_slots_ready = Signal(list)
     source_slots_error = Signal(str)
+    copy_batch_complete = Signal(int, int, int, int)
+    copy_local_profile_complete = Signal(str, int, int, int)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -522,6 +530,185 @@ class SecondaryWorkflowManager(QObject):
                 )
         finally:
             await target_client.close()
+
+    async def _write_preset_copies_to_devices(
+        self,
+        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]],
+        target_devices: list[DeviceInfo],
+        target_source: str,
+    ) -> tuple[int, int]:
+        """Write each already-read preset to every target device.
+
+        Shared by `_do_copy_presets_batch_multi` (reads come from the live
+        source device) and `_do_copy_local_profile_to_devices` (reads come
+        from a locally saved Profile, no source device involved) -- both
+        write via the identical `_do_copy_preset_to_device` primitive per
+        (read, device) pair, so that loop/exception-handling/progress-emit
+        logic lives exactly once.
+
+        Args:
+            reads: List of (preset_name, preset_type, filters, channel_mode,
+                peq_settings) tuples, one per already-read preset.
+            target_devices: List of discovered device objects to copy to.
+            target_source: Target source name on each remote device.
+
+        Returns:
+            Tuple of (succeeded, failed) copy-operation counts.
+        """
+        assert self._bridge is not None
+
+        succeeded = 0
+        failed = 0
+
+        for preset_name, preset_type, filters, channel_mode, peq_settings in reads:
+            for device in target_devices:
+                self._bridge.progress_update.emit(
+                    f"Copying '{preset_name}' to {device.name}..."
+                )
+                try:
+                    await self._do_copy_preset_to_device(
+                        preset_name, preset_type, device.ip, target_source,
+                        filters, channel_mode, peq_settings,
+                    )
+                    succeeded += 1
+                except Exception:
+                    logger.exception(
+                        "Copy preset '%s' to %s failed", preset_name, device.ip
+                    )
+                    failed += 1
+
+        return succeeded, failed
+
+    @Slot(list, list, str, str)
+    def copy_presets_to_devices(
+        self,
+        items: list[Any],
+        target_devices: list[DeviceInfo],
+        source_name: str,
+        target_source: str,
+    ) -> None:
+        """Copy presets to multiple target devices (smoke #73 fix)."""
+        assert self._bridge is not None
+        self._bridge.run_async(
+            self._do_copy_presets_batch_multi(
+                items, target_devices, source_name, target_source
+            )
+        )
+
+    async def _do_copy_presets_batch_multi(
+        self,
+        items: list[Any],
+        target_devices: list[DeviceInfo],
+        source_name: str,
+        target_source: str,
+    ) -> None:
+        """Copy presets to multiple target devices (smoke #73 fix).
+
+        Iterates over all presets, reading (and previewing) each once from the
+        source device, then writes that single read to every target device.
+        Presets are the outer loop and devices the inner loop specifically so
+        the read/preview step -- which briefly flips the source device's live
+        audio, see #166 -- happens once per preset rather than once per
+        (preset, device) pair (#171). No widget access here (moved out of
+        MainWindow, docs/backlog.md item 2 Phase D) -- results reported via
+        copy_batch_complete.
+
+        Args:
+            items: List of PresetItem objects to copy.
+            target_devices: List of discovered device objects to copy to.
+            source_name: Source device's own active source, to read the
+                presets from (resolved by the caller from wizard state --
+                this manager has none of its own).
+            target_source: Target source name on each remote device.
+        """
+        assert self._bridge is not None
+
+        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
+        read_failed = 0
+
+        for item in items:
+            preset_name = getattr(item, "name", "")
+            preset_type = getattr(item, "preset_type", "PEQ")
+            if not preset_name:
+                continue
+
+            self._bridge.progress_update.emit(f"Reading '{preset_name}'...")
+            try:
+                filters, channel_mode, peq_settings = await self._read_preset_to_copy(
+                    source_name, preset_name, preset_type
+                )
+            except Exception:
+                logger.exception("Read preset '%s' for copy failed", preset_name)
+                self._bridge.progress_update.emit(
+                    f"Failed to read '{preset_name}' -- skipping"
+                )
+                read_failed += len(target_devices)
+                continue
+            reads.append((preset_name, preset_type, filters, channel_mode, peq_settings))
+
+        succeeded, write_failed = await self._write_preset_copies_to_devices(
+            reads, target_devices, target_source
+        )
+        failed = read_failed + write_failed
+
+        self.copy_batch_complete.emit(len(items), len(target_devices), succeeded, failed)
+
+    @Slot(str, str, list, str, list, object, object)
+    def copy_local_profile_to_devices(
+        self,
+        profile_name: str,
+        preset_type: str,
+        target_devices: list[DeviceInfo],
+        target_source: str,
+        filters: list[CanonicalFilter],
+        channel_mode: ChannelMode,
+        peq_settings: PEQSettings,
+    ) -> None:
+        """Copy a locally saved profile's already-in-hand filters to devices."""
+        assert self._bridge is not None
+        self._bridge.run_async(
+            self._do_copy_local_profile_to_devices(
+                profile_name, preset_type, target_devices, target_source,
+                filters, channel_mode, peq_settings,
+            )
+        )
+
+    async def _do_copy_local_profile_to_devices(
+        self,
+        profile_name: str,
+        preset_type: str,
+        target_devices: list[DeviceInfo],
+        target_source: str,
+        filters: list[CanonicalFilter],
+        channel_mode: ChannelMode,
+        peq_settings: PEQSettings,
+    ) -> None:
+        """Copy a locally saved profile's already-in-hand filters to devices.
+
+        Unlike `_do_copy_presets_batch_multi`, there's no source device to
+        read from -- the filters already came from a local Profile -- so
+        this is a single-entry `reads` list around the same shared
+        `_write_preset_copies_to_devices` write primitive. No widget access
+        here (moved out of MainWindow, docs/backlog.md item 2 Phase D) --
+        results reported via copy_local_profile_complete.
+
+        Args:
+            profile_name: Name of the local profile being copied.
+            preset_type: "PEQ" or "RoomFit", chosen via PresetTypeDialog.
+            target_devices: List of discovered device objects to copy to.
+            target_source: Target source name on each remote device.
+            filters: Filters from the local Profile.
+            channel_mode: Channel mode of the local Profile.
+            peq_settings: Full PEQSettings built from the local Profile.
+        """
+        reads = [(profile_name, preset_type, filters, channel_mode, peq_settings)]
+        succeeded, failed = await self._write_preset_copies_to_devices(
+            reads, target_devices, target_source
+        )
+
+        self.copy_local_profile_complete.emit(
+            profile_name, len(target_devices), succeeded, failed
+        )
 
     # ------------------------------------------------------------------
     # Workflow: Source-Slot Overview (#194 follow-up diagnostic)
