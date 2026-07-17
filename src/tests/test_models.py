@@ -298,6 +298,43 @@ class TestBuildProfile:
 
 
 # ---------------------------------------------------------------------------
+# Profile.band_counts tests
+# ---------------------------------------------------------------------------
+
+
+class TestProfileBandCounts:
+    """Tests for Profile.band_counts() -- active/total band counting, moved
+    here from src.gui.views.my_presets_view's _count_bands() (no Qt
+    dependency, belongs with the model)."""
+
+    def test_stereo_counts_active_and_total(self) -> None:
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=3.0, q=1.0),
+            CanonicalFilter(type="PEAK", frequency_hz=200.0, gain_db=0.0, q=1.0),
+            CanonicalFilter(type="PEAK", frequency_hz=300.0, gain_db=-1.5, q=1.0),
+        ]
+        profile = build_profile("Test", filters, "Stereo")
+        assert profile.band_counts() == (2, 3)
+
+    def test_lr_uses_left_channel_as_representative(self) -> None:
+        filters_l = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=2.0, q=1.0)]
+        filters_r = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=2.0, q=1.0),
+            CanonicalFilter(type="PEAK", frequency_hz=200.0, gain_db=1.0, q=1.0),
+        ]
+        profile = build_profile(
+            "Test", [], "L/R", filters_l=filters_l, filters_r=filters_r
+        )
+        # Left channel has 1 band (active); right has 2 -- representative
+        # count must be the left channel's, not a combined/right count.
+        assert profile.band_counts() == (1, 1)
+
+    def test_no_filters_returns_zero_zero(self) -> None:
+        profile = build_profile("Test", [], "Stereo")
+        assert profile.band_counts() == (0, 0)
+
+
+# ---------------------------------------------------------------------------
 # BackupRecord tests
 # ---------------------------------------------------------------------------
 

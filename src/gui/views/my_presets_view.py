@@ -279,7 +279,7 @@ class MyPresetsView(QWidget):
         self._list_widget.setVisible(True)
 
         for profile in visible_presets:
-            active_bands, total_bands = _count_bands(profile)
+            active_bands, total_bands = profile.band_counts()
             item_widget = _PresetItemWidget(
                 name=profile.name,
                 channel_mode=profile.channel_mode,
@@ -361,7 +361,7 @@ class MyPresetsView(QWidget):
 
     def _rebuild_item_widget(self, item: QListWidgetItem, profile: Profile) -> None:
         """Recreate the item widget after inline editing is complete."""
-        active_bands, total_bands = _count_bands(profile)
+        active_bands, total_bands = profile.band_counts()
         new_widget = _PresetItemWidget(
             name=profile.name,
             channel_mode=profile.channel_mode,
@@ -510,25 +510,3 @@ def _channel_mode_display(mode: str | ChannelMode) -> str:
     return "Stereo"
 
 
-def _count_bands(profile: Profile) -> tuple[int, int]:
-    """Count active and total bands for a profile.
-
-    A band is considered active if its gain is non-zero.
-
-    For L/R profiles, returns per-channel counts (each channel separately).
-
-    Args:
-        profile: The preset profile.
-
-    Returns:
-        Tuple of (active_band_count, total_band_count).
-    """
-    if profile.channel_mode == ChannelMode.STEREO:
-        filters = profile.filters or []
-    else:
-        # For L/R mode, show per-channel count (use left channel as representative)
-        filters = profile.filters_l or []
-
-    total = len(filters)
-    active = sum(1 for f in filters if f.gain_db != 0.0)
-    return active, total
