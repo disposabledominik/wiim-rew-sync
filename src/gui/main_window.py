@@ -74,7 +74,6 @@ from src.gui.secondary_workflows import (
     SecondaryWorkflowManager,
 )
 from src.gui.shared_helpers import (
-    build_profile,
     extract_filters,
     get_lr_filters,
     is_lr_mode,
@@ -105,6 +104,7 @@ from src.models.errors import (
     WiiMTimeoutError,
 )
 from src.models.peq import PEQSettings, build_peq_settings
+from src.models.profile import build_profile
 from src.repository.backup_manager import (
     BackupManager,
     load_backup_json,

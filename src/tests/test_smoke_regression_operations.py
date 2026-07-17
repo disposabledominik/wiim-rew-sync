@@ -19,7 +19,6 @@ from src.adapters.safe_write import RoomFitSafeWrite, WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.gui.shared_helpers import (
-    build_profile,
     is_lr_mode,
     parse_backup_filters,
     read_preset_preview,
@@ -29,6 +28,7 @@ from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
+from src.models.profile import build_profile
 from src.tests.conftest import close_coroutine_tree
 
 # ---------------------------------------------------------------------------
@@ -957,27 +957,6 @@ class TestImportExport:
         assert "200.00 Hz" not in left_content
         assert "100.00 Hz" not in right_content
 
-    # --- Issue #44: build_profile sanitizes name ---
-
-    def test_issue44_build_profile_removes_slashes(self) -> None:
-        """#44: build_profile removes '/' from name."""
-        filters = [_make_filter()]
-        profile = build_profile("L/R preset", filters, "Stereo")
-        assert "/" not in profile.name
-
-    def test_issue44_build_profile_removes_unsafe_chars(self) -> None:
-        """#44: build_profile removes all filesystem-unsafe characters."""
-        filters = [_make_filter()]
-        profile = build_profile('test:file*"name<>|', filters, "Stereo")
-        for ch in '/\\:*?"<>|':
-            assert ch not in profile.name
-
-    def test_issue44_build_profile_empty_name_fallback(self) -> None:
-        """#44: build_profile uses fallback name when all chars removed."""
-        filters = [_make_filter()]
-        profile = build_profile("/\\:*?", filters, "Stereo")
-        assert profile.name == "Untitled Preset"
-
     # --- Issue #51: REW file import supports L/R (two files) ---
 
     def test_issue51_lr_import_dual_file_picker(self, window, qtbot) -> None:
@@ -1797,7 +1776,7 @@ class TestPresets:
         - Review save and Push save both call MainWindow._save_filters_to_presets.
         - Review export and Push export both call MainWindow._export_filters_as_rew.
         - Presets-on-Device save (_do_preset_save) builds its Profile via the
-          same shared_helpers.build_profile() used by _save_filters_to_presets,
+          same models.profile.build_profile() used by _save_filters_to_presets,
           rather than constructing a Profile inline with duplicated
           name-sanitization/channel-split logic.
         """
@@ -1823,11 +1802,11 @@ class TestPresets:
         # (not a locally-duplicated Profile construction).
         import inspect
 
-        from src.gui.shared_helpers import build_profile as shared_build_profile
+        from src.models.profile import build_profile as canonical_build_profile
 
         source = inspect.getsource(window._primary_workflows._do_preset_save)
         assert "build_profile(" in source
-        assert shared_build_profile.__module__ == "src.gui.shared_helpers"
+        assert canonical_build_profile.__module__ == "src.models.profile"
 
     # --- Issue #53: PushPage export + save signals connected ---
 
@@ -3240,8 +3219,8 @@ class TestSharedHelpers:
         it locally.
 
         Behavior-level coverage of each individual function already exists
-        elsewhere in this file (is_lr_mode, build_profile, parse_backup_filters,
-        get_lr_filters tests above; build_peq_settings tests now live in
+        elsewhere in this file (is_lr_mode, parse_backup_filters, get_lr_filters
+        tests above; build_peq_settings/build_profile tests now live in
         test_models.py, see below); this test is specifically about the
         "single source of truth" claim: that the module exists with the
         right surface and that call-sites import from it instead of
@@ -3251,16 +3230,15 @@ class TestSharedHelpers:
 
         from src.gui import main_window, secondary_workflows, shared_helpers
         from src.models import peq
+        from src.models import profile as profile_module
         from src.translator import wiim_generator
 
         # The documented shared surface (get_lr_filters, is_lr_mode,
-        # build_profile, parse_backup_filters) plus the closely related
-        # helpers that grew out of the same consolidation (extract_filters,
-        # load_backup_json).
+        # parse_backup_filters) plus the closely related helpers that grew
+        # out of the same consolidation (extract_filters, load_backup_json).
         for name in (
             "get_lr_filters",
             "is_lr_mode",
-            "build_profile",
             "parse_backup_filters",
             "extract_filters",
             "load_backup_json",
@@ -3283,6 +3261,13 @@ class TestSharedHelpers:
         assert hasattr(peq, "build_peq_settings")
         assert callable(peq.build_peq_settings)
         assert not hasattr(shared_helpers, "build_peq_settings")
+
+        # build_profile() constructs a Profile domain model with no Qt
+        # dependency, so it moved to models.profile alongside Profile --
+        # same relocation, same reasoning.
+        assert hasattr(profile_module, "build_profile")
+        assert callable(profile_module.build_profile)
+        assert not hasattr(shared_helpers, "build_profile")
 
         # main_window.py imports from shared_helpers rather than defining its
         # own local copies of the same logic.
@@ -3407,32 +3392,6 @@ class TestSharedHelpers:
         """is_lr_mode is case-insensitive."""
         assert is_lr_mode("LR") is True
         assert is_lr_mode("Lr") is True
-
-    # --- build_profile ---
-
-    def test_build_profile_lr_without_explicit_filters_raises(self) -> None:
-        """build_profile with L/R but no filters_l/filters_r must raise."""
-        filters = [_make_filter(100), _make_filter(200)]
-        with pytest.raises(ValueError, match="refusing to guess channel split"):
-            build_profile("Test", filters, "L/R")
-
-    def test_build_profile_lr_with_explicit_filters_preserves_split(self) -> None:
-        """build_profile with explicit filters_l/filters_r uses them as-is."""
-        filters = [_make_filter(100), _make_filter(200), _make_filter(300)]
-        filters_l = filters[:1]
-        filters_r = filters[1:]
-        profile = build_profile(
-            "Test", filters, "L/R", filters_l=filters_l, filters_r=filters_r
-        )
-        assert profile.filters_l == filters_l
-        assert profile.filters_r == filters_r
-
-    def test_build_profile_stereo_keeps_filters(self) -> None:
-        """build_profile with Stereo keeps filters in single list."""
-        filters = [_make_filter(100), _make_filter(200)]
-        profile = build_profile("Test", filters, "Stereo")
-        assert profile.filters is not None
-        assert len(profile.filters) == 2
 
     # --- read_preset_preview ---
 

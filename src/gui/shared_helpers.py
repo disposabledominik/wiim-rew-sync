@@ -1,8 +1,7 @@
 """Shared helper functions for GUI layer operations.
 
 Eliminates duplication across main_window.py and secondary_workflows.py
-for channel-mode handling, filter splitting, PEQSettings construction,
-and Profile building.
+for channel-mode handling and filter splitting.
 """
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from typing import TYPE_CHECKING
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode, require_lr_filters
 from src.models.peq import PEQSettings
-from src.models.profile import Profile
 from src.repository.backup_manager import load_backup_json, parse_backup_filters
 
 if TYPE_CHECKING:
@@ -84,48 +82,6 @@ def is_lr_mode(channel_mode: str | ChannelMode) -> bool:
     if isinstance(channel_mode, ChannelMode):
         return channel_mode.is_lr
     return ChannelMode.from_any(channel_mode).is_lr
-
-
-def build_profile(
-    name: str,
-    filters: list[CanonicalFilter],
-    channel_mode: str | ChannelMode,
-    filters_l: list[CanonicalFilter] | None = None,
-    filters_r: list[CanonicalFilter] | None = None,
-) -> Profile:
-    """Sanitize name and construct Profile with correct channel mode.
-
-    Removes filesystem-unsafe characters from name.
-    For L/R mode: requires explicit filters_l/filters_r (raises ValueError
-    if missing — never guesses a channel split).
-    For stereo: uses filters directly.
-
-    Raises:
-        ValueError: L/R mode without explicit filters_l/filters_r.
-    """
-    safe_name = name.translate(str.maketrans("", "", '/\\:*?"<>|'))
-    if not safe_name:
-        safe_name = "Untitled Preset"
-
-    mode = (
-        channel_mode
-        if isinstance(channel_mode, ChannelMode)
-        else ChannelMode.from_any(channel_mode)
-    )
-
-    if mode.is_lr:
-        left, right = require_lr_filters(filters_l, filters_r)
-        return Profile(
-            name=safe_name,
-            channel_mode=ChannelMode.LR,
-            filters_l=left,
-            filters_r=right,
-        )
-    return Profile(
-        name=safe_name,
-        channel_mode=ChannelMode.STEREO,
-        filters=filters,
-    )
 
 
 # load_backup_json / parse_backup_filters live in src.repository.backup_manager

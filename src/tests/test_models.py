@@ -19,7 +19,7 @@ from src.models.errors import (
     WiiMTimeoutError,
 )
 from src.models.peq import build_peq_settings
-from src.models.profile import BackupRecord, Profile
+from src.models.profile import BackupRecord, Profile, build_profile
 from src.translator import ValidationWarning
 
 # ---------------------------------------------------------------------------
@@ -213,6 +213,49 @@ class TestProfileValidator:
                 filters_l=_sample_filters(),
                 filters_r=_sample_filters(),
             )
+
+
+# ---------------------------------------------------------------------------
+# build_profile tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildProfile:
+    """Tests for build_profile() -- Profile construction with name
+    sanitization and channel-mode splitting, moved here from
+    src.gui.shared_helpers (no Qt dependency, belongs with the model it
+    constructs)."""
+
+    def test_removes_slashes_from_name(self) -> None:
+        profile = build_profile("L/R preset", _sample_filters(), "Stereo")
+        assert "/" not in profile.name
+
+    def test_removes_all_unsafe_chars_from_name(self) -> None:
+        profile = build_profile('test:file*"name<>|', _sample_filters(), "Stereo")
+        for ch in '/\\:*?"<>|':
+            assert ch not in profile.name
+
+    def test_empty_name_after_sanitizing_falls_back_to_untitled(self) -> None:
+        profile = build_profile("/\\:*?", _sample_filters(), "Stereo")
+        assert profile.name == "Untitled Preset"
+
+    def test_lr_without_explicit_filters_raises(self) -> None:
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            build_profile("Test", _sample_filters(), "L/R")
+
+    def test_lr_with_explicit_filters_preserves_split(self) -> None:
+        filters_l = _sample_filters()
+        filters_r = [CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=0.0, q=1.0)]
+        profile = build_profile(
+            "Test", [], "L/R", filters_l=filters_l, filters_r=filters_r
+        )
+        assert profile.filters_l == filters_l
+        assert profile.filters_r == filters_r
+
+    def test_stereo_keeps_filters_in_single_list(self) -> None:
+        filters = _sample_filters()
+        profile = build_profile("Test", filters, "Stereo")
+        assert profile.filters == filters
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, model_validator
 
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode, ChannelModeField
+from src.models.channel_mode import ChannelMode, ChannelModeField, require_lr_filters
 
 
 class Profile(BaseModel):
@@ -70,3 +70,45 @@ class BackupRecord(Profile):
     # subsystem's enable-state it carries. None for RoomFit backups and any
     # backup file created before this field's introduction.
     pre_write_peq_enabled: bool | None = None
+
+
+def build_profile(
+    name: str,
+    filters: list[CanonicalFilter],
+    channel_mode: str | ChannelMode,
+    filters_l: list[CanonicalFilter] | None = None,
+    filters_r: list[CanonicalFilter] | None = None,
+) -> Profile:
+    """Sanitize name and construct Profile with correct channel mode.
+
+    Removes filesystem-unsafe characters from name.
+    For L/R mode: requires explicit filters_l/filters_r (raises ValueError
+    if missing -- never guesses a channel split).
+    For stereo: uses filters directly.
+
+    Raises:
+        ValueError: L/R mode without explicit filters_l/filters_r.
+    """
+    safe_name = name.translate(str.maketrans("", "", '/\\:*?"<>|'))
+    if not safe_name:
+        safe_name = "Untitled Preset"
+
+    mode = (
+        channel_mode
+        if isinstance(channel_mode, ChannelMode)
+        else ChannelMode.from_any(channel_mode)
+    )
+
+    if mode.is_lr:
+        left, right = require_lr_filters(filters_l, filters_r)
+        return Profile(
+            name=safe_name,
+            channel_mode=ChannelMode.LR,
+            filters_l=left,
+            filters_r=right,
+        )
+    return Profile(
+        name=safe_name,
+        channel_mode=ChannelMode.STEREO,
+        filters=filters,
+    )
