@@ -216,8 +216,9 @@ session by extracting a shared `add_optional_warning_box(layout, warning, ...)` 
 (`src/gui/components/warning_box.py`). What's *not* fixed: the `warning` param, its docstring,
 and the `setMinimumWidth(420 if warning else ...)` width-bump convention are still hand-duplicated
 in each dialog's `__init__`/static factory method rather than coming from a shared base class or
-mixin — `PushConfirmation` (a third dialog using the underlying `make_warning_box()` directly,
-without the optional-param wrapper) makes it a third slightly-different convention already.
+mixin. **Correction (2026-07-17):** this entry originally cited `PushConfirmation` as a third,
+differently-conventioned caller of the underlying `make_warning_box()` — that class was dead code
+(zero production references) and has since been deleted; only the two dialogs below remain.
 
 **Why deferred:** Only two dialogs currently need the optional-warning constructor pattern; a
 third would justify extracting a shared base (`WarningDialogBase`/`OptionalWarningMixin`) with

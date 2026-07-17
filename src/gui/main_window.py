@@ -3767,9 +3767,9 @@ class MainWindow(QMainWindow):
         """Shared Yes/No confirmation dialog, default button No.
 
         Uses the same styled yellow warning-box treatment as
-        DevicePickerDialog/QuickSetupDialog/PushConfirmation, rather than a
-        plain QMessageBox, so every "this will change state" confirmation in
-        the app reads consistently.
+        DevicePickerDialog/QuickSetupDialog, rather than a plain
+        QMessageBox, so every "this will change state" confirmation in the
+        app reads consistently.
 
         Args:
             title: Warning box header text.
