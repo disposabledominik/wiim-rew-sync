@@ -193,13 +193,56 @@ callers. Exact current sizes: `_do_push` 127, `_do_copy_preset_to_device`
 85, `_do_copy_presets_batch_multi` 63, `_do_copy_local_profile_to_devices`
 55, `_do_undo_roomfit` 49, `_do_undo_multi_source` 38, plus the two shared
 helpers above — **495 lines total** (~12% of the file), which would drop
-`main_window.py` from 4,169 to roughly 3,674 lines. **Decision: not
-pursued.** This group is what runs through the 5-step safety protocol
-(Backup → Write → Read Back → Verify → Rollback) — CLAUDE.md's "Safety
-before convenience" principle argues for a much more careful, dedicated
-effort than a routine extraction pass if this is ever revisited, not
-something to fold into an incremental phase. No further extraction phases
-are planned for this item.
+`main_window.py` from 4,169 to roughly 3,674 lines. **Decision (2026-07-14):
+not pursued at the time** — this group runs through the 5-step safety
+protocol (Backup → Write → Read Back → Verify → Rollback), and CLAUDE.md's
+"Safety before convenience" principle argued for a much more careful,
+dedicated effort than a routine extraction pass, not something to fold
+into an incremental phase.
+
+**Update (2026-07-17): the dedicated effort happened, and this decision is
+superseded.** The user explicitly requested it, and a 4-pass adversarial plan
+review (checking for new bugs, duplication, and missed consolidation
+opportunities before each execution pass) preceded implementation. All 6
+deferred methods plus `_do_raw_command` are now out of `main_window.py`,
+across a 6-commit sequence on `PrimaryWorkflowManager`/
+`SecondaryWorkflowManager` (`dfd7628`, `1a14ded`, `338894c`, `ef6a05e`,
+`76b2a4c`, characterization tests added first in `009a779`):
+- `_do_raw_command`, `_do_push` → `PrimaryWorkflowManager` (mechanical
+  moves; `_do_push` already touched no widgets, `_do_raw_command` was
+  trivial).
+- `_do_undo_roomfit`, `_do_undo_multi_source`, `_read_preset_to_copy`,
+  `_do_copy_preset_to_device`, `_write_preset_copies_to_devices`,
+  `_do_copy_presets_batch_multi`, `_do_copy_local_profile_to_devices` →
+  `SecondaryWorkflowManager`. Each method's direct `self._status_banner`/
+  `self._push_page` widget calls were converted to signal emissions
+  (`undo_complete`, reused as-is, plus two new signals —
+  `copy_batch_complete(int, int, int, int)` and
+  `copy_local_profile_complete(str, int, int, int)`, kept separate rather
+  than merged since the two summaries need genuinely different data
+  shapes) — same widget→signal pattern Phase 5 established for
+  `presets_delete_complete`. `configure()` gained
+  `roomfit_safe_write_factory` plus three target-device connection
+  factories (`wiim_http_client_factory`, `capability_prober_factory`,
+  `target_adapter_factory` — pure pass-through of `MainWindow`'s existing
+  `adapter_factories.py`-backed attributes, not new factory logic).
+- The `_do_undo_multi_source` scheduling-vs-outcome race flagged in the
+  post-Phase-5 audit was deliberately characterized with tests (`009a779`)
+  and preserved as-is during the move, not fixed — moving code was not the
+  moment to also change its behavior.
+- This same effort also closed several smaller GUI-layer leaks found
+  during a fresh sweep: `shared_helpers.py`'s model-construction functions
+  moved to `models/peq.py`/`models/profile.py`/`models/channel_mode.py`
+  (the file itself was deleted once empty), `MyPresetsView._count_bands()`
+  moved to `Profile.band_counts()`, a hardcoded RoomFit-blocked-model
+  substring check in `_on_capabilities_ready` was consolidated into
+  `CapabilityProber.probe()` (which already made the same decision
+  data-driven via `device_capabilities.json`), and a hardcoded diff-display
+  tolerance in `filter_table.py` was replaced with the canonical
+  `fp_compare.gain_matches()`.
+
+`main_window.py` is now 3,732 lines (down from 4,169 pre-Phase-D). No
+further extraction phases are planned for this item.
 
 ---
 
