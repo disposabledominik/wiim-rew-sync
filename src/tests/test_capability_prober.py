@@ -646,6 +646,43 @@ class TestRoomfitModelFallback:
         assert caps.supports_roomfit_read is True
         assert caps.supports_roomfit_write is True
 
+    @pytest.mark.asyncio
+    async def test_partial_capability_file_match_does_not_bypass_fallback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression test (branch-quality review, 2026-07-17): a
+        capability-file entry that matches a "mini"-substring model but only
+        sets an unrelated field (max_bands here, not any supports_roomfit*/
+        roomfit_level field) must NOT bypass the smoke #36 fallback.
+
+        Before the fix, the fallback gated on caps.capability_file_override
+        (set to True by merge_into() whenever ANY entry field matched,
+        regardless of which fields), so this exact scenario would silently
+        skip the correction and leave supports_roomfit_read at its
+        (incorrectly) probed True value.
+        """
+        from src.models.device_capability_file import CapabilityFileEntry, LoadedCapabilityFile
+
+        monkeypatch.setattr(
+            "src.adapters.capability_prober.get_cached_capability_file",
+            lambda: LoadedCapabilityFile(
+                entries={"WiiM_Mini_2": CapabilityFileEntry(max_bands=12)},
+                default_max_bands=10,
+            ),
+        )
+
+        client = self._client_with(
+            "WiiM Mini 2", TestAcousticCapabilityProbe.ACOUSTIC_FULL
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.capability_file_override is True  # the max_bands entry did match
+        assert caps.supports_roomfit is False  # but the fallback still fired
+        assert caps.supports_roomfit_read is False
+        assert caps.supports_roomfit_write is False
+
 
 class TestRoomFitFallbackProbe:
     """The read-only per-command RoomFit fallback (devices without
