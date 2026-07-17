@@ -24,8 +24,8 @@ import logging
 
 from src.models.canonical import CanonicalFilter, FilterType
 from src.models.constants import DEFAULT_MAX_BANDS, GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
-from src.translator._warnings import ValidationWarning
-from src.utils.clamping import clamp_with_warning
+from src.translator._warnings import FilterRow, SkippedBand, ValidationWarning
+from src.utils.clamping import clamp, clamp_with_warning
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
@@ -175,10 +175,161 @@ def clamp_filters_for_verification(
     truncated = filters[:max_bands]
     clamped: list[CanonicalFilter] = []
     for f in truncated:
-        gain = min(max(f.gain_db, _GAIN_MIN), _GAIN_MAX)
-        q = min(max(f.q, _Q_MIN), _Q_MAX)
+        gain = clamp(f.gain_db, _GAIN_MIN, _GAIN_MAX)
+        q = clamp(f.q, _Q_MIN, _Q_MAX)
         if gain != f.gain_db or q != f.q:
             clamped.append(f.model_copy(update={"gain_db": gain, "q": q}))
         else:
             clamped.append(f)
     return clamped
+
+
+# ---------------------------------------------------------------------------
+# Import validation -- truncation and clamping detection
+# ---------------------------------------------------------------------------
+
+_DEVICE_FILTER_TYPES = {"PEAK", "LS", "HS", "LP", "HP"}
+
+
+def validate_filters_for_device(
+    filters: list[CanonicalFilter],
+    max_filters: int = DEFAULT_MAX_BANDS,
+    rows: list[FilterRow] | None = None,
+    supported_filter_types: list[str] | None = None,
+) -> tuple[list[CanonicalFilter], list[str], dict[int, list[str]], list[FilterRow]]:
+    """Validate and prepare filters for a WiiM device.
+
+    Checks for:
+    - Filter types this device doesn't support (skips them; see
+      supported_filter_types below)
+    - More filters than device supports (truncates to max_filters)
+    - Gain values outside +/-12 dB (flags for clamping)
+    - Q values outside 0.01-24 (flags for clamping)
+
+    Does NOT modify gain/Q values — only flags them. Actual clamping is done
+    by generate_wiim_band_array() at write time.
+
+    Args:
+        filters: List of CanonicalFilter objects from import.
+        max_filters: Device's maximum supported bands (default 10).
+        rows: Optional display rows in original order (from REWParser's
+            *_with_rows methods), used to mark truncated-away bands as
+            disabled placeholders instead of dropping them silently. When
+            omitted, defaults to `filters` itself (no prior skips to preserve).
+        supported_filter_types: Device's supported canonical filter types
+            (DeviceCapabilities.supported_filter_types, e.g. from the device
+            capability file -- a WiiM Mini entry without "LP"/"HP" listed).
+            Empty/None means "no restriction" (every device-probe path that
+            doesn't set this stays exactly as before this check existed).
+
+    Returns:
+        Tuple of:
+        - truncated_filters: filters capped to max_filters, with
+          type-unsupported bands already removed
+        - warnings: list of human-readable warning strings for the UI
+        - clamping_map: dict mapping band index (0-based) to list of
+          clamping reasons (for ReviewPage orange indicators)
+        - rows: display rows with any skipped/truncated-away bands converted
+          to SkippedBand placeholders, in original order
+    """
+    if rows is None:
+        rows = list(filters)
+
+    warnings: list[str] = []
+    clamping_map: dict[int, list[str]] = {}
+
+    # Device filter-type support check — runs before band-limit truncation
+    # so an unsupported-type band doesn't consume a slot it could never use.
+    # OFF/UNKNOWN aren't "filter types" needing device support, so they're
+    # left alone regardless of what's listed.
+    if supported_filter_types:
+        allowed = set(supported_filter_types)
+        unsupported_types: set[str] = set()
+        type_filtered_rows: list[FilterRow] = []
+        kept_filters: list[CanonicalFilter] = []
+        for row in rows:
+            if (
+                isinstance(row, CanonicalFilter)
+                and row.type in _DEVICE_FILTER_TYPES
+                and row.type not in allowed
+            ):
+                unsupported_types.add(row.type)
+                type_filtered_rows.append(
+                    SkippedBand(
+                        original_type=row.type,
+                        reason=f"'{row.type}' filter type is not supported on this device",
+                        frequency_hz=row.frequency_hz,
+                        gain_db=row.gain_db,
+                        q=row.q,
+                    )
+                )
+            else:
+                type_filtered_rows.append(row)
+                if isinstance(row, CanonicalFilter):
+                    kept_filters.append(row)
+        rows = type_filtered_rows
+        filters = kept_filters
+        if unsupported_types:
+            warnings.append(
+                "Filter type(s) "
+                + ", ".join(sorted(unsupported_types))
+                + " are not supported on this device and were skipped."
+            )
+
+    # Truncation check
+    if len(filters) > max_filters:
+        excess_count = len(filters) - max_filters
+        warnings.append(
+            f"Imported {len(filters)} filters but device supports {max_filters}. "
+            f"Only the first {max_filters} will be used."
+        )
+        filters = filters[:max_filters]
+
+        # Mark the trailing excess CanonicalFilter rows as truncated
+        # placeholders, preserving their original position among any
+        # earlier skip placeholders already present.
+        remaining = excess_count
+        new_rows: list[FilterRow] = []
+        for row in reversed(rows):
+            if remaining > 0 and isinstance(row, CanonicalFilter):
+                new_rows.append(
+                    SkippedBand(
+                        original_type=row.type,
+                        reason=f"Exceeds device's {max_filters}-band limit",
+                        frequency_hz=row.frequency_hz,
+                        gain_db=row.gain_db,
+                        q=row.q,
+                    )
+                )
+                remaining -= 1
+            else:
+                new_rows.append(row)
+        rows = list(reversed(new_rows))
+
+    # Gain/Q clamping check (per band) -- uses the same clamp_with_warning()
+    # boundary logic generate_wiim_band_array() applies at write time, so
+    # this pre-write detection can't drift from what actually gets clamped.
+    for i, f in enumerate(filters):
+        reasons: list[str] = []
+
+        _, gain_reason = clamp_with_warning(
+            f.gain_db, _GAIN_MIN, _GAIN_MAX, "gain", unit=" dB", signed=True
+        )
+        if gain_reason is not None:
+            reasons.append(gain_reason)
+
+        _, q_reason = clamp_with_warning(f.q, _Q_MIN, _Q_MAX, "Q")
+        if q_reason is not None:
+            reasons.append(q_reason)
+
+        if reasons:
+            clamping_map[i] = reasons
+
+    # Summarize clamping
+    if clamping_map:
+        n_clamped = len(clamping_map)
+        warnings.append(
+            f"{n_clamped} band(s) have values outside WiiM limits and will be clamped on push."
+        )
+
+    return filters, warnings, clamping_map, rows

@@ -12,14 +12,12 @@ from src.gui import main_window
 from src.gui.components.sidebar_nav import SidebarNav
 from src.gui.pages.push_page import PushPage
 from src.gui.primary_workflows import PrimaryWorkflowManager
-from src.gui.shared_helpers import validate_filters_for_device
 from src.gui.wizard_controller import FlowType, WizardController, WizardState, WizardStep
 from src.logging.setup import configure_logging, install_crash_handler
 from src.models import constants as model_constants
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.tests.conftest import close_coroutine_tree
-from src.translator._warnings import FilterRow, SkippedBand
 
 
 # Issue 101: Band-param helper _flat_array_to_band_params used across adapter write paths
@@ -45,22 +43,27 @@ def test_hardware_constants_present():
     assert model_constants.Q_MIN < model_constants.Q_MAX
 
 
-# Issue 100: wiim_generator and shared_helpers must import the shared
-# constants rather than defining their own independent literals. Numeric
-# equality (the previous test's only real check) can't catch a reintroduced
-# duplicate that merely happens to match today's values -- `is` identity on
-# the private module-level aliases proves they're the *same object* bound
-# from src.models.constants, so any future duplicate literal (numerically
-# equal or not) fails this test immediately.
+# Issue 100: wiim_generator must import the shared constants rather than
+# defining its own independent literals. Numeric equality (the previous
+# test's only real check) can't catch a reintroduced duplicate that merely
+# happens to match today's values -- `is` identity on the private
+# module-level aliases proves they're the *same object* bound from
+# src.models.constants, so any future duplicate literal (numerically equal
+# or not) fails this test immediately.
+#
+# shared_helpers no longer has its own copies of these aliases:
+# validate_filters_for_device() (the only thing in that module that needed
+# them) moved to src.translator.wiim_generator, since it's business logic
+# with no Qt dependency, not GUI code -- see TestSharedHelpers.
+# test_issue64_shared_helpers_created in test_smoke_regression_operations.py
+# for the regression guard against it moving back.
 def test_hardware_constants_imported_not_duplicated():
-    import src.gui.shared_helpers as shared_helpers
     import src.translator.wiim_generator as wiim_generator
 
-    for module in (wiim_generator, shared_helpers):
-        assert module._GAIN_MIN is model_constants.GAIN_MIN
-        assert module._GAIN_MAX is model_constants.GAIN_MAX
-        assert module._Q_MIN is model_constants.Q_MIN
-        assert module._Q_MAX is model_constants.Q_MAX
+    assert wiim_generator._GAIN_MIN is model_constants.GAIN_MIN
+    assert wiim_generator._GAIN_MAX is model_constants.GAIN_MAX
+    assert wiim_generator._Q_MIN is model_constants.Q_MIN
+    assert wiim_generator._Q_MAX is model_constants.Q_MAX
 
 
 # Issue 102: install_crash_handler should log unhandled exceptions to app.log
@@ -172,106 +175,11 @@ async def test_do_load_peq_preset_updates_channel_mode_and_emits():
     assert "val" in emitted
 
 
-# Issue 100: validate_filters_for_device should truncate to device max and flag clamped bands
-def test_validate_filters_for_device_truncation_and_clamping():
-    filters = []
-    for i in range(12):
-        freq = 100.0 + i
-        gain = 20.0 if i % 2 == 0 else -20.0
-        q_val = 100.0 if i % 3 == 0 else 0.001
-        filters.append(
-            CanonicalFilter(
-                type="PEAK",
-                frequency_hz=freq,
-                gain_db=gain,
-                q=q_val,
-            )
-        )
-
-    truncated, warnings, clamping_map, rows = validate_filters_for_device(filters, max_filters=10)
-    assert len(truncated) == 10
-    assert any("Only the first" in w for w in warnings)
-    assert clamping_map
-    assert rows
-
-
-# Phase B3: bands cut for exceeding the device's band cap render as disabled
-# placeholders (not silently dropped), preserving their original position.
-def test_validate_filters_for_device_truncated_bands_become_skipped_rows():
-    filters = [
-        CanonicalFilter(type="PEAK", frequency_hz=100.0 + i, gain_db=1.0, q=1.0)
-        for i in range(12)
-    ]
-
-    _truncated, _warnings, _clamping_map, rows = validate_filters_for_device(
-        filters, max_filters=10
-    )
-
-    assert len(rows) == 12
-    kept, cut = rows[:10], rows[10:]
-    assert all(isinstance(r, CanonicalFilter) for r in kept)
-    assert all(isinstance(r, SkippedBand) for r in cut)
-    first_cut = cut[0]
-    assert isinstance(first_cut, SkippedBand)
-    assert first_cut.original_type == "PEAK"
-    assert "10-band limit" in first_cut.reason
-    # Truncated bands keep their original values for display
-    assert first_cut.frequency_hz == filters[10].frequency_hz
-
-
-def test_validate_filters_for_device_preserves_parser_skip_rows():
-    """Skip placeholders from the parser survive truncation untouched."""
-    filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)]
-    skip = SkippedBand(original_type="Notch", reason="No WiiM equivalent")
-    rows_in: list[FilterRow] = [skip, filters[0]]
-
-    _truncated, _warnings, _clamping_map, rows_out = validate_filters_for_device(
-        filters, max_filters=10, rows=rows_in
-    )
-
-    assert rows_out == [skip, filters[0]]
-
-
-# Issue 150: supported_filter_types from the device capability file was
-# defined on DeviceCapabilities and merged in, but never actually consulted
-# anywhere -- a WiiM Mini entry without "LP"/"HP" listed had no effect on
-# the Review step or the filters actually written to the device.
-def test_validate_filters_for_device_skips_unsupported_types():
-    filters = [
-        CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0),
-        CanonicalFilter(type="LP", frequency_hz=8000.0, gain_db=0.0, q=0.7071),
-        CanonicalFilter(type="HP", frequency_hz=30.0, gain_db=0.0, q=0.7071),
-    ]
-
-    truncated, warnings, _clamping_map, rows = validate_filters_for_device(
-        filters, max_filters=10, supported_filter_types=["PEAK", "LS", "HS"]
-    )
-
-    assert len(truncated) == 1
-    assert truncated[0].type == "PEAK"
-    assert any("LP" in w and "HP" in w for w in warnings)
-
-    assert len(rows) == 3
-    assert isinstance(rows[0], CanonicalFilter)
-    skipped_lp, skipped_hp = rows[1], rows[2]
-    assert isinstance(skipped_lp, SkippedBand)
-    assert skipped_lp.original_type == "LP"
-    assert "not supported on this device" in skipped_lp.reason
-    assert isinstance(skipped_hp, SkippedBand)
-    assert skipped_hp.original_type == "HP"
-
-
-def test_validate_filters_for_device_no_type_restriction_when_unset():
-    """Empty/None supported_filter_types means no restriction (default behavior)."""
-    filters = [CanonicalFilter(type="LP", frequency_hz=8000.0, gain_db=0.0, q=0.7071)]
-
-    truncated, warnings, _clamping_map, rows = validate_filters_for_device(
-        filters, max_filters=10, supported_filter_types=None
-    )
-
-    assert len(truncated) == 1
-    assert rows == filters
-    assert warnings == []
+# Issue 100/Phase B3/Issue 150: validate_filters_for_device tests moved to
+# test_wiim_generator.py (TestValidateFiltersForDevice) -- the function
+# itself moved from src.gui.shared_helpers to src.translator.wiim_generator
+# (no Qt dependency; it's business logic, not GUI code), and its tests
+# moved with it to mirror the project's src/ <-> tests/ structure.
 
 
 # Issue 98: PushPage.reset must clear stale DRY RUN content from previous runs

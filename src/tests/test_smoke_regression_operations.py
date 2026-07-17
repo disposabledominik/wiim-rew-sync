@@ -3214,11 +3214,12 @@ class TestSharedHelpers:
         import inspect
 
         from src.gui import main_window, secondary_workflows, shared_helpers
+        from src.translator import wiim_generator
 
         # The documented shared surface (get_lr_filters, is_lr_mode,
         # build_peq_settings, build_profile, parse_backup_filters) plus the
         # closely related helpers that grew out of the same consolidation
-        # (extract_filters, load_backup_json, validate_filters_for_device).
+        # (extract_filters, load_backup_json).
         for name in (
             "get_lr_filters",
             "is_lr_mode",
@@ -3227,10 +3228,18 @@ class TestSharedHelpers:
             "parse_backup_filters",
             "extract_filters",
             "load_backup_json",
-            "validate_filters_for_device",
         ):
             assert hasattr(shared_helpers, name), f"shared_helpers missing {name}"
             assert callable(getattr(shared_helpers, name))
+
+        # validate_filters_for_device() has no Qt dependency and is business
+        # logic (filter-type exclusion, truncation, clamp-detection), so it
+        # moved to translator.wiim_generator -- same single-source-of-truth
+        # requirement as the loop above, just relocated with the function.
+        # Guard against it creeping back into shared_helpers as a second copy.
+        assert hasattr(wiim_generator, "validate_filters_for_device")
+        assert callable(wiim_generator.validate_filters_for_device)
+        assert not hasattr(shared_helpers, "validate_filters_for_device")
 
         # main_window.py imports from shared_helpers rather than defining its
         # own local copies of the same logic.

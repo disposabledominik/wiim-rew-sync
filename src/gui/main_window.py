@@ -1574,7 +1574,7 @@ class MainWindow(QMainWindow):
             error banner; the caller must return without advancing the
             wizard.
         """
-        from src.gui.shared_helpers import validate_filters_for_device
+        from src.translator.wiim_generator import validate_filters_for_device
 
         # Determine device max_filters and supported filter types
         max_filters = DEFAULT_MAX_BANDS
