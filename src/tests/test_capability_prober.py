@@ -561,6 +561,92 @@ class TestAcousticCapabilityProbe:
         assert len(fallback_lists) == 1
 
 
+class TestRoomfitModelFallback:
+    """_apply_roomfit_model_fallback() -- a defensive fallback for RoomFit
+    support on model strings not yet listed in the capability file (smoke
+    #36), consolidated here from what used to be a duplicate, GUI-layer-only
+    check in MainWindow._on_capabilities_ready()."""
+
+    @staticmethod
+    def _client_with(project: str, acoustic_response: dict) -> WiiMHttpClient:
+        client = _make_mock_client()
+        status = {**STATUS_EX_WIIM_PRO, "project": project}
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return status
+            if cmd == "GetAcousticCapability":
+                return acoustic_response
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return EQ_GET_LV2_BAND_RESPONSE
+            if cmd.startswith("EQv2GetNewList:"):
+                if '"EQLevel": 2' in unquote(cmd):
+                    return {
+                        "custom": [
+                            {"Name": "RF1", "channelMode": "Stereo", "Type": "RC"}
+                        ],
+                        "preset": [],
+                    }
+                return EQ_GET_LV2_LIST_RESPONSE
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_exact_capability_file_match_takes_precedence(self) -> None:
+        """"WiiM_Mini" is an exact capability-file match -- confirms the
+        fallback doesn't need to run (and doesn't override) when the
+        precise, file-driven path already applies."""
+        client = self._client_with(
+            "WiiM_Mini", TestAcousticCapabilityProbe.ACOUSTIC_FULL
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.capability_file_override is True
+        assert caps.supports_roomfit_read is False
+
+    @pytest.mark.asyncio
+    async def test_unlisted_mini_variant_forces_roomfit_off(self) -> None:
+        """A model string containing "mini" that does NOT match the
+        capability file's exact key/alias (confirmed: "WiiM Mini 2" does not
+        equal "WiiM_Mini"/"Muzo_Mini" under case/space/underscore-insensitive
+        matching) still gets supports_roomfit* forced off, even though
+        GetAcousticCapability's RC block would otherwise report full
+        support -- the substring fallback this test exercises, which the
+        exact-match test above confirms is not needed for already-listed
+        models."""
+        client = self._client_with(
+            "WiiM Mini 2", TestAcousticCapabilityProbe.ACOUSTIC_FULL
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.capability_file_override is False
+        assert caps.supports_roomfit is False
+        assert caps.supports_roomfit_read is False
+        assert caps.supports_roomfit_write is False
+
+    @pytest.mark.asyncio
+    async def test_non_mini_model_unaffected(self) -> None:
+        """A model with no capability-file entry and no "mini" in its name
+        keeps its genuinely-probed RoomFit support untouched."""
+        client = self._client_with(
+            "WiiM Amp Ultra", TestAcousticCapabilityProbe.ACOUSTIC_FULL
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.capability_file_override is False
+        assert caps.supports_roomfit is True
+        assert caps.supports_roomfit_read is True
+        assert caps.supports_roomfit_write is True
+
+
 class TestRoomFitFallbackProbe:
     """The read-only per-command RoomFit fallback (devices without
     GetAcousticCapability). Detection is: non-empty custom list, then a

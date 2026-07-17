@@ -1525,22 +1525,13 @@ class MainWindow(QMainWindow):
         self._device_caps = caps
         device_name = self._resolve_connect_summary()
 
-        # Determine flow type and advance wizard
-        # Guard: some devices may incorrectly report RoomFit support due to
-        # firmware variations. Use model name as secondary check (smoke #36).
-        model_str = (getattr(caps, "model", "") or "").lower()
-        roomfit_blocked_models = ("mini",)  # Models known to not support RoomFit
-        is_roomfit_blocked = any(m in model_str for m in roomfit_blocked_models)
-
-        if not roomfit_readable or is_roomfit_blocked:
+        # Determine flow type and advance wizard. caps.supports_roomfit_read
+        # is already corrected for devices known to incorrectly report
+        # RoomFit support (smoke #36) -- capability_prober.py's
+        # _apply_roomfit_model_fallback() forces it off during probe(), so
+        # there's no model-name special-casing to do here.
+        if not roomfit_readable:
             # PEQ-only device — skip EQ_TYPE step (Req 1.10)
-            if is_roomfit_blocked and roomfit_readable:
-                logger.warning(
-                    "Device model '%s' reports RoomFit read support but "
-                    "RoomFit is not supported on this model; forcing "
-                    "PEQ_ONLY flow (smoke #36)",
-                    model_str,
-                )
             self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
             self._wizard_controller.advance(summary=device_name)
         else:

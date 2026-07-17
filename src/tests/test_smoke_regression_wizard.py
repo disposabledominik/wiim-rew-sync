@@ -385,18 +385,36 @@ class TestIssue35AllCommonSources:
 
 
 # ---------------------------------------------------------------------------
-# Issue #36: WiiM Mini (roomfit_level >= 2 but in blocklist) -> PEQ_ONLY flow
+# Issue #36: a model known not to support RoomFit -> PEQ_ONLY flow, even if
+# it reports otherwise (model-name distrust now lives in CapabilityProber,
+# not here -- see the class docstring below).
 # ---------------------------------------------------------------------------
 
 
 class TestIssue36MiniRoomfitBlocklist:
-    """Smoke #36: WiiM Mini with roomfit_level=2 forced to PEQ_ONLY flow."""
+    """Smoke #36: a model known not to support RoomFit gets PEQ_ONLY flow
+    even if it reports otherwise.
 
-    def test_wiim_mini_roomfit_level_2_forced_peq_only(self, window) -> None:
-        """WiiM Mini with roomfit_level=2 gets PEQ_ONLY flow (blocklisted)."""
+    The model-name distrust check itself has moved out of
+    MainWindow._on_capabilities_ready() into
+    CapabilityProber._apply_roomfit_model_fallback() (see
+    test_capability_prober.py::TestRoomfitModelFallback for that coverage,
+    exercised through the real probe() flow rather than a hand-built caps
+    mock) -- _on_capabilities_ready() now simply trusts
+    caps.supports_roomfit_read, which the prober has already corrected by
+    the time this handler runs. The test below confirms that trust: given
+    an already-corrected caps object (supports_roomfit_read=False,
+    regardless of what model name it carries), the wizard still ends up
+    PEQ_ONLY -- there's no remaining model-string special-casing in this
+    handler to test directly.
+    """
+
+    def test_roomfit_read_false_forces_peq_only_regardless_of_model(self, window) -> None:
+        """caps.supports_roomfit_read=False (however it was determined)
+        always yields PEQ_ONLY -- no model-name logic left in this handler."""
         window._on_device_selected("192.168.1.100")
 
-        caps = _make_caps(model="WiiM Mini", roomfit_level=2, source_names=["wifi", "bluetooth"])
+        caps = _make_caps(model="WiiM Mini", roomfit_level=0, source_names=["wifi", "bluetooth"])
         window._on_capabilities_ready(caps)
 
         assert window._wizard_controller.flow_type == FlowType.PEQ_ONLY

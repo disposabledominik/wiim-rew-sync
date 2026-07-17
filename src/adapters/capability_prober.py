@@ -126,7 +126,40 @@ class CapabilityProber:
         """
         loaded = get_cached_capability_file()
         entry = find_entry(caps.model, loaded.entries)
-        return merge_into(caps, entry, default_max_bands=loaded.default_max_bands)
+        merged = merge_into(caps, entry, default_max_bands=loaded.default_max_bands)
+        return self._apply_roomfit_model_fallback(merged)
+
+    def _apply_roomfit_model_fallback(self, caps: DeviceCapabilities) -> DeviceCapabilities:
+        """Defensive fallback for RoomFit support on models not yet listed
+        in the capability file.
+
+        The capability file's "WiiM_Mini"/"Muzo_Mini" entry already forces
+        supports_roomfit* to False via an exact key/alias match (see
+        merge_into()). This is a broader, lower-precision safety net for a
+        model variant not yet added as an alias: if the model string
+        contains "mini" case-insensitively but no capability-file entry
+        matched (caps.capability_file_override is still False), some
+        devices are known to incorrectly report RoomFit read support
+        anyway (smoke #36) -- force it off here too, so every caller of
+        probe() gets the same corrected value rather than each caller
+        re-implementing this same distrust check.
+        """
+        if caps.capability_file_override:
+            return caps
+        model_str = (caps.model or "").lower()
+        if "mini" not in model_str:
+            return caps
+        if caps.supports_roomfit or caps.supports_roomfit_read or caps.supports_roomfit_write:
+            logger.warning(
+                "Device model '%s' reports RoomFit support but is not listed "
+                "in the capability file's RoomFit-supporting models; forcing "
+                "supports_roomfit* off (smoke #36)",
+                caps.model,
+            )
+        caps.supports_roomfit = False
+        caps.supports_roomfit_read = False
+        caps.supports_roomfit_write = False
+        return caps
 
     async def _probe_status(self, caps: DeviceCapabilities) -> dict[str, Any]:
         """Probe getStatusEx for device identity."""
