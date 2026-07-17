@@ -2857,6 +2857,9 @@ class MainWindow(QMainWindow):
         self._secondary_workflows.undo_complete.connect(
             self._on_undo_complete
         )
+        self._secondary_workflows.undo_multi_source_complete.connect(
+            self._on_undo_multi_source_complete
+        )
         self._secondary_workflows.source_slots_ready.connect(
             self._diagnostics_panel.on_source_slots_ready
         )
@@ -3438,6 +3441,33 @@ class MainWindow(QMainWindow):
             self._status_banner.show_success(message)
         else:
             self._status_banner.show_error(f"Undo failed: {message}")
+
+    @Slot(int, int, str)
+    def _on_undo_multi_source_complete(
+        self, succeeded: int, failed: int, message: str
+    ) -> None:
+        """Handle multi-source undo completion — show result in StatusBanner.
+
+        Unlike _on_undo_complete's binary success flag, a multi-source undo
+        can partially succeed: the pushed-filters snapshot must be cleared
+        whenever any source was actually restored (succeeded > 0), which is
+        independent of whether the banner shows success (failed == 0) —
+        these conditions only coincide for the single-source undo paths.
+
+        Args:
+            succeeded: Number of sources whose restore was scheduled
+                successfully (see SecondaryWorkflowManager.undo_multi_source_complete
+                docstring for the scheduling-vs-outcome caveat).
+            failed: Number of sources whose restore failed to schedule.
+            message: Human-readable result summary.
+        """
+        if succeeded > 0:
+            self._clear_pushed_snapshot()
+        if failed == 0:
+            self._push_page.mark_undo_complete(True)
+            self._status_banner.show_success(message)
+        else:
+            self._status_banner.show_error(message)
 
     @Slot(int, int, int, int)
     def _on_copy_batch_complete(

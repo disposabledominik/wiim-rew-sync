@@ -321,13 +321,15 @@ class TestUndoMultiSource:
             side_effect=lambda src, path: scheduled.append((src, path))
         )
 
-        undo_signals: list[tuple[bool, str]] = []
-        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+        undo_signals: list[tuple[int, int, str]] = []
+        manager.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
+        )
 
         await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
 
         assert scheduled == [("wifi", "/tmp/backup_wifi.json")]
-        assert undo_signals == [(True, "All 1 source(s) restored from backup")]
+        assert undo_signals == [(1, 0, "All 1 source(s) restored from backup")]
 
     @pytest.mark.asyncio
     async def test_scheduling_failure_emits_failure_tally(self) -> None:
@@ -335,9 +337,46 @@ class TestUndoMultiSource:
         manager._bridge = MagicMock()
         manager.undo_last_push = MagicMock(side_effect=RuntimeError("bridge unavailable"))
 
-        undo_signals: list[tuple[bool, str]] = []
-        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+        undo_signals: list[tuple[int, int, str]] = []
+        manager.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
+        )
 
         await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
 
-        assert undo_signals == [(False, "0 restored, 1 failed")]
+        assert undo_signals == [(0, 1, "0 restored, 1 failed")]
+
+    @pytest.mark.asyncio
+    async def test_partial_success_emits_both_counts(self) -> None:
+        """2 of 3 sources scheduled successfully, 1 malformed entry fails.
+
+        Regression coverage for the snapshot-clearing bug (branch-quality
+        review, 2026-07-17): the manager's own tally must report succeeded=2
+        so MainWindow._on_undo_multi_source_complete can clear the pushed
+        snapshot on a partial success, not just a full one.
+        """
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        scheduled: list[tuple[str, str]] = []
+
+        def _schedule(src: str, path: str) -> None:
+            if src == "bluetooth":
+                raise RuntimeError("bridge unavailable")
+            scheduled.append((src, path))
+
+        manager.undo_last_push = MagicMock(side_effect=_schedule)
+
+        undo_signals: list[tuple[int, int, str]] = []
+        manager.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
+        )
+
+        await manager._do_undo_multi_source(
+            "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json;optical=/tmp/backup_opt.json"
+        )
+
+        assert scheduled == [
+            ("wifi", "/tmp/backup_wifi.json"),
+            ("optical", "/tmp/backup_opt.json"),
+        ]
+        assert undo_signals == [(2, 1, "2 restored, 1 failed")]

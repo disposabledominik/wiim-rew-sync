@@ -2172,6 +2172,16 @@ class TestPresets:
     # method's own summary already fired). This is a pre-existing bug,
     # captured here as a golden master to diff against after the Phase D
     # move -- not fixed as part of it (see docs/backlog.md).
+    #
+    # Update (branch-quality review, 2026-07-17): this method now emits its
+    # own dedicated undo_multi_source_complete(int, int, str) signal instead
+    # of sharing undo_complete(bool, str) with the single-source paths --
+    # fixes a regression where a partial multi-source undo (succeeded > 0,
+    # failed > 0) never cleared the pushed-filters snapshot, since the
+    # shared signal's binary success flag couldn't distinguish "should the
+    # banner say success" from "did anything actually change." The
+    # scheduling-vs-outcome race itself (still real, still unfixed) is now
+    # visible on the new signal instead of the old one.
 
     def test_undo_multi_source_single_entry_schedules_and_reports_success(
         self, window
@@ -2248,25 +2258,22 @@ class TestPresets:
         the same shape a real call has at the instant it returns, before
         its scheduled coroutine has run.
 
-        Before this move, _do_undo_multi_source (a MainWindow method) never
-        touched the undo_complete signal at all -- it called
-        _push_page.mark_undo_complete()/_status_banner.show_success()
-        directly. After the move (docs/backlog.md item 2, Phase D), it
-        necessarily emits undo_complete for its own summary too, since it
-        no longer has direct widget access -- both this method's own
-        summary and each source's real outcome now share one signal. This
-        test captures that emission directly (real signal connection, not
-        a mocked-out one) to confirm it fires exactly once, synchronously,
+        This method emits its own dedicated undo_multi_source_complete
+        signal (not the shared undo_complete single-source signal -- see
+        the 2026-07-17 update note on the class comment above) for its own
+        summary, since it no longer has direct widget access. This test
+        captures that emission directly (real signal connection, not a
+        mocked-out one) to confirm it fires exactly once, synchronously,
         with the scheduling-based tally -- the race itself (this summary
         potentially preceding or duplicating a later real per-source
-        emission) is unchanged, just now visible on the same signal
-        instead of bypassing it.
+        emission on the *other*, single-source undo_complete signal) is
+        unchanged.
         """
         _setup_device(window)
 
-        captured: list[tuple[bool, str]] = []
-        window._secondary_workflows.undo_complete.connect(
-            lambda ok, msg: captured.append((ok, msg))
+        captured: list[tuple[int, int, str]] = []
+        window._secondary_workflows.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: captured.append((succeeded, failed, msg))
         )
 
         with (
@@ -2285,7 +2292,38 @@ class TestPresets:
         mock_success.assert_called_once()
         # Exactly one emission -- this method's own summary -- since
         # undo_last_push is mocked and never emits its own (real) result.
-        assert captured == [(True, "All 1 source(s) restored from backup")]
+        assert captured == [(1, 0, "All 1 source(s) restored from backup")]
+
+    def test_undo_multi_source_partial_failure_clears_snapshot(self, window) -> None:
+        """Regression test (branch-quality review, 2026-07-17): a partial
+        multi-source undo (2 succeeded, 1 failed) must still clear
+        wizard_controller.state.last_pushed_filters, since device state for
+        the 2 restored sources actually changed. Pre-fix, the snapshot was
+        only cleared when the whole batch succeeded (failed == 0), leaving
+        stale dirty-tracking after a real partial device change.
+        """
+        _setup_device(window)
+        window._wizard_controller.state.last_pushed_filters = ["sentinel"]
+
+        def _schedule(src: str, path: str) -> None:
+            if src == "bluetooth":
+                raise RuntimeError("bridge unavailable")
+
+        with (
+            patch.object(
+                window._secondary_workflows, "undo_last_push", side_effect=_schedule
+            ),
+            patch.object(window._status_banner, "show_error"),
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_undo_multi_source(
+                    "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json"
+                )
+            )
+
+        assert window._wizard_controller.state.last_pushed_filters == []
 
 
 # ===========================================================================

@@ -65,7 +65,18 @@ class SecondaryWorkflowManager(QObject):
         profile_recalled(list, str): List of CanonicalFilter loaded from a
             profile, and the profile's name (for the Filters step tooltip,
             #162d).
-        undo_complete(bool, str): Success flag and message after undo.
+        undo_complete(bool, str): Success flag and message after undo, for
+            the binary-outcome undo paths (_do_undo, _do_undo_roomfit).
+        undo_multi_source_complete(int, int, str): succeeded, failed counts
+            and message after a multi-source undo. A separate signal from
+            undo_complete rather than a shared one -- multi-source undo has
+            a genuine 3-way outcome (full success / partial / full failure)
+            that a binary success flag can't carry, and the "should the
+            pushed-filters snapshot be cleared" decision (succeeded > 0)
+            is independent of the "should the banner show success" decision
+            (failed == 0). Squeezing this into undo_complete would add a
+            parameter that's always redundant with the success flag for the
+            other two (binary) undo paths.
         source_slots_ready(list): SourceSlotInfo rows from the current
             device's EQGetSourceModes overview (diagnostic-only).
         source_slots_error(str): Error message when the slot overview
@@ -83,6 +94,7 @@ class SecondaryWorkflowManager(QObject):
     # --- Signals ---
     profile_recalled = Signal(list, str)
     undo_complete = Signal(bool, str)
+    undo_multi_source_complete = Signal(int, int, str)
     source_slots_ready = Signal(list)
     source_slots_error = Signal(str)
     copy_batch_complete = Signal(int, int, int, int)
@@ -377,12 +389,20 @@ class SecondaryWorkflowManager(QObject):
         docs/backlog.md item 2 Phase D): undo_last_push() below only
         *schedules* each source's real restore via run_async() and returns
         immediately, so this method's own succeeded/failed tally and
-        undo_complete emit reflect scheduling success, not each source's
-        actual outcome -- which arrives later via undo_last_push's own
-        undo_complete emit (per source), potentially after this method's
+        undo_multi_source_complete emit reflect scheduling success, not each
+        source's actual outcome -- which arrives later via undo_last_push's
+        own undo_complete emit (per source), potentially after this method's
         own summary already fired. Characterized in
         test_smoke_regression_operations.py before this move; not fixed
         here.
+
+        Emits undo_multi_source_complete (succeeded, failed, message) rather
+        than the shared undo_complete(bool, str) the other two undo paths
+        use -- MainWindow needs the succeeded count independently of the
+        failed count (clear the pushed-filters snapshot whenever
+        succeeded > 0, show a success banner only when failed == 0; these
+        are different conditions for a partial multi-source undo, unlike
+        the single-source paths where they collapse to the same thing).
         """
         assert self._bridge is not None
         entries = [e.strip() for e in backup_paths_str.split(";") if e.strip()]
@@ -405,9 +425,13 @@ class SecondaryWorkflowManager(QObject):
                 failed += 1
 
         if failed == 0:
-            self.undo_complete.emit(True, f"All {succeeded} source(s) restored from backup")
+            self.undo_multi_source_complete.emit(
+                succeeded, failed, f"All {succeeded} source(s) restored from backup"
+            )
         else:
-            self.undo_complete.emit(False, f"{succeeded} restored, {failed} failed")
+            self.undo_multi_source_complete.emit(
+                succeeded, failed, f"{succeeded} restored, {failed} failed"
+            )
 
     # ------------------------------------------------------------------
     # Workflow: Copy Preset to Device (Req 15.11, 17.3)
