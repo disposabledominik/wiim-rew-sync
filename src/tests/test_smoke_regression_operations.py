@@ -2120,6 +2120,110 @@ class TestPresets:
         # its ancestor chain is on-screen.
         assert not window._push_page._undo_button.isHidden()
 
+    # --- _do_undo_multi_source characterization (pre-Phase-D extraction) ---
+    #
+    # No prior coverage existed for this method at all (confirmed via repo
+    # grep). These tests pin its CURRENT behavior, including a latent race:
+    # self._secondary_workflows.undo_last_push() is synchronous and only
+    # *schedules* the real restore via AsyncBridge.run_async(), returning
+    # immediately -- it does not wait for the scheduled coroutine. This
+    # loop's own succeeded/failed tally and "All N source(s) restored"
+    # summary banner therefore reflect scheduling success, not the actual
+    # per-source restore outcome, which arrives later via the existing
+    # undo_complete signal -> _on_undo_complete (itself calling
+    # mark_undo_complete/status banner again, potentially after this
+    # method's own summary already fired). This is a pre-existing bug,
+    # captured here as a golden master to diff against after the Phase D
+    # move -- not fixed as part of it (see docs/backlog.md).
+
+    def test_undo_multi_source_single_entry_schedules_and_reports_success(
+        self, window
+    ) -> None:
+        """A single "source=path" entry schedules one undo_last_push call
+        and reports it as a completed restore -- before any real outcome
+        is known (see class comment above)."""
+        _setup_device(window)
+
+        with (
+            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            import asyncio
+
+            asyncio.run(window._do_undo_multi_source("wifi=/tmp/backup_wifi.json"))
+
+        mock_undo.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
+        assert window._push_page._undo_button is not None
+        mock_success.assert_called_once_with("All 1 source(s) restored from backup")
+
+    def test_undo_multi_source_multi_entry_all_scheduled_reports_success(
+        self, window
+    ) -> None:
+        """Multiple "source=path" entries each schedule their own
+        undo_last_push call; the summary banner counts scheduling
+        successes, not real per-source outcomes."""
+        _setup_device(window)
+        backup_str = "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json"
+
+        with (
+            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            import asyncio
+
+            asyncio.run(window._do_undo_multi_source(backup_str))
+
+        assert mock_undo.call_count == 2
+        mock_undo.assert_any_call("wifi", "/tmp/backup_wifi.json")
+        mock_undo.assert_any_call("bluetooth", "/tmp/backup_bt.json")
+        mock_success.assert_called_once_with("All 2 source(s) restored from backup")
+
+    def test_undo_multi_source_malformed_entries_skipped(self, window) -> None:
+        """Entries without "=" (malformed) are silently skipped -- not
+        counted toward succeeded or failed."""
+        _setup_device(window)
+        backup_str = "wifi=/tmp/backup_wifi.json;garbage-no-equals;;"
+
+        with (
+            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            import asyncio
+
+            asyncio.run(window._do_undo_multi_source(backup_str))
+
+        mock_undo.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
+        mock_success.assert_called_once_with("All 1 source(s) restored from backup")
+
+    def test_undo_multi_source_completes_before_real_undo_outcome_is_known(
+        self, window
+    ) -> None:
+        """Golden-master for the race itself: _do_undo_multi_source reports
+        success and returns having never touched the undo_complete signal
+        that the real per-source restore eventually emits -- proving its
+        own completion is decoupled from (and can precede) the actual
+        outcome. undo_last_push is mocked as a no-op scheduling call here
+        (it never invokes undo_complete), the same shape a real call has at
+        the instant it returns, before its scheduled coroutine has run."""
+        _setup_device(window)
+
+        with (
+            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(
+                window._secondary_workflows, "undo_complete"
+            ) as mock_undo_complete_signal,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            import asyncio
+
+            asyncio.run(window._do_undo_multi_source("wifi=/tmp/backup_wifi.json"))
+
+        mock_undo.assert_called_once()
+        mock_success.assert_called_once()
+        # The real per-source result -- not yet known -- would arrive via
+        # this signal; _do_undo_multi_source neither waits for nor emits it.
+        mock_undo_complete_signal.emit.assert_not_called()
+
 
 # ===========================================================================
 # SETTINGS / UI STATE
