@@ -4,9 +4,19 @@ Tests the secondary workflows (undo, profile recall) by driving the async
 methods directly with mocked adapter factories and verifying signal
 emissions.
 
-Note: copy-to-sources, multi-device push, and copy-preset-to-device tests
-were removed (code quality audit, 2026-06-28) along with the corresponding
-dead SecondaryWorkflowManager methods — see docs/backlog.md.
+Note: copy-preset-to-device coverage (_do_copy_preset_to_device,
+_do_copy_presets_batch_multi, _do_copy_local_profile_to_devices, etc.) lives
+in test_smoke_regression_operations.py instead of here (issue26/34/58/69/74/
+78/79/153/194 and others) -- those characterization tests were written
+against MainWindow during the original Phase D extraction (docs/backlog.md
+item 2) and never relocated. This file's own convention is undo/
+profile-recall workflows driven directly against the manager via mocked
+factories; a 2026-06-28 code-quality audit removed an earlier, unrelated
+set of copy-to-sources/multi-device-push tests here for methods that were
+genuinely dead at the time -- that note is retired as of the 2026-07-17
+branch-quality review, which found it had gone stale: the copy-to-device
+methods above are very much alive and wired to real UI actions in
+main_window.py (_on_copy_to_device_requested, _on_local_preset_copy_to_device_requested).
 
 Requirements: 8.1-8.6
 """
