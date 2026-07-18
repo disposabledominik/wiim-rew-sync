@@ -150,12 +150,19 @@ class ProfileRepository:
         self.save(new_profile, expected_existing_name=old_name)
 
         # Remove the old file only if it's a *different* file on disk than
-        # what save() just wrote -- comparing normalized paths, not raw
-        # names, since a rename to an NFC/NFD-equivalent form of the same
-        # name normalizes to the same path save() just overwrote in place;
-        # unlinking by raw-name inequality alone would delete the profile
-        # that was just renamed.
-        if self._profile_path(old_name) != self._profile_path(new_name):
+        # what save() just wrote -- comparing case-folded normalized paths,
+        # not raw names or plain Path equality, since a rename to an
+        # NFC/NFD-equivalent form -or- a case-only variant of the same name
+        # (e.g. "MyPreset" -> "mypreset") normalizes to the same file save()
+        # just overwrote in place. Path equality alone isn't enough here:
+        # it's case-insensitive on Windows/default-macOS but case-sensitive
+        # on Linux (this project's own documented WSL2/Ubuntu test
+        # environment included), so without the explicit casefold, a
+        # case-only rename on a case-sensitive filesystem would delete the
+        # file just written instead of recognizing it as the same profile.
+        if str(self._profile_path(old_name)).casefold() != str(
+            self._profile_path(new_name)
+        ).casefold():
             old_path.unlink()
 
     def duplicate(self, name: str, new_name: str) -> Profile:

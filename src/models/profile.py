@@ -8,6 +8,7 @@ from pydantic import BaseModel, model_validator
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode, ChannelModeField, resolve_channel_split
+from src.utils.fp_compare import gain_matches
 
 
 class Profile(BaseModel):
@@ -26,7 +27,13 @@ class Profile(BaseModel):
         """Enforce channel-mode/filter-key consistency.
 
         Stereo mode: only `filters` must be set.
-        L/R mode: only `filters_l` and `filters_r` must be set.
+        L/R mode: only `filters_l` and `filters_r` must be set, and neither
+        may be empty -- matching require_lr_filters' contract (an empty
+        channel is treated the same as a missing one, since there's no safe
+        way to reconstruct which channel it was later). Enforcing this here,
+        not just at require_lr_filters' call sites, means a profile that
+        would fail that check can never be constructed or loaded from disk
+        in the first place (branch-quality review, 2026-07-18).
         """
         if self.channel_mode == ChannelMode.STEREO:
             if self.filters is None:
@@ -34,7 +41,7 @@ class Profile(BaseModel):
             if self.filters_l is not None or self.filters_r is not None:
                 raise ValueError("Stereo profile must not have 'filters_l'/'filters_r'")
         else:  # ChannelMode.LR
-            if self.filters_l is None or self.filters_r is None:
+            if not self.filters_l or not self.filters_r:
                 raise ValueError("L/R profile must have 'filters_l' and 'filters_r'")
             if self.filters is not None:
                 raise ValueError("L/R profile must not have 'filters' key")
@@ -65,7 +72,7 @@ class Profile(BaseModel):
             filters = self.filters_l or []
 
         total = len(filters)
-        active = sum(1 for f in filters if f.gain_db != 0.0)
+        active = sum(1 for f in filters if not gain_matches(f.gain_db, 0.0))
         return active, total
 
 

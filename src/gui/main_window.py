@@ -1415,6 +1415,7 @@ class MainWindow(QMainWindow):
         # Configure SecondaryWorkflowManager with adapter factories (Req 8.1, 9.3, 10.3, 15.3)
         self._secondary_workflows.configure(
             bridge=self._bridge,
+            bridge_wrapper=self._bridge_wrapper,
             safe_write_factory=self._safe_write_factory,
             roomfit_safe_write_factory=self._roomfit_safe_write_factory,
             wiim_http_client_factory=self._wiim_http_client_factory,
@@ -2031,11 +2032,15 @@ class MainWindow(QMainWindow):
         """
         state = self._wizard_controller.state
         name = sanitize_device_name(name).strip()
-        profile = build_profile(
-            name, filters, channel_mode,
-            filters_l=state.filters_l,
-            filters_r=state.filters_r,
-        )
+        try:
+            profile = build_profile(
+                name, filters, channel_mode,
+                filters_l=state.filters_l,
+                filters_r=state.filters_r,
+            )
+        except ValueError as exc:
+            self._status_banner.show_error(f"Save failed: {exc}")
+            return
 
         def _save() -> None:
             self._profile_repository.save(profile)
@@ -2085,7 +2090,11 @@ class MainWindow(QMainWindow):
             path_l, path_r = paths
             # Use stored L/R lists; fallback only for defensive safety
             state = self._wizard_controller.state
-            filters_l, filters_r = require_lr_filters(state.filters_l, state.filters_r)
+            try:
+                filters_l, filters_r = require_lr_filters(state.filters_l, state.filters_r)
+            except ValueError as exc:
+                self._status_banner.show_error(f"Export failed: {exc}")
+                return
 
             self._primary_workflows.export_file_lr(filters_l, filters_r, path_l, path_r)
             logger.info("Export L/R REW: %s, %s", path_l, path_r)
@@ -3002,13 +3011,17 @@ class MainWindow(QMainWindow):
         state = self._wizard_controller.state
         target_source = state.primary_source
 
-        peq_settings = build_peq_settings(
-            target_source,
-            filters_value or [],
-            channel_mode_value,
-            filters_l=filters_l_value,
-            filters_r=filters_r_value,
-        )
+        try:
+            peq_settings = build_peq_settings(
+                target_source,
+                filters_value or [],
+                channel_mode_value,
+                filters_l=filters_l_value,
+                filters_r=filters_r_value,
+            )
+        except ValueError as exc:
+            self._status_banner.show_error(f"Copy failed: {exc}")
+            return
         filters, channel_mode = extract_filters(peq_settings)
 
         logger.info(
@@ -3417,7 +3430,11 @@ class MainWindow(QMainWindow):
         channel = state.channel_mode
         if channel.is_lr:
             # Use stored L/R lists (set by recall_profile before emitting signal)
-            left, right = require_lr_filters(state.filters_l, state.filters_r)
+            try:
+                left, right = require_lr_filters(state.filters_l, state.filters_r)
+            except ValueError as exc:
+                self._status_banner.show_error(f"Could not load preset: {exc}")
+                return
             self._review_page.set_lr_filters(left, right)
         else:
             self._review_page.set_filters(filters)

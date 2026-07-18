@@ -22,7 +22,7 @@ Requirements referenced: 17.2, 18.1, 18.2, 18.3, 18.4, 18.6.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -47,6 +47,10 @@ if TYPE_CHECKING:
     from src.models.capabilities import DeviceCapabilities, DeviceInfo
 
 logger = logging.getLogger("wiim_rew_sync.secondary_workflows")
+
+# Signature of MainWindow._bridge_wrapper, injected via configure() the same
+# way PrimaryWorkflowManager does -- see BridgeWrapper in primary_workflows.py.
+BridgeWrapper = Callable[[str, Coroutine[Any, Any, Any]], Coroutine[Any, Any, None]]
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +110,7 @@ class SecondaryWorkflowManager(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._bridge: AsyncBridge | None = None
+        self._bridge_wrapper: BridgeWrapper | None = None
         self._safe_write_factory: Callable[[WiiMAdapter], SafeWrite] | None = None
         self._roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite] | None = None
         self._current_adapter: WiiMAdapter | None = None
@@ -124,6 +129,7 @@ class SecondaryWorkflowManager(QObject):
     def configure(
         self,
         bridge: AsyncBridge,
+        bridge_wrapper: BridgeWrapper,
         safe_write_factory: Callable[[WiiMAdapter], SafeWrite],
         roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite],
         wiim_http_client_factory: Callable[[str], WiiMHttpClient],
@@ -136,6 +142,14 @@ class SecondaryWorkflowManager(QObject):
 
         Args:
             bridge: The AsyncBridge for run_async calls.
+            bridge_wrapper: MainWindow._bridge_wrapper, injected the same way
+                PrimaryWorkflowManager takes it -- catches any exception,
+                logs it, maps it to a user-friendly message, and emits
+                operation_error. Used by the fire-and-forget dispatchers
+                below (undo_roomfit, undo_multi_source, copy_presets_to_devices,
+                copy_local_profile_to_devices) so an exception that escapes
+                their coroutine reaches a status banner instead of being
+                silently dropped by run_async's un-awaited Future.
             safe_write_factory: Factory creating a SafeWrite from a WiiMAdapter.
             roomfit_safe_write_factory: Factory creating a RoomFitSafeWrite
                 from a WiiMAdapter, for undo_roomfit().
@@ -153,12 +167,24 @@ class SecondaryWorkflowManager(QObject):
         Requirements: 8.1.
         """
         self._bridge = bridge
+        self._bridge_wrapper = bridge_wrapper
         self._safe_write_factory = safe_write_factory
         self._roomfit_safe_write_factory = roomfit_safe_write_factory
         self._wiim_http_client_factory = wiim_http_client_factory
         self._capability_prober_factory = capability_prober_factory
         self._target_adapter_factory = target_adapter_factory
         logger.info("SecondaryWorkflowManager configured with adapter factories")
+
+    def _dispatch(self, operation_name: str, coro: Coroutine[Any, Any, Any]) -> None:
+        """Run a coroutine on the bridge, wrapped for error mapping.
+
+        Mirrors PrimaryWorkflowManager._dispatch -- shared so an exception
+        that escapes a fire-and-forget workflow coroutine reaches a status
+        banner instead of vanishing silently in run_async's un-awaited Future.
+        """
+        assert self._bridge is not None
+        assert self._bridge_wrapper is not None
+        self._bridge.run_async(self._bridge_wrapper(operation_name, coro))
 
     def set_current_adapter(self, adapter: WiiMAdapter | None) -> None:
         """Set the current device adapter for same-device workflows.
@@ -269,8 +295,7 @@ class SecondaryWorkflowManager(QObject):
 
         Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6.
         """
-        assert self._bridge is not None
-        self._bridge.run_async(self._do_undo(source_name, backup_path))
+        self._dispatch("undo_last_push", self._do_undo(source_name, backup_path))
 
     async def _restore_backup(
         self, source_name: str, backup_path: str | Path
@@ -321,9 +346,9 @@ class SecondaryWorkflowManager(QObject):
     @Slot(str, str, str)
     def undo_roomfit(self, backup_path: str, source_name: str, profile_name: str) -> None:
         """Restore a RoomFit profile from backup."""
-        assert self._bridge is not None
-        self._bridge.run_async(
-            self._do_undo_roomfit(backup_path, source_name, profile_name)
+        self._dispatch(
+            "undo_roomfit",
+            self._do_undo_roomfit(backup_path, source_name, profile_name),
         )
 
     async def _do_undo_roomfit(
@@ -379,8 +404,7 @@ class SecondaryWorkflowManager(QObject):
     @Slot(str)
     def undo_multi_source(self, backup_paths_str: str) -> None:
         """Undo a multi-source push by restoring each source's backup."""
-        assert self._bridge is not None
-        self._bridge.run_async(self._do_undo_multi_source(backup_paths_str))
+        self._dispatch("undo_multi_source", self._do_undo_multi_source(backup_paths_str))
 
     async def _do_undo_multi_source(self, backup_paths_str: str) -> None:
         """Undo a multi-source push by restoring each source's backup.
@@ -679,11 +703,11 @@ class SecondaryWorkflowManager(QObject):
         target_source: str,
     ) -> None:
         """Copy presets to multiple target devices (smoke #73 fix)."""
-        assert self._bridge is not None
-        self._bridge.run_async(
+        self._dispatch(
+            "copy_presets_to_devices",
             self._do_copy_presets_batch_multi(
                 items, target_devices, source_name, target_source
-            )
+            ),
         )
 
     async def _do_copy_presets_batch_multi(
@@ -756,12 +780,12 @@ class SecondaryWorkflowManager(QObject):
         peq_settings: PEQSettings,
     ) -> None:
         """Copy a locally saved profile's already-in-hand filters to devices."""
-        assert self._bridge is not None
-        self._bridge.run_async(
+        self._dispatch(
+            "copy_local_profile_to_devices",
             self._do_copy_local_profile_to_devices(
                 profile_name, preset_type, target_devices, target_source,
                 filters, channel_mode, peq_settings,
-            )
+            ),
         )
 
     async def _do_copy_local_profile_to_devices(
@@ -814,8 +838,13 @@ class SecondaryWorkflowManager(QObject):
         `_do_*` method: this orchestration lives here, per backlog #7's
         rule that new orchestration must not grow MainWindow further.
         """
-        assert self._bridge is not None
-        self._bridge.run_async(self._do_fetch_source_slots())
+        if self._bridge is None:
+            # configure() hasn't run yet (no device has been probed) --
+            # report the same "no device" outcome _do_fetch_source_slots
+            # would, instead of asserting out of this Qt slot.
+            self.source_slots_error.emit("No device connected")
+            return
+        self._dispatch("fetch_source_slots", self._do_fetch_source_slots())
 
     async def _do_fetch_source_slots(self) -> None:
         if self._current_adapter is None:
