@@ -1416,12 +1416,8 @@ class MainWindow(QMainWindow):
         # Configure SecondaryWorkflowManager with adapter factories (Req 8.1, 9.3, 10.3, 15.3)
         self._secondary_workflows.configure(
             bridge=self._bridge,
-            wiim_adapter_factory=lambda ip: self._wiim_adapter_factory(
-                self._wiim_http_client_factory(ip), device_caps
-            ),
             safe_write_factory=self._safe_write_factory,
             roomfit_safe_write_factory=self._roomfit_safe_write_factory,
-            backup_manager=self._backup_manager,
             wiim_http_client_factory=self._wiim_http_client_factory,
             capability_prober_factory=self._capability_prober_factory,
             target_adapter_factory=self._wiim_adapter_factory,

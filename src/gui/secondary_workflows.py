@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from src.adapters.wiim_http import WiiMHttpClient
     from src.gui.async_bridge import AsyncBridge
     from src.models.capabilities import DeviceCapabilities, DeviceInfo
-    from src.repository.backup_manager import BackupManager
 
 logger = logging.getLogger("wiim_rew_sync.secondary_workflows")
 
@@ -103,10 +102,8 @@ class SecondaryWorkflowManager(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._bridge: AsyncBridge | None = None
-        self._wiim_adapter_factory: Callable[[str], WiiMAdapter] | None = None
         self._safe_write_factory: Callable[[WiiMAdapter], SafeWrite] | None = None
         self._roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite] | None = None
-        self._backup_manager: BackupManager | None = None
         self._current_adapter: WiiMAdapter | None = None
         self._wiim_http_client_factory: Callable[[str], WiiMHttpClient] | None = None
         self._capability_prober_factory: (
@@ -123,10 +120,8 @@ class SecondaryWorkflowManager(QObject):
     def configure(
         self,
         bridge: AsyncBridge,
-        wiim_adapter_factory: Callable[[str], WiiMAdapter],
         safe_write_factory: Callable[[WiiMAdapter], SafeWrite],
         roomfit_safe_write_factory: Callable[[WiiMAdapter], RoomFitSafeWrite],
-        backup_manager: BackupManager,
         wiim_http_client_factory: Callable[[str], WiiMHttpClient],
         capability_prober_factory: Callable[[WiiMHttpClient], CapabilityProber],
         target_adapter_factory: Callable[[WiiMHttpClient, DeviceCapabilities], WiiMAdapter],
@@ -137,49 +132,29 @@ class SecondaryWorkflowManager(QObject):
 
         Args:
             bridge: The AsyncBridge for run_async calls.
-            wiim_adapter_factory: Factory creating a WiiMAdapter for a given IP.
-                Currently unused by any remaining workflow, retained for
-                future per-device adapter needs.
             safe_write_factory: Factory creating a SafeWrite from a WiiMAdapter.
             roomfit_safe_write_factory: Factory creating a RoomFitSafeWrite
                 from a WiiMAdapter, for undo_roomfit().
-            backup_manager: The backup manager instance for state snapshots.
             wiim_http_client_factory: Factory creating a WiiMHttpClient for a
                 target device IP, for copy-to-device's target connection.
             capability_prober_factory: Factory creating a CapabilityProber
                 for a WiiMHttpClient, to probe an unfamiliar target device
-                before connecting to it (async, unlike wiim_adapter_factory
-                above which assumes already-known capabilities).
+                before connecting to it (async -- the target device's own
+                capabilities are unknown until probed, unlike the already-
+                connected source device).
             target_adapter_factory: Factory creating a WiiMAdapter from a
-                probed target client + capabilities. Deliberately a separate
-                param from wiim_adapter_factory above -- that one has an
-                incompatible same-device, synchronous-reconnect signature.
+                probed target client + capabilities, for copy-to-device's
+                target connection.
 
         Requirements: 8.1.
         """
         self._bridge = bridge
-        self._wiim_adapter_factory = wiim_adapter_factory
         self._safe_write_factory = safe_write_factory
         self._roomfit_safe_write_factory = roomfit_safe_write_factory
-        self._backup_manager = backup_manager
         self._wiim_http_client_factory = wiim_http_client_factory
         self._capability_prober_factory = capability_prober_factory
         self._target_adapter_factory = target_adapter_factory
         logger.info("SecondaryWorkflowManager configured with adapter factories")
-
-    @property
-    def is_configured(self) -> bool:
-        """Return True if configure() has been called with valid dependencies."""
-        return (
-            self._bridge is not None
-            and self._wiim_adapter_factory is not None
-            and self._safe_write_factory is not None
-            and self._roomfit_safe_write_factory is not None
-            and self._backup_manager is not None
-            and self._wiim_http_client_factory is not None
-            and self._capability_prober_factory is not None
-            and self._target_adapter_factory is not None
-        )
 
     def set_current_adapter(self, adapter: WiiMAdapter | None) -> None:
         """Set the current device adapter for same-device workflows.
