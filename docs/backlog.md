@@ -313,6 +313,48 @@ Two similarly-scoped low-severity cleanup findings (`build_peq_settings`/`build_
 duplicated L/R-vs-stereo branching, `get_lr_filters`'s thin getattr wrapper) were fixed too. The
 deliberate no-concurrent-writes trade-off from the first review round above stands unchanged.
 
+**Update (2026-07-18): PR #1 review, third round.** A further max-effort review (`dc72487`) found
+5 more CONFIRMED issues and fixed them, but shipped zero test coverage for any of the 5 behavior
+changes. Backfilling that coverage (`a02b55f`) surfaced that one of the 5 "fixes" — the
+`ProfileRepository.rename()` case-sensitivity fix — was itself a regression: its casefold-string
+comparison collapses a genuinely different case-only rename (`"MyPreset"` -> `"mypreset"`) into
+"same file" on a case-*sensitive* filesystem (this project's own WSL2/ext4 test environment
+included), leaving an orphaned duplicate profile on disk. Fixed with `Path.samefile()`
+(stat-based, correct regardless of the filesystem's case-folding behavior), verified with a live
+before/after/fixed reproduction against a real filesystem.
+
+That same round's own "flagged, not changed" list (5 items dc72487 chose not to act on) was
+re-verified against current source rather than taken at face value. One turned out to be a real,
+mischaracterized bug and was fixed in the same commit (`a02b55f`): `write_peq()`'s L/R branch fell
+back to the *left* channel's bands when the *right* channel was empty (not a `settings.bands` leak
+as originally described — `PEQSettings`'s validator already forbids that in L/R mode). Reachable via
+`safe_write.py`'s rollback path, which restores a `PEQSettings` read straight off the device
+(independently-populated `bands_l`/`bands_r`, no non-empty guarantee) — so a rollback after a failed
+verification could silently copy the left channel over the right instead of restoring an
+intentionally asymmetric state. The other 4 are recorded here, once, so they aren't rediscovered by
+a future review pass:
+
+- `SecondaryWorkflowManager._store_lr_state` reaches through `self.parent()` with `hasattr()`
+  duck-typing instead of the `configure()`-injected pattern used everywhere else in the class.
+  Works correctly today because the manager is always constructed with `parent=self` (MainWindow)
+  in production; would only break if that construction changed. Low priority — fix by threading a
+  `wizard_state_accessor` (or similar) through `configure()` if that construction ever does change.
+- `src/gui/components/filter_table.py`'s Review-page diff display switched to
+  `fp_compare.band_matches()`, loosening its before/after tolerance 5-10x versus the prior
+  hardcoded value. Intentional reuse of the same tolerance Safe-Write verification uses to decide a
+  write "matched" (so the display can't flag a band as changed that Safe-Write itself already
+  considers verified) — a real but minor, cosmetic-only display-fidelity change, not a correctness
+  bug. No action planned.
+- `SecondaryWorkflowManager._do_copy_presets_batch_multi` can compute `failed == 0` (success banner)
+  if `target_devices` is ever empty, since the read-failure tally scales by `len(target_devices)`.
+  Confirmed unreachable via the GUI: `DevicePickerDialog.accept()` already blocks confirming the
+  dialog with zero devices selected. Not a live bug; no action planned.
+- `.txt`-suffix-ensuring logic (`if path.suffix.lower() != ".txt": ...`) is hand-duplicated in 5
+  places (`primary_workflows.py`, twice in `main_window.py`, three sites in `export_dialog.py`).
+  Pure duplication, no behavior difference between the copies — a `ensure_txt_suffix()` helper in
+  `utils/` would be a reasonable small follow-up if any of these sites are touched again, but not
+  worth a standalone commit today.
+
 ---
 
 ## 3. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)
