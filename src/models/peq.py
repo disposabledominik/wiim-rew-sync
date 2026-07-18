@@ -8,9 +8,8 @@ from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import (
     ChannelMode,
     ChannelModeField,
-    coerce_channel_mode,
     is_lr_mode,
-    require_lr_filters,
+    resolve_channel_split,
 )
 
 
@@ -81,10 +80,9 @@ def build_peq_settings(
     Raises:
         ValueError: L/R mode without explicit filters_l/filters_r.
     """
-    mode = coerce_channel_mode(channel_mode)
+    mode, left, right = resolve_channel_split(channel_mode, filters_l, filters_r)
 
     if mode.is_lr:
-        left, right = require_lr_filters(filters_l, filters_r)
         return PEQSettings(
             source_name=source_name,
             channel_mode=ChannelMode.LR,

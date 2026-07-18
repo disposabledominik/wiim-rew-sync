@@ -136,22 +136,30 @@ def require_lr_filters(
     return filters_l, filters_r
 
 
-def get_lr_filters(state: object) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
-    """Get L/R filter lists from wizard state.
-
-    Requires explicit, non-empty state.filters_l/filters_r (set during
-    validation) -- never guesses a channel split.
-
-    Args:
-        state: WizardState object with filters_l/filters_r fields.
+def resolve_channel_split(
+    channel_mode: str | ChannelMode,
+    filters_l: list[CanonicalFilter] | None,
+    filters_r: list[CanonicalFilter] | None,
+) -> tuple[ChannelMode, list[CanonicalFilter], list[CanonicalFilter]]:
+    """Coerce channel_mode and, for L/R mode, require explicit per-channel
+    filter lists -- the logic build_peq_settings/build_profile both need
+    before constructing their own model (each has a differently-shaped
+    schema for the inactive channel -- PEQSettings defaults to `[]`, Profile
+    requires `None` -- so model construction itself is left to each caller).
 
     Returns:
-        Tuple of (left_filters, right_filters).
+        Tuple of (resolved_mode, left, right). left/right are empty lists
+        when resolved_mode is not L/R -- callers should use `filters`
+        (the combined list) instead in that case, not these.
 
     Raises:
-        ValueError: if state has no filters_l/filters_r set, or either is
-            empty.
+        ValueError: L/R mode without explicit, non-empty filters_l/filters_r
+            (see require_lr_filters).
     """
-    left = getattr(state, "filters_l", None)
-    right = getattr(state, "filters_r", None)
-    return require_lr_filters(left, right)
+    mode = coerce_channel_mode(channel_mode)
+    if mode.is_lr:
+        left, right = require_lr_filters(filters_l, filters_r)
+        return mode, left, right
+    return mode, [], []
+
+

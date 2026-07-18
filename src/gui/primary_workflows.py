@@ -31,7 +31,7 @@ from PySide6.QtCore import QObject, Signal
 
 from src.adapters.safe_write import WriteResult
 from src.gui.wizard_controller import FlowType
-from src.models.channel_mode import ChannelMode, get_lr_filters, is_lr_mode
+from src.models.channel_mode import ChannelMode, is_lr_mode, require_lr_filters
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.models.profile import build_profile
 from src.repository.backup_manager import encode_multi_source_backup_paths
@@ -1188,7 +1188,7 @@ class PrimaryWorkflowManager(QObject):
                 # Use stored L/R lists if available (avoids naive 50/50 split)
                 channel_kwargs: dict[str, Any] = {}
                 if channel_mode.is_lr:
-                    left, right = get_lr_filters(state)
+                    left, right = require_lr_filters(state.filters_l, state.filters_r)
                     channel_kwargs = {"filters_l": left, "filters_r": right}
                 result = await roomfit_safe_write.execute(
                     source_name,

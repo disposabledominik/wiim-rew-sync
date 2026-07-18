@@ -1,13 +1,11 @@
 """Unit tests for core Pydantic models — validation rejection and Profile channel-mode validator."""
 
-from types import SimpleNamespace
-
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
-from src.models.channel_mode import get_lr_filters, is_lr_mode
+from src.models.channel_mode import is_lr_mode, require_lr_filters
 from src.models.errors import (
     BackupError,
     ParseError,
@@ -91,7 +89,7 @@ class TestCanonicalFilter:
 
 
 # ---------------------------------------------------------------------------
-# is_lr_mode / get_lr_filters tests
+# is_lr_mode / require_lr_filters tests
 # ---------------------------------------------------------------------------
 
 
@@ -110,20 +108,27 @@ class TestIsLrMode:
         assert is_lr_mode("Stereo") is False
 
 
-class TestGetLrFilters:
-    """Tests for get_lr_filters() -- requires explicit wizard-state
-    filters_l/filters_r, never guesses a channel split."""
+class TestRequireLrFilters:
+    """Tests for require_lr_filters() -- requires explicit, non-empty
+    filters_l/filters_r, never guesses a channel split.
 
-    def test_without_state_data_raises(self) -> None:
-        state = SimpleNamespace(filters_l=None, filters_r=None)
+    Previously exercised indirectly through a get_lr_filters(state) wrapper
+    that just did getattr(state, "filters_l"/"filters_r", None) before
+    delegating here -- removed (branch-quality review, 2026-07-18) since
+    every call site already holds a typed WizardState with real
+    filters_l/filters_r fields, so the wrapper's object-typed getattr
+    indirection only defeated mypy's ability to catch a typo'd attribute
+    name for no benefit. Call sites now call require_lr_filters(
+    state.filters_l, state.filters_r) directly."""
+
+    def test_none_filters_raise(self) -> None:
         with pytest.raises(ValueError, match="refusing to guess channel split"):
-            get_lr_filters(state)
+            require_lr_filters(None, None)
 
-    def test_returns_explicit_state_filters(self) -> None:
+    def test_returns_explicit_filters(self) -> None:
         left = _sample_filters()
         right = [CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=0.0, q=1.0)]
-        state = SimpleNamespace(filters_l=left, filters_r=right)
-        assert get_lr_filters(state) == (left, right)
+        assert require_lr_filters(left, right) == (left, right)
 
     def test_empty_filters_l_raises_same_as_none(self) -> None:
         """An empty list for one channel is treated the same as a missing
@@ -132,15 +137,13 @@ class TestGetLrFilters:
         a flattened channel instead of raising (branch-quality review,
         2026-07-18)."""
         right = _sample_filters()
-        state = SimpleNamespace(filters_l=[], filters_r=right)
         with pytest.raises(ValueError, match="refusing to guess channel split"):
-            get_lr_filters(state)
+            require_lr_filters([], right)
 
     def test_empty_filters_r_raises_same_as_none(self) -> None:
         left = _sample_filters()
-        state = SimpleNamespace(filters_l=left, filters_r=[])
         with pytest.raises(ValueError, match="refusing to guess channel split"):
-            get_lr_filters(state)
+            require_lr_filters(left, [])
 
 
 # ---------------------------------------------------------------------------
