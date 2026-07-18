@@ -443,25 +443,28 @@ class SecondaryWorkflowManager(QObject):
 
         return filters, channel_mode, peq_settings
 
-    async def _do_copy_preset_to_device(
+    async def _write_preset_to_adapter(
         self,
+        target_adapter: WiiMAdapter,
         preset_name: str,
         preset_type: str,
-        target_ip: str,
         target_source: str,
         filters: list[CanonicalFilter],
         channel_mode: ChannelMode,
         peq_settings: PEQSettings,
     ) -> None:
-        """Write an already-read preset to a target device, as a named preset.
+        """Write+verify+save one already-read preset onto an already-connected
+        target adapter, as a named preset.
 
-        1. Connects to target device
-        2. Writes + verifies (SafeWrite/RoomFitSafeWrite)
-        3. Saves as a named preset (same name) on the target device
+        1. Writes + verifies (SafeWrite/RoomFitSafeWrite)
+        2. Saves as a named preset (same name) on the target device
 
-        The read/preview step happens once, earlier, via
-        _read_preset_to_copy() -- shared across every target device this
-        preset is being copied to (#171).
+        Split out of `_do_copy_preset_to_device` (branch-quality review,
+        2026-07-17) so `_write_preset_copies_to_devices` can connect to each
+        target device once and reuse the adapter across every preset copied
+        to it, instead of reconnecting + re-probing capabilities on every
+        (preset, device) pair -- the connect step doesn't change between
+        presets copied seconds apart in the same batch.
 
         No per-item success banner: earlier (pre-Phase-D) code showed a
         StatusBanner success message after every individual (preset,
@@ -473,6 +476,84 @@ class SecondaryWorkflowManager(QObject):
         item would flicker/spam for a multi-preset, multi-device batch;
         consolidating into one summary is a deliberate UX choice, not a
         dropped feature (branch-quality review, 2026-07-17).
+
+        Args:
+            target_adapter: Already-connected WiiMAdapter for the target device.
+            preset_name: Name of the preset/profile to copy.
+            preset_type: "PEQ" or "RoomFit".
+            target_source: Target source name on the remote device.
+            filters: Filters read from the source preset (see _read_preset_to_copy).
+            channel_mode: Channel mode of the source preset.
+            peq_settings: Full PEQSettings read from the source preset (carries
+                bands_l/bands_r for L/R mode).
+        """
+        assert self._safe_write_factory is not None
+        assert self._roomfit_safe_write_factory is not None
+
+        if preset_type == "RoomFit":
+            # RoomFit: write as RoomFit profile on target (smoke #34, #79),
+            # verified and rolled back on mismatch via RoomFitSafeWrite --
+            # same protocol as the main Push flow (smoke #153), not a bare
+            # write_roomfit() with no verification at all.
+            roomfit_safe_write = self._roomfit_safe_write_factory(target_adapter)
+            if is_lr_mode(channel_mode):
+                # Use the L/R bands just read from the source preset —
+                # not wizard state, which may be stale or unrelated to
+                # this preset (e.g. never populated in this session).
+                result = await roomfit_safe_write.execute(
+                    target_source, preset_name, filters,
+                    channel_mode=ChannelMode.LR,
+                    filters_l=peq_settings.bands_l,
+                    filters_r=peq_settings.bands_r,
+                )
+            else:
+                result = await roomfit_safe_write.execute(
+                    target_source, preset_name, filters,
+                    channel_mode=ChannelMode.STEREO,
+                )
+            if not result.success:
+                raise RuntimeError(
+                    result.error_message or "RoomFit copy verification failed"
+                )
+        else:
+            # PEQ: write filters (verified via SafeWrite, smoke #153), then
+            # save as named PEQ preset -- only if the write actually verified.
+            settings = build_peq_settings(
+                target_source, filters, channel_mode,
+                filters_l=peq_settings.bands_l,
+                filters_r=peq_settings.bands_r,
+            )
+            safe_write = self._safe_write_factory(target_adapter)
+            result = await safe_write.execute(target_source, settings)
+            if not result.success:
+                raise RuntimeError(
+                    result.error_message or "PEQ copy verification failed"
+                )
+            await target_adapter.save_peq_profile(
+                target_source, preset_name
+            )
+
+    async def _do_copy_preset_to_device(
+        self,
+        preset_name: str,
+        preset_type: str,
+        target_ip: str,
+        target_source: str,
+        filters: list[CanonicalFilter],
+        channel_mode: ChannelMode,
+        peq_settings: PEQSettings,
+    ) -> None:
+        """Connect to a target device and write one already-read preset to it.
+
+        Single-item entry point (also used directly by tests). The batch
+        path (`_write_preset_copies_to_devices`) connects once per device
+        instead of calling this per (preset, device) pair, to avoid
+        redundant re-probing (branch-quality review, 2026-07-17) -- see
+        `_write_preset_to_adapter` for the actual write/verify/save logic.
+
+        The read/preview step happens once, earlier, via
+        _read_preset_to_copy() -- shared across every target device this
+        preset is being copied to (#171).
 
         Args:
             preset_name: Name of the preset/profile to copy.
@@ -487,57 +568,15 @@ class SecondaryWorkflowManager(QObject):
         assert self._wiim_http_client_factory is not None
         assert self._capability_prober_factory is not None
         assert self._target_adapter_factory is not None
-        assert self._safe_write_factory is not None
-        assert self._roomfit_safe_write_factory is not None
 
-        # Connect to target device and save as named preset
         target_client = self._wiim_http_client_factory(target_ip)
         try:
             target_caps = await self._capability_prober_factory(target_client).probe()
             target_adapter = self._target_adapter_factory(target_client, target_caps)
-
-            if preset_type == "RoomFit":
-                # RoomFit: write as RoomFit profile on target (smoke #34, #79),
-                # verified and rolled back on mismatch via RoomFitSafeWrite --
-                # same protocol as the main Push flow (smoke #153), not a bare
-                # write_roomfit() with no verification at all.
-                roomfit_safe_write = self._roomfit_safe_write_factory(target_adapter)
-                if is_lr_mode(channel_mode):
-                    # Use the L/R bands just read from the source preset —
-                    # not wizard state, which may be stale or unrelated to
-                    # this preset (e.g. never populated in this session).
-                    result = await roomfit_safe_write.execute(
-                        target_source, preset_name, filters,
-                        channel_mode=ChannelMode.LR,
-                        filters_l=peq_settings.bands_l,
-                        filters_r=peq_settings.bands_r,
-                    )
-                else:
-                    result = await roomfit_safe_write.execute(
-                        target_source, preset_name, filters,
-                        channel_mode=ChannelMode.STEREO,
-                    )
-                if not result.success:
-                    raise RuntimeError(
-                        result.error_message or "RoomFit copy verification failed"
-                    )
-            else:
-                # PEQ: write filters (verified via SafeWrite, smoke #153), then
-                # save as named PEQ preset -- only if the write actually verified.
-                settings = build_peq_settings(
-                    target_source, filters, channel_mode,
-                    filters_l=peq_settings.bands_l,
-                    filters_r=peq_settings.bands_r,
-                )
-                safe_write = self._safe_write_factory(target_adapter)
-                result = await safe_write.execute(target_source, settings)
-                if not result.success:
-                    raise RuntimeError(
-                        result.error_message or "PEQ copy verification failed"
-                    )
-                await target_adapter.save_peq_profile(
-                    target_source, preset_name
-                )
+            await self._write_preset_to_adapter(
+                target_adapter, preset_name, preset_type, target_source,
+                filters, channel_mode, peq_settings,
+            )
         finally:
             await target_client.close()
 
@@ -552,9 +591,16 @@ class SecondaryWorkflowManager(QObject):
         Shared by `_do_copy_presets_batch_multi` (reads come from the live
         source device) and `_do_copy_local_profile_to_devices` (reads come
         from a locally saved Profile, no source device involved) -- both
-        write via the identical `_do_copy_preset_to_device` primitive per
+        write via the identical `_write_preset_to_adapter` primitive per
         (read, device) pair, so that loop/exception-handling/progress-emit
         logic lives exactly once.
+
+        Connects to each target device once (outer loop) and reuses that
+        connection across every preset copied to it, instead of
+        reconnecting + re-probing per (preset, device) pair (branch-quality
+        review, 2026-07-17) -- a device that fails to connect/probe counts
+        all its presets as failed in one step rather than retrying the
+        connection once per preset.
 
         Args:
             reads: List of (preset_name, preset_type, filters, channel_mode,
@@ -566,26 +612,43 @@ class SecondaryWorkflowManager(QObject):
             Tuple of (succeeded, failed) copy-operation counts.
         """
         assert self._bridge is not None
+        assert self._wiim_http_client_factory is not None
+        assert self._capability_prober_factory is not None
+        assert self._target_adapter_factory is not None
 
         succeeded = 0
         failed = 0
 
-        for preset_name, preset_type, filters, channel_mode, peq_settings in reads:
-            for device in target_devices:
-                self._bridge.progress_update.emit(
-                    f"Copying '{preset_name}' to {device.name}..."
-                )
-                try:
-                    await self._do_copy_preset_to_device(
-                        preset_name, preset_type, device.ip, target_source,
-                        filters, channel_mode, peq_settings,
+        for device in target_devices:
+            self._bridge.progress_update.emit(f"Connecting to {device.name}...")
+            target_client = self._wiim_http_client_factory(device.ip)
+            try:
+                target_caps = await self._capability_prober_factory(target_client).probe()
+                target_adapter = self._target_adapter_factory(target_client, target_caps)
+            except Exception:
+                logger.exception("Connect to %s failed", device.ip)
+                failed += len(reads)
+                await target_client.close()
+                continue
+
+            try:
+                for preset_name, preset_type, filters, channel_mode, peq_settings in reads:
+                    self._bridge.progress_update.emit(
+                        f"Copying '{preset_name}' to {device.name}..."
                     )
-                    succeeded += 1
-                except Exception:
-                    logger.exception(
-                        "Copy preset '%s' to %s failed", preset_name, device.ip
-                    )
-                    failed += 1
+                    try:
+                        await self._write_preset_to_adapter(
+                            target_adapter, preset_name, preset_type, target_source,
+                            filters, channel_mode, peq_settings,
+                        )
+                        succeeded += 1
+                    except Exception:
+                        logger.exception(
+                            "Copy preset '%s' to %s failed", preset_name, device.ip
+                        )
+                        failed += 1
+            finally:
+                await target_client.close()
 
         return succeeded, failed
 

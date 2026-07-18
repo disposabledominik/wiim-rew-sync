@@ -3247,7 +3247,17 @@ class TestSettingsUIState:
         devices -- folded in from the removed #33 test after #33's
         single-device `_do_copy_presets_batch` was superseded by this
         multi-device version (docs/smoke_test_issues.md row 74) and left
-        behind as dead code with its own regression test."""
+        behind as dead code with its own regression test.
+
+        Updated (branch-quality review, 2026-07-17): _write_preset_copies_to_devices
+        now connects once per device (outer loop) instead of once per
+        (preset, device) pair, so the write call is _write_preset_to_adapter
+        (taking an already-connected adapter) rather than
+        _do_copy_preset_to_device (which connected itself, keyed by IP).
+        Distinct per-device adapter sentinels replace the old
+        `target_ip` positional check, and the expected call order changes
+        from preset-major to device-major to match the new loop nesting.
+        """
         _setup_device(window)
         items = [MagicMock(), MagicMock()]
         items[0].name = "Preset1"
@@ -3263,15 +3273,35 @@ class TestSettingsUIState:
         peq_settings = MagicMock(channel_mode="stereo", bands=filters)
         read_result = (filters, ChannelMode.STEREO, peq_settings)
 
+        # Distinct sentinel client/adapter per target IP, so calls can be
+        # verified against the device actually targeted (not just counted).
+        adapters_by_ip = {
+            ip: MagicMock(name=f"Adapter-{ip}") for ip in ("192.168.1.201", "192.168.1.202")
+        }
+        clients_by_ip = {
+            ip: MagicMock(name=f"Client-{ip}", close=AsyncMock()) for ip in adapters_by_ip
+        }
+        ip_by_client_id = {id(client): ip for ip, client in clients_by_ip.items()}
+
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: clients_by_ip[ip]
+        )
+        window._secondary_workflows._capability_prober_factory = (
+            lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: adapters_by_ip[ip_by_client_id[id(client)]]
+        )
+
         with (
             patch.object(
                 window._secondary_workflows, "_read_preset_to_copy",
                 new_callable=AsyncMock, return_value=read_result,
             ) as mock_read,
             patch.object(
-                window._secondary_workflows, "_do_copy_preset_to_device",
+                window._secondary_workflows, "_write_preset_to_adapter",
                 new_callable=AsyncMock,
-            ) as mock_copy,
+            ) as mock_write,
         ):
             import asyncio
 
@@ -3281,14 +3311,14 @@ class TestSettingsUIState:
                 )
             )
             assert mock_read.call_count == 2
-            assert mock_copy.call_count == 4
-            # _do_copy_preset_to_device(preset_name, preset_type, target_ip, target_source, ...)
-            calls = [(c.args[0], c.args[2]) for c in mock_copy.call_args_list]
+            assert mock_write.call_count == 4
+            # _write_preset_to_adapter(target_adapter, preset_name, ...)
+            calls = [(c.args[0], c.args[1]) for c in mock_write.call_args_list]
             assert calls == [
-                ("Preset1", "192.168.1.201"),
-                ("Preset1", "192.168.1.202"),
-                ("Preset2", "192.168.1.201"),
-                ("Preset2", "192.168.1.202"),
+                (adapters_by_ip["192.168.1.201"], "Preset1"),
+                (adapters_by_ip["192.168.1.201"], "Preset2"),
+                (adapters_by_ip["192.168.1.202"], "Preset1"),
+                (adapters_by_ip["192.168.1.202"], "Preset2"),
             ]
 
 
@@ -3310,13 +3340,27 @@ class TestSettingsUIState:
         peq_settings = MagicMock(channel_mode="stereo", bands=filters)
         read_result = (filters, ChannelMode.STEREO, peq_settings)
 
+        # _write_preset_copies_to_devices connects once per device now
+        # (branch-quality review, 2026-07-17) -- stub the connect factories
+        # so it doesn't attempt real network calls; the write itself is
+        # mocked out below via _write_preset_to_adapter.
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: MagicMock(close=AsyncMock())
+        )
+        window._secondary_workflows._capability_prober_factory = (
+            lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: MagicMock()
+        )
+
         with (
             patch.object(
                 window._secondary_workflows, "_read_preset_to_copy",
                 new_callable=AsyncMock, return_value=read_result,
             ),
             patch.object(
-                window._secondary_workflows, "_do_copy_preset_to_device",
+                window._secondary_workflows, "_write_preset_to_adapter",
                 new_callable=AsyncMock,
             ),
             patch.object(window._status_banner, "show_success") as mock_success,
@@ -3332,6 +3376,131 @@ class TestSettingsUIState:
             msg = mock_success.call_args[0][0]
             assert "1 preset(s)" in msg
             assert "3 device(s)" in msg
+
+    def test_copy_batch_connects_once_per_device_not_per_preset(self, window) -> None:
+        """Regression test (branch-quality review, 2026-07-17):
+        _write_preset_copies_to_devices must connect + probe capabilities
+        exactly once per target device, not once per (preset, device) pair
+        -- copying 2 presets to 2 devices should make 2 connect/probe calls
+        total, not 4."""
+        _setup_device(window)
+        items = [MagicMock(), MagicMock()]
+        items[0].name = "Preset1"
+        items[0].preset_type = "PEQ"
+        items[1].name = "Preset2"
+        items[1].preset_type = "PEQ"
+
+        device1 = MagicMock(ip="192.168.1.201", name="Device A")
+        device2 = MagicMock(ip="192.168.1.202", name="Device B")
+        devices = [device1, device2]
+
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        http_client_factory = MagicMock(
+            side_effect=lambda ip: MagicMock(close=AsyncMock())
+        )
+        prober_factory = MagicMock(
+            side_effect=lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        window._secondary_workflows._wiim_http_client_factory = http_client_factory
+        window._secondary_workflows._capability_prober_factory = prober_factory
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: MagicMock()
+        )
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
+            ),
+            patch.object(
+                window._secondary_workflows, "_write_preset_to_adapter",
+                new_callable=AsyncMock,
+            ) as mock_write,
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
+            )
+
+        assert http_client_factory.call_count == 2
+        assert prober_factory.call_count == 2
+        assert mock_write.call_count == 4
+
+    def test_copy_batch_device_connect_failure_counts_all_its_presets_failed(
+        self, window
+    ) -> None:
+        """Regression test (branch-quality review, 2026-07-17): if a target
+        device fails to connect/probe, all presets destined for it count as
+        failed in one step (not attempted individually), while the other
+        device's presets still succeed and the totals still balance."""
+        _setup_device(window)
+        items = [MagicMock(), MagicMock()]
+        items[0].name = "Preset1"
+        items[0].preset_type = "PEQ"
+        items[1].name = "Preset2"
+        items[1].preset_type = "PEQ"
+
+        device_ok = MagicMock(ip="192.168.1.201", name="Device OK")
+        device_bad = MagicMock(ip="192.168.1.202", name="Device Unreachable")
+        devices = [device_ok, device_bad]
+
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        def _prober_factory(client: object) -> MagicMock:
+            prober = MagicMock()
+            if client is bad_client:
+                prober.probe = AsyncMock(side_effect=RuntimeError("unreachable"))
+            else:
+                prober.probe = AsyncMock(return_value=MagicMock())
+            return prober
+
+        ok_client = MagicMock(close=AsyncMock())
+        bad_client = MagicMock(close=AsyncMock())
+        clients_by_ip = {"192.168.1.201": ok_client, "192.168.1.202": bad_client}
+
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: clients_by_ip[ip]
+        )
+        window._secondary_workflows._capability_prober_factory = _prober_factory
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: MagicMock()
+        )
+
+        captured: list[tuple[int, int, int, int]] = []
+        window._secondary_workflows.copy_batch_complete.connect(
+            lambda n_items, n_devices, succeeded, failed: captured.append(
+                (n_items, n_devices, succeeded, failed)
+            )
+        )
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
+            ),
+            patch.object(
+                window._secondary_workflows, "_write_preset_to_adapter",
+                new_callable=AsyncMock,
+            ) as mock_write,
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
+            )
+
+        assert mock_write.call_count == 2  # only device_ok's 2 presets were attempted
+        assert captured == [(2, 2, 2, 2)]  # n_items, n_devices, succeeded, failed
 
     # --- Issue #79: Copy L/R RoomFit preserves channel_mode ---
 
