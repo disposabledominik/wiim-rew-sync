@@ -272,11 +272,22 @@ class SecondaryWorkflowManager(QObject):
         assert self._bridge is not None
         self._bridge.run_async(self._do_undo(source_name, backup_path))
 
-    async def _do_undo(self, source_name: str, backup_path: str | Path) -> None:
-        """Execute undo via SafeWrite.undo(), which restores both the
-        source's previous bands and its previous enable-state (backup
-        parsing and PEQSettings reconstruction live inside SafeWrite.undo()
-        now, not here -- see its docstring).
+    async def _restore_backup(
+        self, source_name: str, backup_path: str | Path
+    ) -> tuple[bool, str]:
+        """Restore a source's PEQ state from backup via SafeWrite.undo()
+        (backup parsing and PEQSettings reconstruction live inside
+        SafeWrite.undo(), not here -- see its docstring).
+
+        Shared by _do_undo (single-source, wraps this in an undo_complete
+        emit) and _do_undo_multi_source (awaits this directly per source so
+        its succeeded/failed tally reflects each source's real outcome,
+        rather than undo_last_push()'s fire-and-forget scheduling -- branch-
+        quality review, 2026-07-18).
+
+        Returns:
+            Tuple of (success, message) -- message is the restored-
+            confirmation text on success, or the error text on failure.
         """
         assert self._safe_write_factory is not None
         assert self._current_adapter is not None
@@ -286,23 +297,26 @@ class SecondaryWorkflowManager(QObject):
         # Check if backup file exists (Req 8.5)
         if not path or not path.is_file():
             logger.error("Undo requested but backup file not found: %s", path)
-            self.undo_complete.emit(False, "No backup available")
-            return
+            return False, "No backup available"
 
         try:
             safe_write = self._safe_write_factory(self._current_adapter)
             result = await safe_write.undo(path, source_name)
 
             if result.success:
-                self.undo_complete.emit(True, "Previous filters restored")
                 logger.info("Undo last push: completed successfully")
-            else:
-                error_msg = result.error_message or "Unknown error"
-                self.undo_complete.emit(False, error_msg)
-                logger.error("Undo last push failed: %s", error_msg)
+                return True, "Previous filters restored"
+            error_msg = result.error_message or "Unknown error"
+            logger.error("Undo last push failed: %s", error_msg)
+            return False, error_msg
         except Exception as exc:
             logger.exception("Undo last push failed")
-            self.undo_complete.emit(False, str(exc))
+            return False, str(exc)
+
+    async def _do_undo(self, source_name: str, backup_path: str | Path) -> None:
+        """Execute undo via _restore_backup() and report the result."""
+        success, message = await self._restore_backup(source_name, backup_path)
+        self.undo_complete.emit(success, message)
 
     @Slot(str, str, str)
     def undo_roomfit(self, backup_path: str, source_name: str, profile_name: str) -> None:
@@ -374,16 +388,12 @@ class SecondaryWorkflowManager(QObject):
         Args:
             backup_paths_str: Semicolon-separated "source=/path" entries.
 
-        Note (pre-existing behavior, preserved as-is by this move --
-        docs/backlog.md item 2 Phase D): undo_last_push() below only
-        *schedules* each source's real restore via run_async() and returns
-        immediately, so this method's own succeeded/failed tally and
-        undo_multi_source_complete emit reflect scheduling success, not each
-        source's actual outcome -- which arrives later via undo_last_push's
-        own undo_complete emit (per source), potentially after this method's
-        own summary already fired. Characterized in
-        test_smoke_regression_operations.py before this move; not fixed
-        here.
+        Awaits each source's real restore via _restore_backup() directly
+        (rather than undo_last_push(), which only schedules the restore via
+        run_async() and returns immediately) so succeeded/failed reflects
+        each source's actual outcome, not just scheduling success. Fixed
+        branch-quality review, 2026-07-18 -- see docs/corrections.md for the
+        prior scheduling-vs-outcome gap this replaces.
 
         Emits undo_multi_source_complete (succeeded, failed, message) rather
         than the shared undo_complete(bool, str) the other two undo paths
@@ -399,12 +409,12 @@ class SecondaryWorkflowManager(QObject):
         failed = 0
 
         for source_name, bp in entries:
-            try:
-                self._bridge.progress_update.emit(f"Restoring {source_name}...")
-                self.undo_last_push(source_name, bp)
+            self._bridge.progress_update.emit(f"Restoring {source_name}...")
+            success, message = await self._restore_backup(source_name, bp)
+            if success:
                 succeeded += 1
-            except Exception:
-                logger.exception("Undo source '%s' failed", source_name)
+            else:
+                logger.error("Undo source '%s' failed: %s", source_name, message)
                 failed += 1
 
         if failed == 0:

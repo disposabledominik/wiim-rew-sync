@@ -2165,39 +2165,45 @@ class TestPresets:
     # --- _do_undo_multi_source characterization (pre-Phase-D extraction) ---
     #
     # No prior coverage existed for this method at all (confirmed via repo
-    # grep). These tests pin its CURRENT behavior, including a latent race:
+    # grep). These tests originally pinned a latent race as a golden master:
     # self._secondary_workflows.undo_last_push() is synchronous and only
     # *schedules* the real restore via AsyncBridge.run_async(), returning
-    # immediately -- it does not wait for the scheduled coroutine. This
-    # loop's own succeeded/failed tally and "All N source(s) restored"
-    # summary banner therefore reflect scheduling success, not the actual
-    # per-source restore outcome, which arrives later via the existing
-    # undo_complete signal -> _on_undo_complete (itself calling
-    # mark_undo_complete/status banner again, potentially after this
-    # method's own summary already fired). This is a pre-existing bug,
-    # captured here as a golden master to diff against after the Phase D
-    # move -- not fixed as part of it (see docs/backlog.md).
+    # immediately -- the loop's own succeeded/failed tally and "All N
+    # source(s) restored" summary banner reflected scheduling success, not
+    # the actual per-source restore outcome.
     #
-    # Update (branch-quality review, 2026-07-17): this method now emits its
-    # own dedicated undo_multi_source_complete(int, int, str) signal instead
-    # of sharing undo_complete(bool, str) with the single-source paths --
-    # fixes a regression where a partial multi-source undo (succeeded > 0,
-    # failed > 0) never cleared the pushed-filters snapshot, since the
-    # shared signal's binary success flag couldn't distinguish "should the
-    # banner say success" from "did anything actually change." The
-    # scheduling-vs-outcome race itself (still real, still unfixed) is now
+    # Update (branch-quality review, 2026-07-17): this method started
+    # emitting its own dedicated undo_multi_source_complete(int, int, str)
+    # signal instead of sharing undo_complete(bool, str) with the
+    # single-source paths -- fixed a regression where a partial multi-source
+    # undo (succeeded > 0, failed > 0) never cleared the pushed-filters
+    # snapshot, since the shared signal's binary success flag couldn't
+    # distinguish "should the banner say success" from "did anything
+    # actually change." The scheduling-vs-outcome race itself remained,
     # visible on the new signal instead of the old one.
+    #
+    # Update (branch-quality review, 2026-07-18): the race itself is fixed.
+    # _do_undo_multi_source now awaits each source's real restore via
+    # SecondaryWorkflowManager._restore_backup() directly instead of the
+    # fire-and-forget undo_last_push(), so succeeded/failed reflects actual
+    # per-source outcomes. Tests below updated to mock _restore_backup()
+    # (the real awaited call) rather than undo_last_push() (no longer
+    # called by this method at all).
 
-    def test_undo_multi_source_single_entry_schedules_and_reports_success(
+    def test_undo_multi_source_single_entry_restores_and_reports_success(
         self, window
     ) -> None:
-        """A single "source=path" entry schedules one undo_last_push call
-        and reports it as a completed restore -- before any real outcome
-        is known (see class comment above)."""
+        """A single "source=path" entry awaits one real restore and reports
+        success only once that restore actually succeeds."""
         _setup_device(window)
 
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return True, "Previous filters restored"
+
         with (
-            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(
+                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            ) as mock_restore,
             patch.object(window._push_page, "mark_undo_complete") as mock_mark,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
@@ -2209,30 +2215,34 @@ class TestPresets:
                 )
             )
 
-        mock_undo.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
+        mock_restore.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
         mock_mark.assert_called_once_with(True)
         mock_success.assert_called_once_with("All 1 source(s) restored from backup")
 
-    def test_undo_multi_source_multi_entry_all_scheduled_reports_success(
+    def test_undo_multi_source_multi_entry_all_restored_reports_success(
         self, window
     ) -> None:
-        """Multiple "source=path" entries each schedule their own
-        undo_last_push call; the summary banner counts scheduling
-        successes, not real per-source outcomes."""
+        """Multiple "source=path" entries each await their own real
+        restore; the summary banner counts actual per-source successes."""
         _setup_device(window)
         backup_str = "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json"
 
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return True, "Previous filters restored"
+
         with (
-            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(
+                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            ) as mock_restore,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
             import asyncio
 
             asyncio.run(window._secondary_workflows._do_undo_multi_source(backup_str))
 
-        assert mock_undo.call_count == 2
-        mock_undo.assert_any_call("wifi", "/tmp/backup_wifi.json")
-        mock_undo.assert_any_call("bluetooth", "/tmp/backup_bt.json")
+        assert mock_restore.call_count == 2
+        mock_restore.assert_any_call("wifi", "/tmp/backup_wifi.json")
+        mock_restore.assert_any_call("bluetooth", "/tmp/backup_bt.json")
         mock_success.assert_called_once_with("All 2 source(s) restored from backup")
 
     def test_undo_multi_source_malformed_entries_skipped(self, window) -> None:
@@ -2241,38 +2251,29 @@ class TestPresets:
         _setup_device(window)
         backup_str = "wifi=/tmp/backup_wifi.json;garbage-no-equals;;"
 
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return True, "Previous filters restored"
+
         with (
-            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(
+                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            ) as mock_restore,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
             import asyncio
 
             asyncio.run(window._secondary_workflows._do_undo_multi_source(backup_str))
 
-        mock_undo.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
+        mock_restore.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
         mock_success.assert_called_once_with("All 1 source(s) restored from backup")
 
-    def test_undo_multi_source_completes_before_real_undo_outcome_is_known(
-        self, window
-    ) -> None:
-        """Golden-master for the race itself: _do_undo_multi_source's own
-        summary is what the status banner shows -- there's no waiting for
-        the real per-source undo_complete signal each scheduled
-        undo_last_push() call will emit later. undo_last_push is mocked as
-        a no-op scheduling call here (it never itself emits undo_complete),
-        the same shape a real call has at the instant it returns, before
-        its scheduled coroutine has run.
-
-        This method emits its own dedicated undo_multi_source_complete
-        signal (not the shared undo_complete single-source signal -- see
-        the 2026-07-17 update note on the class comment above) for its own
-        summary, since it no longer has direct widget access. This test
-        captures that emission directly (real signal connection, not a
-        mocked-out one) to confirm it fires exactly once, synchronously,
-        with the scheduling-based tally -- the race itself (this summary
-        potentially preceding or duplicating a later real per-source
-        emission on the *other*, single-source undo_complete signal) is
-        unchanged.
+    def test_undo_multi_source_waits_for_real_undo_outcome(self, window) -> None:
+        """Regression test for the scheduling-vs-outcome fix (branch-quality
+        review, 2026-07-18): the summary now reflects _restore_backup()'s
+        real, awaited return value -- a source that actually fails to
+        restore (device unreachable, verification failure, etc.) is counted
+        as failed, not as succeeded-because-scheduling-didn't-raise (the
+        prior bug this test used to golden-master).
         """
         _setup_device(window)
 
@@ -2281,9 +2282,12 @@ class TestPresets:
             lambda succeeded, failed, msg: captured.append((succeeded, failed, msg))
         )
 
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return False, "Device unreachable"
+
         with (
-            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
-            patch.object(window._status_banner, "show_success") as mock_success,
+            patch.object(window._secondary_workflows, "_restore_backup", side_effect=_restore),
+            patch.object(window._status_banner, "show_error") as mock_error,
         ):
             import asyncio
 
@@ -2293,11 +2297,10 @@ class TestPresets:
                 )
             )
 
-        mock_undo.assert_called_once()
-        mock_success.assert_called_once()
-        # Exactly one emission -- this method's own summary -- since
-        # undo_last_push is mocked and never emits its own (real) result.
-        assert captured == [(1, 0, "All 1 source(s) restored from backup")]
+        mock_error.assert_called_once()
+        # The real (failed) outcome is reflected -- not a scheduling-based
+        # success, since _restore_backup is awaited before the tally.
+        assert captured == [(0, 1, "0 restored, 1 failed")]
 
     def test_undo_multi_source_partial_failure_clears_snapshot(self, window) -> None:
         """Regression test (branch-quality review, 2026-07-17): a partial
@@ -2310,13 +2313,14 @@ class TestPresets:
         _setup_device(window)
         window._wizard_controller.state.last_pushed_filters = ["sentinel"]
 
-        def _schedule(src: str, path: str) -> None:
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
             if src == "bluetooth":
-                raise RuntimeError("bridge unavailable")
+                return False, "Device unreachable"
+            return True, "Previous filters restored"
 
         with (
             patch.object(
-                window._secondary_workflows, "undo_last_push", side_effect=_schedule
+                window._secondary_workflows, "_restore_backup", side_effect=_restore
             ),
             patch.object(window._status_banner, "show_error"),
         ):
@@ -3637,7 +3641,7 @@ class TestSharedHelpers:
         assert callable(peq.extract_filters)
         assert hasattr(profile_module, "build_profile")
         assert callable(profile_module.build_profile)
-        for name in ("is_lr_mode", "get_lr_filters", "require_lr_filters"):
+        for name in ("is_lr_mode", "require_lr_filters"):
             assert hasattr(channel_mode_module, name)
             assert callable(getattr(channel_mode_module, name))
 

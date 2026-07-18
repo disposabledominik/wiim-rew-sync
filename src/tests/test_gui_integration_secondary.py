@@ -315,21 +315,29 @@ class TestUndoRoomfit:
 class TestUndoMultiSource:
     """Test SecondaryWorkflowManager._do_undo_multi_source.
 
-    Full characterization of the pre-existing scheduling-vs-outcome race
-    lives in test_smoke_regression_operations.py (captured before this
-    method moved here); these tests cover the same core behavior directly
-    against the manager, matching this file's convention for the other
-    moved/native workflows.
+    _do_undo_multi_source awaits each source's real restore via
+    _restore_backup() directly (fixed branch-quality review, 2026-07-18 --
+    previously it called the fire-and-forget undo_last_push() and tallied
+    scheduling success, not actual outcome; full characterization of that
+    prior gap lives in test_smoke_regression_operations.py, captured before
+    this method moved here). These tests mock _restore_backup() directly to
+    isolate this method's aggregation logic; _restore_backup()'s own
+    correctness (SafeWrite.undo() success/failure/missing-backup-file
+    handling) is covered by TestUndoSuccessWithValidBackup and
+    TestUndoMissingBackupFile above, which exercise it via _do_undo().
     """
 
     @pytest.mark.asyncio
-    async def test_single_entry_schedules_and_emits_success(self) -> None:
+    async def test_single_entry_restores_and_emits_success(self) -> None:
         manager = SecondaryWorkflowManager()
         manager._bridge = MagicMock()
-        scheduled: list[tuple[str, str]] = []
-        manager.undo_last_push = MagicMock(
-            side_effect=lambda src, path: scheduled.append((src, path))
-        )
+        restored: list[tuple[str, str]] = []
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            restored.append((src, path))
+            return True, "Previous filters restored"
+
+        manager._restore_backup = _restore  # type: ignore[assignment]
 
         undo_signals: list[tuple[int, int, str]] = []
         manager.undo_multi_source_complete.connect(
@@ -338,14 +346,18 @@ class TestUndoMultiSource:
 
         await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
 
-        assert scheduled == [("wifi", "/tmp/backup_wifi.json")]
+        assert restored == [("wifi", "/tmp/backup_wifi.json")]
         assert undo_signals == [(1, 0, "All 1 source(s) restored from backup")]
 
     @pytest.mark.asyncio
-    async def test_scheduling_failure_emits_failure_tally(self) -> None:
+    async def test_restore_failure_emits_failure_tally(self) -> None:
         manager = SecondaryWorkflowManager()
         manager._bridge = MagicMock()
-        manager.undo_last_push = MagicMock(side_effect=RuntimeError("bridge unavailable"))
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return False, "Verification failed"
+
+        manager._restore_backup = _restore  # type: ignore[assignment]
 
         undo_signals: list[tuple[int, int, str]] = []
         manager.undo_multi_source_complete.connect(
@@ -358,23 +370,28 @@ class TestUndoMultiSource:
 
     @pytest.mark.asyncio
     async def test_partial_success_emits_both_counts(self) -> None:
-        """2 of 3 sources scheduled successfully, 1 malformed entry fails.
+        """2 of 3 sources actually restore, 1 genuinely fails (e.g. device
+        unreachable during that source's SafeWrite.undo()).
 
         Regression coverage for the snapshot-clearing bug (branch-quality
         review, 2026-07-17): the manager's own tally must report succeeded=2
         so MainWindow._on_undo_multi_source_complete can clear the pushed
-        snapshot on a partial success, not just a full one.
+        snapshot on a partial success, not just a full one. Also regression
+        coverage for the scheduling-vs-outcome fix (2026-07-18): the tally
+        now reflects each source's real restore outcome, not just whether
+        scheduling it raised.
         """
         manager = SecondaryWorkflowManager()
         manager._bridge = MagicMock()
-        scheduled: list[tuple[str, str]] = []
+        restored: list[tuple[str, str]] = []
 
-        def _schedule(src: str, path: str) -> None:
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
             if src == "bluetooth":
-                raise RuntimeError("bridge unavailable")
-            scheduled.append((src, path))
+                return False, "Device unreachable"
+            restored.append((src, path))
+            return True, "Previous filters restored"
 
-        manager.undo_last_push = MagicMock(side_effect=_schedule)
+        manager._restore_backup = _restore  # type: ignore[assignment]
 
         undo_signals: list[tuple[int, int, str]] = []
         manager.undo_multi_source_complete.connect(
@@ -385,7 +402,7 @@ class TestUndoMultiSource:
             "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json;optical=/tmp/backup_opt.json"
         )
 
-        assert scheduled == [
+        assert restored == [
             ("wifi", "/tmp/backup_wifi.json"),
             ("optical", "/tmp/backup_opt.json"),
         ]
