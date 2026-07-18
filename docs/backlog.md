@@ -327,6 +327,42 @@ and migrate `DevicePickerDialog`/`QuickSetupDialog` onto it at the same time.
 
 ---
 
+## 4. Multi-Source Push: No Automatic Rollback on Partial Failure (Known Limitation)
+
+**Originally:** Surfaced during PR #1 review (2026-07-18) of item 2's `PrimaryWorkflowManager`
+extraction — pre-existing behavior, not introduced by that PR, but previously undocumented as a
+known limitation anywhere.
+
+**What:** `PrimaryWorkflowManager._do_push()`'s PEQ flow writes to each of `state.selected_sources`
+in sequence and aborts on the first failure (`src/gui/primary_workflows.py`, the "Abort on first
+failure" comment). Each individual source's write still goes through the full `SafeWrite` 5-step
+protocol (backup, write, read-back, verify, rollback-on-verify-failure) for *that* source — but if
+source N fails after sources 1..N-1 already succeeded, there is no cross-source rollback: the
+already-written sources are left in their new state rather than restored to their pre-push backups.
+CLAUDE.md's design principle #1 ("Safety before convenience — never write to a device without
+backup and verification") and #4 ("Recoverability — automatic rollback on verification failure")
+read as applying at the whole-push level, not just per-source, so this is a real gap against the
+stated design principles, not just a UX rough edge.
+
+**Why deferred:** Backup paths for all sources written before the failure are still collected and
+returned (`backup_paths` in `_do_push`), so the *user* can manually undo each succeeded source via
+the existing undo flow — the data needed for a fix already exists, this is a missing automation, not
+a missing capability. Most setups push to 1-2 sources, and a partial multi-source push failure is
+uncommon (each source already passed its own read-back verification before the loop moves on; the
+common failure mode is connection loss between sources, not a bad write). Fixing this properly means
+either auto-invoking undo on sources 1..N-1 when source N fails (extra complexity in the safety-
+critical write path, and a rollback-of-a-rollback risk if the auto-undo itself fails) or restructuring
+the whole multi-source push to pre-stage backups for all sources before writing any of them.  Either
+is a large enough decision to warrant its own design pass rather than folding into an unrelated PR.
+
+**Status:** Not started.
+
+**To reactivate:** Decide whether cross-source auto-rollback is wanted (and how it should behave if
+the rollback itself fails), or whether documenting the manual-undo path in the GUI's push failure
+message is sufficient. Implement in `PrimaryWorkflowManager._do_push()`'s PEQ branch.
+
+---
+
 ## Completed / Closed Items (Archive)
 
 ### Adapters Instantiated Directly in `main_window.py` (Tech Debt)

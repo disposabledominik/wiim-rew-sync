@@ -1245,7 +1245,10 @@ class PrimaryWorkflowManager(QObject):
                     backup_paths.append(f"{source_name}={bp_path}")
 
                 if not result.success:
-                    # Abort on first failure
+                    # Abort on first failure. Sources 1..i-1 already succeeded and are
+                    # NOT automatically rolled back here -- each already passed its own
+                    # SafeWrite verification, so this is a cross-source gap, not a
+                    # per-source one. Known limitation, see docs/backlog.md item 4.
                     self._bridge.write_complete.emit(result)
                     return
 
