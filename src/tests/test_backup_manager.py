@@ -13,7 +13,12 @@ from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import ChannelMode
 from src.models.errors import BackupError
 from src.models.peq import PEQSettings
-from src.repository.backup_manager import BackupManager
+from src.repository.backup_manager import (
+    BackupManager,
+    decode_multi_source_backup_paths,
+    encode_multi_source_backup_paths,
+    is_multi_source_backup_path,
+)
 
 
 @pytest.fixture
@@ -293,3 +298,39 @@ class TestListBackups:
         """list_backups returns empty list for a device with no backups."""
         result = backup_manager.list_backups("nonexistent-uuid")
         assert result == []
+
+
+class TestMultiSourceBackupPathEncoding:
+    """encode/decode_multi_source_backup_paths and is_multi_source_backup_path.
+
+    Single source of truth for the "source1=/path;source2=/path" wire format
+    shared by PrimaryWorkflowManager._do_push (encode), MainWindow's undo
+    handler (is_multi_source_backup_path), and
+    SecondaryWorkflowManager._do_undo_multi_source (decode).
+    """
+
+    def test_encode_decode_round_trip(self) -> None:
+        entries = [("Living Room", "/backups/a.json"), ("Bedroom", "/backups/b.json")]
+        encoded = encode_multi_source_backup_paths(entries)
+        assert encoded == "Living Room=/backups/a.json;Bedroom=/backups/b.json"
+        assert decode_multi_source_backup_paths(encoded) == entries
+
+    def test_decode_skips_malformed_entries(self) -> None:
+        encoded = "Living Room=/a.json;;no-equals-sign;Bedroom=/b.json"
+        assert decode_multi_source_backup_paths(encoded) == [
+            ("Living Room", "/a.json"),
+            ("Bedroom", "/b.json"),
+        ]
+
+    def test_encode_empty_list(self) -> None:
+        assert encode_multi_source_backup_paths([]) == ""
+
+    def test_decode_empty_string(self) -> None:
+        assert decode_multi_source_backup_paths("") == []
+
+    def test_is_multi_source_detects_semicolon_or_equals(self) -> None:
+        assert is_multi_source_backup_path("Living Room=/backups/a.json") is True
+        assert is_multi_source_backup_path("a=1;b=2") is True
+
+    def test_is_multi_source_false_for_legacy_bare_path(self) -> None:
+        assert is_multi_source_backup_path("/backups/a.json") is False

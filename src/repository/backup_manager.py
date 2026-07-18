@@ -89,6 +89,43 @@ def parse_backup_restore_metadata(
     )
 
 
+def encode_multi_source_backup_paths(entries: list[tuple[str, str]]) -> str:
+    """Encode (source_name, backup_path) pairs for the multi-source undo wire format.
+
+    Format: "source1=/path1;source2=/path2". Single source of truth for a
+    format built in PrimaryWorkflowManager._do_push, sniffed in MainWindow's
+    undo handler, and decoded in SecondaryWorkflowManager._do_undo_multi_source
+    -- see decode_multi_source_backup_paths/is_multi_source_backup_path below.
+    """
+    return ";".join(f"{source_name}={backup_path}" for source_name, backup_path in entries)
+
+
+def decode_multi_source_backup_paths(encoded: str) -> list[tuple[str, str]]:
+    """Decode the multi-source undo wire format back into (source_name, backup_path) pairs.
+
+    Inverse of encode_multi_source_backup_paths(). Silently skips malformed
+    entries (empty after stripping, or missing '=') rather than raising --
+    matches the tolerant parsing this replaced.
+    """
+    result: list[tuple[str, str]] = []
+    for entry in encoded.split(";"):
+        entry = entry.strip()
+        if not entry or "=" not in entry:
+            continue
+        source_name, backup_path = entry.split("=", 1)
+        result.append((source_name.strip(), backup_path.strip()))
+    return result
+
+
+def is_multi_source_backup_path(backup_path: str) -> bool:
+    """Detect whether a backup_path string uses the multi-source encoding.
+
+    A single-source (legacy) backup_path is a bare filesystem path and
+    contains neither of these characters.
+    """
+    return ";" in backup_path or "=" in backup_path
+
+
 class BackupManager:
     """Manages automatic backup lifecycle for device EQ state.
 
