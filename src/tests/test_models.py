@@ -268,6 +268,21 @@ class TestProfileValidator:
         ):
             Profile(name="test", channel_mode="left", filters_l=_sample_filters())
 
+    def test_lr_with_empty_filters_l_rejected(self) -> None:
+        """Empty is treated the same as missing -- matches require_lr_filters'
+        contract (ca14e26), so a profile that would fail that check can never
+        be constructed or loaded from disk in the first place."""
+        with pytest.raises(
+            PydanticValidationError, match="L/R profile must have 'filters_l' and 'filters_r'"
+        ):
+            Profile(name="test", channel_mode="left", filters_l=[], filters_r=_sample_filters())
+
+    def test_lr_with_empty_filters_r_rejected(self) -> None:
+        with pytest.raises(
+            PydanticValidationError, match="L/R profile must have 'filters_l' and 'filters_r'"
+        ):
+            Profile(name="test", channel_mode="left", filters_l=_sample_filters(), filters_r=[])
+
     def test_lr_with_filters_key_rejected(self) -> None:
         with pytest.raises(
             PydanticValidationError, match="L/R profile must not have 'filters' key"
@@ -366,6 +381,17 @@ class TestProfileBandCounts:
     def test_no_filters_returns_zero_zero(self) -> None:
         profile = build_profile("Test", [], "Stereo")
         assert profile.band_counts() == (0, 0)
+
+    def test_gain_within_tolerance_of_zero_counts_as_inactive(self) -> None:
+        """band_counts() uses fp_compare.gain_matches()'s tolerance, not raw
+        float equality, so a gain that rounds to ~0 dB (e.g. from a
+        read-back device value) still counts as inactive, not active."""
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=0.01, q=1.0),
+            CanonicalFilter(type="PEAK", frequency_hz=200.0, gain_db=3.0, q=1.0),
+        ]
+        profile = build_profile("Test", filters, "Stereo")
+        assert profile.band_counts() == (1, 2)
 
 
 # ---------------------------------------------------------------------------

@@ -763,6 +763,38 @@ class TestImportExport:
         assert warning_text.count("Left: Imported 3 filters") == 1
         assert warning_text.count("Right: Imported 3 filters") == 1
 
+    def test_export_lr_with_empty_channel_shows_error_not_crash(
+        self, window, tmp_path
+    ) -> None:
+        """require_lr_filters() rejects an empty (not just missing) channel
+        (ca14e26); _export_filters_as_rew must show an error banner for
+        that ValueError, not let it escape uncaught out of the Qt slot
+        (branch-quality review, 2026-07-18)."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.filters_l = []
+        state.filters_r = [_make_filter(200, gain=-4.0)]
+        state.channel_mode = ChannelMode.LR
+
+        path_l = tmp_path / "export_L.txt"
+        path_r = tmp_path / "export_R.txt"
+
+        with (
+            patch(
+                "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
+                return_value=(path_l, path_r),
+            ),
+            patch.object(window._status_banner, "show_error") as mock_error,
+            patch.object(window._primary_workflows, "export_file_lr") as mock_export,
+        ):
+            window._export_filters_as_rew(state.current_filters, "L/R")
+
+        mock_export.assert_not_called()
+        mock_error.assert_called_once()
+        assert "Export failed" in mock_error.call_args[0][0]
+        assert not path_l.exists()
+        assert not path_r.exists()
+
     # --- Issue #29: Export branches on channel_mode for L/R ---
 
     def test_issue29_export_lr_mode_uses_export_dialog(self, window, tmp_path) -> None:
@@ -1488,6 +1520,46 @@ class TestPresets:
         assert warning is not None
         assert "Movie Night" in warning[1]
         mock_run.assert_not_called()
+
+    def test_local_preset_copy_lr_empty_channel_shows_error_not_crash(
+        self, window
+    ) -> None:
+        """build_peq_settings() raises ValueError for an L/R profile with one
+        empty channel (require_lr_filters, ca14e26);
+        _on_local_preset_copy_to_device_requested must show an error banner
+        for that, not let it escape uncaught out of the Qt slot -- reachable
+        for a duck-typed `profile` object even though a real, freshly-loaded
+        Profile can no longer hold an empty channel itself (branch-quality
+        review, 2026-07-18)."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        profile = MagicMock(
+            name="Broken LR Profile",
+            channel_mode=ChannelMode.LR,
+            filters=None,
+            filters_l=[],
+            filters_r=[_make_filter(100)],
+        )
+        profile.name = "Broken LR Profile"
+
+        with (
+            patch(
+                "src.gui.main_window.PresetTypeDialog.get_type", return_value="PEQ"
+            ),
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=[MagicMock(ip="192.168.1.200", name="Other Device")],
+            ),
+            patch.object(window._bridge, "run_async") as mock_run,
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            window._on_local_preset_copy_to_device_requested(profile)
+
+        mock_run.assert_not_called()
+        mock_error.assert_called_once()
+        assert "Copy failed" in mock_error.call_args[0][0]
 
     # --- #191: Copy-to-Device RoomFit target-activation warning ---
 
@@ -3060,6 +3132,30 @@ class TestSettingsUIState:
         mock_save.assert_called_once()
         mock_refresh.assert_not_called()
         mock_error.assert_called_once_with("Save failed: disk full")
+
+    def test_save_filters_to_presets_lr_empty_channel_shows_error_not_crash(
+        self, window
+    ) -> None:
+        """build_profile() raises ValueError for an L/R save with one empty
+        channel (require_lr_filters, ca14e26); _save_filters_to_presets must
+        show an error banner for that, not let it escape uncaught out of the
+        Qt slot (branch-quality review, 2026-07-18)."""
+        filters = [_make_filter(100)]
+        state = window._wizard_controller.state
+        state.filters_l = [_make_filter(100)]
+        state.filters_r = []
+
+        with (
+            patch.object(window._profile_repository, "save") as mock_save,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            window._save_filters_to_presets("Broken LR Preset", filters, ChannelMode.LR)
+
+        mock_save.assert_not_called()
+        mock_refresh.assert_not_called()
+        mock_error.assert_called_once()
+        assert "Save failed" in mock_error.call_args[0][0]
 
     def test_issue235_save_filters_to_presets_sanitizes_device_name(self, window) -> None:
         """Smoke #235: _save_filters_to_presets() must sanitize its `name`

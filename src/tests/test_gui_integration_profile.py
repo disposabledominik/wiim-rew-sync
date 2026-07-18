@@ -223,6 +223,40 @@ class TestProfileRecallNoFiltersAttr:
 
 
 # ---------------------------------------------------------------------------
+# Test 3b: L/R profile recall with one empty channel -> error, not a crash
+# ---------------------------------------------------------------------------
+
+
+class TestProfileRecallLrEmptyChannel:
+    """An L/R profile whose combined filters (filters_l + filters_r) are
+    non-empty because only one channel is empty must not crash
+    _on_profile_recalled -- require_lr_filters() (ca14e26) raises for that
+    case, and _on_profile_recalled must turn that ValueError into an error
+    banner instead of letting it escape the Qt slot uncaught
+    (branch-quality review, 2026-07-18)."""
+
+    def test_recall_lr_profile_with_empty_channel_shows_error_not_crash(
+        self, make_window, qtbot
+    ) -> None:
+        from src.models.channel_mode import ChannelMode
+
+        window = make_window()
+        # As _on_profile_load_requested does before calling recall_profile.
+        window._wizard_controller.state.channel_mode = ChannelMode.LR
+
+        profile = _make_profile(name="Broken LR Profile")
+        profile.channel_mode = ChannelMode.LR
+        profile.filters_l = []
+        profile.filters_r = _make_filters(2)
+
+        with patch.object(window._review_page, "set_lr_filters") as mock_set_lr:
+            window._secondary_workflows.recall_profile(profile)
+
+        mock_set_lr.assert_not_called()
+        assert "Could not load preset" in window._status_banner._message_label.text()
+
+
+# ---------------------------------------------------------------------------
 # Test 4: Profile recall updates ReviewPage via set_filters
 # ---------------------------------------------------------------------------
 

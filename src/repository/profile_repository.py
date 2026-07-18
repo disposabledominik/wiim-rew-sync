@@ -150,20 +150,24 @@ class ProfileRepository:
         self.save(new_profile, expected_existing_name=old_name)
 
         # Remove the old file only if it's a *different* file on disk than
-        # what save() just wrote -- comparing case-folded normalized paths,
-        # not raw names or plain Path equality, since a rename to an
-        # NFC/NFD-equivalent form -or- a case-only variant of the same name
-        # (e.g. "MyPreset" -> "mypreset") normalizes to the same file save()
-        # just overwrote in place. Path equality alone isn't enough here:
-        # it's case-insensitive on Windows/default-macOS but case-sensitive
-        # on Linux (this project's own documented WSL2/Ubuntu test
-        # environment included), so without the explicit casefold, a
-        # case-only rename on a case-sensitive filesystem would delete the
-        # file just written instead of recognizing it as the same profile.
-        if str(self._profile_path(old_name)).casefold() != str(
-            self._profile_path(new_name)
-        ).casefold():
-            old_path.unlink()
+        # what save() just wrote. Path.samefile() (stat-based: same
+        # device+inode) is used rather than string/Path equality, because
+        # whether two differently-spelled names collapse to the *same
+        # physical file* depends on the actual filesystem's case-folding
+        # behaviour, not on how Python happens to compare path strings.
+        # Path equality is case-insensitive on Windows (WindowsPath) but
+        # always case-sensitive on POSIX (PosixPath is a plain string
+        # compare, even on a case-insensitive volume like default macOS) --
+        # and a casefold comparison has the opposite problem: it collapses
+        # a case-only rename ("MyPreset" -> "mypreset") into "same path" even
+        # on this project's own case-sensitive WSL2/Ubuntu ext4 test
+        # environment, where they are genuinely two different files, which
+        # would skip the unlink and leave the stale old-cased file behind
+        # as an orphan. samefile() asks the OS directly, so it's correct on
+        # both case-sensitive and case-insensitive filesystems.
+        new_path = self._profile_path(new_name)
+        if not old_path.exists() or not old_path.samefile(new_path):
+            old_path.unlink(missing_ok=True)
 
     def duplicate(self, name: str, new_name: str) -> Profile:
         """Create a copy of a profile with a new name.

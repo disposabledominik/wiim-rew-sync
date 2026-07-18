@@ -200,6 +200,35 @@ class TestRename:
         assert loaded.filters is not None
         assert len(loaded.filters) == 2
 
+    def test_rename_case_only_leaves_exactly_one_file(
+        self, repo: ProfileRepository
+    ) -> None:
+        """A case-only rename ("MyPreset" -> "mypreset") must leave exactly
+        one file on disk under the new name, on any filesystem.
+
+        Regression test: an earlier fix used a casefolded string comparison
+        to decide whether the old and new paths were "the same file," which
+        is wrong on a case-sensitive filesystem (this project's own WSL2/
+        Ubuntu ext4 test environment) -- there, "MyPreset.json" and
+        "mypreset.json" really are two different files, so the casefolded
+        comparison treated them as equal, skipped the unlink, and left the
+        stale old-cased file behind as an orphan alongside the correctly
+        renamed one. rename() now uses Path.samefile() (stat-based) instead,
+        which asks the OS directly and is correct regardless of the
+        filesystem's own case-folding behaviour.
+        """
+        repo.save(_make_stereo_profile("MyPreset"))
+
+        repo.rename("MyPreset", "mypreset")
+
+        on_disk = sorted(p.name for p in repo._profiles_dir.iterdir())
+        assert on_disk == ["mypreset.json"]
+
+        loaded = repo.load("mypreset")
+        assert loaded.name == "mypreset"
+        assert loaded.filters is not None
+        assert len(loaded.filters) == 2
+
     def test_rename_to_name_colliding_with_unrelated_profile_still_raises(
         self, repo: ProfileRepository
     ) -> None:

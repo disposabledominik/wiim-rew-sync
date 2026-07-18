@@ -1221,6 +1221,44 @@ class TestWritePeqLRBatch:
         call = mock_client.command.call_args_list[0][0][0]
         assert "L%2FR" in call or "L/R" in call
 
+    async def test_write_peq_lr_empty_right_channel_not_flattened_to_left(
+        self, lr_batch_adapter: WiiMAdapter
+    ) -> None:
+        """An L/R PEQSettings with a genuinely empty right channel (valid
+        device read-state -- see WiiMAdapter._parse_lr(), which builds
+        bands_l/bands_r independently from parsed device data) must write
+        an empty right channel, not silently copy the left channel's bands
+        into it. safe_write.py's rollback path restores exactly this kind
+        of settings object (as read from the device before the write), so
+        flattening here would corrupt the state recoverability is meant to
+        restore (branch-quality review, flagged-not-changed #2, 2026-07-18).
+        """
+        from src.models.canonical import CanonicalFilter
+        from src.translator.wiim_generator import generate_wiim_band_array
+
+        bands_l = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.0),
+        ]
+        settings = PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="lr",
+            bands_l=bands_l,
+            bands_r=[],
+        )
+
+        with patch.object(
+            lr_batch_adapter, "_write_peq_batch", new=AsyncMock(return_value="OK")
+        ) as mock_batch:
+            await lr_batch_adapter.write_peq("wifi", settings)
+
+        band_array_l = mock_batch.call_args[0][1]
+        band_array_r = mock_batch.call_args[0][2]
+        expected_empty_r, _ = generate_wiim_band_array([], max_bands=10)
+
+        assert band_array_r == expected_empty_r
+        assert band_array_r != band_array_l
+
 
 # ---------------------------------------------------------------------------
 # Tests: write_peq — L/R sequential path (hardware testing regression)

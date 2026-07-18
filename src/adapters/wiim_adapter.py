@@ -452,9 +452,17 @@ class WiiMAdapter:
         """
 
         if settings.channel_mode.is_lr:
-            # L/R mode: write both channels
-            bands_l = settings.bands_l if settings.bands_l else settings.bands
-            bands_r = settings.bands_r if settings.bands_r else bands_l
+            # L/R mode: write both channels independently. No fallback
+            # between bands_l/bands_r -- an empty channel is a legitimate
+            # device read-state (see _parse_lr()), not a signal to reuse the
+            # other channel's bands. A prior version fell back to bands_l
+            # when bands_r was empty, which silently copied the left
+            # channel's filters into the right channel during rollback
+            # (safe_write.py restores an originally-read PEQSettings, which
+            # can have a genuinely asymmetric L/R split) -- corrupting the
+            # very state recoverability is supposed to restore.
+            bands_l = settings.bands_l
+            bands_r = settings.bands_r
             band_array_l, _warnings_l = generate_wiim_band_array(
                 bands_l, max_bands=self._capabilities.max_filters
             )
