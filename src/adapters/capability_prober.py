@@ -34,7 +34,6 @@ from src.adapters.wiim_commands import PLUGIN_URI, encode_wiim_command
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
 from src.models.device_capability_file import (
-    CapabilityFileEntry,
     find_entry,
     get_cached_capability_file,
     merge_into,
@@ -127,63 +126,7 @@ class CapabilityProber:
         """
         loaded = get_cached_capability_file()
         entry = find_entry(caps.model, loaded.entries)
-        merged = merge_into(caps, entry, default_max_bands=loaded.default_max_bands)
-        return self._apply_roomfit_model_fallback(merged, entry)
-
-    def _apply_roomfit_model_fallback(
-        self, caps: DeviceCapabilities, entry: CapabilityFileEntry | None
-    ) -> DeviceCapabilities:
-        """Defensive fallback for RoomFit support on models not yet listed
-        in the capability file.
-
-        The capability file's "WiiM_Mini"/"Muzo_Mini" entry already forces
-        supports_roomfit* to False via an exact key/alias match (see
-        merge_into()). This is a broader, lower-precision safety net for a
-        model variant not yet added as an alias: if the model string
-        contains "mini" case-insensitively and the matched capability-file
-        entry (if any) didn't already answer the RoomFit question, some
-        devices are known to incorrectly report RoomFit read support
-        anyway (smoke #36) -- force it off here too, so every caller of
-        probe() gets the same corrected value rather than each caller
-        re-implementing this same distrust check.
-
-        Gate is on the *entry's own roomfit-specific fields*, not the
-        coarser caps.capability_file_override flag -- merge_into() sets
-        capability_file_override=True whenever ANY entry field matched
-        (even one that says nothing about RoomFit), so gating on that flag
-        would let an unrelated partial match (e.g. an entry that only sets
-        max_bands) silently bypass this correction (branch-quality review,
-        2026-07-17).
-        """
-        if entry is not None and (
-            entry.supports_roomfit is not None
-            or entry.supports_roomfit_read is not None
-            or entry.supports_roomfit_write is not None
-            or entry.roomfit_level is not None
-        ):
-            return caps
-        model_str = (caps.model or "").lower()
-        # ASSUMPTION: any device whose model string contains "mini" shares
-        # the WiiM Mini's confirmed-by-hardware RoomFit-misreporting quirk
-        # (smoke #36, docs/corrections.md). Only the Mini itself has been
-        # hardware-tested; this generalizes that one finding to unlisted
-        # "mini"-named variants as a conservative default. If a future
-        # "mini"-named device turns out to genuinely support RoomFit, add
-        # it to device_capabilities.json with explicit supports_roomfit*
-        # values to override this fallback for that model specifically.
-        if "mini" not in model_str:
-            return caps
-        if caps.supports_roomfit or caps.supports_roomfit_read or caps.supports_roomfit_write:
-            logger.warning(
-                "Device model '%s' reports RoomFit support but is not listed "
-                "in the capability file's RoomFit-supporting models; forcing "
-                "supports_roomfit* off (smoke #36)",
-                caps.model,
-            )
-        caps.supports_roomfit = False
-        caps.supports_roomfit_read = False
-        caps.supports_roomfit_write = False
-        return caps
+        return merge_into(caps, entry, default_max_bands=loaded.default_max_bands)
 
     async def _probe_status(self, caps: DeviceCapabilities) -> dict[str, Any]:
         """Probe getStatusEx for device identity."""

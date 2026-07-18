@@ -395,18 +395,20 @@ class TestIssue36MiniRoomfitBlocklist:
     """Smoke #36: a model known not to support RoomFit gets PEQ_ONLY flow
     even if it reports otherwise.
 
-    The model-name distrust check itself has moved out of
-    MainWindow._on_capabilities_ready() into
-    CapabilityProber._apply_roomfit_model_fallback() (see
-    test_capability_prober.py::TestRoomfitModelFallback for that coverage,
-    exercised through the real probe() flow rather than a hand-built caps
-    mock) -- _on_capabilities_ready() now simply trusts
-    caps.supports_roomfit_read, which the prober has already corrected by
-    the time this handler runs. The test below confirms that trust: given
-    an already-corrected caps object (supports_roomfit_read=False,
-    regardless of what model name it carries), the wizard still ends up
-    PEQ_ONLY -- there's no remaining model-string special-casing in this
-    handler to test directly.
+    The correction lives entirely in CapabilityProber, not here (see
+    test_capability_prober.py::TestRoomfitCapabilityFileOverride and
+    TestRoomFitFallbackProbe, exercised through the real probe() flow rather
+    than a hand-built caps mock): the WiiM_Mini/Muzo_Mini capability-file
+    entry force-overrides supports_roomfit* for that exact model, and
+    CapabilityProber's generic protocol-level detection (empty RoomFit
+    profile list / no acoustic-capability subsystem) independently gets the
+    right answer for any device without needing its name at all -- there is
+    no model-string special-casing anywhere, in CapabilityProber or here.
+    _on_capabilities_ready() simply trusts caps.supports_roomfit_read, which
+    the prober has already corrected by the time this handler runs. The test
+    below confirms that trust: given an already-corrected caps object
+    (supports_roomfit_read=False, regardless of what model name it carries),
+    the wizard still ends up PEQ_ONLY.
     """
 
     def test_roomfit_read_false_forces_peq_only_regardless_of_model(self, window) -> None:
