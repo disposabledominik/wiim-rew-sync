@@ -25,7 +25,7 @@ import json
 import logging
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from PySide6.QtCore import QObject, Signal
 
@@ -34,6 +34,7 @@ from src.gui.wizard_controller import FlowType
 from src.models.channel_mode import ChannelMode, get_lr_filters, is_lr_mode
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.models.profile import build_profile
+from src.repository.backup_manager import encode_multi_source_backup_paths
 
 if TYPE_CHECKING:
     from src.adapters.capability_prober import CapabilityProber
@@ -477,18 +478,23 @@ class PrimaryWorkflowManager(QObject):
         source_name = self._require_wizard_state().primary_source
         from src.gui.views.presets_device_view import PresetItem
 
+        def _to_preset_items(
+            raw_items: list[dict[str, Any]], preset_type: Literal["PEQ", "RoomFit"]
+        ) -> list[PresetItem]:
+            return [
+                PresetItem(
+                    name=item.get("Name", "Unnamed"),
+                    preset_type=preset_type,
+                    channel_mode=item.get("channelMode", "Stereo"),
+                )
+                for item in raw_items
+            ]
+
         async def _fetch_peq() -> None:
             try:
                 if wiim_adapter.capabilities.supports_profile_enumeration:
                     peq_presets = await wiim_adapter.list_peq_profiles(source_name)
-                    peq_items = [
-                        PresetItem(
-                            name=p.get("Name", "Unnamed"),
-                            preset_type="PEQ",
-                            channel_mode=p.get("channelMode", "Stereo"),
-                        )
-                        for p in peq_presets
-                    ]
+                    peq_items = _to_preset_items(peq_presets, "PEQ")
                     # read_peq() is a plain, harmless read, unlike
                     # load_peq_profile()/EQv2SourceLoad.
                     active_peq_name = await self._read_active_name_or_default(
@@ -506,14 +512,7 @@ class PrimaryWorkflowManager(QObject):
             try:
                 if wiim_adapter.capabilities.supports_roomfit:
                     rf_profiles = await wiim_adapter.list_roomfit_profiles(source_name)
-                    rf_items = [
-                        PresetItem(
-                            name=p.get("Name", "Unnamed"),
-                            preset_type="RoomFit",
-                            channel_mode=p.get("channelMode", "Stereo"),
-                        )
-                        for p in rf_profiles
-                    ]
+                    rf_items = _to_preset_items(rf_profiles, "RoomFit")
                     active_roomfit_name = await self._read_active_name_or_default(
                         self._roomfit_name_for_highlight(),
                         "Failed to read active RoomFit profile name",
@@ -648,15 +647,10 @@ class PrimaryWorkflowManager(QObject):
             source_name, preset_name
         )
 
-        # Determine channel_mode from the device data and update wizard state
-        peq_channel = getattr(peq_settings, "channel_mode", None)
-        if is_lr_mode(peq_channel) if peq_channel else False:
-            state.channel_mode = ChannelMode.LR
-        else:
-            state.channel_mode = ChannelMode.STEREO
-
-        # Extract filters
-        filters, _ = extract_filters(peq_settings)
+        # Extract filters and channel_mode from the device data, and update
+        # wizard state (avoids stale L/R state from a previous load, smoke #111)
+        filters, channel_mode = extract_filters(peq_settings)
+        state.channel_mode = channel_mode
 
         # Store in wizard state
         state.current_filters = filters
@@ -844,8 +838,12 @@ class PrimaryWorkflowManager(QObject):
         rew_client = self._require_rew_client()
         state = self._require_wizard_state()
 
-        filters_l, rows_l, notes_l = await rew_client.get_filters_with_rows(uuid_l)
-        filters_r, rows_r, notes_r = await rew_client.get_filters_with_rows(uuid_r)
+        # Independent fetches -- run concurrently rather than one blocking
+        # the other, matching refresh_presets()'s PEQ/RoomFit concurrency.
+        (filters_l, rows_l, notes_l), (filters_r, rows_r, notes_r) = await asyncio.gather(
+            rew_client.get_filters_with_rows(uuid_l),
+            rew_client.get_filters_with_rows(uuid_r),
+        )
 
         # Combine L+R into flat list and set L/R channel mode
         filters = filters_l + filters_r
@@ -1146,7 +1144,7 @@ class PrimaryWorkflowManager(QObject):
 
         # Safety net: never write to device in dry-run mode
         if state.dry_run:
-            logger.warning("_do_push called in dry-run mode — aborting write")
+            logger.warning("_do_push called in dry-run mode - aborting write")
             return
 
         wiim_adapter = self._require_adapter()
@@ -1187,26 +1185,19 @@ class PrimaryWorkflowManager(QObject):
                 self._bridge.progress_update.emit(
                     f"Writing RoomFit profile '{profile_name}'..."
                 )
+                # Use stored L/R lists if available (avoids naive 50/50 split)
+                channel_kwargs: dict[str, Any] = {}
                 if channel_mode.is_lr:
-                    # Use stored L/R lists if available (avoids naive 50/50 split)
                     left, right = get_lr_filters(state)
-                    result = await roomfit_safe_write.execute(
-                        source_name,
-                        profile_name,
-                        filters,
-                        channel_mode=ChannelMode.LR,
-                        filters_l=left,
-                        filters_r=right,
-                        on_stage=on_stage,
-                    )
-                else:
-                    result = await roomfit_safe_write.execute(
-                        source_name,
-                        profile_name,
-                        filters,
-                        channel_mode=ChannelMode.STEREO,
-                        on_stage=on_stage,
-                    )
+                    channel_kwargs = {"filters_l": left, "filters_r": right}
+                result = await roomfit_safe_write.execute(
+                    source_name,
+                    profile_name,
+                    filters,
+                    channel_mode=channel_mode,
+                    on_stage=on_stage,
+                    **channel_kwargs,
+                )
 
                 if result.success:
                     self._bridge.progress_update.emit(
@@ -1221,7 +1212,7 @@ class PrimaryWorkflowManager(QObject):
             safe_write = self._safe_write_factory(wiim_adapter)
 
             last_result = None
-            backup_paths: list[str] = []
+            backup_paths: list[tuple[str, str]] = []
             for i, source_name in enumerate(source_list):
                 if len(source_list) > 1:
                     self._bridge.progress_update.emit(
@@ -1242,7 +1233,7 @@ class PrimaryWorkflowManager(QObject):
                 # Collect backup path for undo (smoke #77)
                 bp_path = result.backup_path
                 if bp_path:
-                    backup_paths.append(f"{source_name}={bp_path}")
+                    backup_paths.append((source_name, str(bp_path)))
 
                 if not result.success:
                     # Abort on first failure. Sources 1..i-1 already succeeded and are
@@ -1252,11 +1243,11 @@ class PrimaryWorkflowManager(QObject):
                     self._bridge.write_complete.emit(result)
                     return
 
-            # All sources succeeded — store all backup paths as semicolon-joined
+            # All sources succeeded — store all backup paths for undo
             if last_result and last_result.success:
-                # Encode multi-source backup paths for undo
-                # Format: "source1=/path;source2=/path" — consumed by _do_undo_multi_source
-                combined_backup = ";".join(backup_paths) if backup_paths else None
+                combined_backup = (
+                    encode_multi_source_backup_paths(backup_paths) if backup_paths else None
+                )
                 result = WriteResult(
                     success=True,
                     backup_path=combined_backup,
