@@ -240,7 +240,7 @@ class SecondaryWorkflowManager(QObject):
     # Workflow: Undo Last Push (Req 18)
     # ------------------------------------------------------------------
 
-    @Slot(str)
+    @Slot(str, object)
     def undo_last_push(self, source_name: str, backup_path: str | Path = "") -> None:
         """Restore the device's PEQ state from the most recent backup.
 
