@@ -165,7 +165,7 @@ PrimaryWorkflowManager" template everywhere:
 - `_on_peq_ready` (182 lines, the largest method in the file) was **not**
   moved either — it's a synchronous Qt slot reacting to data a signal
   already delivered, making no adapter/network calls itself (the actual
-  validation math already lives in `shared_helpers.validate_filters_for_device()`).
+  validation math already lives in `translator.wiim_generator.validate_filters_for_device()`).
   Decomposed in place into `_validate_and_populate_review()` plus two tiny
   `_clear_pending_lr_rows()`/`_clear_pending_stereo_rows()` helpers, which
   also deduped a pending-state reset block copy-pasted three times (L/R

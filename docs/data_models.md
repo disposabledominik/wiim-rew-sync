@@ -73,7 +73,7 @@ a `FilterRow` list (`CanonicalFilter | SkippedBand`, defined in `src/translator/
 preserves each skipped band's original position, alongside the plain `list[CanonicalFilter]` used for
 writes. `SkippedBand` carries the original REW type token and the skip reason; the Review table renders
 it as an unnumbered ("N/A"), crossed-out, dimmed row with the reason on hover. Bands cut for exceeding
-the device's band cap (`validate_filters_for_device` in `src/gui/shared_helpers.py`) are represented the
+the device's band cap (`validate_filters_for_device` in `src/translator/wiim_generator.py`) are represented the
 same way, but keep their original frequency/gain/Q for display since — unlike a type-level skip — the
 band itself was valid, just over the limit.
 
