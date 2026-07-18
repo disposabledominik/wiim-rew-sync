@@ -294,6 +294,25 @@ to the safety-critical write path for uncertain benefit (most setups target 1-3 
 
 `main_window.py` is now 3,767 lines. No further passes are planned for this item.
 
+**Update (2026-07-18): PR #1 review, second round.** A further `/code-review ultra` pass against
+the same branch (post-Phase-D) surfaced 15 more findings; the correctness ones (empty-not-just-
+missing L/R filter lists silently pushing a flattened channel, `undo_roomfit`'s `@Slot(str)`
+understating its 3-arg signature, an em-dash in a runtime log string, a discarded/re-derived
+`channel_mode` in preset loading, stale docs pointing at the deleted `shared_helpers.py`) were
+fixed, and cheap cleanup findings (backup-path format centralized, L/R REW fetch parallelized,
+RoomFit push's two near-identical `execute()` calls collapsed to one, duplicated `PresetItem`
+construction extracted) were applied too. On reflection, `capability_prober.py`'s "mini"-substring
+RoomFit fallback — flagged in this round as a code-level special case sitting beside the
+capability-file mechanism, but left as a deliberate, tested, documented trade-off at the time —
+was revisited and removed outright: `docs/corrections.md` (2026-07-18 row) has the full reasoning.
+`_do_undo_multi_source`'s long-tracked scheduling-success-vs-actual-outcome tally (present since
+before this branch, not introduced by it) was also fixed in this pass: it now awaits each source's
+real restore via a new `_restore_backup()` helper (extracted from `_do_undo`) instead of the
+fire-and-forget `undo_last_push()`, so `succeeded`/`failed` reflect actual per-source outcomes.
+Two similarly-scoped low-severity cleanup findings (`build_peq_settings`/`build_profile`'s
+duplicated L/R-vs-stereo branching, `get_lr_filters`'s thin getattr wrapper) were fixed too. The
+deliberate no-concurrent-writes trade-off from the first review round above stands unchanged.
+
 ---
 
 ## 3. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)

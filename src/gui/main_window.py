@@ -90,8 +90,8 @@ from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import (
     ChannelMode,
     coerce_channel_mode,
-    get_lr_filters,
     is_lr_mode,
+    require_lr_filters,
 )
 from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE, DEFAULT_SOURCE_NAMES
 from src.models.errors import (
@@ -1437,9 +1437,12 @@ class MainWindow(QMainWindow):
 
         # Determine flow type and advance wizard. caps.supports_roomfit_read
         # is already corrected for devices known to incorrectly report
-        # RoomFit support (smoke #36) -- capability_prober.py's
-        # _apply_roomfit_model_fallback() forces it off during probe(), so
-        # there's no model-name special-casing to do here.
+        # RoomFit support (smoke #36, WiiM Mini/Muzo_Mini) -- CapabilityProber
+        # detects this generically (empty RoomFit profile list / no acoustic-
+        # capability subsystem, docs/corrections.md 2026-07-10) and the
+        # device_capabilities.json entry provides an explicit override for
+        # that exact model, so there's no model-name special-casing to do
+        # here.
         if not roomfit_readable:
             # PEQ-only device — skip EQ_TYPE step (Req 1.10)
             self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
@@ -2082,7 +2085,7 @@ class MainWindow(QMainWindow):
             path_l, path_r = paths
             # Use stored L/R lists; fallback only for defensive safety
             state = self._wizard_controller.state
-            filters_l, filters_r = get_lr_filters(state)
+            filters_l, filters_r = require_lr_filters(state.filters_l, state.filters_r)
 
             self._primary_workflows.export_file_lr(filters_l, filters_r, path_l, path_r)
             logger.info("Export L/R REW: %s, %s", path_l, path_r)
@@ -3414,7 +3417,7 @@ class MainWindow(QMainWindow):
         channel = state.channel_mode
         if channel.is_lr:
             # Use stored L/R lists (set by recall_profile before emitting signal)
-            left, right = get_lr_filters(state)
+            left, right = require_lr_filters(state.filters_l, state.filters_r)
             self._review_page.set_lr_filters(left, right)
         else:
             self._review_page.set_filters(filters)
@@ -3459,10 +3462,10 @@ class MainWindow(QMainWindow):
         these conditions only coincide for the single-source undo paths.
 
         Args:
-            succeeded: Number of sources whose restore was scheduled
-                successfully (see SecondaryWorkflowManager.undo_multi_source_complete
-                docstring for the scheduling-vs-outcome caveat).
-            failed: Number of sources whose restore failed to schedule.
+            succeeded: Number of sources actually restored (each source's
+                real SafeWrite.undo() outcome, awaited directly -- see
+                SecondaryWorkflowManager._do_undo_multi_source docstring).
+            failed: Number of sources whose restore failed.
             message: Human-readable result summary.
         """
         if succeeded > 0:
