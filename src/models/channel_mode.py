@@ -114,19 +114,24 @@ def require_lr_filters(
     filters_l: list[CanonicalFilter] | None,
     filters_r: list[CanonicalFilter] | None,
 ) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
-    """Require explicit per-channel filter lists; never guess a split.
+    """Require explicit, non-empty per-channel filter lists; never guess a split.
 
     Shared by PEQSettings/Profile construction from a combined filter list
     plus channel mode (see build_peq_settings/build_profile).
 
     Raises:
-        ValueError: if either filters_l or filters_r is missing. There is
-            no safe way to reconstruct a channel boundary from a combined
-            list -- a positional 50/50 split is correct only by coincidence
-            when both channels happen to have equal length, and silently
-            wrong otherwise.
+        ValueError: if either filters_l or filters_r is missing or empty.
+            There is no safe way to reconstruct a channel boundary from a
+            combined list -- a positional 50/50 split is correct only by
+            coincidence when both channels happen to have equal length, and
+            silently wrong otherwise. An empty channel is treated the same
+            as a missing one (branch-quality review, 2026-07-18): a manually
+            edited or older-format profile can end up with one channel
+            missing/empty and the other populated, and without this check a
+            later push would silently write a flattened (all-filters-removed)
+            channel to the device instead of raising.
     """
-    if filters_l is None or filters_r is None:
+    if not filters_l or not filters_r:
         raise ValueError("L/R filters missing; refusing to guess channel split")
     return filters_l, filters_r
 
@@ -134,8 +139,8 @@ def require_lr_filters(
 def get_lr_filters(state: object) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
     """Get L/R filter lists from wizard state.
 
-    Requires explicit state.filters_l/filters_r (set during validation) --
-    never guesses a channel split.
+    Requires explicit, non-empty state.filters_l/filters_r (set during
+    validation) -- never guesses a channel split.
 
     Args:
         state: WizardState object with filters_l/filters_r fields.
@@ -144,7 +149,8 @@ def get_lr_filters(state: object) -> tuple[list[CanonicalFilter], list[Canonical
         Tuple of (left_filters, right_filters).
 
     Raises:
-        ValueError: if state has no filters_l/filters_r set.
+        ValueError: if state has no filters_l/filters_r set, or either is
+            empty.
     """
     left = getattr(state, "filters_l", None)
     right = getattr(state, "filters_r", None)

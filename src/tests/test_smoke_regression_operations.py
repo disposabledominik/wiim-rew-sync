@@ -536,6 +536,11 @@ class TestPushWriteOperations:
         state = window._wizard_controller.state
         state.current_filters = [_make_filter(100), _make_filter(200)]
         state.channel_mode = ChannelMode.LR
+        # get_lr_filters() requires explicit, non-empty filters_l/filters_r
+        # for L/R mode (never guesses a split) -- see
+        # src.models.channel_mode.require_lr_filters.
+        state.filters_l = [_make_filter(100)]
+        state.filters_r = [_make_filter(200)]
         state.dry_run = False
         state.roomfit_profile_name = "TestProfile"
         state.flow_type = FlowType.ROOMFIT

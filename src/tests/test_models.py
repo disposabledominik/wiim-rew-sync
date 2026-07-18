@@ -125,6 +125,23 @@ class TestGetLrFilters:
         state = SimpleNamespace(filters_l=left, filters_r=right)
         assert get_lr_filters(state) == (left, right)
 
+    def test_empty_filters_l_raises_same_as_none(self) -> None:
+        """An empty list for one channel is treated the same as a missing
+        one -- a manually edited or older-format profile could otherwise end
+        up with one channel empty and the other populated, silently pushing
+        a flattened channel instead of raising (branch-quality review,
+        2026-07-18)."""
+        right = _sample_filters()
+        state = SimpleNamespace(filters_l=[], filters_r=right)
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            get_lr_filters(state)
+
+    def test_empty_filters_r_raises_same_as_none(self) -> None:
+        left = _sample_filters()
+        state = SimpleNamespace(filters_l=left, filters_r=[])
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            get_lr_filters(state)
+
 
 # ---------------------------------------------------------------------------
 # build_peq_settings tests
@@ -162,6 +179,13 @@ class TestBuildPeqSettings:
         assert settings.bands_l == left
         assert settings.bands_r == right
         assert settings.bands == []
+
+    def test_lr_with_empty_filters_l_raises(self) -> None:
+        """An empty (not just missing) channel must raise too -- see
+        TestGetLrFilters.test_empty_filters_l_raises_same_as_none."""
+        right = [CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=2.0, q=1.0)]
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            build_peq_settings("wifi", [], "L/R", filters_l=[], filters_r=right)
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +319,13 @@ class TestBuildProfile:
         filters = _sample_filters()
         profile = build_profile("Test", filters, "Stereo")
         assert profile.filters == filters
+
+    def test_lr_with_empty_filters_r_raises(self) -> None:
+        """An empty (not just missing) channel must raise too -- see
+        TestGetLrFilters.test_empty_filters_r_raises_same_as_none."""
+        filters_l = _sample_filters()
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            build_profile("Test", [], "L/R", filters_l=filters_l, filters_r=[])
 
 
 # ---------------------------------------------------------------------------
