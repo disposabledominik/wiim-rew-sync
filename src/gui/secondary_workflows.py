@@ -32,7 +32,11 @@ from src.gui.primary_workflows import EmptyPresetFiltersError
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode, coerce_channel_mode, is_lr_mode
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
-from src.repository.backup_manager import load_backup_json, parse_backup_restore_metadata
+from src.repository.backup_manager import (
+    decode_multi_source_backup_paths,
+    load_backup_json,
+    parse_backup_restore_metadata,
+)
 
 if TYPE_CHECKING:
     from src.adapters.capability_prober import CapabilityProber
@@ -228,13 +232,23 @@ class SecondaryWorkflowManager(QObject):
 
         This avoids the need for naive 50/50 splitting when consumers
         need separate channel lists.
+
+        Reaches through self.parent() rather than an injected dependency
+        (unlike every other cross-object access in this class) because this
+        method predates the configure()-based injection pattern established
+        by the rest of the file. Logs rather than silently no-opping if the
+        parent isn't wired up yet, so a construction-order mistake surfaces
+        instead of just quietly losing the L/R state.
         """
-        # Access wizard state through the parent (MainWindow)
         parent = self.parent()
         if parent is not None and hasattr(parent, "wizard_controller"):
             state = parent.wizard_controller.state
             state.filters_l = filters_l
             state.filters_r = filters_r
+        else:
+            logger.warning(
+                "_store_lr_state: no parent with wizard_controller -- L/R state not stored"
+            )
 
     # ------------------------------------------------------------------
     # Workflow: Undo Last Push (Req 18)
@@ -290,7 +304,7 @@ class SecondaryWorkflowManager(QObject):
             logger.exception("Undo last push failed")
             self.undo_complete.emit(False, str(exc))
 
-    @Slot(str)
+    @Slot(str, str, str)
     def undo_roomfit(self, backup_path: str, source_name: str, profile_name: str) -> None:
         """Restore a RoomFit profile from backup."""
         assert self._bridge is not None
@@ -380,17 +394,11 @@ class SecondaryWorkflowManager(QObject):
         the single-source paths where they collapse to the same thing).
         """
         assert self._bridge is not None
-        entries = [e.strip() for e in backup_paths_str.split(";") if e.strip()]
+        entries = decode_multi_source_backup_paths(backup_paths_str)
         succeeded = 0
         failed = 0
 
-        for entry in entries:
-            if "=" not in entry:
-                continue
-            source_name, bp = entry.split("=", 1)
-            source_name = source_name.strip()
-            bp = bp.strip()
-
+        for source_name, bp in entries:
             try:
                 self._bridge.progress_update.emit(f"Restoring {source_name}...")
                 self.undo_last_push(source_name, bp)

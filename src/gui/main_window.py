@@ -103,7 +103,7 @@ from src.models.errors import (
 )
 from src.models.peq import build_peq_settings, extract_filters
 from src.models.profile import build_profile
-from src.repository.backup_manager import BackupManager
+from src.repository.backup_manager import BackupManager, is_multi_source_backup_path
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
 from src.utils.device_name import sanitize_device_name
@@ -1228,8 +1228,7 @@ class MainWindow(QMainWindow):
             self._secondary_workflows.undo_roomfit(backup_path, source_name, profile_name)
         else:
             # PEQ undo: handle multi-source backup paths (smoke #77)
-            # Format: "source1=/path/to/backup1;source2=/path/to/backup2"
-            if ";" in backup_path or "=" in backup_path:
+            if is_multi_source_backup_path(backup_path):
                 # Multi-source undo
                 self._secondary_workflows.undo_multi_source(backup_path)
             else:
