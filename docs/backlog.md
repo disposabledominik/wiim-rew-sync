@@ -244,6 +244,56 @@ across a 6-commit sequence on `PrimaryWorkflowManager`/
 `main_window.py` is now 3,732 lines (down from 4,169 pre-Phase-D). No
 further extraction phases are planned for this item.
 
+**Update (2026-07-17): branch-quality review and fixes.** After the Phase D extraction above landed,
+an 8-angle code review (line-by-line, removed-behavior, cross-file, reuse, simplification,
+efficiency, altitude, CLAUDE.md-conventions) was run against the full branch diff. 10 findings were
+confirmed and independently verified against the actual code; all 10 were fixed, across 11 commits
+(`b5415a9`, `17a6fe3`, `73ee1b0`, `6a7e011`, `0d58501`, `f086aca`, `a015432`, `649e92d`, `5cdad7c`,
+`a44d39b`, `a7045b9`):
+
+- **Two regressions from the Phase D move, fixed:** `_do_undo_multi_source` had lost its
+  succeeded>0 → clear-pushed-snapshot behavior when it started sharing the binary `undo_complete`
+  signal with the single-source undo paths — a partial multi-source undo no longer cleared stale
+  dirty-tracking. Fixed with a dedicated `undo_multi_source_complete(int, int, str)` signal (`b5415a9`).
+  Separately, `capability_prober.py`'s "mini"-model RoomFit fallback gated on the coarse
+  `capability_file_override` flag, which `merge_into()` sets whenever *any* capability-file entry
+  field matched — not specifically a RoomFit one — so a future/user-added entry that only set an
+  unrelated field could silently bypass the smoke #36 correction. Narrowed the gate to the matched
+  entry's own roomfit-specific fields (`17a6fe3`).
+- **Documentation gaps closed:** the copy-to-device flow's dropped per-item success banner (batch
+  summary + existing progress messages already cover it) was documented as an intentional
+  consolidation, not a silent regression (`73ee1b0`). A stale test-file docstring claiming
+  copy-preset-to-device methods were dead code was corrected — they're the same live methods this
+  Phase D effort re-added (`6a7e011`).
+- **Consolidation:** 5 separate hand-rolled copies of the str-or-ChannelMode coercion `coerce_channel_mode()`
+  already centralizes (2 found by the original review, 3 more — including one in
+  `wiim_adapter.py`'s `write_roomfit()` the original review missed — found during the plan's own
+  adversarial re-review pass) now all call the one helper (`0d58501`). `MainWindow` no longer builds
+  two byte-for-byte-identical `SafeWrite`/`RoomFitSafeWrite` factory-lambda pairs (`f086aca`).
+- **Dead code removed:** `SecondaryWorkflowManager.is_configured` (zero callers anywhere) and its
+  `wiim_adapter_factory`/`backup_manager` `configure()` params (never read by any workflow) were
+  deleted; the removed lambda at the one production call site turned out to also be latently buggy —
+  it captured the *source* device's capabilities and would have misapplied them to any different
+  target device if it had ever been invoked (`649e92d`). `undo_last_push`'s `@Slot(str)` decorator,
+  which understated its real 2-arg signature, was corrected to `@Slot(str, object)` (`5cdad7c`).
+- **Efficiency:** the copy-to-device batch path connected to and re-probed capabilities on *every*
+  (preset, device) pair instead of once per device — copying 3 presets to 3 devices made 9 probe
+  cycles instead of 3. Restructured to connect once per device (`_write_preset_to_adapter` extracted
+  from `_do_copy_preset_to_device` as a shared write-only primitive); an unreachable device now counts
+  all its presets failed in one step instead of retrying the connection per preset (`a44d39b`).
+  `wiim_adapter.py`'s `_write_peq_batch`/`_write_peq_sequential` no longer take a redundant
+  `channel_mode` parameter that had to be kept in lockstep with `band_array_r`'s presence — it's
+  derived internally now (`a7045b9`).
+
+Two findings involved a genuine UX/scope trade-off rather than a single correct answer, resolved
+in favor of the lower-risk option: the per-item copy banner stays consolidated into the batch
+summary (not restored) to avoid banner-spam on larger batches, and the copy-to-device batch fix
+above connects sequentially per device rather than also parallelizing writes across devices —
+CLAUDE.md's "Safety before convenience" principle argued against adding concurrent-write complexity
+to the safety-critical write path for uncertain benefit (most setups target 1-3 devices).
+
+`main_window.py` is now 3,767 lines. No further passes are planned for this item.
+
 ---
 
 ## 3. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)
