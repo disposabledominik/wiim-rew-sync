@@ -20,6 +20,7 @@ from hypothesis import strategies as st
 
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
+from src.gui.primary_workflows import EmptyPresetFiltersError
 from src.models.errors import (
     ParseError,
     REWNotConnectedError,
@@ -164,3 +165,23 @@ def test_validation_error_includes_details(window, msg: str) -> None:
         f"ValidationError message '{msg}' not found in mapped output '{result}'"
     )
     assert result.startswith("Invalid data: ")
+
+
+# ---------------------------------------------------------------------------
+# Property 4: EmptyPresetFiltersError passes its message through unchanged
+# ---------------------------------------------------------------------------
+
+
+@given(msg=st.text(min_size=1))
+@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+def test_empty_preset_filters_error_passes_message_through(window, msg: str) -> None:
+    """**Validates: Requirements 12.2**
+
+    EmptyPresetFiltersError (raised by PrimaryWorkflowManager's export/save
+    flows in place of a direct status-banner call) maps to its own message
+    verbatim, not a generic fallback.
+    """
+    exc = EmptyPresetFiltersError(msg)
+    result = window._map_error(exc)
+
+    assert result == msg

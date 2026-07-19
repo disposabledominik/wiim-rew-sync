@@ -10,16 +10,14 @@ Requirements referenced: 14.1, 14.2, 14.4, 14.5, 10.1, 10.6, 24.6,
 
 from __future__ import annotations
 
-import asyncio
 import html
-import json
 import logging
 import sys
 import traceback
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from PySide6.QtCore import QSize, Qt, QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
@@ -39,10 +37,16 @@ from PySide6.QtWidgets import (
 
 from src.adapters.capability_prober import CapabilityProber
 from src.adapters.rew_http_client import MeasurementSummary, REWHttpApiClient
-from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
+from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
+from src.gui.adapter_factories import (
+    make_capability_prober,
+    make_rew_client,
+    make_wiim_adapter,
+    make_wiim_http_client,
+)
 from src.gui.app_settings import AppSettings
 from src.gui.async_bridge import AsyncBridge
 from src.gui.components.page_layout import ICON_NO_CONNECTION, ICON_NO_DATA
@@ -64,15 +68,9 @@ from src.gui.pages.push_page import PushPage
 from src.gui.pages.review_page import ReviewPage
 from src.gui.pages.source_page import SourcePage
 from src.gui.panels.diagnostics_panel import DiagnosticsPanel
+from src.gui.primary_workflows import EmptyPresetFiltersError, PrimaryWorkflowManager
 from src.gui.secondary_workflows import (
     SecondaryWorkflowManager,
-)
-from src.gui.shared_helpers import (
-    build_peq_settings,
-    build_profile,
-    extract_filters,
-    get_lr_filters,
-    is_lr_mode,
 )
 from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
@@ -88,8 +86,13 @@ from src.gui.wizard_controller import (
     parse_source_list,
 )
 from src.models.canonical import CanonicalFilter
-from src.models.capabilities import DeviceInfo
-from src.models.channel_mode import ChannelMode
+from src.models.capabilities import DeviceCapabilities
+from src.models.channel_mode import (
+    ChannelMode,
+    coerce_channel_mode,
+    is_lr_mode,
+    require_lr_filters,
+)
 from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE, DEFAULT_SOURCE_NAMES
 from src.models.errors import (
     ParseError,
@@ -98,12 +101,9 @@ from src.models.errors import (
     WiiMConnectionError,
     WiiMTimeoutError,
 )
-from src.models.peq import PEQSettings
-from src.repository.backup_manager import (
-    BackupManager,
-    load_backup_json,
-    parse_backup_restore_metadata,
-)
+from src.models.peq import build_peq_settings, extract_filters
+from src.models.profile import build_profile
+from src.repository.backup_manager import BackupManager, is_multi_source_backup_path
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
 from src.utils.device_name import sanitize_device_name
@@ -205,12 +205,41 @@ class MainWindow(QMainWindow):
         +-- QDockWidget (Diagnostics, hidden by default)
     """
 
-    def __init__(self, async_bridge: AsyncBridge | None = None) -> None:
+    def __init__(
+        self,
+        async_bridge: AsyncBridge | None = None,
+        *,
+        rew_client_factory: Callable[[], REWHttpApiClient] = make_rew_client,
+        wiim_http_client_factory: Callable[[str], WiiMHttpClient] = make_wiim_http_client,
+        capability_prober_factory: Callable[
+            [WiiMHttpClient], CapabilityProber
+        ] = make_capability_prober,
+        wiim_adapter_factory: Callable[
+            [WiiMHttpClient, DeviceCapabilities], WiiMAdapter
+        ] = make_wiim_adapter,
+    ) -> None:
         """Initialize the main window.
 
         Args:
             async_bridge: The async bridge for background operations.
                          If None, a new one is created and started.
+            rew_client_factory: Constructs the REW HTTP API client.
+                Overridable for tests; defaults to the real adapter
+                (src.gui.adapter_factories.make_rew_client).
+            wiim_http_client_factory: Constructs a WiiM HTTP client for a
+                given device IP. Overridable for tests; defaults to the
+                real adapter (make_wiim_http_client).
+            capability_prober_factory: Constructs a capability prober for a
+                given WiiM HTTP client. Overridable for tests; defaults to
+                the real adapter (make_capability_prober).
+            wiim_adapter_factory: Constructs a WiiM adapter for a given
+                client + probed capabilities. Overridable for tests;
+                defaults to the real adapter (make_wiim_adapter). This is
+                the same callable passed as `target_adapter_factory` to
+                SecondaryWorkflowManager.configure() below -- construction
+                is identical for the currently-connecting device and an
+                unfamiliar copy-to-device target, so one factory serves
+                both.
         """
         super().__init__()
 
@@ -227,12 +256,19 @@ class MainWindow(QMainWindow):
         else:
             self._bridge = async_bridge
 
+        # --- Adapter construction factories (dependency injection; see
+        # src/gui/adapter_factories.py and test_gui_adapter_injection.py) ---
+        self._rew_client_factory = rew_client_factory
+        self._wiim_http_client_factory = wiim_http_client_factory
+        self._capability_prober_factory = capability_prober_factory
+        self._wiim_adapter_factory = wiim_adapter_factory
+
         # --- Backend adapter instances (Req 14.1-14.6) ---
         # Eagerly created at startup:
         self._discovery_module = DiscoveryModule(
             timeout=float(self._settings.discovery_timeout),
         )
-        self._rew_client = REWHttpApiClient()
+        self._rew_client = self._rew_client_factory()
         presets_dir = (
             Path(self._settings.presets_directory)
             if self._settings.presets_directory
@@ -240,26 +276,25 @@ class MainWindow(QMainWindow):
         )
         self._profile_repository = ProfileRepository(storage_root=presets_dir)
         self._backup_manager = BackupManager(storage_root=presets_dir)
+        # Built once, shared by both PrimaryWorkflowManager and
+        # SecondaryWorkflowManager's configure() calls below -- avoids
+        # defining the same two lambdas twice (branch-quality review,
+        # 2026-07-17).
+        self._safe_write_factory = lambda adapter: SafeWrite(adapter, self._backup_manager)
+        self._roomfit_safe_write_factory = lambda adapter: RoomFitSafeWrite(
+            adapter, self._backup_manager
+        )
 
         # Lazily created on device selection (Req 14.2, 14.3):
         self._wiim_http_client: WiiMHttpClient | None = None
         self._capability_prober: CapabilityProber | None = None
         self._wiim_adapter: WiiMAdapter | None = None
-        self._safe_write: SafeWrite | None = None
-        self._roomfit_safe_write: RoomFitSafeWrite | None = None
         self._device_caps: object | None = None
-        # Set by _do_populate_name_profiles from get_roomfit_status() (#165) --
-        # whether RoomFit is currently on, gating the overwrite-active-profile
-        # confirmation in _on_name_confirmed.
+        # Set via _on_name_profiles_ready from get_roomfit_status() (#165) --
+        # whether RoomFit is currently on. Not currently read anywhere:
+        # _on_name_confirmed's overwrite-confirmation dialog is driven by
+        # NameProfilePage.classify() instead, not this flag.
         self._roomfit_enabled: bool = False
-        # Bumped on every device selection; lets a stale/superseded capability
-        # probe (e.g. user selects a second device before the first probe
-        # resolves) detect that it's no longer current and avoid corrupting
-        # wizard state (double-advance, wrong "Connected" step).
-        self._probe_generation = 0
-
-        # Discovered devices cache (populated by discovery, used by device picker)
-        self._discovered_devices: list[DeviceInfo] = []
 
         # --- Window properties ---
         self.setWindowTitle("WiiM \u2194 REW PEQ Sync")
@@ -268,6 +303,23 @@ class MainWindow(QMainWindow):
 
         # --- Create controller ---
         self._wizard_controller = WizardController(self)
+
+        # --- Primary workflows (discovery, probing, file import, push) ---
+        # Configured eagerly, unlike SecondaryWorkflowManager: only push()
+        # needs a live device adapter, obtained the same way every other
+        # adapter-dependent workflow here does -- set_current_adapter(),
+        # once a device is selected and probed (see primary_workflows.py).
+        self._primary_workflows = PrimaryWorkflowManager(parent=self)
+        self._primary_workflows.configure(
+            bridge=self._bridge,
+            discovery_module=self._discovery_module,
+            wizard_controller=self._wizard_controller,
+            bridge_wrapper=self._bridge_wrapper,
+            rew_client=self._rew_client,
+            profile_repository=self._profile_repository,
+            safe_write_factory=self._safe_write_factory,
+            roomfit_safe_write_factory=self._roomfit_safe_write_factory,
+        )
 
         # --- Build UI ---
         self._setup_central_widget()
@@ -300,6 +352,9 @@ class MainWindow(QMainWindow):
 
         # --- Secondary workflows (Req 17, 18, 20, 21) ---
         self._setup_secondary_workflows()
+
+        # --- Primary workflows: presets_ready signal wiring (Phase 1b) ---
+        self._setup_primary_workflows()
 
         # --- Initialize step indicator with default flow ---
         sequence = self._wizard_controller.get_steps()
@@ -781,10 +836,10 @@ class MainWindow(QMainWindow):
         # device must not linger into this one (#162d).
         state.filters_origin = ""
         # A stale "RoomFit is active" flag from the previous device must not
-        # linger either -- it gates the overwrite-active-profile confirmation
-        # in _on_name_confirmed, and a leftover True from device A would let
-        # device B's overwrite proceed without warning if reached before
-        # _do_populate_name_profiles() re-fetches device B's real status.
+        # linger either, even though nothing currently reads it (see the
+        # __init__ comment) -- reset defensively so device B's state is
+        # never contaminated by device A's, until populate_name_profiles()
+        # re-fetches device B's real status.
         self._roomfit_enabled = False
         # Clear completed steps beyond CONNECT
         for step in (
@@ -798,21 +853,14 @@ class MainWindow(QMainWindow):
             state.completed_step_tooltips.pop(step, None)
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
-        self._wiim_http_client = WiiMHttpClient(device_ip)
-        self._capability_prober = CapabilityProber(self._wiim_http_client)
+        self._wiim_http_client = self._wiim_http_client_factory(device_ip)
+        self._capability_prober = self._capability_prober_factory(self._wiim_http_client)
 
         # Bump generation so a still-in-flight probe from a previous device
         # selection is discarded instead of advancing the wizard out from
         # under the user (see _do_probe).
-        self._probe_generation += 1
-        generation = self._probe_generation
-
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "capability_probe",
-                self._do_probe(self._capability_prober, generation),
-            )
-        )
+        generation = self._primary_workflows.bump_probe_generation()
+        self._primary_workflows.probe(self._capability_prober, generation)
         logger.info("Device selected: %s", device_ip)
 
     @Slot()
@@ -822,9 +870,7 @@ class MainWindow(QMainWindow):
             return
 
         self._connect_page.set_scanning(True)
-        self._bridge.run_async(
-            self._bridge_wrapper("discovery", self._do_discovery())
-        )
+        self._primary_workflows.discover()
         logger.debug("Discovery refresh requested")
 
     # ------------------------------------------------------------------
@@ -838,7 +884,7 @@ class MainWindow(QMainWindow):
         `default` if not found -- shared by every call site that needs a
         device name for display (step summaries, default export/preset
         filenames), so they can't independently drift (#176)."""
-        for d in self._discovered_devices:
+        for d in self._primary_workflows.discovered_devices:
             if d.ip == ip:
                 return d.name
         return default
@@ -915,9 +961,7 @@ class MainWindow(QMainWindow):
             self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
             self._filters_page.set_roomfit_mode(True)
             # Populate RoomFit profile dropdown from device
-            self._bridge.run_async(
-                self._bridge_wrapper("list_roomfit", self._do_list_roomfit_profiles())
-            )
+            self._primary_workflows.refresh_roomfit_dropdown()
 
         # A stale "what current_filters came from" string from before this EQ
         # type switch must not linger into the new flow (#162d/#173) -- mirrors
@@ -959,9 +1003,7 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper("file_import", self._do_file_import(path))
-        )
+        self._primary_workflows.import_file(path)
         logger.info("File import requested: %s", path)
 
     @Slot(str, str)
@@ -978,11 +1020,7 @@ class MainWindow(QMainWindow):
         if self._is_busy():
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "file_import_lr", self._do_file_import_lr(path_l, path_r)
-            )
-        )
+        self._primary_workflows.import_file_lr(path_l, path_r)
         logger.info("L/R file import requested: L=%s, R=%s", path_l, path_r)
 
     @Slot()
@@ -1001,9 +1039,7 @@ class MainWindow(QMainWindow):
         # when no source was selected (RoomFit is device-global, or the
         # source step was skipped).
         self._status_banner.show_progress("Pulling filters from device...")
-        self._bridge.run_async(
-            self._bridge_wrapper("device_pull", self._do_device_pull())
-        )
+        self._primary_workflows.pull_device()
         logger.info("Device pull requested")
 
     @Slot()
@@ -1022,9 +1058,7 @@ class MainWindow(QMainWindow):
         self._active_rew_pull_view = self._filters_page.rew_pull_view
         self._active_rew_pull_page_index = PAGE_INDICES["filters"]
         self._status_banner.show_progress("Connecting to REW...")
-        self._bridge.run_async(
-            self._bridge_wrapper("rew_list", self._do_rew_list_measurements())
-        )
+        self._primary_workflows.list_rew_measurements()
         logger.info("REW API pull requested")
 
     @Slot(str)
@@ -1046,11 +1080,7 @@ class MainWindow(QMainWindow):
 
         self._wizard_controller.state.roomfit_profile_name = profile_name
         self._status_banner.show_progress(f"Loading RoomFit profile '{profile_name}'...")
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "roomfit_pull", self._do_roomfit_pull(profile_name)
-            )
-        )
+        self._primary_workflows.pull_roomfit(profile_name)
         logger.info("RoomFit profile selected: %s", profile_name)
 
     @Slot(bool)
@@ -1120,9 +1150,7 @@ class MainWindow(QMainWindow):
         else:
             # PEQ: advance to PUSH and execute immediately
             self._wizard_controller.advance(summary="Push")
-            self._bridge.run_async(
-                self._bridge_wrapper("push", self._do_push())
-            )
+            self._primary_workflows.push()
 
     @Slot()
     def _on_export_requested(self) -> None:
@@ -1179,9 +1207,7 @@ class MainWindow(QMainWindow):
         self._wizard_controller.state.roomfit_profile_name = name
         self._wizard_controller.advance(summary=name)
         # Now execute the actual push (deferred from _on_push_requested)
-        self._bridge.run_async(
-            self._bridge_wrapper("push", self._do_push())
-        )
+        self._primary_workflows.push()
 
     @Slot()
     def _on_undo_requested(self) -> None:
@@ -1200,114 +1226,16 @@ class MainWindow(QMainWindow):
             # RoomFit undo: restore backed-up bands to the same profile name
             source_name = self._wizard_controller.state.primary_source
             profile_name = self._wizard_controller.state.roomfit_profile_name
-            self._bridge.run_async(
-                self._bridge_wrapper(
-                    "undo_roomfit",
-                    self._do_undo_roomfit(backup_path, source_name, profile_name),
-                )
-            )
+            self._secondary_workflows.undo_roomfit(backup_path, source_name, profile_name)
         else:
             # PEQ undo: handle multi-source backup paths (smoke #77)
-            # Format: "source1=/path/to/backup1;source2=/path/to/backup2"
-            if ";" in backup_path or "=" in backup_path:
+            if is_multi_source_backup_path(backup_path):
                 # Multi-source undo
-                self._bridge.run_async(
-                    self._bridge_wrapper(
-                        "undo_multi_source",
-                        self._do_undo_multi_source(backup_path),
-                    )
-                )
+                self._secondary_workflows.undo_multi_source(backup_path)
             else:
                 # Single source undo (legacy format)
                 source_name = self._wizard_controller.state.primary_source
                 self._secondary_workflows.undo_last_push(source_name, backup_path)
-
-    async def _do_undo_roomfit(
-        self, backup_path: str, source_name: str, profile_name: str
-    ) -> None:
-        """Restore a RoomFit profile from backup — thin pass-through to
-        RoomFitSafeWrite.undo(), which owns all orchestration (backup
-        parsing, new-vs-overwrite branching, selection/enable-state
-        restore to the state before the *original* push). GUI layer
-        performs no data manipulation (CLAUDE.md).
-        """
-        assert self._wiim_adapter is not None
-
-        path = Path(backup_path) if backup_path else Path(".")
-        if not path.exists() or not path.is_file():
-            self._status_banner.show_error("No backup available for undo")
-            return
-
-        try:
-            self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
-            roomfit_safe_write = RoomFitSafeWrite(self._wiim_adapter, self._backup_manager)
-            result = await roomfit_safe_write.undo(path, source_name, profile_name)
-            if not result.success:
-                self._status_banner.show_error(
-                    result.error_message or "RoomFit undo verification failed"
-                )
-                return
-            self._clear_pushed_snapshot()
-            self._push_page.mark_undo_complete(True)
-            # was_new_profile determines what undo() actually did: for a
-            # brand-new profile it skips the bands-restore entirely (there
-            # was nothing to restore) and only re-activates the
-            # previously-active profile, leaving the new one on the device.
-            # Read the same metadata undo() itself used, so the message
-            # matches what happened instead of always claiming a restore.
-            _, _, was_new_profile, _ = parse_backup_restore_metadata(
-                load_backup_json(path)
-            )
-            if was_new_profile is True:
-                self._status_banner.show_success(
-                    f"Original profile re-activated. Profile '{profile_name}' was "
-                    "kept, but deactivated."
-                )
-            else:
-                self._status_banner.show_success(
-                    f"Profile '{profile_name}' restored from backup"
-                )
-        except Exception as exc:
-            logger.exception("RoomFit undo failed")
-            self._status_banner.show_error(f"Undo failed: {exc}")
-
-    async def _do_undo_multi_source(self, backup_paths_str: str) -> None:
-        """Undo a multi-source push by restoring each source's backup.
-
-        Args:
-            backup_paths_str: Semicolon-separated "source=/path" entries.
-        """
-        entries = [e.strip() for e in backup_paths_str.split(";") if e.strip()]
-        succeeded = 0
-        failed = 0
-
-        for entry in entries:
-            if "=" not in entry:
-                continue
-            source_name, bp = entry.split("=", 1)
-            source_name = source_name.strip()
-            bp = bp.strip()
-
-            try:
-                self._bridge.progress_update.emit(f"Restoring {source_name}...")
-                self._secondary_workflows.undo_last_push(source_name, bp)
-                succeeded += 1
-            except Exception:
-                logger.exception("Undo source '%s' failed", source_name)
-                failed += 1
-
-        if succeeded > 0:
-            self._clear_pushed_snapshot()
-
-        if failed == 0:
-            self._push_page.mark_undo_complete(True)
-            self._status_banner.show_success(
-                f"All {succeeded} source(s) restored from backup"
-            )
-        else:
-            self._status_banner.show_error(
-                f"Undo: {succeeded} restored, {failed} failed"
-            )
 
     def _clear_pushed_snapshot(self) -> None:
         """Forget the last-successful-push snapshot after an undo.
@@ -1470,22 +1398,33 @@ class MainWindow(QMainWindow):
         # Store capabilities (caps has supports_roomfit*, source_names, etc.)
         roomfit_readable = bool(getattr(caps, "supports_roomfit_read", False))
 
-        # Create WiiMAdapter and SafeWrite now that we have a connected client (Req 14.2, 14.3)
+        # @Slot(object) erases the static type to satisfy PySide6's signal
+        # registration -- probe() itself is properly typed as returning
+        # DeviceCapabilities, so this narrows once here rather than
+        # suppressing mypy separately at each of the two call sites below
+        # that need the real type.
+        device_caps = cast(DeviceCapabilities, caps)
+
+        # Create WiiMAdapter now that we have a connected client (Req 14.2, 14.3).
+        # SafeWrite/RoomFitSafeWrite are no longer cached here -- every
+        # reader (push, undo, copy-to-device) now builds them on demand via
+        # the factories passed to PrimaryWorkflowManager.configure()/
+        # SecondaryWorkflowManager.configure() below.
         assert self._wiim_http_client is not None
-        self._wiim_adapter = WiiMAdapter(self._wiim_http_client, caps)  # type: ignore[arg-type]
-        self._safe_write = SafeWrite(self._wiim_adapter, self._backup_manager)
-        self._roomfit_safe_write = RoomFitSafeWrite(self._wiim_adapter, self._backup_manager)
+        self._wiim_adapter = self._wiim_adapter_factory(self._wiim_http_client, device_caps)
 
         # Configure SecondaryWorkflowManager with adapter factories (Req 8.1, 9.3, 10.3, 15.3)
         self._secondary_workflows.configure(
             bridge=self._bridge,
-            wiim_adapter_factory=lambda ip: WiiMAdapter(
-                WiiMHttpClient(ip), caps,  # type: ignore[arg-type]
-            ),
-            safe_write_factory=lambda adapter: SafeWrite(adapter, self._backup_manager),
-            backup_manager=self._backup_manager,
+            bridge_wrapper=self._bridge_wrapper,
+            safe_write_factory=self._safe_write_factory,
+            roomfit_safe_write_factory=self._roomfit_safe_write_factory,
+            wiim_http_client_factory=self._wiim_http_client_factory,
+            capability_prober_factory=self._capability_prober_factory,
+            target_adapter_factory=self._wiim_adapter_factory,
         )
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)
+        self._primary_workflows.set_current_adapter(self._wiim_adapter)
 
         # Source names: resolved once, centrally, in merge_into() (#167) --
         # real enumeration via getAudioInputEnable where the device supports
@@ -1498,22 +1437,16 @@ class MainWindow(QMainWindow):
         self._device_caps = caps
         device_name = self._resolve_connect_summary()
 
-        # Determine flow type and advance wizard
-        # Guard: some devices may incorrectly report RoomFit support due to
-        # firmware variations. Use model name as secondary check (smoke #36).
-        model_str = (getattr(caps, "model", "") or "").lower()
-        roomfit_blocked_models = ("mini",)  # Models known to not support RoomFit
-        is_roomfit_blocked = any(m in model_str for m in roomfit_blocked_models)
-
-        if not roomfit_readable or is_roomfit_blocked:
+        # Determine flow type and advance wizard. caps.supports_roomfit_read
+        # is already corrected for devices known to incorrectly report
+        # RoomFit support (smoke #36, WiiM Mini/Muzo_Mini) -- CapabilityProber
+        # detects this generically (empty RoomFit profile list / no acoustic-
+        # capability subsystem, docs/corrections.md 2026-07-10) and the
+        # device_capabilities.json entry provides an explicit override for
+        # that exact model, so there's no model-name special-casing to do
+        # here.
+        if not roomfit_readable:
             # PEQ-only device — skip EQ_TYPE step (Req 1.10)
-            if is_roomfit_blocked and roomfit_readable:
-                logger.warning(
-                    "Device model '%s' reports RoomFit read support but "
-                    "RoomFit is not supported on this model; forcing "
-                    "PEQ_ONLY flow (smoke #36)",
-                    model_str,
-                )
             self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
             self._wizard_controller.advance(summary=device_name)
         else:
@@ -1548,6 +1481,113 @@ class MainWindow(QMainWindow):
         # Populate diagnostics panel capabilities display
         self._diagnostics_panel.on_capabilities_ready(caps)  # type: ignore[arg-type]
 
+    def _clear_pending_lr_rows(self) -> None:
+        """Reset pending L/R skip-row/conversion-note state.
+
+        Shared by _validate_and_populate_review's L/R-success and
+        L/R-without-bands-guard branches, plus _on_peq_ready's count==0
+        early reset — this exact 4-field reset used to be duplicated three
+        times.
+        """
+        state = self._wizard_controller.state
+        state.pending_rows_l = []
+        state.pending_rows_r = []
+        state.pending_conversion_notes_l = {}
+        state.pending_conversion_notes_r = {}
+
+    def _clear_pending_stereo_rows(self) -> None:
+        """Reset pending stereo skip-row/conversion-note state.
+
+        Shared by _validate_and_populate_review's stereo-success branch and
+        _on_peq_ready's count==0 early reset — this exact 2-field reset
+        used to be duplicated twice.
+        """
+        state = self._wizard_controller.state
+        state.pending_rows = []
+        state.pending_conversion_notes = {}
+
+    def _validate_and_populate_review(
+        self, peq_data: object, state: WizardState
+    ) -> tuple[list[str], int] | None:
+        """Validate filters against device limits and populate ReviewPage.
+
+        Thin pass-through to translator.wiim_generator.resolve_review_validation()
+        (the actual validation/branching logic, moved out of src/gui/ per
+        CLAUDE.md's "GUI has zero business logic" rule -- round-4 review
+        finding #7, 2026-07-19) plus this class's own state/widget updates.
+
+        Returns:
+            (warnings, validated_count) on success, or None if the
+            L/R-without-bands guard fired — it already showed its own
+            error banner; the caller must return without advancing the
+            wizard.
+        """
+        from src.translator.wiim_generator import resolve_review_validation
+
+        # Determine device max_filters and supported filter types
+        max_filters = DEFAULT_MAX_BANDS
+        supported_filter_types: list[str] | None = None
+        if self._device_caps is not None:
+            # merge_into() (#167c) guarantees max_filters is always a valid
+            # positive int once capabilities are resolved -- no "or
+            # DEFAULT_MAX_BANDS" fallback needed here; that used to be a
+            # second, independently-drifting copy of the same default.
+            max_filters = getattr(self._device_caps, "max_filters", DEFAULT_MAX_BANDS)
+            supported_filter_types = (
+                getattr(self._device_caps, "supported_filter_types", None) or None
+            )
+
+        # Read pending-rows/notes state before resolve_review_validation()'s
+        # result is used to clear it below -- order matters, the validated
+        # result is built from these fields' pre-clear values.
+        result = resolve_review_validation(
+            peq_data,
+            state.channel_mode,
+            state.current_filters,
+            state.pending_rows,
+            state.pending_rows_l,
+            state.pending_rows_r,
+            max_filters,
+            supported_filter_types,
+        )
+
+        if result is None:
+            # Logged inside resolve_review_validation() already; this only
+            # needs to surface it to the user and reset pending state.
+            self._status_banner.show_error(
+                "Could not determine L/R channel data for this source"
+            )
+            self._clear_pending_lr_rows()
+            return None
+
+        state.channel_mode = result.resolved_channel_mode
+        state.current_filters = result.current_filters
+
+        if result.resolved_channel_mode.is_lr:
+            state.filters_l = result.filters_l
+            state.filters_r = result.filters_r
+            notes_l = state.pending_conversion_notes_l
+            notes_r = state.pending_conversion_notes_r
+            self._clear_pending_lr_rows()
+            self._review_page.set_lr_filters(
+                result.filters_l,
+                result.filters_r,
+                result.clamping_l,
+                result.clamping_r,
+                result.rows_l,
+                result.rows_r,
+                notes_l,
+                notes_r,
+            )
+        else:
+            notes = state.pending_conversion_notes
+            self._clear_pending_stereo_rows()
+            self._review_page.set_filters(
+                result.current_filters, result.clamping_map, result.rows, notes
+            )
+
+        return result.warnings, len(state.current_filters)
+
     @Slot(object)
     def _on_peq_ready(self, peq_data: object) -> None:
         """Handle PEQ data ready — validate, populate ReviewPage, and advance wizard.
@@ -1563,132 +1603,32 @@ class MainWindow(QMainWindow):
         Args:
             peq_data: PEQ settings object or filter list from the operation.
         """
-        from src.gui.shared_helpers import validate_filters_for_device
-
         state = self._wizard_controller.state
-        filters = state.current_filters
-        count = len(filters)
+        count = len(state.current_filters)
 
         if count == 0:
             # No filters at all — nothing to show, so any pending skip rows
             # from this attempt are moot. Reset so they don't leak into a
             # later unrelated flow.
-            state.pending_rows = []
-            state.pending_rows_l = []
-            state.pending_rows_r = []
-            state.pending_conversion_notes = {}
-            state.pending_conversion_notes_l = {}
-            state.pending_conversion_notes_r = {}
-            # Also clear the sidebar-load one-shot flag here -- the count > 0
+            self._clear_pending_lr_rows()
+            self._clear_pending_stereo_rows()
+            # Also clear the sidebar-load one-shot flag here -- the else
             # branch below is the only other place that resets it, so a
             # sidebar load that resolves to zero filters would otherwise
             # leave it stuck True and incorrectly jump a later, unrelated
             # peq_ready straight to Review instead of advancing normally.
             self._sidebar_load_in_progress = False
-
-        if count > 0:
-            # Determine device max_filters and supported filter types
-            max_filters = DEFAULT_MAX_BANDS
-            supported_filter_types: list[str] | None = None
-            if self._device_caps is not None:
-                # merge_into() (#167c) guarantees max_filters is always a valid
-                # positive int once capabilities are resolved -- no "or
-                # DEFAULT_MAX_BANDS" fallback needed here; that used to be a
-                # second, independently-drifting copy of the same default.
-                max_filters = getattr(self._device_caps, "max_filters", DEFAULT_MAX_BANDS)
-                supported_filter_types = (
-                    getattr(self._device_caps, "supported_filter_types", None) or None
+            QTimer.singleShot(
+                150, lambda: self._status_banner.show_info(
+                    "Device has no active filters. Try importing from a REW file instead.",
+                    auto_dismiss=0,
                 )
-
-            # Populate ReviewPage — branch on channel mode (smoke #28)
-            channel = state.channel_mode
-
-            # Check if peq_data carries explicit L/R bands
-            peq_channel = getattr(peq_data, "channel_mode", None)
-            bands_l = getattr(peq_data, "bands_l", None)
-            bands_r = getattr(peq_data, "bands_r", None)
-
-            if (
-                peq_channel is not None
-                and is_lr_mode(peq_channel)
-                and bands_l is not None
-                and bands_r is not None
-            ):
-                # Update wizard state to reflect actual L/R mode from device
-                state.channel_mode = ChannelMode.LR
-                channel = ChannelMode.LR
-
-                # Validate each channel independently
-                validated_l, warnings_l, clamping_l, rows_l = validate_filters_for_device(
-                    list(bands_l), max_filters, state.pending_rows_l or None,
-                    supported_filter_types,
-                )
-                validated_r, warnings_r, clamping_r, rows_r = validate_filters_for_device(
-                    list(bands_r), max_filters, state.pending_rows_r or None,
-                    supported_filter_types,
-                )
-                notes_l = state.pending_conversion_notes_l
-                notes_r = state.pending_conversion_notes_r
-                state.pending_rows_l = []
-                state.pending_rows_r = []
-                state.pending_conversion_notes_l = {}
-                state.pending_conversion_notes_r = {}
-
-                # Merge warnings — prefix with channel so the combined status
-                # text (joined with " | ") doesn't leave the user guessing
-                # which side a truncation/clamping warning applies to.
-                all_warnings = [f"Left: {w}" for w in warnings_l] + [
-                    f"Right: {w}" for w in warnings_r
-                ]
-
-                # Update state with truncated filters and separate L/R lists
-                state.current_filters = validated_l + validated_r
-                state.filters_l = validated_l
-                state.filters_r = validated_r
-
-                self._review_page.set_lr_filters(
-                    validated_l,
-                    validated_r,
-                    clamping_l,
-                    clamping_r,
-                    rows_l,
-                    rows_r,
-                    notes_l,
-                    notes_r,
-                )
-            elif channel.is_lr:
-                # Every producer of peq_ready in L/R mode (file_import_lr,
-                # device_pull, roomfit_pull, rew_get_filters_lr) always
-                # supplies explicit bands_l/bands_r — read_peq/read_roomfit
-                # raise rather than return L/R mode without both. Reaching
-                # this branch means that invariant broke; refuse to guess
-                # a channel split instead of silently writing wrong-channel
-                # data (same class of bug as smoke #92/#93).
-                logger.error(
-                    "L/R mode without explicit bands_l/bands_r — refusing "
-                    "to guess channel split"
-                )
-                self._status_banner.show_error(
-                    "Could not determine L/R channel data for this source"
-                )
-                state.pending_rows_l = []
-                state.pending_rows_r = []
-                state.pending_conversion_notes_l = {}
-                state.pending_conversion_notes_r = {}
+            )
+        else:
+            result = self._validate_and_populate_review(peq_data, state)
+            if result is None:
                 return
-            else:
-                # Stereo: validate the full list
-                validated, all_warnings, clamping_map, rows = validate_filters_for_device(
-                    filters, max_filters, state.pending_rows or None,
-                    supported_filter_types,
-                )
-                notes = state.pending_conversion_notes
-                state.pending_rows = []
-                state.pending_conversion_notes = {}
-                state.current_filters = validated
-                self._review_page.set_filters(validated, clamping_map, rows, notes)
-
-            validated_count = len(state.current_filters)
+            all_warnings, validated_count = result
 
             # Advance wizard to REVIEW step
             if getattr(self, "_sidebar_load_in_progress", False):
@@ -1715,13 +1655,6 @@ class MainWindow(QMainWindow):
                         f"{validated_count} filters loaded — ready for review"
                     )
                 )
-        else:
-            QTimer.singleShot(
-                150, lambda: self._status_banner.show_info(
-                    "Device has no active filters. Try importing from a REW file instead.",
-                    auto_dismiss=0,
-                )
-            )
 
         logger.info(
             "PEQ data ready: %d raw filters, %d after validation, channel=%s",
@@ -1820,6 +1753,7 @@ class MainWindow(QMainWindow):
         # never auto-dismisses and has no close button, so it looks stuck.
         if message.startswith("__info__"):
             info_text = message[len("__info__"):]
+            self._sidebar_load_in_progress = False
             self._status_banner.show_info(info_text)
             self._show_rew_pull_message(info_text, icon=ICON_NO_DATA)
             return
@@ -1916,14 +1850,9 @@ class MainWindow(QMainWindow):
 
         if isinstance(result, tuple):
             measurement_l, measurement_r = result
-            self._bridge.run_async(
-                self._bridge_wrapper(
-                    "rew_filters_lr",
-                    self._do_rew_get_filters_lr(
-                        measurement_l.uuid, measurement_r.uuid,
-                        measurement_l.name, measurement_r.name,
-                    ),
-                )
+            self._primary_workflows.get_rew_filters_lr(
+                measurement_l.uuid, measurement_r.uuid,
+                measurement_l.name, measurement_r.name,
             )
             logger.info(
                 "REW L/R measurements selected: L=%s, R=%s",
@@ -1932,12 +1861,7 @@ class MainWindow(QMainWindow):
             )
         else:
             measurement = result
-            self._bridge.run_async(
-                self._bridge_wrapper(
-                    "rew_filters",
-                    self._do_rew_get_filters(measurement.uuid, measurement.name),
-                )
-            )
+            self._primary_workflows.get_rew_filters(measurement.uuid, measurement.name)
             logger.info("REW measurement selected: %s", measurement.name)
 
     @Slot(list)
@@ -1993,6 +1917,8 @@ class MainWindow(QMainWindow):
             return f"Could not read file: {exc}"
         if isinstance(exc, ValidationError):
             return f"Invalid data: {exc}"
+        if isinstance(exc, EmptyPresetFiltersError):
+            return str(exc)
         if isinstance(exc, OSError):
             return "File could not be written"
 
@@ -2036,6 +1962,30 @@ class MainWindow(QMainWindow):
     # Shared action helpers (used by multiple trigger points)
     # ------------------------------------------------------------------
 
+    def _run_profile_action(
+        self, action: Callable[[], object], success_message: str, failure_verb: str
+    ) -> None:
+        """Run a synchronous ProfileRepository action, showing success/error
+        feedback.
+
+        Shared by MyPresetsView's rename/duplicate/delete handlers and the
+        save-to-presets flow -- these are local-disk I/O, not network calls,
+        so they don't need the async bridge/dispatch pattern used elsewhere;
+        this only consolidates the repeated try/except/refresh/banner shape.
+
+        Args:
+            action: Zero-arg callable performing the repository write (and
+                anything that must only happen on success, e.g. logging).
+            success_message: Shown in the status banner on success.
+            failure_verb: Prefixes the error banner, e.g. "Rename failed: {exc}".
+        """
+        try:
+            action()
+            self._refresh_presets_view()
+            self._status_banner.show_success(success_message)
+        except Exception as exc:
+            self._status_banner.show_error(f"{failure_verb} failed: {exc}")
+
     def _save_filters_to_presets(
         self, name: str, filters: list[CanonicalFilter], channel_mode: str | ChannelMode
     ) -> None:
@@ -2053,25 +2003,27 @@ class MainWindow(QMainWindow):
         """
         state = self._wizard_controller.state
         name = sanitize_device_name(name).strip()
-        profile = build_profile(
-            name, filters, channel_mode,
-            filters_l=state.filters_l,
-            filters_r=state.filters_r,
+        try:
+            profile = build_profile(
+                name, filters, channel_mode,
+                filters_l=state.filters_l,
+                filters_r=state.filters_r,
+            )
+        except ValueError as exc:
+            self._status_banner.show_error(f"Save failed: {exc}")
+            return
+
+        def _save() -> None:
+            self._profile_repository.save(profile)
+            logger.info("Saved preset: %s (%s)", profile.name, channel_mode)
+
+        self._run_profile_action(
+            _save, f"Saved '{profile.name}' to My Presets", "Save"
         )
-
-        self._profile_repository.save(profile)
-
-        # Refresh MyPresetsView
-        self._refresh_presets_view()
-
-        self._status_banner.show_success(
-            f"Saved '{profile.name}' to My Presets"
-        )
-        logger.info("Saved preset: %s (%s)", profile.name, channel_mode)
 
     def _refresh_presets_view(self) -> None:
         """Refresh MyPresetsView from the profile repository."""
-        all_profiles = self._profile_repository.list()
+        all_profiles = self._profile_repository.list_all()
         self._my_presets_view.set_presets(all_profiles)
 
     def _export_filters_as_rew(
@@ -2109,14 +2061,13 @@ class MainWindow(QMainWindow):
             path_l, path_r = paths
             # Use stored L/R lists; fallback only for defensive safety
             state = self._wizard_controller.state
-            filters_l, filters_r = get_lr_filters(state, filters)
+            try:
+                filters_l, filters_r = require_lr_filters(state.filters_l, state.filters_r)
+            except ValueError as exc:
+                self._status_banner.show_error(f"Export failed: {exc}")
+                return
 
-            self._bridge.run_async(
-                self._bridge_wrapper(
-                    "export_lr",
-                    self._do_export_lr(filters_l, filters_r, path_l, path_r),
-                )
-            )
+            self._primary_workflows.export_file_lr(filters_l, filters_r, path_l, path_r)
             logger.info("Export L/R REW: %s, %s", path_l, path_r)
         else:
             # Stereo mode: single file dialog
@@ -2137,961 +2088,49 @@ class MainWindow(QMainWindow):
             if not path.lower().endswith(".txt"):
                 path += ".txt"
 
-            self._bridge.run_async(
-                self._bridge_wrapper("export", self._do_export(filters, path))
-            )
+            self._primary_workflows.export_file(filters, path)
             logger.info("Export REW: %s", path)
 
     # ------------------------------------------------------------------
     # Async operation coroutines (Req 1.1-1.7, 2.1-2.7)
     # ------------------------------------------------------------------
 
-    async def _do_discovery(self) -> None:
-        """Run device discovery and emit results via bridge signal.
-
-        Uses progressive discovery — devices appear in the UI as soon as
-        they're found rather than waiting for the full scan to complete.
-        """
-
-        def _on_found(devices: list[DeviceInfo]) -> None:
-            """Progressive callback — emit partial results to the UI."""
-            device_list = [
-                {"name": d.name, "ip": d.ip, "model": d.model}
-                for d in devices
-            ]
-            self._bridge.discovery_progress.emit(device_list)
-
-        devices = await self._discovery_module.discover(on_found=_on_found)
-        # Cache raw DeviceInfo objects for device picker dialogs
-        self._discovered_devices = devices
-        device_list = [
-            {"name": d.name, "ip": d.ip, "model": d.model}
-            for d in devices
-        ]
-        self._bridge.discovery_complete.emit(device_list)
-
-    async def _do_probe(self, prober: CapabilityProber, generation: int) -> None:
-        """Run capability probing and emit results via bridge signal.
-
-        Calls CapabilityProber.probe() and emits the DeviceCapabilities
-        object for flow-type determination and wizard advancement.
-
-        The *prober* instance and *generation* are passed in explicitly
-        (rather than read from ``self``) so a probe started for a previously
-        selected device can't pick up a different device's prober if the
-        user reselects before this one resolves. If *generation* no longer
-        matches the most recent selection, the result is discarded —
-        otherwise a stale probe could advance the wizard for a device the
-        user already navigated away from, corrupting the Connect step's
-        completed/checkmark state.
-
-        Args:
-            prober: The CapabilityProber for the device this probe targets.
-            generation: Snapshot of ``self._probe_generation`` at selection time.
-        """
-        caps = await prober.probe()
-        if generation != self._probe_generation:
-            logger.debug(
-                "Discarding stale capability probe result (generation %d, current %d)",
-                generation,
-                self._probe_generation,
-            )
-            return
-        self._bridge.capabilities_ready.emit(caps)
-
-    async def _do_file_import(self, path: str) -> None:
-        """Parse a REW EQ text file and populate filters.
-
-        Calls REWParser.parse_file_with_rows() for full result including
-        skipped bands. Stores filters in wizard state, shows warnings if any.
-
-        Args:
-            path: Path to the REW text file.
-        """
-        from src.translator.rew_parser import REWParser
-
-        file_path = Path(path)
-        parser = REWParser()
-        filters, warnings, rows, notes = parser.parse_file_with_rows(file_path)
-
-        # Store in wizard state — explicitly set Stereo channel mode (smoke #72)
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = ChannelMode.STEREO
-        self._wizard_controller.state.pending_rows = rows
-        self._wizard_controller.state.pending_conversion_notes = notes
-        self._wizard_controller.state.filters_origin = (
-            f"Imported from REW file: {file_path.name}"
-        )
-
-        # Notify FiltersPage of success via peq_ready signal
-        self._bridge.peq_ready.emit(filters)
-
-        # If there were skipped/unsupported bands, show info message
-        if warnings:
-            skip_count = len(warnings)
-            self._bridge.progress_update.emit(
-                f"{len(filters)} filters loaded, {skip_count} unsupported band(s) skipped"
-            )
-
-    async def _do_file_import_lr(self, path_l: str, path_r: str) -> None:
-        """Parse two REW EQ text files as L/R channels.
-
-        Parses each file independently, combines into a flat filter list (L+R),
-        and sets channel_mode to "L/R" in wizard state.
-
-        Args:
-            path_l: Path to the left channel REW text file.
-            path_r: Path to the right channel REW text file.
-        """
-        from src.translator.rew_parser import REWParser
-
-        parser = REWParser()
-        filters_l, warnings_l, rows_l, notes_l = parser.parse_file_with_rows(Path(path_l))
-        filters_r, warnings_r, rows_r, notes_r = parser.parse_file_with_rows(Path(path_r))
-
-        # Combine L+R into flat list and set L/R channel mode
-        filters = filters_l + filters_r
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = ChannelMode.LR
-        self._wizard_controller.state.pending_rows_l = rows_l
-        self._wizard_controller.state.pending_rows_r = rows_r
-        self._wizard_controller.state.pending_conversion_notes_l = notes_l
-        self._wizard_controller.state.pending_conversion_notes_r = notes_r
-        self._wizard_controller.state.filters_origin = (
-            f"Imported from REW files: L={Path(path_l).name}, R={Path(path_r).name}"
-        )
-
-        # Emit peq_ready with a pseudo-PEQSettings-like object carrying L/R bands
-        peq_data = PEQSettings(
-            source_name=self._wizard_controller.state.primary_source,
-            channel_mode=ChannelMode.LR,
-            bands_l=filters_l,
-            bands_r=filters_r,
-        )
-        self._bridge.peq_ready.emit(peq_data)
-
-        total_warnings = len(warnings_l) + len(warnings_r)
-        if total_warnings:
-            self._bridge.progress_update.emit(
-                f"L/R import: Left {len(filters_l)} bands ({len(warnings_l)} skipped), "
-                f"Right {len(filters_r)} bands ({len(warnings_r)} skipped)"
-            )
-
-    async def _do_device_pull(self) -> None:
-        """Pull PEQ settings from the connected device.
-
-        Reads PEQ bands via WiiMAdapter, converts to CanonicalFilter list,
-        stores in wizard state, and emits result signal.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        peq_settings = await self._wiim_adapter.read_peq(source_name)
-
-        # Extract filters based on channel mode
-        filters, _ = extract_filters(peq_settings)
-
-        # Store in wizard state
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.device_filters = filters
-        self._wizard_controller.state.filters_origin = (
-            f"Pulled from device (source: {source_name})"
-        )
-
-        # Emit result signal
-        self._bridge.peq_ready.emit(peq_settings)
-
-    async def _do_roomfit_pull(self, profile_name: str) -> None:
-        """Pull RoomFit profile filters from the device.
-
-        Reads the named RoomFit profile via WiiMAdapter, stores filters
-        in wizard state, and emits peq_ready to advance to Review.
-
-        Args:
-            profile_name: Name of the RoomFit profile to read.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
-            source_name, profile_name
-        )
-
-        # Extract filters based on channel mode
-        filters, _ = extract_filters(peq_settings)
-
-        # Store in wizard state
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.device_filters = filters
-        self._wizard_controller.state.filters_origin = f"RoomFit profile: {profile_name}"
-
-        # Emit result signal (triggers _on_peq_ready -> Review page)
-        self._bridge.peq_ready.emit(peq_settings)
-
-    async def _do_load_peq_preset(self, preset_name: str) -> None:
-        """Load a named PEQ preset from device and emit peq_ready.
-
-        Loads the preset via EQv2SourceLoad then reads the resulting bands,
-        then restores the source's original active preset (#166) -- the
-        confirmation dialog in _on_preset_load_into_editor already warned the
-        user this briefly changes what's playing. Sets channel_mode in wizard
-        state from the device response to avoid stale L/R state from a
-        previous load (smoke #111).
-
-        Args:
-            preset_name: Name of the PEQ preset to load.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        peq_settings = await self._wiim_adapter.read_peq_preset_preview(
-            source_name, preset_name
-        )
-
-        # Determine channel_mode from the device data and update wizard state
-        peq_channel = getattr(peq_settings, "channel_mode", None)
-        if is_lr_mode(peq_channel) if peq_channel else False:
-            self._wizard_controller.state.channel_mode = ChannelMode.LR
-        else:
-            self._wizard_controller.state.channel_mode = ChannelMode.STEREO
-
-        # Extract filters
-        filters, _ = extract_filters(peq_settings)
-
-        # Store in wizard state
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.device_filters = filters
-        self._wizard_controller.state.filters_origin = f"PEQ preset: {preset_name}"
-
-        # Emit result signal
-        self._bridge.peq_ready.emit(peq_settings)
-
-    async def _read_preset_to_copy(
-        self, preset_name: str, preset_type: str
-    ) -> tuple[list[CanonicalFilter], ChannelMode, PEQSettings] | None:
-        """Read+preview a preset from the currently connected (source) device.
-
-        Shared by both copy flows so the read/preview -- which briefly loads
-        the preset onto the source device's live DSP and restores it after,
-        see #166 -- happens exactly once per preset, not once per target
-        device it's copied to (#171).
-
-        Returns None (after showing an error banner) if the preset has no
-        filters to copy.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        # Reading (previewing + restoring) -- the confirmation dialog in
-        # _on_copy_to_device_requested already warned the user this briefly
-        # changes what's playing, see #166.
-        if preset_type == "RoomFit":
-            peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
-                source_name, preset_name
-            )
-        else:
-            peq_settings = await self._wiim_adapter.read_peq_preset_preview(
-                source_name, preset_name
-            )
-        filters, channel_mode = extract_filters(peq_settings)
-
-        if not filters:
-            self._status_banner.show_error(
-                f"Preset '{preset_name}' has no filters to copy"
-            )
-            return None
-
-        return filters, channel_mode, peq_settings
-
-    async def _do_copy_preset_to_device(
-        self,
-        preset_name: str,
-        preset_type: str,
-        target_ip: str,
-        target_source: str,
-        filters: list[CanonicalFilter],
-        channel_mode: ChannelMode,
-        peq_settings: PEQSettings,
-    ) -> None:
-        """Write an already-read preset to a target device, as a named preset.
-
-        1. Connects to target device
-        2. Writes + verifies (SafeWrite/RoomFitSafeWrite)
-        3. Saves as a named preset (same name) on the target device
-
-        The read/preview step happens once, earlier, via
-        _read_preset_to_copy() -- shared across every target device this
-        preset is being copied to (#171).
-
-        Args:
-            preset_name: Name of the preset/profile to copy.
-            preset_type: "PEQ" or "RoomFit".
-            target_ip: IP address of the target device.
-            target_source: Target source name on the remote device.
-            filters: Filters read from the source preset (see _read_preset_to_copy).
-            channel_mode: Channel mode of the source preset.
-            peq_settings: Full PEQSettings read from the source preset (carries
-                bands_l/bands_r for L/R mode).
-        """
-        # Connect to target device and save as named preset
-        target_client = WiiMHttpClient(target_ip)
-        try:
-            target_caps = await CapabilityProber(target_client).probe()
-            target_adapter = WiiMAdapter(target_client, target_caps)
-
-            if preset_type == "RoomFit":
-                # RoomFit: write as RoomFit profile on target (smoke #34, #79),
-                # verified and rolled back on mismatch via RoomFitSafeWrite --
-                # same protocol as the main Push flow (smoke #153), not a bare
-                # write_roomfit() with no verification at all.
-                roomfit_safe_write = RoomFitSafeWrite(target_adapter, self._backup_manager)
-                if is_lr_mode(channel_mode):
-                    # Use the L/R bands just read from the source preset —
-                    # not wizard state, which may be stale or unrelated to
-                    # this preset (e.g. never populated in this session).
-                    result = await roomfit_safe_write.execute(
-                        target_source, preset_name, filters,
-                        channel_mode=ChannelMode.LR,
-                        filters_l=peq_settings.bands_l,
-                        filters_r=peq_settings.bands_r,
-                    )
-                else:
-                    result = await roomfit_safe_write.execute(
-                        target_source, preset_name, filters,
-                        channel_mode=ChannelMode.STEREO,
-                    )
-                if not result.success:
-                    raise RuntimeError(
-                        result.error_message or "RoomFit copy verification failed"
-                    )
-            else:
-                # PEQ: write filters (verified via SafeWrite, smoke #153), then
-                # save as named PEQ preset -- only if the write actually verified.
-                settings = build_peq_settings(
-                    target_source, filters, channel_mode,
-                    filters_l=peq_settings.bands_l,
-                    filters_r=peq_settings.bands_r,
-                )
-                safe_write = SafeWrite(target_adapter, self._backup_manager)
-                result = await safe_write.execute(target_source, settings)
-                if not result.success:
-                    raise RuntimeError(
-                        result.error_message or "PEQ copy verification failed"
-                    )
-                await target_adapter.save_peq_profile(
-                    target_source, preset_name
-                )
-
-            self._status_banner.show_success(
-                f"Preset '{preset_name}' saved to {target_ip} on source '{target_source}'"
-            )
-        finally:
-            await target_client.close()
-
-    async def _write_preset_copies_to_devices(
-        self,
-        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]],
-        target_devices: list[DeviceInfo],
-        target_source: str,
-    ) -> tuple[int, int]:
-        """Write each already-read preset to every target device.
-
-        Shared by `_do_copy_presets_batch_multi` (reads come from the live
-        source device) and `_do_copy_local_profile_to_devices` (reads come
-        from a locally saved Profile, no source device involved) -- both
-        write via the identical `_do_copy_preset_to_device` primitive per
-        (read, device) pair, so that loop/exception-handling/progress-emit
-        logic lives exactly once.
-
-        Args:
-            reads: List of (preset_name, preset_type, filters, channel_mode,
-                peq_settings) tuples, one per already-read preset.
-            target_devices: List of discovered device objects to copy to.
-            target_source: Target source name on each remote device.
-
-        Returns:
-            Tuple of (succeeded, failed) copy-operation counts.
-        """
-        succeeded = 0
-        failed = 0
-
-        for preset_name, preset_type, filters, channel_mode, peq_settings in reads:
-            for device in target_devices:
-                self._bridge.progress_update.emit(
-                    f"Copying '{preset_name}' to {device.name}..."
-                )
-                try:
-                    await self._do_copy_preset_to_device(
-                        preset_name, preset_type, device.ip, target_source,
-                        filters, channel_mode, peq_settings,
-                    )
-                    succeeded += 1
-                except Exception:
-                    logger.exception(
-                        "Copy preset '%s' to %s failed", preset_name, device.ip
-                    )
-                    failed += 1
-
-        return succeeded, failed
-
-    async def _do_copy_presets_batch_multi(
-        self,
-        items: list[Any],
-        target_devices: list[DeviceInfo],
-        target_source: str,
-    ) -> None:
-        """Copy presets to multiple target devices (smoke #73 fix).
-
-        Iterates over all presets, reading (and previewing) each once from the
-        source device, then writes that single read to every target device.
-        Presets are the outer loop and devices the inner loop specifically so
-        the read/preview step -- which briefly flips the source device's live
-        audio, see #166 -- happens once per preset rather than once per
-        (preset, device) pair (#171).
-
-        Args:
-            items: List of PresetItem objects to copy.
-            target_devices: List of discovered device objects to copy to.
-            target_source: Target source name on each remote device.
-        """
-        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
-        read_failed = 0
-
-        for item in items:
-            preset_name = getattr(item, "name", "")
-            preset_type = getattr(item, "preset_type", "PEQ")
-            if not preset_name:
-                continue
-
-            self._bridge.progress_update.emit(f"Reading '{preset_name}'...")
-            try:
-                read_result = await self._read_preset_to_copy(preset_name, preset_type)
-            except Exception:
-                logger.exception("Read preset '%s' for copy failed", preset_name)
-                self._bridge.progress_update.emit(
-                    f"Failed to read '{preset_name}' -- skipping"
-                )
-                read_failed += len(target_devices)
-                continue
-            if read_result is None:
-                read_failed += len(target_devices)
-                continue
-            filters, channel_mode, peq_settings = read_result
-            reads.append((preset_name, preset_type, filters, channel_mode, peq_settings))
-
-        succeeded, write_failed = await self._write_preset_copies_to_devices(
-            reads, target_devices, target_source
-        )
-        failed = read_failed + write_failed
-
-        # Show summary result
-        n_items = len(items)
-        n_devices = len(target_devices)
-        total_ops = n_items * n_devices
-        if failed == 0:
-            self._status_banner.show_success(
-                f"{n_items} preset(s) copied to {n_devices} device(s)"
-            )
-        else:
-            self._status_banner.show_error(
-                f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
-            )
-
-    async def _do_copy_local_profile_to_devices(
-        self,
-        profile_name: str,
-        preset_type: str,
-        target_devices: list[DeviceInfo],
-        target_source: str,
-        filters: list[CanonicalFilter],
-        channel_mode: ChannelMode,
-        peq_settings: PEQSettings,
-    ) -> None:
-        """Copy a locally saved profile's already-in-hand filters to devices.
-
-        Unlike `_do_copy_presets_batch_multi`, there's no source device to
-        read from -- the filters already came from a local Profile -- so
-        this is a single-entry `reads` list around the same shared
-        `_write_preset_copies_to_devices` write primitive.
-
-        Args:
-            profile_name: Name of the local profile being copied.
-            preset_type: "PEQ" or "RoomFit", chosen via PresetTypeDialog.
-            target_devices: List of discovered device objects to copy to.
-            target_source: Target source name on each remote device.
-            filters: Filters from the local Profile.
-            channel_mode: Channel mode of the local Profile.
-            peq_settings: Full PEQSettings built from the local Profile.
-        """
-        reads = [(profile_name, preset_type, filters, channel_mode, peq_settings)]
-        succeeded, failed = await self._write_preset_copies_to_devices(
-            reads, target_devices, target_source
-        )
-
-        n_devices = len(target_devices)
-        if failed == 0:
-            self._status_banner.show_success(
-                f"'{profile_name}' copied to {n_devices} device(s)"
-            )
-        else:
-            self._status_banner.show_error(
-                f"Copied to {succeeded} of {n_devices} device(s) ({failed} failed)"
-            )
-
-    async def _do_delete_presets(self, items: list[Any]) -> None:
-        """Delete selected PEQ presets / RoomFit profiles from the device.
-
-        Dispatches per item on preset_type to delete_peq_profile or
-        delete_roomfit_profile. One item's failure doesn't abort the rest;
-        the view is refreshed afterward regardless of partial failure.
-
-        Args:
-            items: List of PresetItem objects to delete.
-        """
-        assert self._wiim_adapter is not None
-        succeeded = 0
-        failed = 0
-
-        for item in items:
-            name = getattr(item, "name", "")
-            preset_type = getattr(item, "preset_type", "PEQ")
-            if not name:
-                continue
-            try:
-                if preset_type == "RoomFit":
-                    await self._wiim_adapter.delete_roomfit_profile(name)
-                else:
-                    await self._wiim_adapter.delete_peq_profile(name)
-                succeeded += 1
-            except Exception:
-                logger.exception("Delete preset '%s' (%s) failed", name, preset_type)
-                failed += 1
-
-        await self._do_list_presets()
-
-        if failed == 0:
-            self._status_banner.show_success(f"{succeeded} preset(s) deleted")
-        else:
-            self._status_banner.show_error(f"Deleted {succeeded}, {failed} failed")
-
-    async def _do_preset_export(
-        self, preset_name: str, preset_type: str, path: str
-    ) -> None:
-        """Read a preset from device and export as REW file.
-
-        For L/R mode, generates two files (_L.txt and _R.txt) from the base path.
-
-        Args:
-            preset_name: Name of the preset to export.
-            preset_type: "PEQ" or "RoomFit".
-            path: Destination file path.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        # Read preset filters from device (previewing + restoring -- the
-        # confirmation dialog in _on_preset_export_requested already warned
-        # the user this briefly changes what's playing, see #166)
-        if preset_type == "RoomFit":
-            peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
-                source_name, preset_name
-            )
-        else:
-            peq_settings = await self._wiim_adapter.read_peq_preset_preview(
-                source_name, preset_name
-            )
-
-        from src.translator.rew_generator import REWGenerator
-
-        generator = REWGenerator()
-        file_path = Path(path)
-
-        # Ensure .txt extension
-        if file_path.suffix.lower() != ".txt":
-            file_path = file_path.with_suffix(".txt")
-
-        if is_lr_mode(peq_settings.channel_mode):
-            # L/R mode: generate two files
-            filters_l = peq_settings.bands_l or []
-            filters_r = peq_settings.bands_r or []
-
-            if not filters_l and not filters_r:
-                self._status_banner.show_error(
-                    f"Preset '{preset_name}' has no filters to export"
-                )
-                return
-
-            left_path = file_path.with_stem(file_path.stem + "_L")
-            right_path = file_path.with_stem(file_path.stem + "_R")
-            warnings_l = generator.generate_file(filters_l, left_path)
-            warnings_r = generator.generate_file(filters_r, right_path)
-            total_warnings = len(warnings_l) + len(warnings_r)
-
-            if total_warnings:
-                self._bridge.progress_update.emit(
-                    f"Exported '{preset_name}' L/R ({total_warnings} band(s) skipped)"
-                )
-            else:
-                self._bridge.progress_update.emit(
-                    f"Exported '{preset_name}' as {left_path.name} and {right_path.name}"
-                )
-        else:
-            # Stereo mode: single file
-            filters = peq_settings.bands
-            if not filters:
-                self._status_banner.show_error(
-                    f"Preset '{preset_name}' has no filters to export"
-                )
-                return
-
-            warnings = generator.generate_file(filters, file_path)
-            if warnings:
-                self._bridge.progress_update.emit(
-                    f"Exported '{preset_name}' ({len(warnings)} band(s) skipped)"
-                )
-            else:
-                self._bridge.progress_update.emit(
-                    f"Exported '{preset_name}' to {file_path.name}"
-                )
-
-    async def _do_preset_save(
-        self, preset_name: str, preset_type: str, saved_name: str
-    ) -> None:
-        """Read a preset from device and save to local profile repository.
-
-        Uses build_profile helper for consistent Profile construction.
-        Note: the helper is safe to call here because AsyncBridge signals
-        are delivered via QueuedConnection (thread-safe).
-
-        Args:
-            preset_name: Name of the preset to read from the device --
-                the exact on-device identifier, never prefixed.
-            preset_type: "PEQ" or "RoomFit".
-            saved_name: Name for the resulting local Profile (device-name
-                prefixed by the caller); independent of preset_name so the
-                device read always uses the real on-device preset name.
-        """
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
-
-        # Read preset filters from device (previewing + restoring -- the
-        # confirmation dialog in _on_preset_save_requested already warned the
-        # user this briefly changes what's playing, see #166)
-        if preset_type == "RoomFit":
-            peq_settings = await self._wiim_adapter.read_roomfit_preset_preview(
-                source_name, preset_name
-            )
-        else:
-            peq_settings = await self._wiim_adapter.read_peq_preset_preview(
-                source_name, preset_name
-            )
-
-        # Determine channel mode and filter list
-        filters, channel_mode = extract_filters(peq_settings)
-
-        if not filters:
-            self._status_banner.show_error(
-                f"Preset '{preset_name}' has no filters to save"
-            )
-            return
-
-        # Save directly (Profile construction + file write is thread-safe)
-        # For L/R, pass explicit channel lists from peq_settings
-        profile = build_profile(
-            saved_name, filters, channel_mode,
-            filters_l=peq_settings.bands_l,
-            filters_r=peq_settings.bands_r,
-        )
-
-        self._profile_repository.save(profile)
-        # UI updates via progress_update signal (thread-safe)
-        self._bridge.progress_update.emit(
-            f"Saved '{profile.name}' to My Presets"
-        )
-
-    async def _do_rew_list_measurements(self) -> None:
-        """List available measurements from REW API.
-
-        Calls REWHttpApiClient.list_measurements() and emits the result.
-        If empty, emits an info message instead of the measurement list.
-        """
-        measurements = await self._rew_client.list_measurements()
-
-        if not measurements:
-            self._sidebar_load_in_progress = False
-            self._bridge.progress_update.emit(
-                "__info__No measurements found in REW. "
-                "Load or import measurement(s) in REW's Measurements pane, then try again."
-            )
-            return
-
-        # Emit measurement list for the picker dialog
-        self._bridge.rew_measurements_ready.emit(measurements)
-
-    async def _do_rew_get_filters(self, uuid: str, measurement_name: str = "") -> None:
-        """Fetch filters for a specific REW measurement.
-
-        Calls REWHttpApiClient.get_filters(uuid), stores in wizard state,
-        and emits result signal.
-
-        Args:
-            uuid: The measurement UUID selected by the user.
-            measurement_name: Display name of the measurement, for the
-                Filters step tooltip (#162d) -- referenced by UUID for the
-                actual fetch since names aren't stable identifiers.
-        """
-        filters, rows, notes = await self._rew_client.get_filters_with_rows(uuid)
-
-        # Store in wizard state
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = ChannelMode.STEREO
-        self._wizard_controller.state.pending_rows = rows
-        self._wizard_controller.state.pending_conversion_notes = notes
-        self._wizard_controller.state.filters_origin = (
-            f"Pulled from REW measurement: {measurement_name}"
-        )
-
-        # Emit result signal
-        self._bridge.rew_filters_ready.emit(filters)
-
-    async def _do_rew_get_filters_lr(
-        self,
-        uuid_l: str,
-        uuid_r: str,
-        measurement_name_l: str = "",
-        measurement_name_r: str = "",
-    ) -> None:
-        """Fetch filters for Left and Right REW measurements.
-
-        Calls get_filters for each UUID, combines into L+R format,
-        and emits peq_ready with the combined result.
-
-        Args:
-            uuid_l: UUID of the Left channel measurement.
-            uuid_r: UUID of the Right channel measurement.
-            measurement_name_l: Display name of the Left measurement, for
-                the Filters step tooltip (#162d).
-            measurement_name_r: Display name of the Right measurement.
-        """
-        from src.translator._warnings import SkippedBand
-
-        filters_l, rows_l, notes_l = await self._rew_client.get_filters_with_rows(uuid_l)
-        filters_r, rows_r, notes_r = await self._rew_client.get_filters_with_rows(uuid_r)
-
-        # Combine L+R into flat list and set L/R channel mode
-        filters = filters_l + filters_r
-        self._wizard_controller.state.current_filters = filters
-        self._wizard_controller.state.channel_mode = ChannelMode.LR
-        self._wizard_controller.state.pending_rows_l = rows_l
-        self._wizard_controller.state.pending_rows_r = rows_r
-        self._wizard_controller.state.pending_conversion_notes_l = notes_l
-        self._wizard_controller.state.pending_conversion_notes_r = notes_r
-        self._wizard_controller.state.filters_origin = (
-            f"Pulled from REW measurements: L={measurement_name_l}, R={measurement_name_r}"
-        )
-
-        # Emit peq_ready with a PEQSettings carrying L/R bands
-        peq_data = PEQSettings(
-            source_name=self._wizard_controller.state.primary_source,
-            channel_mode=ChannelMode.LR,
-            bands_l=filters_l,
-            bands_r=filters_r,
-        )
-        self._bridge.peq_ready.emit(peq_data)
-
-        skipped_l = sum(1 for r in rows_l if isinstance(r, SkippedBand))
-        skipped_r = sum(1 for r in rows_r if isinstance(r, SkippedBand))
-        if skipped_l or skipped_r:
-            self._bridge.progress_update.emit(
-                f"L/R import: Left {len(filters_l)} bands ({skipped_l} skipped), "
-                f"Right {len(filters_r)} bands ({skipped_r} skipped)"
-            )
-
-    async def _do_push(self) -> None:
-        """Execute push to device — PEQ via SafeWrite, or RoomFit via write_roomfit.
-
-        For PEQ flow: constructs PEQSettings and uses SafeWrite protocol.
-        Pushes to ALL selected sources (state.selected_sources).
-        For RoomFit flow: uses write_roomfit with the named profile.
-
-        Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7
-        """
-        # Safety net: never write to device in dry-run mode
-        if self._wizard_controller.state.dry_run:
-            logger.warning("_do_push called in dry-run mode — aborting write")
-            return
-
-        assert self._wiim_adapter is not None
-
-        state = self._wizard_controller.state
-        filters = state.current_filters
-        channel_mode = state.channel_mode
-        flow_type = self._wizard_controller.flow_type
-
-        # The push flow is the one deliberately multi-source operation:
-        # one write per selected source. Empty selection falls back to the
-        # single default source (#194).
-        source_list = state.selected_sources or [state.primary_source]
-
-        logger.info(
-            "Push initiated: flow=%s, channel=%s, filters=%d, sources=%s",
-            flow_type.value, channel_mode.value, len(filters), source_list,
-        )
-
-        on_stage = self._bridge.stage_changed.emit
-
-        if flow_type == FlowType.ROOMFIT:
-            # RoomFit: write as named profile via write_roomfit
-            # RoomFit is device-global, so source doesn't matter — use first
-            source_name = source_list[0]
-            profile_name = state.roomfit_profile_name
-            if not profile_name:
-                result = WriteResult(
-                    success=False, error_message="No profile name specified", backup_path=None
-                )
-                self._bridge.write_complete.emit(result)
-                return
-
-            assert self._roomfit_safe_write is not None
-            try:
-                self._bridge.progress_update.emit(
-                    f"Writing RoomFit profile '{profile_name}'..."
-                )
-                if channel_mode.is_lr:
-                    # Use stored L/R lists if available (avoids naive 50/50 split)
-                    left, right = get_lr_filters(state, filters)
-                    result = await self._roomfit_safe_write.execute(
-                        source_name,
-                        profile_name,
-                        filters,
-                        channel_mode=ChannelMode.LR,
-                        filters_l=left,
-                        filters_r=right,
-                        on_stage=on_stage,
-                    )
-                else:
-                    result = await self._roomfit_safe_write.execute(
-                        source_name,
-                        profile_name,
-                        filters,
-                        channel_mode=ChannelMode.STEREO,
-                        on_stage=on_stage,
-                    )
-
-                if result.success:
-                    self._bridge.progress_update.emit(
-                        f"RoomFit profile '{profile_name}' saved"
-                    )
-                self._bridge.write_complete.emit(result)
-            except Exception as exc:
-                result = WriteResult(success=False, error_message=str(exc), backup_path=None)
-                self._bridge.write_complete.emit(result)
-        else:
-            # PEQ: use SafeWrite protocol — push to ALL selected sources
-            assert self._safe_write is not None
-
-            last_result = None
-            backup_paths: list[str] = []
-            for i, source_name in enumerate(source_list):
-                if len(source_list) > 1:
-                    self._bridge.progress_update.emit(
-                        f"Pushing to {source_name} ({i + 1}/{len(source_list)})..."
-                    )
-                    self._bridge.push_round_changed.emit(
-                        source_name, i + 1, len(source_list)
-                    )
-
-                settings = build_peq_settings(
-                    source_name, filters, channel_mode,
-                    filters_l=state.filters_l,
-                    filters_r=state.filters_r,
-                )
-                result = await self._safe_write.execute(source_name, settings, on_stage=on_stage)
-                last_result = result
-
-                # Collect backup path for undo (smoke #77)
-                bp_path = result.backup_path
-                if bp_path:
-                    backup_paths.append(f"{source_name}={bp_path}")
-
-                if not result.success:
-                    # Abort on first failure
-                    self._bridge.write_complete.emit(result)
-                    return
-
-            # All sources succeeded — store all backup paths as semicolon-joined
-            if last_result and last_result.success:
-                # Encode multi-source backup paths for undo
-                # Format: "source1=/path;source2=/path" — consumed by _do_undo_multi_source
-                combined_backup = ";".join(backup_paths) if backup_paths else None
-                result = WriteResult(
-                    success=True,
-                    backup_path=combined_backup,
-                    # Same filters/channel_mode were pushed to every source
-                    # in this loop, so the last source's read-back is
-                    # representative of what's now on every one of them.
-                    read_back=last_result.read_back,
-                )
-                self._bridge.write_complete.emit(result)
-
-    async def _do_export(self, filters: list[CanonicalFilter], path: str) -> None:
-        """Generate a REW EQ text file from current filters.
-
-        Calls REWGenerator.generate_file() and emits progress_update with
-        success message. Includes skip count if any bands were skipped.
-
-        Args:
-            filters: List of CanonicalFilter objects to export.
-            path: Destination file path chosen by the user.
-
-        Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6
-        """
-        from src.translator.rew_generator import REWGenerator
-
-        generator = REWGenerator()
-        file_path = Path(path)
-        warnings = generator.generate_file(filters, file_path)
-
-        if warnings:
-            skip_count = len(warnings)
-            self._bridge.progress_update.emit(
-                f"File exported successfully ({skip_count} unsupported band(s) skipped)"
-            )
-        else:
-            self._bridge.progress_update.emit("File exported successfully")
-
-    async def _do_export_lr(
-        self,
-        filters_l: list[CanonicalFilter],
-        filters_r: list[CanonicalFilter],
-        path_l: Path,
-        path_r: Path,
-    ) -> None:
-        """Generate two REW EQ text files for L/R channel mode (smoke #29).
-
-        Uses REWGenerator.generate_file() for each channel independently.
-
-        Args:
-            filters_l: Left channel CanonicalFilter list.
-            filters_r: Right channel CanonicalFilter list.
-            path_l: Destination path for left channel file.
-            path_r: Destination path for right channel file.
-        """
-        from src.translator.rew_generator import REWGenerator
-
-        generator = REWGenerator()
-        warnings_l = generator.generate_file(filters_l, path_l)
-        warnings_r = generator.generate_file(filters_r, path_r)
-
-        total_warnings = len(warnings_l) + len(warnings_r)
-        if total_warnings:
-            self._bridge.progress_update.emit(
-                f"L/R files exported ({total_warnings} unsupported band(s) skipped)"
-            )
-        else:
-            self._bridge.progress_update.emit(
-                f"L/R files exported: {path_l.name} and {path_r.name}"
-            )
+    # _do_discovery, _do_probe, _do_file_import, _do_file_import_lr,
+    # _do_device_pull, _do_roomfit_pull, _do_load_peq_preset, _do_export,
+    # _do_export_lr moved to PrimaryWorkflowManager
+    # (src/gui/primary_workflows.py) — docs/backlog.md item 2, Phases 1-2.
+    # Dispatch from _on_refresh_requested/_on_device_selected/
+    # _on_file_import_requested/_on_file_import_lr_requested/
+    # _on_device_pull_requested/_on_roomfit_profile_selected/
+    # _on_preset_load_into_editor/_export_filters_as_rew now calls the
+    # manager directly.
+
+    # _read_preset_to_copy, _write_preset_to_adapter,
+    # _write_preset_copies_to_devices, _do_copy_presets_batch_multi,
+    # _do_copy_local_profile_to_devices moved to SecondaryWorkflowManager
+    # (src/gui/secondary_workflows.py) — docs/backlog.md item 2, Phase D.
+    # (_do_copy_preset_to_device, also moved here at Phase D, was deleted --
+    # round-4 review finding #10 -- once _write_preset_to_adapter became the
+    # actual production write primitive and it had zero remaining callers.)
+    # Dispatch from _on_copy_to_device_requested/
+    # _on_local_preset_copy_to_device_requested now calls the manager
+    # directly; results arrive via copy_batch_complete/
+    # copy_local_profile_complete, see _on_copy_batch_complete/
+    # _on_copy_local_profile_complete.
+
+    # _do_delete_presets moved to PrimaryWorkflowManager
+    # (src/gui/primary_workflows.py) — docs/backlog.md item 2, Phase 5.
+    # Dispatch from _on_preset_delete_requested now calls the manager
+    # directly; results arrive via presets_delete_complete, see
+    # _on_presets_delete_complete.
+
+    # _do_preset_export, _do_preset_save, _do_rew_list_measurements,
+    # _do_rew_get_filters, _do_rew_get_filters_lr moved to
+    # PrimaryWorkflowManager (src/gui/primary_workflows.py) —
+    # docs/backlog.md item 2, Phase 3. Dispatch from
+    # _on_preset_export_requested/_on_preset_save_requested/
+    # _on_rew_api_pull_requested/_on_rew_pull_requested/
+    # _dispatch_measurement_selection now calls the manager directly.
 
     def _load_device_presets(self) -> None:
         """Fetch and display device presets in the PresetsDeviceView.
@@ -3110,9 +2149,7 @@ class MainWindow(QMainWindow):
             return
 
         # Fetch presets asynchronously
-        self._bridge.run_async(
-            self._bridge_wrapper("list_presets", self._do_list_presets())
-        )
+        self._primary_workflows.list_presets()
 
     def _populate_name_profile_page(self) -> None:
         """Fetch RoomFit profile names and populate NameProfilePage list.
@@ -3123,142 +2160,64 @@ class MainWindow(QMainWindow):
             self._name_profile_page.set_existing_profiles([])
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "list_roomfit_for_naming",
-                self._do_populate_name_profiles(),
-            )
-        )
+        self._primary_workflows.populate_name_profiles()
 
-    async def _do_populate_name_profiles(self) -> None:
-        """Fetch RoomFit profiles and populate the NameProfilePage."""
-        assert self._wiim_adapter is not None
-        source_name = self._wizard_controller.state.primary_source
+    # _do_populate_name_profiles, _do_list_roomfit_profiles moved to
+    # PrimaryWorkflowManager (src/gui/primary_workflows.py) —
+    # docs/backlog.md item 2, Phase 4. Dispatch from
+    # _populate_name_profile_page/_on_eq_type_selected now calls the
+    # manager directly; results arrive via name_profiles_ready/
+    # filters_roomfit_profiles_ready, see _on_name_profiles_ready/
+    # _on_filters_roomfit_profiles_ready.
 
-        try:
-            if self._wiim_adapter.capabilities.supports_roomfit:
-                profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
-                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
-                try:
-                    self._roomfit_enabled, active_profile = (
-                        await self._wiim_adapter.get_roomfit_status()
-                    )
-                except Exception:
-                    self._roomfit_enabled, active_profile = False, ""
-                    logger.warning(
-                        "Failed to read RoomFit active-profile status", exc_info=True
-                    )
-                self._name_profile_page.set_existing_profiles(profile_names, active_profile)
-            else:
-                self._roomfit_enabled = False
-                self._name_profile_page.set_existing_profiles([])
-        except Exception:
-            logger.warning("Failed to list RoomFit profiles for naming", exc_info=True)
-            self._roomfit_enabled = False
-            self._name_profile_page.set_existing_profiles([])
+    # _read_active_name_or_default, _do_list_presets, _peq_name_for_highlight,
+    # _roomfit_name_for_highlight moved to PrimaryWorkflowManager
+    # (src/gui/primary_workflows.py) as refresh_presets() and its helpers —
+    # docs/backlog.md item 3, Phase 1b. See _on_peq_presets_ready /
+    # _on_peq_presets_unavailable / _on_roomfit_profiles_ready /
+    # _on_roomfit_profiles_hidden below for the thin pass-through into
+    # PresetsDeviceView that replaced this method's direct widget writes.
 
-    async def _do_list_roomfit_profiles(self) -> None:
-        """Fetch RoomFit profile names and populate FiltersPage dropdown."""
-        assert self._wiim_adapter is not None
+    @Slot(list, str)
+    def _on_peq_presets_ready(self, items: list[Any], active_name: str) -> None:
+        """Forward PrimaryWorkflowManager.peq_presets_ready into the view."""
+        self._presets_device_view.set_peq_presets(items, active_name)
 
-        source_name = self._wizard_controller.state.primary_source
-        try:
-            if self._wiim_adapter.capabilities.supports_roomfit:
-                profiles = await self._wiim_adapter.list_roomfit_profiles(source_name)
-                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
-                self._filters_page.set_roomfit_profiles(profile_names)
-            else:
-                self._filters_page.set_roomfit_profiles([])
-        except Exception:
-            logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
-            self._filters_page.set_roomfit_profiles([])
+    @Slot()
+    def _on_peq_presets_unavailable(self) -> None:
+        """Forward PrimaryWorkflowManager.peq_presets_unavailable into the view."""
+        self._presets_device_view.set_peq_unavailable()
 
-    async def _read_active_name_or_default(
-        self, coro: Coroutine[Any, Any, Any], log_msg: str
-    ) -> str:
-        """Await a read whose only purpose is an active-item name for
-        highlighting (#165c) -- a failure here means no highlight, not a
-        failed view, so it degrades to "" rather than propagating."""
-        try:
-            return str(await coro)
-        except Exception:
-            logger.warning(log_msg, exc_info=True)
-            return ""
+    @Slot(list, str)
+    def _on_roomfit_profiles_ready(self, items: list[Any], active_name: str) -> None:
+        """Forward PrimaryWorkflowManager.roomfit_profiles_ready into the view."""
+        self._presets_device_view.set_roomfit_profiles(items, active_name)
 
-    async def _do_list_presets(self) -> None:
-        """Fetch device PEQ preset list and RoomFit profiles, populate PresetsDeviceView.
+    @Slot()
+    def _on_roomfit_profiles_hidden(self) -> None:
+        """Forward PrimaryWorkflowManager.roomfit_profiles_hidden into the view."""
+        self._presets_device_view.set_roomfit_hidden()
 
-        The PEQ and RoomFit fetches are fully independent of each other, so
-        they run concurrently (#174) instead of one blocking the other.
-        """
-        assert self._wiim_adapter is not None
-        wiim_adapter = self._wiim_adapter
+    @Slot(list, str, bool)
+    def _on_name_profiles_ready(
+        self, profile_names: list[str], active_profile: str, roomfit_enabled: bool
+    ) -> None:
+        """Forward PrimaryWorkflowManager.name_profiles_ready into NameProfilePage."""
+        self._name_profile_page.set_existing_profiles(profile_names, active_profile)
+        self._roomfit_enabled = roomfit_enabled
 
-        source_name = self._wizard_controller.state.primary_source
-        from src.gui.views.presets_device_view import PresetItem
+    @Slot(list)
+    def _on_filters_roomfit_profiles_ready(self, profile_names: list[str]) -> None:
+        """Forward PrimaryWorkflowManager.filters_roomfit_profiles_ready into FiltersPage."""
+        self._filters_page.set_roomfit_profiles(profile_names)
 
-        async def _fetch_peq() -> None:
-            try:
-                if wiim_adapter.capabilities.supports_profile_enumeration:
-                    peq_presets = await wiim_adapter.list_peq_profiles(source_name)
-                    peq_items = [
-                        PresetItem(
-                            name=p.get("Name", "Unnamed"),
-                            preset_type="PEQ",
-                            channel_mode=p.get("channelMode", "Stereo"),
-                        )
-                        for p in peq_presets
-                    ]
-                    # read_peq() is a plain, harmless read, unlike
-                    # load_peq_profile()/EQv2SourceLoad.
-                    active_peq_name = await self._read_active_name_or_default(
-                        self._peq_name_for_highlight(source_name),
-                        "Failed to read active PEQ preset name",
-                    )
-                    self._presets_device_view.set_peq_presets(peq_items, active_peq_name)
-                else:
-                    self._presets_device_view.set_peq_unavailable()
-            except Exception:
-                logger.warning("Failed to list PEQ presets", exc_info=True)
-                self._presets_device_view.set_peq_unavailable()
-
-        async def _fetch_roomfit() -> None:
-            try:
-                if wiim_adapter.capabilities.supports_roomfit:
-                    rf_profiles = await wiim_adapter.list_roomfit_profiles(source_name)
-                    rf_items = [
-                        PresetItem(
-                            name=p.get("Name", "Unnamed"),
-                            preset_type="RoomFit",
-                            channel_mode=p.get("channelMode", "Stereo"),
-                        )
-                        for p in rf_profiles
-                    ]
-                    active_roomfit_name = await self._read_active_name_or_default(
-                        self._roomfit_name_for_highlight(),
-                        "Failed to read active RoomFit profile name",
-                    )
-                    self._presets_device_view.set_roomfit_profiles(
-                        rf_items, active_roomfit_name
-                    )
-                else:
-                    self._presets_device_view.set_roomfit_hidden()
-            except Exception:
-                logger.warning("Failed to list RoomFit profiles", exc_info=True)
-                self._presets_device_view.set_roomfit_hidden()
-
-        await asyncio.gather(_fetch_peq(), _fetch_roomfit())
-
-    async def _peq_name_for_highlight(self, source_name: str) -> str:
-        """The active PEQ preset's name, for #165c highlighting."""
-        assert self._wiim_adapter is not None
-        return (await self._wiim_adapter.read_peq(source_name)).name
-
-    async def _roomfit_name_for_highlight(self) -> str:
-        """The active RoomFit profile's name, for #165c highlighting."""
-        assert self._wiim_adapter is not None
-        _enabled, active_roomfit_name = await self._wiim_adapter.get_roomfit_status()
-        return active_roomfit_name
+    @Slot(int, int)
+    def _on_presets_delete_complete(self, succeeded: int, failed: int) -> None:
+        """Forward PrimaryWorkflowManager.presets_delete_complete into the status banner."""
+        if failed == 0:
+            self._status_banner.show_success(f"{succeeded} preset(s) deleted")
+        else:
+            self._status_banner.show_error(f"Deleted {succeeded}, {failed} failed")
 
     # ------------------------------------------------------------------
     # Navigation handlers
@@ -3295,29 +2254,7 @@ class MainWindow(QMainWindow):
             self._diagnostics_panel.on_raw_response("Error: No device connected")
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper("raw_command", self._do_raw_command(command))
-        )
-
-    async def _do_raw_command(self, command: str) -> None:
-        """Execute a raw httpapi command against the connected device.
-
-        Args:
-            command: The command string (e.g. "getStatusEx").
-        """
-        assert self._wiim_adapter is not None
-
-        try:
-            response = await self._wiim_adapter.raw_command(command)
-            # Format the response as JSON if possible
-            if isinstance(response, dict):
-                formatted = json.dumps(response, indent=2, ensure_ascii=False)
-            else:
-                formatted = str(response)
-            # Emit via signal to avoid cross-thread GUI access (smoke #85 segfault fix)
-            self._bridge.progress_update.emit(f"__raw_response__{formatted}")
-        except Exception as exc:
-            self._bridge.progress_update.emit(f"__raw_response__Error: {exc}")
+        self._primary_workflows.raw_command(command)
 
     @Slot(str)
     def _on_navigation_requested(self, view_key: str) -> None:
@@ -3395,9 +2332,7 @@ class MainWindow(QMainWindow):
         # Set flag so _on_peq_ready navigates directly to Review
         self._sidebar_load_in_progress = True
         self._status_banner.show_progress("Connecting to REW...")
-        self._bridge.run_async(
-            self._bridge_wrapper("rew_list", self._do_rew_list_measurements())
-        )
+        self._primary_workflows.list_rew_measurements()
 
     @Slot(object)
     def _on_rew_pull_measurement_selected(
@@ -3802,6 +2737,41 @@ class MainWindow(QMainWindow):
             logger.debug("Keyboard shortcut: Escape — Operation cancelled")
 
     # ------------------------------------------------------------------
+    # Primary Workflows — presets_ready signal wiring (Phase 1b)
+    # ------------------------------------------------------------------
+
+    def _setup_primary_workflows(self) -> None:
+        """Wire PrimaryWorkflowManager's view-bound signals to their widgets.
+
+        The manager itself is constructed and configured earlier, in
+        __init__, right after WizardController (discover/probe/import_file
+        need no view wiring at all — they emit through AsyncBridge's
+        existing signals, already connected elsewhere). This method connects
+        the four signals refresh_presets() added in Phase 1b, the two
+        RoomFit-dropdown signals added in Phase 4, and the delete-presets
+        completion signal added in Phase 5.
+        """
+        self._primary_workflows.peq_presets_ready.connect(self._on_peq_presets_ready)
+        self._primary_workflows.peq_presets_unavailable.connect(
+            self._on_peq_presets_unavailable
+        )
+        self._primary_workflows.roomfit_profiles_ready.connect(
+            self._on_roomfit_profiles_ready
+        )
+        self._primary_workflows.roomfit_profiles_hidden.connect(
+            self._on_roomfit_profiles_hidden
+        )
+        self._primary_workflows.name_profiles_ready.connect(
+            self._on_name_profiles_ready
+        )
+        self._primary_workflows.filters_roomfit_profiles_ready.connect(
+            self._on_filters_roomfit_profiles_ready
+        )
+        self._primary_workflows.presets_delete_complete.connect(
+            self._on_presets_delete_complete
+        )
+
+    # ------------------------------------------------------------------
     # Secondary Workflows (Req 17, 18, 20, 21)
     # ------------------------------------------------------------------
 
@@ -3809,9 +2779,10 @@ class MainWindow(QMainWindow):
         """Create the SecondaryWorkflowManager and wire its signals.
 
         Connects:
-        - PresetsDeviceView "Copy to Another Device" → handled directly by
-          MainWindow's own _do_copy_presets_batch_multi /
-          _do_copy_preset_to_device (not via SecondaryWorkflowManager).
+        - PresetsDeviceView "Copy to Another Device" → dispatched from
+          MainWindow's own _do_copy_presets_batch_multi, which calls the
+          read/write primitives on SecondaryWorkflowManager
+          (_read_preset_to_copy / _write_preset_to_adapter).
         - MyPresetsView "Load" → profile recall → populate ReviewPage
         - PushPage "Undo" → undo_last_push flow
         - SecondaryWorkflowManager completion signals → UI updates
@@ -3876,11 +2847,20 @@ class MainWindow(QMainWindow):
         self._secondary_workflows.undo_complete.connect(
             self._on_undo_complete
         )
+        self._secondary_workflows.undo_multi_source_complete.connect(
+            self._on_undo_multi_source_complete
+        )
         self._secondary_workflows.source_slots_ready.connect(
             self._diagnostics_panel.on_source_slots_ready
         )
         self._secondary_workflows.source_slots_error.connect(
             self._diagnostics_panel.on_source_slots_error
+        )
+        self._secondary_workflows.copy_batch_complete.connect(
+            self._on_copy_batch_complete
+        )
+        self._secondary_workflows.copy_local_profile_complete.connect(
+            self._on_copy_local_profile_complete
         )
 
     # --- Inbound handlers (page/view → workflow trigger) ---
@@ -3892,8 +2872,8 @@ class MainWindow(QMainWindow):
         Opens a device picker (with the source-read and target-write
         warnings folded into it as a single combined dialog, instead of two
         separate confirmations shown beforehand) for the target device
-        selection, then executes _do_copy_presets_batch_multi for each
-        selected item.
+        selection, then dispatches SecondaryWorkflowManager
+        .copy_presets_to_devices() for each selected item.
 
         Requirement 15.1: User selects target device from discovered list.
         Requirement 15.2: Copy preset filters to the selected target device.
@@ -3909,7 +2889,7 @@ class MainWindow(QMainWindow):
         current_ip = state.selected_device or ""
 
         # Need discovered devices for the picker
-        if not self._discovered_devices:
+        if not self._primary_workflows.discovered_devices:
             self._status_banner.show_error("No other devices discovered")
             return
 
@@ -3925,7 +2905,7 @@ class MainWindow(QMainWindow):
         # Open device picker dialog for target device selection, with the
         # combined warning embedded above the list
         selected_devices = DevicePickerDialog.get_devices(
-            self, self._discovered_devices, current_ip, warning
+            self, self._primary_workflows.discovered_devices, current_ip, warning
         )
 
         # User cancelled the dialog
@@ -3943,14 +2923,12 @@ class MainWindow(QMainWindow):
             len(selected_devices),
         )
 
-        # Process all items across all selected devices in a single async operation
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "copy_presets_to_devices",
-                self._do_copy_presets_batch_multi(
-                    items, selected_devices, target_source
-                ),
-            )
+        # Process all items across all selected devices in a single async operation.
+        # source_name and target_source are the same wizard-state value here --
+        # the source device's active source is assumed to name the same slot
+        # on each target device.
+        self._secondary_workflows.copy_presets_to_devices(
+            items, selected_devices, target_source, target_source
         )
 
     @Slot(object)
@@ -3970,7 +2948,7 @@ class MainWindow(QMainWindow):
         Args:
             profile: Profile object selected in My Saved Presets.
         """
-        if not self._discovered_devices:
+        if not self._primary_workflows.discovered_devices:
             self._status_banner.show_error("No other devices discovered")
             return
 
@@ -3999,7 +2977,7 @@ class MainWindow(QMainWindow):
         )
 
         selected_devices = DevicePickerDialog.get_devices(
-            self, self._discovered_devices, "", warning
+            self, self._primary_workflows.discovered_devices, "", warning
         )
         if selected_devices is None:
             return
@@ -4007,13 +2985,17 @@ class MainWindow(QMainWindow):
         state = self._wizard_controller.state
         target_source = state.primary_source
 
-        peq_settings = build_peq_settings(
-            target_source,
-            filters_value or [],
-            channel_mode_value,
-            filters_l=filters_l_value,
-            filters_r=filters_r_value,
-        )
+        try:
+            peq_settings = build_peq_settings(
+                target_source,
+                filters_value or [],
+                channel_mode_value,
+                filters_l=filters_l_value,
+                filters_r=filters_r_value,
+            )
+        except ValueError as exc:
+            self._status_banner.show_error(f"Copy failed: {exc}")
+            return
         filters, channel_mode = extract_filters(peq_settings)
 
         logger.info(
@@ -4021,14 +3003,9 @@ class MainWindow(QMainWindow):
             name, preset_type, len(selected_devices),
         )
 
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "copy_local_preset_to_devices",
-                self._do_copy_local_profile_to_devices(
-                    name, preset_type, selected_devices, target_source,
-                    filters, channel_mode, peq_settings,
-                ),
-            )
+        self._secondary_workflows.copy_local_profile_to_devices(
+            name, preset_type, selected_devices, target_source,
+            filters, channel_mode, peq_settings,
         )
 
     @Slot(object)
@@ -4051,9 +3028,9 @@ class MainWindow(QMainWindow):
             return
 
         # Set channel_mode in wizard state from profile BEFORE recall emits
-        channel_mode = getattr(profile, "channel_mode", ChannelMode.STEREO)
-        if isinstance(channel_mode, str):
-            channel_mode = ChannelMode.from_any(channel_mode)
+        channel_mode = coerce_channel_mode(
+            getattr(profile, "channel_mode", ChannelMode.STEREO)
+        )
         self._wizard_controller.state.channel_mode = channel_mode
         self._secondary_workflows.recall_profile(profile)
 
@@ -4080,23 +3057,21 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def _on_profile_rename_requested(self, old_name: str, new_name: str) -> None:
         """Handle MyPresetsView rename action."""
-        try:
-            self._profile_repository.rename(old_name, new_name)
-            self._refresh_presets_view()
-            self._status_banner.show_success(f"Renamed '{old_name}' to '{new_name}'")
-        except Exception as exc:
-            self._status_banner.show_error(f"Rename failed: {exc}")
+        self._run_profile_action(
+            lambda: self._profile_repository.rename(old_name, new_name),
+            f"Renamed '{old_name}' to '{new_name}'",
+            "Rename",
+        )
 
     @Slot(str)
     def _on_profile_duplicate_requested(self, name: str) -> None:
         """Handle MyPresetsView duplicate action."""
-        try:
-            new_name = sanitize_device_name(f"{name} (copy)").strip()
-            self._profile_repository.duplicate(name, new_name)
-            self._refresh_presets_view()
-            self._status_banner.show_success(f"Duplicated '{name}'")
-        except Exception as exc:
-            self._status_banner.show_error(f"Duplicate failed: {exc}")
+        new_name = sanitize_device_name(f"{name} (copy)").strip()
+        self._run_profile_action(
+            lambda: self._profile_repository.duplicate(name, new_name),
+            f"Duplicated '{name}'",
+            "Duplicate",
+        )
 
     @Slot(str)
     def _on_profile_delete_requested(self, name: str) -> None:
@@ -4112,12 +3087,11 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        try:
-            self._profile_repository.delete(name)
-            self._refresh_presets_view()
-            self._status_banner.show_success(f"Deleted '{name}'")
-        except Exception as exc:
-            self._status_banner.show_error(f"Delete failed: {exc}")
+        self._run_profile_action(
+            lambda: self._profile_repository.delete(name),
+            f"Deleted '{name}'",
+            "Delete",
+        )
 
     @Slot(list)
     def _on_preset_export_requested(self, items: list[Any]) -> None:
@@ -4142,7 +3116,7 @@ class MainWindow(QMainWindow):
 
         # Device-prefixed only for the destination filename -- preset_name
         # itself stays exactly as the device reports it, since it's also the
-        # on-device lookup key passed to _do_preset_export below.
+        # on-device lookup key passed to PrimaryWorkflowManager.export_preset below.
         export_default_name = self._device_prefixed_name(preset_name)
 
         # Use the same dialog pattern as ReviewPage export
@@ -4161,7 +3135,8 @@ class MainWindow(QMainWindow):
             # Pass base path (first path's stem without _L suffix)
             assert isinstance(paths, tuple)
             path_l, _path_r = paths
-            # Use the left path — _do_preset_export handles L/R splitting internally
+            # Use the left path — _do_preset_export (on PrimaryWorkflowManager)
+            # handles L/R splitting internally
             export_path = str(path_l.parent / path_l.stem.replace("_L", "")) + ".txt"
         else:
             default_dir = self._settings.rew_folder or str(Path.home())
@@ -4179,12 +3154,7 @@ class MainWindow(QMainWindow):
             export_path = path
 
         self._status_banner.show_progress(f"Exporting '{preset_name}'...")
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "preset_export",
-                self._do_preset_export(preset_name, preset_type, export_path),
-            )
-        )
+        self._primary_workflows.export_preset(preset_name, preset_type, export_path)
         logger.info("Preset export requested: %s -> %s", preset_name, export_path)
 
     @Slot(list)
@@ -4211,12 +3181,7 @@ class MainWindow(QMainWindow):
         # it's also the on-device lookup key _do_preset_save reads with.
         saved_name = self._device_prefixed_name(preset_name)
         self._status_banner.show_progress(f"Saving '{preset_name}' to My Presets...")
-        self._bridge.run_async(
-            self._bridge_wrapper(
-                "preset_save",
-                self._do_preset_save(preset_name, preset_type, saved_name),
-            )
-        )
+        self._primary_workflows.save_preset(preset_name, preset_type, saved_name)
         logger.info("Preset save requested: %s", [i.name for i in items])
 
     @Slot(object)
@@ -4252,14 +3217,10 @@ class MainWindow(QMainWindow):
         self._sidebar_load_in_progress = True
         self._status_banner.show_progress(f"Loading preset '{name}'...")
         if preset_type == "RoomFit":
-            self._bridge.run_async(
-                self._bridge_wrapper("load_preset", self._do_roomfit_pull(name))
-            )
+            self._primary_workflows.pull_roomfit(name, operation_name="load_preset")
         else:
             # PEQ preset: load it via EQv2SourceLoad then read
-            self._bridge.run_async(
-                self._bridge_wrapper("load_preset", self._do_load_peq_preset(name))
-            )
+            self._primary_workflows.load_peq_preset(name)
         logger.info("Preset load into editor: %s (type=%s)", name, preset_type)
 
     def _format_preset_names(self, items: list[Any]) -> str:
@@ -4287,9 +3248,9 @@ class MainWindow(QMainWindow):
         """Shared Yes/No confirmation dialog, default button No.
 
         Uses the same styled yellow warning-box treatment as
-        DevicePickerDialog/QuickSetupDialog/PushConfirmation, rather than a
-        plain QMessageBox, so every "this will change state" confirmation in
-        the app reads consistently.
+        DevicePickerDialog/QuickSetupDialog, rather than a plain
+        QMessageBox, so every "this will change state" confirmation in the
+        app reads consistently.
 
         Args:
             title: Warning box header text.
@@ -4406,9 +3367,7 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        self._bridge.run_async(
-            self._bridge_wrapper("delete_presets", self._do_delete_presets(items))
-        )
+        self._primary_workflows.delete_presets(items)
         logger.info("Preset delete requested: %s", [getattr(i, "name", "") for i in items])
 
     # --- Outbound handlers (workflow manager → UI updates) ---
@@ -4445,7 +3404,11 @@ class MainWindow(QMainWindow):
         channel = state.channel_mode
         if channel.is_lr:
             # Use stored L/R lists (set by recall_profile before emitting signal)
-            left, right = get_lr_filters(state, filters)
+            try:
+                left, right = require_lr_filters(state.filters_l, state.filters_r)
+            except ValueError as exc:
+                self._status_banner.show_error(f"Could not load preset: {exc}")
+                return
             self._review_page.set_lr_filters(left, right)
         else:
             self._review_page.set_filters(filters)
@@ -4476,6 +3439,64 @@ class MainWindow(QMainWindow):
             self._status_banner.show_success(message)
         else:
             self._status_banner.show_error(f"Undo failed: {message}")
+
+    @Slot(int, int, str)
+    def _on_undo_multi_source_complete(
+        self, succeeded: int, failed: int, message: str
+    ) -> None:
+        """Handle multi-source undo completion — show result in StatusBanner.
+
+        Unlike _on_undo_complete's binary success flag, a multi-source undo
+        can partially succeed: the pushed-filters snapshot must be cleared
+        whenever any source was actually restored (succeeded > 0), which is
+        independent of whether the banner shows success (failed == 0) —
+        these conditions only coincide for the single-source undo paths.
+
+        Args:
+            succeeded: Number of sources actually restored (each source's
+                real SafeWrite.undo() outcome, awaited directly -- see
+                SecondaryWorkflowManager._do_undo_multi_source docstring).
+            failed: Number of sources whose restore failed.
+            message: Human-readable result summary.
+        """
+        if succeeded > 0:
+            self._clear_pushed_snapshot()
+        if failed == 0:
+            self._push_page.mark_undo_complete(True)
+            self._status_banner.show_success(message)
+        else:
+            self._status_banner.show_error(message)
+
+    @Slot(int, int, int, int)
+    def _on_copy_batch_complete(
+        self, n_items: int, n_devices: int, succeeded: int, failed: int
+    ) -> None:
+        """Handle SecondaryWorkflowManager.copy_batch_complete — show result
+        in StatusBanner (smoke #73, #78)."""
+        total_ops = n_items * n_devices
+        if failed == 0:
+            self._status_banner.show_success(
+                f"{n_items} preset(s) copied to {n_devices} device(s)"
+            )
+        else:
+            self._status_banner.show_error(
+                f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
+            )
+
+    @Slot(str, int, int, int)
+    def _on_copy_local_profile_complete(
+        self, profile_name: str, n_devices: int, succeeded: int, failed: int
+    ) -> None:
+        """Handle SecondaryWorkflowManager.copy_local_profile_complete —
+        show result in StatusBanner."""
+        if failed == 0:
+            self._status_banner.show_success(
+                f"'{profile_name}' copied to {n_devices} device(s)"
+            )
+        else:
+            self._status_banner.show_error(
+                f"Copied to {succeeded} of {n_devices} device(s) ({failed} failed)"
+            )
 
     # ------------------------------------------------------------------
     # Quick Setup helper (smoke #87)

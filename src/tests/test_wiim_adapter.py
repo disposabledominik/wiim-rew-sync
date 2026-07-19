@@ -9,7 +9,7 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from urllib.parse import unquote
 
 import pytest
@@ -970,6 +970,102 @@ class TestWriteRoomfit:
         save_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
         assert "source_name" not in save_payload
 
+    async def test_write_roomfit_lr_success(
+        self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """L/R mode writes EQBandL/EQBandR with channelMode "L/R" -- same
+        shape as the stereo path (test_write_roomfit_success) other than
+        the band-payload keys, confirming the stereo/L-R branch
+        consolidation didn't change either wire payload."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters_l = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+        filters_r = [CanonicalFilter(type="LS", frequency_hz=120.0, gain_db=2.0, q=0.71)]
+
+        mock_client.command.side_effect = ["OK", "OK"]
+
+        await adapter.write_roomfit(
+            "wifi",
+            "REW Export",
+            filters=[],
+            channel_mode="left",
+            filters_l=filters_l,
+            filters_r=filters_r,
+        )
+
+        calls = mock_client.command.call_args_list
+        assert len(calls) == 2
+        write_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        assert write_payload["channelMode"] == "L/R"
+        assert "EQBandL" in write_payload
+        assert "EQBandR" in write_payload
+        assert "EQBand" not in write_payload
+        assert write_payload["source_name"] == ""
+        assert write_payload["rc_output"] == "AUDIO_OUTPUT_SPEAKER_MODE"
+
+    async def test_write_roomfit_lr_empty_right_channel_stays_lr(
+        self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """A genuinely empty right channel (legitimate device read-state,
+        restored as-is by RoomFitSafeWrite's rollback path) must still be
+        written as channelMode "L/R" with an empty EQBandR, not silently
+        misrouted into the Stereo branch. The prior `filters_l and
+        filters_r` truthy check took the Stereo branch whenever either
+        channel was empty -- writing the wrong channelMode and, on
+        rollback, failing to restore the original asymmetric split
+        (round-4 review finding #2, 2026-07-19)."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters_l = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+
+        mock_client.command.side_effect = ["OK", "OK"]
+
+        await adapter.write_roomfit(
+            "wifi",
+            "REW Export",
+            filters=[],
+            channel_mode="left",
+            filters_l=filters_l,
+            filters_r=[],
+        )
+
+        calls = mock_client.command.call_args_list
+        write_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        assert write_payload["channelMode"] == "L/R"
+        assert "EQBandL" in write_payload
+        assert "EQBandR" in write_payload
+        assert "EQBand" not in write_payload
+
+    async def test_write_roomfit_rejected_band_write_raises_before_save(
+        self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """An explicit device-side rejection of the band write (the same
+        {"status": "Failed"} shape _is_write_rejection() already detects
+        for the PEQ batch path) must raise WiiMResponseError immediately,
+        before EQSourceSave is ever issued -- previously the response was
+        discarded and the write proceeded straight to save regardless."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+
+        mock_client.command.return_value = {"status": "Failed"}
+
+        with pytest.raises(WiiMResponseError, match="rejected"):
+            await adapter.write_roomfit("wifi", "REW Export", filters)
+
+        # Only the band write was attempted -- EQSourceSave must not fire.
+        assert mock_client.command.call_count == 1
+        assert "EQSetLV2SourceBand:" in mock_client.command.call_args_list[0][0][0]
+
 
 class TestRequireRoomfit:
     """Test the shared _require_roomfit() gate used by every RoomFit method
@@ -1160,6 +1256,44 @@ class TestWritePeqLRBatch:
 
         call = mock_client.command.call_args_list[0][0][0]
         assert "L%2FR" in call or "L/R" in call
+
+    async def test_write_peq_lr_empty_right_channel_not_flattened_to_left(
+        self, lr_batch_adapter: WiiMAdapter
+    ) -> None:
+        """An L/R PEQSettings with a genuinely empty right channel (valid
+        device read-state -- see WiiMAdapter._parse_lr(), which builds
+        bands_l/bands_r independently from parsed device data) must write
+        an empty right channel, not silently copy the left channel's bands
+        into it. safe_write.py's rollback path restores exactly this kind
+        of settings object (as read from the device before the write), so
+        flattening here would corrupt the state recoverability is meant to
+        restore (branch-quality review, flagged-not-changed #2, 2026-07-18).
+        """
+        from src.models.canonical import CanonicalFilter
+        from src.translator.wiim_generator import generate_wiim_band_array
+
+        bands_l = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-3.0, q=1.0),
+        ]
+        settings = PEQSettings(
+            source_name="wifi",
+            enabled=True,
+            channel_mode="lr",
+            bands_l=bands_l,
+            bands_r=[],
+        )
+
+        with patch.object(
+            lr_batch_adapter, "_write_peq_batch", new=AsyncMock(return_value="OK")
+        ) as mock_batch:
+            await lr_batch_adapter.write_peq("wifi", settings)
+
+        band_array_l = mock_batch.call_args[0][1]
+        band_array_r = mock_batch.call_args[0][2]
+        expected_empty_r, _ = generate_wiim_band_array([], max_bands=10)
+
+        assert band_array_r == expected_empty_r
+        assert band_array_r != band_array_l
 
 
 # ---------------------------------------------------------------------------
@@ -1954,6 +2088,46 @@ class TestReadRoomfitPresetPreview:
 
         assert result.name == "Preview"
         assert any("Failed to restore" in rec.message for rec in caplog.records)
+
+
+class TestReadPresetPreview:
+    """Test read_preset_preview() -- dispatches by preset_type to
+    read_roomfit_preset_preview()/read_peq_preset_preview(). Moved here
+    from src.gui.shared_helpers (no Qt/GUI dependency, and it does device
+    I/O, so it belongs on WiiMAdapter itself rather than a free function
+    taking an adapter as its first argument)."""
+
+    async def test_roomfit_dispatches_to_roomfit_read(
+        self, adapter: WiiMAdapter
+    ) -> None:
+        """preset_type=='RoomFit' dispatches to read_roomfit_preset_preview."""
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        with (
+            patch.object(
+                adapter, "read_roomfit_preset_preview", AsyncMock(return_value=settings)
+            ) as mock_roomfit,
+            patch.object(adapter, "read_peq_preset_preview", AsyncMock()) as mock_peq,
+        ):
+            result = await adapter.read_preset_preview("RoomFit", "wifi", "Living Room")
+
+        assert result is settings
+        mock_roomfit.assert_awaited_once_with("wifi", "Living Room")
+        mock_peq.assert_not_awaited()
+
+    async def test_peq_dispatches_to_peq_read(self, adapter: WiiMAdapter) -> None:
+        """preset_type=='PEQ' (or anything else) dispatches to read_peq_preset_preview."""
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        with (
+            patch.object(adapter, "read_roomfit_preset_preview", AsyncMock()) as mock_roomfit,
+            patch.object(
+                adapter, "read_peq_preset_preview", AsyncMock(return_value=settings)
+            ) as mock_peq,
+        ):
+            result = await adapter.read_preset_preview("PEQ", "wifi", "Movie Night")
+
+        assert result is settings
+        mock_peq.assert_awaited_once_with("wifi", "Movie Night")
+        mock_roomfit.assert_not_awaited()
 
 
 class TestRestoreRoomfitActiveProfile:

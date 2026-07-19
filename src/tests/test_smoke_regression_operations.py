@@ -15,19 +15,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.rew_http_client import MeasurementSummary
-from src.adapters.safe_write import RoomFitSafeWrite, WriteResult
+from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
-from src.gui.shared_helpers import (
-    build_profile,
-    is_lr_mode,
-    parse_backup_filters,
-)
 from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
+from src.models.profile import build_profile
+from src.repository.backup_manager import parse_backup_filters
 from src.tests.conftest import close_coroutine_tree
 
 # ---------------------------------------------------------------------------
@@ -94,8 +91,48 @@ def _setup_device(window) -> MagicMock:
     """Set up a mocked device adapter on the window."""
     mock_adapter = MagicMock()
     mock_adapter.capabilities = _make_caps()
+
+    async def _dispatch_preview(preset_type: str, source_name: str, preset_name: str):
+        # Mirrors WiiMAdapter.read_preset_preview()'s real dispatch, against
+        # whichever of read_roomfit_preset_preview/read_peq_preset_preview a
+        # test configures below -- so tests only need to mock the one they
+        # actually exercise, same as before this became a real adapter
+        # method rather than a free function taking the adapter as its
+        # first argument.
+        if preset_type == "RoomFit":
+            return await mock_adapter.read_roomfit_preset_preview(source_name, preset_name)
+        return await mock_adapter.read_peq_preset_preview(source_name, preset_name)
+
+    mock_adapter.read_preset_preview = AsyncMock(side_effect=_dispatch_preview)
     window._wiim_adapter = mock_adapter
-    window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, window._backup_manager)
+    window._primary_workflows.set_current_adapter(mock_adapter)
+    # _do_undo_roomfit/_do_undo_multi_source now live on SecondaryWorkflowManager
+    # (docs/backlog.md item 2, Phase D) and read self._current_adapter/
+    # self._bridge there -- normally wired by the real (not exercised here)
+    # _on_capabilities_ready -> SecondaryWorkflowManager.configure() call,
+    # which this helper bypasses like it already does for PrimaryWorkflowManager.
+    window._secondary_workflows._bridge = window._bridge
+    window._secondary_workflows.set_current_adapter(mock_adapter)
+    window._secondary_workflows._roomfit_safe_write_factory = (
+        lambda adapter: RoomFitSafeWrite(adapter, window._backup_manager)
+    )
+    # _write_preset_copies_to_devices/_read_preset_to_copy (also Phase D)
+    # need the same PEQ safe_write factory plus the 3 target-device
+    # connection factories -- reuse MainWindow's real ones (default to
+    # adapter_factories.make_*) so the existing
+    # patch("src.gui.adapter_factories.<Class>") tests below keep working
+    # unchanged; only the SafeWrite/RoomFitSafeWrite factories need
+    # per-test overrides since those wrap window._backup_manager directly.
+    window._secondary_workflows._safe_write_factory = (
+        lambda adapter: SafeWrite(adapter, window._backup_manager)
+    )
+    window._secondary_workflows._wiim_http_client_factory = (
+        window._wiim_http_client_factory
+    )
+    window._secondary_workflows._capability_prober_factory = (
+        window._capability_prober_factory
+    )
+    window._secondary_workflows._target_adapter_factory = window._wiim_adapter_factory
     window._wizard_controller.state.selected_device = "192.168.1.100"
     window._wizard_controller.state.selected_source = "wifi"
     return mock_adapter
@@ -148,24 +185,6 @@ class TestPushWriteOperations:
 
         assert window._wizard_controller.state.current_step == WizardStep.REVIEW
 
-    # --- Issue #55: _do_push checks both "lr" and "l/r" via is_lr_mode ---
-
-    def test_issue55_is_lr_mode_detects_lr(self) -> None:
-        """#55: is_lr_mode returns True for 'lr'."""
-        assert is_lr_mode("lr") is True
-
-    def test_issue55_is_lr_mode_detects_l_slash_r(self) -> None:
-        """#55: is_lr_mode returns True for 'l/r'."""
-        assert is_lr_mode("l/r") is True
-
-    def test_issue55_is_lr_mode_detects_uppercase(self) -> None:
-        """#55: is_lr_mode returns True for 'L/R'."""
-        assert is_lr_mode("L/R") is True
-
-    def test_issue55_is_lr_mode_stereo_false(self) -> None:
-        """#55: is_lr_mode returns False for 'Stereo'."""
-        assert is_lr_mode("Stereo") is False
-
     # --- Issue #58: Multi-device push respects channel_mode (live equivalent) ---
 
     def test_issue58_copy_presets_batch_multi_peq_lr_uses_lr_channel_mode(
@@ -178,7 +197,7 @@ class TestPushWriteOperations:
         longer exists anywhere in the codebase (confirmed via repo-wide
         grep) -- it was superseded by
         MainWindow._do_copy_presets_batch_multi() ->
-        _do_copy_preset_to_device(), which is the current live multi-device
+        _write_preset_to_adapter(), which is the current live multi-device
         write path (see docstrings in src/gui/secondary_workflows.py noting
         "Apply to multiple devices" was removed as dead code in the
         2026-06-28 quality audit). This test exercises that current path
@@ -196,7 +215,7 @@ class TestPushWriteOperations:
                 channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
             )
         )
-        # _do_copy_preset_to_device now reads via read_peq_preset_preview (#166)
+        # _read_preset_to_copy now reads via read_peq_preset_preview (#166)
         source_adapter.read_peq_preset_preview = AsyncMock(
             return_value=MagicMock(
                 channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
@@ -210,10 +229,9 @@ class TestPushWriteOperations:
         device2 = MagicMock(ip="192.168.1.202", name="Device B")
 
         with (
-            patch("src.gui.main_window.WiiMHttpClient"),
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
+            patch("src.gui.adapter_factories.WiiMHttpClient"),
+            patch("src.gui.adapter_factories.CapabilityProber") as mock_prober_cls,
+            patch("src.gui.adapter_factories.WiiMAdapter") as mock_adapter_cls,
         ):
             mock_prober = MagicMock()
             mock_prober.probe = AsyncMock(return_value=_make_caps())
@@ -228,13 +246,15 @@ class TestPushWriteOperations:
 
             safe_write = MagicMock()
             safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_safe_write_cls.return_value = safe_write
+            window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
 
             import asyncio
 
-            with patch("src.gui.main_window.WiiMHttpClient", return_value=mock_target_client):
+            with patch("src.gui.adapter_factories.WiiMHttpClient", return_value=mock_target_client):
                 asyncio.run(
-                    window._do_copy_presets_batch_multi(items, [device1, device2], "wifi")
+                    window._secondary_workflows._do_copy_presets_batch_multi(
+                        items, [device1, device2], "wifi", "wifi"
+                    )
                 )
 
             assert safe_write.execute.call_count == 2
@@ -457,7 +477,15 @@ class TestPushWriteOperations:
         window._bridge.run_async.assert_called_once()
 
     def test_165_populate_name_profiles_sets_active_and_enabled(self, window) -> None:
-        """_do_populate_name_profiles fetches roomfit status and applies it."""
+        """_do_populate_name_profiles fetches roomfit status and applies it.
+
+        Drives the real name_profiles_ready signal end-to-end (it's a
+        PrimaryWorkflowManager-owned QObject signal, always real regardless
+        of the mocked AsyncBridge, and is connected to
+        MainWindow._on_name_profiles_ready for real via
+        _setup_primary_workflows() during __init__) rather than asserting
+        on the coroutine's return value.
+        """
         import asyncio
 
         mock_adapter = _setup_device(window)
@@ -467,7 +495,7 @@ class TestPushWriteOperations:
         )
         mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
 
-        asyncio.run(window._do_populate_name_profiles())
+        asyncio.run(window._primary_workflows._do_populate_name_profiles())
 
         assert window._roomfit_enabled is True
         assert window._name_profile_page.active_profile == "Living Room"
@@ -486,7 +514,7 @@ class TestPushWriteOperations:
         )
         mock_adapter.get_roomfit_status = AsyncMock(side_effect=RuntimeError("boom"))
 
-        asyncio.run(window._do_populate_name_profiles())
+        asyncio.run(window._primary_workflows._do_populate_name_profiles())
 
         assert window._roomfit_enabled is False
         assert window._name_profile_page.active_profile == ""
@@ -508,6 +536,11 @@ class TestPushWriteOperations:
         state = window._wizard_controller.state
         state.current_filters = [_make_filter(100), _make_filter(200)]
         state.channel_mode = ChannelMode.LR
+        # get_lr_filters() requires explicit, non-empty filters_l/filters_r
+        # for L/R mode (never guesses a split) -- see
+        # src.models.channel_mode.require_lr_filters.
+        state.filters_l = [_make_filter(100)]
+        state.filters_r = [_make_filter(200)]
         state.dry_run = False
         state.roomfit_profile_name = "TestProfile"
         state.flow_type = FlowType.ROOMFIT
@@ -534,12 +567,14 @@ class TestPushWriteOperations:
         mock_backup = MagicMock()
         mock_backup.create_backup = MagicMock(return_value="/tmp/backup.json")
         window._backup_manager = mock_backup
-        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
+        window._primary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: RoomFitSafeWrite(adapter, mock_backup)
+        )
 
         # _do_push is a coroutine; we verify write_roomfit gets channel_mode
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
         mock_adapter.write_roomfit.assert_called_once()
         call_kwargs = mock_adapter.write_roomfit.call_args
         assert call_kwargs.kwargs.get("channel_mode") == ChannelMode.LR
@@ -559,11 +594,11 @@ class TestPushWriteOperations:
         result1 = MagicMock(success=True, backup_path="/tmp/backup_wifi.json")
         result2 = MagicMock(success=True, backup_path="/tmp/backup_optical.json")
         mock_safe_write.execute = AsyncMock(side_effect=[result1, result2])
-        window._safe_write = mock_safe_write
+        window._primary_workflows._safe_write_factory = lambda adapter: mock_safe_write
 
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
         # write_complete should be emitted with combined backup path
         call_args = window._bridge.write_complete.emit.call_args[0][0]
         assert "wifi=" in call_args.backup_path
@@ -588,11 +623,11 @@ class TestPushWriteOperations:
         mock_safe_write.execute = AsyncMock(
             return_value=MagicMock(success=True, backup_path="/tmp/backup.json")
         )
-        window._safe_write = mock_safe_write
+        window._primary_workflows._safe_write_factory = lambda adapter: mock_safe_write
 
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
 
         mock_safe_write.execute.assert_called_once()
         call_kwargs = mock_safe_write.execute.call_args.kwargs
@@ -612,11 +647,13 @@ class TestPushWriteOperations:
         mock_roomfit_safe_write.execute = AsyncMock(
             return_value=MagicMock(success=True, backup_path=None)
         )
-        window._roomfit_safe_write = mock_roomfit_safe_write
+        window._primary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: mock_roomfit_safe_write
+        )
 
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
 
         mock_roomfit_safe_write.execute.assert_called_once()
         call_kwargs = mock_roomfit_safe_write.execute.call_args.kwargs
@@ -726,6 +763,38 @@ class TestImportExport:
         assert warning_text.count("Left: Imported 3 filters") == 1
         assert warning_text.count("Right: Imported 3 filters") == 1
 
+    def test_export_lr_with_empty_channel_shows_error_not_crash(
+        self, window, tmp_path
+    ) -> None:
+        """require_lr_filters() rejects an empty (not just missing) channel
+        (ca14e26); _export_filters_as_rew must show an error banner for
+        that ValueError, not let it escape uncaught out of the Qt slot
+        (branch-quality review, 2026-07-18)."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.filters_l = []
+        state.filters_r = [_make_filter(200, gain=-4.0)]
+        state.channel_mode = ChannelMode.LR
+
+        path_l = tmp_path / "export_L.txt"
+        path_r = tmp_path / "export_R.txt"
+
+        with (
+            patch(
+                "src.gui.dialogs.export_dialog.ExportDialog.get_paths",
+                return_value=(path_l, path_r),
+            ),
+            patch.object(window._status_banner, "show_error") as mock_error,
+            patch.object(window._primary_workflows, "export_file_lr") as mock_export,
+        ):
+            window._export_filters_as_rew(state.current_filters, "L/R")
+
+        mock_export.assert_not_called()
+        mock_error.assert_called_once()
+        assert "Export failed" in mock_error.call_args[0][0]
+        assert not path_l.exists()
+        assert not path_r.exists()
+
     # --- Issue #29: Export branches on channel_mode for L/R ---
 
     def test_issue29_export_lr_mode_uses_export_dialog(self, window, tmp_path) -> None:
@@ -762,7 +831,7 @@ class TestImportExport:
         # since run_async was mocked above (close_coroutine_tree only closes it).
         import asyncio
 
-        asyncio.run(window._do_export_lr(filters_l, filters_r, path_l, path_r))
+        asyncio.run(window._primary_workflows._do_export_lr(filters_l, filters_r, path_l, path_r))
         assert path_l.exists()
         assert path_r.exists()
         left_content = path_l.read_text()
@@ -853,7 +922,7 @@ class TestImportExport:
                 return_value=("/tmp/myfile", ""),
             ),
             patch.object(
-                window, "_do_export", side_effect=_fake_do_export
+                window._primary_workflows, "_do_export", side_effect=_fake_do_export
             ) as mock_do_export,
             patch.object(
                 window._bridge, "run_async", side_effect=close_coroutine_tree
@@ -946,27 +1015,6 @@ class TestImportExport:
         assert "Fc   200.00 Hz" in right_content
         assert "200.00 Hz" not in left_content
         assert "100.00 Hz" not in right_content
-
-    # --- Issue #44: build_profile sanitizes name ---
-
-    def test_issue44_build_profile_removes_slashes(self) -> None:
-        """#44: build_profile removes '/' from name."""
-        filters = [_make_filter()]
-        profile = build_profile("L/R preset", filters, "Stereo")
-        assert "/" not in profile.name
-
-    def test_issue44_build_profile_removes_unsafe_chars(self) -> None:
-        """#44: build_profile removes all filesystem-unsafe characters."""
-        filters = [_make_filter()]
-        profile = build_profile('test:file*"name<>|', filters, "Stereo")
-        for ch in '/\\:*?"<>|':
-            assert ch not in profile.name
-
-    def test_issue44_build_profile_empty_name_fallback(self) -> None:
-        """#44: build_profile uses fallback name when all chars removed."""
-        filters = [_make_filter()]
-        profile = build_profile("/\\:*?", filters, "Stereo")
-        assert profile.name == "Untitled Preset"
 
     # --- Issue #51: REW file import supports L/R (two files) ---
 
@@ -1114,7 +1162,7 @@ class TestPresets:
 
         import asyncio
 
-        asyncio.run(window._do_list_presets())
+        asyncio.run(window._primary_workflows.refresh_presets())
         mock_adapter.list_peq_profiles.assert_called_once()
         mock_adapter.list_roomfit_profiles.assert_called_once()
 
@@ -1147,7 +1195,7 @@ class TestPresets:
         ) as mock_set_peq, patch.object(
             window._presets_device_view, "set_roomfit_profiles"
         ) as mock_set_roomfit:
-            asyncio.run(window._do_list_presets())
+            asyncio.run(window._primary_workflows.refresh_presets())
 
         mock_set_peq.assert_called_once()
         assert mock_set_peq.call_args[0][1] == "Movie Night"
@@ -1176,7 +1224,7 @@ class TestPresets:
         ) as mock_set_peq, patch.object(
             window._presets_device_view, "set_roomfit_profiles"
         ) as mock_set_roomfit:
-            asyncio.run(window._do_list_presets())
+            asyncio.run(window._primary_workflows.refresh_presets())
 
         # Still populated with the real items, just no active-name highlight.
         assert len(mock_set_peq.call_args[0][0]) == 1
@@ -1226,7 +1274,7 @@ class TestPresets:
                 return_value=("/tmp/movie-night.txt", ""),
             ),
             patch.object(
-                window, "_do_preset_export", return_value=object()
+                window._primary_workflows, "_do_preset_export", return_value=object()
             ) as mock_export_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
             patch.object(
@@ -1254,7 +1302,7 @@ class TestPresets:
                 "src.gui.main_window.QFileDialog.getSaveFileName",
                 return_value=("", ""),
             ) as mock_dialog,
-            patch.object(window, "_do_preset_export", return_value=object()),
+            patch.object(window._primary_workflows, "_do_preset_export", return_value=object()),
             patch.object(window._bridge, "run_async", side_effect=close_coroutine_tree),
         ):
             window._presets_device_view.export_requested.emit([item])
@@ -1272,7 +1320,9 @@ class TestPresets:
                 "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
                 return_value=True,
             ),
-            patch.object(window, "_do_preset_save", return_value=object()) as mock_save_workflow,
+            patch.object(
+                window._primary_workflows, "_do_preset_save", return_value=object()
+            ) as mock_save_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
             patch.object(
                 window._bridge, "run_async", side_effect=close_coroutine_tree
@@ -1304,7 +1354,9 @@ class TestPresets:
             import asyncio
 
             asyncio.run(
-                window._do_preset_save("Movie Night", "PEQ", "WiiM - Movie Night")
+                window._primary_workflows._do_preset_save(
+                    "Movie Night", "PEQ", "WiiM - Movie Night"
+                )
             )
 
         mock_adapter.read_peq_preset_preview.assert_called_once()
@@ -1327,7 +1379,7 @@ class TestPresets:
             ),
             patch.object(window, "_ensure_wizard_state_for_load", return_value=True),
             patch.object(
-                window, "_do_load_peq_preset", return_value=object()
+                window._primary_workflows, "_do_load_peq_preset", return_value=object()
             ) as mock_load_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
             patch.object(
@@ -1448,7 +1500,9 @@ class TestPresets:
         beforehand, so "declining" is now expressed as the user cancelling
         that single dialog -- DevicePickerDialog.get_devices returning None."""
         _setup_device(window)
-        window._discovered_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
         items = [PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")]
 
         with (
@@ -1466,6 +1520,46 @@ class TestPresets:
         assert warning is not None
         assert "Movie Night" in warning[1]
         mock_run.assert_not_called()
+
+    def test_local_preset_copy_lr_empty_channel_shows_error_not_crash(
+        self, window
+    ) -> None:
+        """build_peq_settings() raises ValueError for an L/R profile with one
+        empty channel (require_lr_filters, ca14e26);
+        _on_local_preset_copy_to_device_requested must show an error banner
+        for that, not let it escape uncaught out of the Qt slot -- reachable
+        for a duck-typed `profile` object even though a real, freshly-loaded
+        Profile can no longer hold an empty channel itself (branch-quality
+        review, 2026-07-18)."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        profile = MagicMock(
+            name="Broken LR Profile",
+            channel_mode=ChannelMode.LR,
+            filters=None,
+            filters_l=[],
+            filters_r=[_make_filter(100)],
+        )
+        profile.name = "Broken LR Profile"
+
+        with (
+            patch(
+                "src.gui.main_window.PresetTypeDialog.get_type", return_value="PEQ"
+            ),
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=[MagicMock(ip="192.168.1.200", name="Other Device")],
+            ),
+            patch.object(window._bridge, "run_async") as mock_run,
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            window._on_local_preset_copy_to_device_requested(profile)
+
+        mock_run.assert_not_called()
+        mock_error.assert_called_once()
+        assert "Copy failed" in mock_error.call_args[0][0]
 
     # --- #191: Copy-to-Device RoomFit target-activation warning ---
 
@@ -1526,7 +1620,9 @@ class TestPresets:
         abort before any run_async call, and the warning text passed to the
         picker must name the RoomFit item and mention RoomFit specifically."""
         _setup_device(window)
-        window._discovered_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
         items = [PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")]
 
         with (
@@ -1615,7 +1711,7 @@ class TestPresets:
         ]
 
         with patch.object(window._status_banner, "show_success") as mock_success:
-            asyncio.run(window._do_delete_presets(items))
+            asyncio.run(window._primary_workflows._do_delete_presets(items))
 
         mock_adapter.delete_peq_profile.assert_called_once_with("Movie")
         mock_adapter.delete_roomfit_profile.assert_called_once_with("Living Room")
@@ -1637,7 +1733,7 @@ class TestPresets:
         ]
 
         with patch.object(window._status_banner, "show_error") as mock_error:
-            asyncio.run(window._do_delete_presets(items))
+            asyncio.run(window._primary_workflows._do_delete_presets(items))
 
         mock_adapter.delete_roomfit_profile.assert_called_once_with("Living Room")
         mock_error.assert_called_once_with("Deleted 1, 1 failed")
@@ -1703,7 +1799,7 @@ class TestPresets:
         and the My Presets view is refreshed with it.
 
         Real behavior-level coverage of the refresh mechanics (repository
-        .list() -> view.set_presets()) already lives in
+        .list_all() -> view.set_presets()) already lives in
         test_issue48_save_filters_to_presets_callable; this test instead
         exercises the real _on_review_save_preset() -> _save_filters_to_presets()
         call chain end-to-end (name generation included) rather than mocking
@@ -1714,12 +1810,12 @@ class TestPresets:
         state.current_filters = [_make_filter()]
         state.channel_mode = ChannelMode.STEREO
         state.selected_source = "wifi"
-        window._discovered_devices = []
+        window._primary_workflows._discovered_devices = []
 
         with (
             patch.object(window._profile_repository, "save") as mock_save,
             patch.object(
-                window._profile_repository, "list", return_value=[]
+                window._profile_repository, "list_all", return_value=[]
             ) as mock_list,
             patch.object(window._my_presets_view, "set_presets") as mock_set_presets,
         ):
@@ -1779,7 +1875,7 @@ class TestPresets:
         - Review save and Push save both call MainWindow._save_filters_to_presets.
         - Review export and Push export both call MainWindow._export_filters_as_rew.
         - Presets-on-Device save (_do_preset_save) builds its Profile via the
-          same shared_helpers.build_profile() used by _save_filters_to_presets,
+          same models.profile.build_profile() used by _save_filters_to_presets,
           rather than constructing a Profile inline with duplicated
           name-sanitization/channel-split logic.
         """
@@ -1805,11 +1901,11 @@ class TestPresets:
         # (not a locally-duplicated Profile construction).
         import inspect
 
-        from src.gui.shared_helpers import build_profile as shared_build_profile
+        from src.models.profile import build_profile as canonical_build_profile
 
-        source = inspect.getsource(window._do_preset_save)
+        source = inspect.getsource(window._primary_workflows._do_preset_save)
         assert "build_profile(" in source
-        assert shared_build_profile.__module__ == "src.gui.shared_helpers"
+        assert canonical_build_profile.__module__ == "src.models.profile"
 
     # --- Issue #53: PushPage export + save signals connected ---
 
@@ -2034,11 +2130,13 @@ class TestPresets:
         mock_backup = MagicMock()
         mock_backup.create_backup = MagicMock(return_value="/tmp/backup.json")
         window._backup_manager = mock_backup
-        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
+        window._primary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: RoomFitSafeWrite(adapter, mock_backup)
+        )
 
         import asyncio
 
-        asyncio.run(window._do_push())
+        asyncio.run(window._primary_workflows._do_push())
         # Backup should have been created for the existing profile
         mock_backup.create_backup.assert_called_once()
 
@@ -2100,13 +2198,17 @@ class TestPresets:
         mock_backup = MagicMock()
         mock_backup.create_backup = MagicMock(return_value="/tmp/pre_undo_backup.json")
         window._backup_manager = mock_backup
-        window._roomfit_safe_write = RoomFitSafeWrite(mock_adapter, mock_backup)
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: RoomFitSafeWrite(adapter, mock_backup)
+        )
 
         import asyncio
 
         with patch.object(window._status_banner, "show_success") as mock_success:
             asyncio.run(
-                window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+                window._secondary_workflows._do_undo_roomfit(
+                    str(backup_path), "wifi", "My Profile"
+                )
             )
 
         mock_adapter.write_roomfit.assert_called_once()
@@ -2131,6 +2233,178 @@ class TestPresets:
         # the widget's own explicit show/hide state independent of whether
         # its ancestor chain is on-screen.
         assert not window._push_page._undo_button.isHidden()
+
+    # --- _do_undo_multi_source characterization (pre-Phase-D extraction) ---
+    #
+    # No prior coverage existed for this method at all (confirmed via repo
+    # grep). These tests originally pinned a latent race as a golden master:
+    # self._secondary_workflows.undo_last_push() is synchronous and only
+    # *schedules* the real restore via AsyncBridge.run_async(), returning
+    # immediately -- the loop's own succeeded/failed tally and "All N
+    # source(s) restored" summary banner reflected scheduling success, not
+    # the actual per-source restore outcome.
+    #
+    # Update (branch-quality review, 2026-07-17): this method started
+    # emitting its own dedicated undo_multi_source_complete(int, int, str)
+    # signal instead of sharing undo_complete(bool, str) with the
+    # single-source paths -- fixed a regression where a partial multi-source
+    # undo (succeeded > 0, failed > 0) never cleared the pushed-filters
+    # snapshot, since the shared signal's binary success flag couldn't
+    # distinguish "should the banner say success" from "did anything
+    # actually change." The scheduling-vs-outcome race itself remained,
+    # visible on the new signal instead of the old one.
+    #
+    # Update (branch-quality review, 2026-07-18): the race itself is fixed.
+    # _do_undo_multi_source now awaits each source's real restore via
+    # SecondaryWorkflowManager._restore_backup() directly instead of the
+    # fire-and-forget undo_last_push(), so succeeded/failed reflects actual
+    # per-source outcomes. Tests below updated to mock _restore_backup()
+    # (the real awaited call) rather than undo_last_push() (no longer
+    # called by this method at all).
+
+    def test_undo_multi_source_single_entry_restores_and_reports_success(
+        self, window
+    ) -> None:
+        """A single "source=path" entry awaits one real restore and reports
+        success only once that restore actually succeeds."""
+        _setup_device(window)
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return True, "Previous filters restored"
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            ) as mock_restore,
+            patch.object(window._push_page, "mark_undo_complete") as mock_mark,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_undo_multi_source(
+                    "wifi=/tmp/backup_wifi.json"
+                )
+            )
+
+        mock_restore.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
+        mock_mark.assert_called_once_with(True)
+        mock_success.assert_called_once_with("All 1 source(s) restored from backup")
+
+    def test_undo_multi_source_multi_entry_all_restored_reports_success(
+        self, window
+    ) -> None:
+        """Multiple "source=path" entries each await their own real
+        restore; the summary banner counts actual per-source successes."""
+        _setup_device(window)
+        backup_str = "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json"
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return True, "Previous filters restored"
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            ) as mock_restore,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            import asyncio
+
+            asyncio.run(window._secondary_workflows._do_undo_multi_source(backup_str))
+
+        assert mock_restore.call_count == 2
+        mock_restore.assert_any_call("wifi", "/tmp/backup_wifi.json")
+        mock_restore.assert_any_call("bluetooth", "/tmp/backup_bt.json")
+        mock_success.assert_called_once_with("All 2 source(s) restored from backup")
+
+    def test_undo_multi_source_malformed_entries_skipped(self, window) -> None:
+        """Entries without "=" (malformed) are silently skipped -- not
+        counted toward succeeded or failed."""
+        _setup_device(window)
+        backup_str = "wifi=/tmp/backup_wifi.json;garbage-no-equals;;"
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return True, "Previous filters restored"
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            ) as mock_restore,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            import asyncio
+
+            asyncio.run(window._secondary_workflows._do_undo_multi_source(backup_str))
+
+        mock_restore.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
+        mock_success.assert_called_once_with("All 1 source(s) restored from backup")
+
+    def test_undo_multi_source_waits_for_real_undo_outcome(self, window) -> None:
+        """Regression test for the scheduling-vs-outcome fix (branch-quality
+        review, 2026-07-18): the summary now reflects _restore_backup()'s
+        real, awaited return value -- a source that actually fails to
+        restore (device unreachable, verification failure, etc.) is counted
+        as failed, not as succeeded-because-scheduling-didn't-raise (the
+        prior bug this test used to golden-master).
+        """
+        _setup_device(window)
+
+        captured: list[tuple[int, int, str]] = []
+        window._secondary_workflows.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: captured.append((succeeded, failed, msg))
+        )
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return False, "Device unreachable"
+
+        with (
+            patch.object(window._secondary_workflows, "_restore_backup", side_effect=_restore),
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_undo_multi_source(
+                    "wifi=/tmp/backup_wifi.json"
+                )
+            )
+
+        mock_error.assert_called_once()
+        # The real (failed) outcome is reflected -- not a scheduling-based
+        # success, since _restore_backup is awaited before the tally.
+        assert captured == [(0, 1, "0 restored, 1 failed")]
+
+    def test_undo_multi_source_partial_failure_clears_snapshot(self, window) -> None:
+        """Regression test (branch-quality review, 2026-07-17): a partial
+        multi-source undo (2 succeeded, 1 failed) must still clear
+        wizard_controller.state.last_pushed_filters, since device state for
+        the 2 restored sources actually changed. Pre-fix, the snapshot was
+        only cleared when the whole batch succeeded (failed == 0), leaving
+        stale dirty-tracking after a real partial device change.
+        """
+        _setup_device(window)
+        window._wizard_controller.state.last_pushed_filters = ["sentinel"]
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            if src == "bluetooth":
+                return False, "Device unreachable"
+            return True, "Previous filters restored"
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            ),
+            patch.object(window._status_banner, "show_error"),
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_undo_multi_source(
+                    "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json"
+                )
+            )
+
+        assert window._wizard_controller.state.last_pushed_filters == []
 
 
 # ===========================================================================
@@ -2313,52 +2587,40 @@ class TestSettingsUIState:
     def test_issue153_copy_batch_counts_verification_failure(self, window) -> None:
         """#153: a verification failure during copy must count as a real
         failure in the batch summary, not be silently treated as success.
-        Previously _do_copy_preset_to_device never checked SafeWrite's
+        Previously _write_preset_to_adapter never checked SafeWrite's
         result at all, so save_peq_profile() ran and "saved" was reported
         unconditionally even after a failed/rolled-back write."""
-        _setup_device(window)
         filters = [_make_filter(100)]
         peq_settings = MagicMock(channel_mode="stereo", bands=filters)
 
-        with (
-            patch("src.gui.main_window.WiiMHttpClient"),
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
-        ):
-            mock_prober = MagicMock()
-            mock_prober.probe = AsyncMock(return_value=_make_caps())
-            mock_prober_cls.return_value = mock_prober
+        target_adapter = MagicMock()
+        target_adapter.save_peq_profile = AsyncMock()
 
-            mock_target_client = MagicMock()
-            mock_target_client.close = AsyncMock()
-            target_adapter = MagicMock()
-            target_adapter.save_peq_profile = AsyncMock()
-            mock_adapter_cls.return_value = target_adapter
+        safe_write = MagicMock()
+        safe_write.execute = AsyncMock(
+            return_value=WriteResult(
+                success=False,
+                rollback_success=True,
+                error_message="Write verification failed; original state restored.",
+            )
+        )
+        window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
+        # _write_preset_to_adapter asserts both write factories are set
+        # unconditionally, even for a PEQ-only call -- irrelevant here, just
+        # needs to be non-None.
+        window._secondary_workflows._roomfit_safe_write_factory = lambda adapter: MagicMock()
 
-            safe_write = MagicMock()
-            safe_write.execute = AsyncMock(
-                return_value=WriteResult(
-                    success=False,
-                    rollback_success=True,
-                    error_message="Write verification failed; original state restored.",
+        import asyncio
+
+        with pytest.raises(RuntimeError):
+            asyncio.run(
+                window._secondary_workflows._write_preset_to_adapter(
+                    target_adapter, "Movie Night", "PEQ", "wifi",
+                    filters, ChannelMode.STEREO, peq_settings,
                 )
             )
-            mock_safe_write_cls.return_value = safe_write
-
-            import asyncio
-
-            mock_wiim_http = MagicMock(return_value=mock_target_client)
-            with patch("src.gui.main_window.WiiMHttpClient", mock_wiim_http):
-                with pytest.raises(RuntimeError):
-                    asyncio.run(
-                        window._do_copy_preset_to_device(
-                            "Movie Night", "PEQ", "192.168.1.200", "wifi",
-                            filters, ChannelMode.STEREO, peq_settings,
-                        )
-                    )
-            # The failed write must not be saved as if it succeeded.
-            target_adapter.save_peq_profile.assert_not_called()
+        # The failed write must not be saved as if it succeeded.
+        target_adapter.save_peq_profile.assert_not_called()
 
     def test_issue154_undo_roomfit_uses_safe_write(self, window, tmp_path) -> None:
         """#154: _do_undo_roomfit must go through RoomFitSafeWrite (verified,
@@ -2376,19 +2638,22 @@ class TestSettingsUIState:
             encoding="utf-8",
         )
 
-        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
 
-            import asyncio
+        import asyncio
 
-            asyncio.run(
-                window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+        asyncio.run(
+            window._secondary_workflows._do_undo_roomfit(
+                str(backup_path), "wifi", "My Profile"
             )
+        )
 
-            roomfit_safe_write.undo.assert_called_once()
-            window._wiim_adapter.write_roomfit.assert_not_called()
+        roomfit_safe_write.undo.assert_called_once()
+        window._wiim_adapter.write_roomfit.assert_not_called()
 
     def test_issue154_undo_roomfit_surfaces_verification_failure(
         self, window, tmp_path
@@ -2403,27 +2668,30 @@ class TestSettingsUIState:
             encoding="utf-8",
         )
 
-        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.undo = AsyncMock(
-                return_value=WriteResult(
-                    success=False,
-                    rollback_success=True,
-                    error_message="RoomFit verification failed; original profile restored.",
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.undo = AsyncMock(
+            return_value=WriteResult(
+                success=False,
+                rollback_success=True,
+                error_message="RoomFit verification failed; original profile restored.",
+            )
+        )
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
+
+        with patch.object(window._status_banner, "show_error") as mock_show_error, \
+             patch.object(window._status_banner, "show_success") as mock_show_success:
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_undo_roomfit(
+                    str(backup_path), "wifi", "My Profile"
                 )
             )
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
 
-            with patch.object(window._status_banner, "show_error") as mock_show_error, \
-                 patch.object(window._status_banner, "show_success") as mock_show_success:
-                import asyncio
-
-                asyncio.run(
-                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
-                )
-
-                mock_show_success.assert_not_called()
-                mock_show_error.assert_called_once()
+            mock_show_success.assert_not_called()
+            mock_show_error.assert_called_once()
 
     def test_undo_roomfit_new_profile_shows_reactivation_message(
         self, window, tmp_path
@@ -2441,17 +2709,20 @@ class TestSettingsUIState:
             encoding="utf-8",
         )
 
-        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
 
-            import asyncio
+        import asyncio
 
-            with patch.object(window._status_banner, "show_success") as mock_success:
-                asyncio.run(
-                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            asyncio.run(
+                window._secondary_workflows._do_undo_roomfit(
+                    str(backup_path), "wifi", "My Profile"
                 )
+            )
 
         message = mock_success.call_args[0][0]
         assert "restored from backup" not in message
@@ -2473,17 +2744,20 @@ class TestSettingsUIState:
             encoding="utf-8",
         )
 
-        with patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls:
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
 
-            import asyncio
+        import asyncio
 
-            with patch.object(window._status_banner, "show_success") as mock_success:
-                asyncio.run(
-                    window._do_undo_roomfit(str(backup_path), "wifi", "My Profile")
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            asyncio.run(
+                window._secondary_workflows._do_undo_roomfit(
+                    str(backup_path), "wifi", "My Profile"
                 )
+            )
 
         message = mock_success.call_args[0][0]
         assert message == "Profile 'My Profile' restored from backup"
@@ -2493,46 +2767,36 @@ class TestSettingsUIState:
     def test_issue26_copy_preset_to_device_writes_to_target(self, window) -> None:
         """#26: A full successful "Copy to Another Device" for a PEQ preset
         must actually write the target device's data (via SafeWrite.execute,
-        then save_peq_profile) and show a success status -- not just pick
-        the right branch (that narrower claim is already covered by #34's
-        test). This is the end-to-end happy path: read from source, connect
-        to target, write+verify, persist as a named preset, report success.
+        then save_peq_profile) -- not just pick the right branch (that
+        narrower claim is already covered by #34's test). This is the
+        happy path for the shared primitive: read from source, connect to
+        target, write+verify, persist as a named preset. (The per-item
+        success banner was deleted -- docs/backlog.md item 2 Phase D --
+        since it was redundant with the batch-level summary shown by
+        _do_copy_presets_batch_multi.)
         """
-        _setup_device(window)
         filters = [_make_filter(100), _make_filter(200)]
         peq_settings = MagicMock(channel_mode="stereo", bands=filters)
 
-        with (
-            patch("src.gui.main_window.WiiMHttpClient") as mock_client_cls,
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
-            patch.object(window._status_banner, "show_success") as mock_show_success,
-        ):
-            mock_target_client = MagicMock()
-            mock_target_client.close = AsyncMock()
-            mock_client_cls.return_value = mock_target_client
+        target_adapter = MagicMock()
+        target_adapter.save_peq_profile = AsyncMock()
 
-            mock_prober = MagicMock()
-            mock_prober.probe = AsyncMock(return_value=_make_caps())
-            mock_prober_cls.return_value = mock_prober
+        safe_write = MagicMock()
+        safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
+        # _write_preset_to_adapter asserts both write factories are set
+        # unconditionally, even for a PEQ-only call -- irrelevant here, just
+        # needs to be non-None.
+        window._secondary_workflows._roomfit_safe_write_factory = lambda adapter: MagicMock()
 
-            target_adapter = MagicMock()
-            target_adapter.save_peq_profile = AsyncMock()
-            mock_adapter_cls.return_value = target_adapter
+        import asyncio
 
-            safe_write = MagicMock()
-            safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_safe_write_cls.return_value = safe_write
-
-            import asyncio
-
-            asyncio.run(
-                window._do_copy_preset_to_device(
-                    "Movie Night", "PEQ", "192.168.1.200", "wifi",
-                    filters, ChannelMode.STEREO, peq_settings,
-                )
+        asyncio.run(
+            window._secondary_workflows._write_preset_to_adapter(
+                target_adapter, "Movie Night", "PEQ", "wifi",
+                filters, ChannelMode.STEREO, peq_settings,
             )
+        )
 
         # Write must have actually happened, targeting the real data read
         # from the source device.
@@ -2541,8 +2805,6 @@ class TestSettingsUIState:
         assert written_settings.bands == peq_settings.bands
         # And the write must be saved as a named preset on the target.
         target_adapter.save_peq_profile.assert_called_once_with("wifi", "Movie Night")
-        mock_show_success.assert_called_once()
-        assert "Movie Night" in mock_show_success.call_args[0][0]
 
     # --- Issue #69: Copy preset to device carries channel_mode through (PEQ) ---
 
@@ -2556,60 +2818,47 @@ class TestSettingsUIState:
         source" / "Apply to multiple devices" were removed as dead code
         (see src/gui/secondary_workflows.py module docstring, 2026-06-28
         audit). The live copy-to-device implementation is
-        MainWindow._do_copy_preset_to_device(), which already takes
+        SecondaryWorkflowManager._write_preset_to_adapter() (moved from
+        MainWindow, docs/backlog.md item 2 Phase D), which already takes
         channel_mode from the source read rather than a hardcoded default --
         this test targets that current path.
         """
-        _setup_device(window)
         filters_l = [_make_filter(100)]
         filters_r = [_make_filter(200)]
         peq_settings = MagicMock(
             channel_mode="lr", bands_l=filters_l, bands_r=filters_r, bands=[]
         )
 
-        with (
-            patch("src.gui.main_window.WiiMHttpClient"),
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
-        ):
-            mock_prober = MagicMock()
-            mock_prober.probe = AsyncMock(return_value=_make_caps())
-            mock_prober_cls.return_value = mock_prober
+        target_adapter = MagicMock()
+        target_adapter.save_peq_profile = AsyncMock()
 
-            target_adapter = MagicMock()
-            target_adapter.save_peq_profile = AsyncMock()
-            mock_adapter_cls.return_value = target_adapter
+        safe_write = MagicMock()
+        safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
+        # _write_preset_to_adapter asserts both write factories are set
+        # unconditionally, even for a PEQ-only call -- irrelevant here, just
+        # needs to be non-None.
+        window._secondary_workflows._roomfit_safe_write_factory = lambda adapter: MagicMock()
 
-            mock_target_client = MagicMock()
-            mock_target_client.close = AsyncMock()
+        import asyncio
 
-            safe_write = MagicMock()
-            safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_safe_write_cls.return_value = safe_write
+        asyncio.run(
+            window._secondary_workflows._write_preset_to_adapter(
+                target_adapter, "LR Preset", "PEQ", "wifi",
+                filters_l + filters_r, ChannelMode.LR, peq_settings,
+            )
+        )
 
-            import asyncio
+        safe_write.execute.assert_called_once()
+        written_settings = safe_write.execute.call_args[0][1]
+        assert written_settings.channel_mode == ChannelMode.LR
+        assert written_settings.bands_l == filters_l
+        assert written_settings.bands_r == filters_r
 
-            with patch("src.gui.main_window.WiiMHttpClient", return_value=mock_target_client):
-                asyncio.run(
-                    window._do_copy_preset_to_device(
-                        "LR Preset", "PEQ", "192.168.1.200", "wifi",
-                        filters_l + filters_r, ChannelMode.LR, peq_settings,
-                    )
-                )
-
-            safe_write.execute.assert_called_once()
-            written_settings = safe_write.execute.call_args[0][1]
-            assert written_settings.channel_mode == ChannelMode.LR
-            assert written_settings.bands_l == filters_l
-            assert written_settings.bands_r == filters_r
-
-    # --- Issue #34: _do_copy_preset_to_device branches on preset_type ---
+    # --- Issue #34: _write_preset_to_adapter branches on preset_type ---
 
     def test_issue34_copy_branches_on_preset_type(self, window) -> None:
-        """#34: _do_copy_preset_to_device uses PEQ and RoomFit write paths correctly."""
-        _setup_device(window)
-
+        """#34: _write_preset_to_adapter uses PEQ and RoomFit write paths correctly."""
         peq_settings = MagicMock(channel_mode="stereo", bands=[_make_filter(100)])
 
         roomfit_settings = MagicMock(
@@ -2619,66 +2868,51 @@ class TestSettingsUIState:
             bands_r=[_make_filter(200)],
         )
 
-        with (
-            patch("src.gui.main_window.WiiMHttpClient"),
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.SafeWrite") as mock_safe_write_cls,
-            patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls,
-        ):
-            mock_prober = MagicMock()
-            mock_prober.probe = AsyncMock(return_value=_make_caps())
-            mock_prober_cls.return_value = mock_prober
+        target_adapter = MagicMock()
+        target_adapter.write_roomfit = AsyncMock()
+        target_adapter.save_peq_profile = AsyncMock()
 
-            mock_target_client = MagicMock()
-            mock_target_client.close = AsyncMock()
+        safe_write = MagicMock()
+        safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
 
-            target_adapter = MagicMock()
-            target_adapter.write_roomfit = AsyncMock()
-            target_adapter.save_peq_profile = AsyncMock()
-            mock_adapter_cls.return_value = target_adapter
-            mock_wiim_http = MagicMock(return_value=mock_target_client)
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
 
-            safe_write = MagicMock()
-            safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_safe_write_cls.return_value = safe_write
+        import asyncio
 
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+        asyncio.run(
+            window._secondary_workflows._write_preset_to_adapter(
+                target_adapter, "Movie Night", "PEQ", "wifi",
+                peq_settings.bands, ChannelMode.STEREO, peq_settings,
+            )
+        )
+        safe_write.execute.assert_called_once()
+        target_adapter.save_peq_profile.assert_called_once_with(
+            "wifi", "Movie Night"
+        )
+        roomfit_safe_write.execute.assert_not_called()
 
-            import asyncio
+        safe_write.execute.reset_mock()
+        target_adapter.save_peq_profile.reset_mock()
+        roomfit_safe_write.execute.reset_mock()
 
-            with patch("src.gui.main_window.WiiMHttpClient", mock_wiim_http):
-                asyncio.run(
-                    window._do_copy_preset_to_device(
-                        "Movie Night", "PEQ", "192.168.1.200", "wifi",
-                        peq_settings.bands, ChannelMode.STEREO, peq_settings,
-                    )
-                )
-                safe_write.execute.assert_called_once()
-                target_adapter.save_peq_profile.assert_called_once_with(
-                    "wifi", "Movie Night"
-                )
-                roomfit_safe_write.execute.assert_not_called()
-
-                safe_write.execute.reset_mock()
-                target_adapter.save_peq_profile.reset_mock()
-                roomfit_safe_write.execute.reset_mock()
-
-                asyncio.run(
-                    window._do_copy_preset_to_device(
-                        "RoomFit A", "RoomFit", "192.168.1.200", "wifi",
-                        roomfit_settings.bands, ChannelMode.LR, roomfit_settings,
-                    )
-                )
-                # RoomFit copies now go through RoomFitSafeWrite (verified +
-                # rolled back on mismatch, smoke #153), not a bare
-                # write_roomfit() call with no verification.
-                roomfit_safe_write.execute.assert_called_once()
-                target_adapter.write_roomfit.assert_not_called()
-                safe_write.execute.assert_not_called()
-                target_adapter.save_peq_profile.assert_not_called()
+        asyncio.run(
+            window._secondary_workflows._write_preset_to_adapter(
+                target_adapter, "RoomFit A", "RoomFit", "wifi",
+                roomfit_settings.bands, ChannelMode.LR, roomfit_settings,
+            )
+        )
+        # RoomFit copies now go through RoomFitSafeWrite (verified +
+        # rolled back on mismatch, smoke #153), not a bare
+        # write_roomfit() call with no verification.
+        roomfit_safe_write.execute.assert_called_once()
+        target_adapter.write_roomfit.assert_not_called()
+        safe_write.execute.assert_not_called()
+        target_adapter.save_peq_profile.assert_not_called()
 
     # --- Issue #38: My Saved Presets view has toolbar buttons ---
 
@@ -2812,7 +3046,7 @@ class TestSettingsUIState:
 
         with (
             patch.object(window._profile_repository, "save") as mock_save,
-            patch.object(window._profile_repository, "list", return_value=[]) as mock_list,
+            patch.object(window._profile_repository, "list_all", return_value=[]) as mock_list,
             patch.object(window._my_presets_view, "set_presets") as mock_set_presets,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
@@ -2826,6 +3060,87 @@ class TestSettingsUIState:
         mock_list.assert_called_once()
         mock_set_presets.assert_called_once_with([])
         mock_success.assert_called_once_with("Saved 'Thread Safe Preset' to My Presets")
+
+    def test_save_filters_to_presets_shows_error_banner_on_failure(self, window) -> None:
+        """A failing ProfileRepository.save() must show an error banner, not
+        propagate uncaught -- this path previously had no try/except at all
+        (Phase 5 consolidation via _run_profile_action)."""
+        filters = [_make_filter(100)]
+        state = window._wizard_controller.state
+        state.filters_l = []
+        state.filters_r = []
+
+        with (
+            patch.object(
+                window._profile_repository, "save", side_effect=OSError("disk full")
+            ) as mock_save,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            window._save_filters_to_presets("Broken Preset", filters, ChannelMode.STEREO)
+
+        mock_save.assert_called_once()
+        mock_refresh.assert_not_called()
+        mock_error.assert_called_once_with("Save failed: disk full")
+
+    def test_save_filters_to_presets_lr_empty_channel_shows_error_not_crash(
+        self, window
+    ) -> None:
+        """build_profile() raises ValueError for an L/R save with one empty
+        channel (require_lr_filters, ca14e26); _save_filters_to_presets must
+        show an error banner for that, not let it escape uncaught out of the
+        Qt slot (branch-quality review, 2026-07-18)."""
+        filters = [_make_filter(100)]
+        state = window._wizard_controller.state
+        state.filters_l = [_make_filter(100)]
+        state.filters_r = []
+
+        with (
+            patch.object(window._profile_repository, "save") as mock_save,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            window._save_filters_to_presets("Broken LR Preset", filters, ChannelMode.LR)
+
+        mock_save.assert_not_called()
+        mock_refresh.assert_not_called()
+        mock_error.assert_called_once()
+        assert "Save failed" in mock_error.call_args[0][0]
+
+    def test_issue235_save_filters_to_presets_sanitizes_device_name(self, window) -> None:
+        """Smoke #235: _save_filters_to_presets() must sanitize its `name`
+        argument via sanitize_device_name() before building the Profile --
+        for the Review-page trigger this argument is an auto-generated
+        default like "wifi (Stereo)", so every preset saved this way
+        carried disallowed characters from the moment it was created,
+        before any rename ever touched it."""
+        filters = [_make_filter(100)]
+        state = window._wizard_controller.state
+        state.filters_l = []
+        state.filters_r = []
+
+        with (
+            patch.object(window._profile_repository, "save") as mock_save,
+            patch.object(window._profile_repository, "list_all", return_value=[]),
+            patch.object(window._my_presets_view, "set_presets"),
+            patch.object(window._status_banner, "show_success"),
+        ):
+            window._save_filters_to_presets("wifi (Stereo)", filters, ChannelMode.STEREO)
+
+        saved_profile = mock_save.call_args[0][0]
+        assert saved_profile.name == "wifi Stereo"
+
+    def test_issue235_profile_duplicate_sanitizes_device_name(self, window) -> None:
+        """Smoke #235: _on_profile_duplicate_requested() synthesizes
+        f"{name} (copy)" -- parentheses are disallowed by the WiiM device
+        naming rule, so the synthesized name must be sanitized before
+        reaching ProfileRepository.duplicate()."""
+        with patch.object(window._profile_repository, "duplicate") as mock_duplicate, patch.object(
+            window, "_refresh_presets_view"
+        ), patch.object(window._status_banner, "show_success"):
+            window._on_profile_duplicate_requested("My Preset")
+
+        mock_duplicate.assert_called_once_with("My Preset", "My Preset copy")
 
     # --- Issue #49: recall_profile handles L/R profiles ---
 
@@ -2987,7 +3302,17 @@ class TestSettingsUIState:
         devices -- folded in from the removed #33 test after #33's
         single-device `_do_copy_presets_batch` was superseded by this
         multi-device version (docs/smoke_test_issues.md row 74) and left
-        behind as dead code with its own regression test."""
+        behind as dead code with its own regression test.
+
+        Updated (branch-quality review, 2026-07-17): _write_preset_copies_to_devices
+        now connects once per device (outer loop) instead of once per
+        (preset, device) pair, so the write call is _write_preset_to_adapter
+        (taking an already-connected adapter) rather than
+        _do_copy_preset_to_device (which connected itself, keyed by IP).
+        Distinct per-device adapter sentinels replace the old
+        `target_ip` positional check, and the expected call order changes
+        from preset-major to device-major to match the new loop nesting.
+        """
         _setup_device(window)
         items = [MagicMock(), MagicMock()]
         items[0].name = "Preset1"
@@ -3003,29 +3328,52 @@ class TestSettingsUIState:
         peq_settings = MagicMock(channel_mode="stereo", bands=filters)
         read_result = (filters, ChannelMode.STEREO, peq_settings)
 
+        # Distinct sentinel client/adapter per target IP, so calls can be
+        # verified against the device actually targeted (not just counted).
+        adapters_by_ip = {
+            ip: MagicMock(name=f"Adapter-{ip}") for ip in ("192.168.1.201", "192.168.1.202")
+        }
+        clients_by_ip = {
+            ip: MagicMock(name=f"Client-{ip}", close=AsyncMock()) for ip in adapters_by_ip
+        }
+        ip_by_client_id = {id(client): ip for ip, client in clients_by_ip.items()}
+
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: clients_by_ip[ip]
+        )
+        window._secondary_workflows._capability_prober_factory = (
+            lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: adapters_by_ip[ip_by_client_id[id(client)]]
+        )
+
         with (
             patch.object(
-                window, "_read_preset_to_copy", new_callable=AsyncMock,
-                return_value=read_result,
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
             ) as mock_read,
             patch.object(
-                window, "_do_copy_preset_to_device", new_callable=AsyncMock
-            ) as mock_copy,
+                window._secondary_workflows, "_write_preset_to_adapter",
+                new_callable=AsyncMock,
+            ) as mock_write,
         ):
             import asyncio
 
             asyncio.run(
-                window._do_copy_presets_batch_multi(items, devices, "wifi")
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
             )
             assert mock_read.call_count == 2
-            assert mock_copy.call_count == 4
-            # _do_copy_preset_to_device(preset_name, preset_type, target_ip, target_source, ...)
-            calls = [(c.args[0], c.args[2]) for c in mock_copy.call_args_list]
+            assert mock_write.call_count == 4
+            # _write_preset_to_adapter(target_adapter, preset_name, ...)
+            calls = [(c.args[0], c.args[1]) for c in mock_write.call_args_list]
             assert calls == [
-                ("Preset1", "192.168.1.201"),
-                ("Preset1", "192.168.1.202"),
-                ("Preset2", "192.168.1.201"),
-                ("Preset2", "192.168.1.202"),
+                (adapters_by_ip["192.168.1.201"], "Preset1"),
+                (adapters_by_ip["192.168.1.201"], "Preset2"),
+                (adapters_by_ip["192.168.1.202"], "Preset1"),
+                (adapters_by_ip["192.168.1.202"], "Preset2"),
             ]
 
 
@@ -3047,31 +3395,233 @@ class TestSettingsUIState:
         peq_settings = MagicMock(channel_mode="stereo", bands=filters)
         read_result = (filters, ChannelMode.STEREO, peq_settings)
 
+        # _write_preset_copies_to_devices connects once per device now
+        # (branch-quality review, 2026-07-17) -- stub the connect factories
+        # so it doesn't attempt real network calls; the write itself is
+        # mocked out below via _write_preset_to_adapter.
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: MagicMock(close=AsyncMock())
+        )
+        window._secondary_workflows._capability_prober_factory = (
+            lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: MagicMock()
+        )
+
         with (
             patch.object(
-                window, "_read_preset_to_copy", new_callable=AsyncMock,
-                return_value=read_result,
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
             ),
             patch.object(
-                window, "_do_copy_preset_to_device", new_callable=AsyncMock
+                window._secondary_workflows, "_write_preset_to_adapter",
+                new_callable=AsyncMock,
             ),
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
             import asyncio
 
             asyncio.run(
-                window._do_copy_presets_batch_multi(items, devices, "wifi")
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
             )
             mock_success.assert_called_once()
             msg = mock_success.call_args[0][0]
             assert "1 preset(s)" in msg
             assert "3 device(s)" in msg
 
+    def test_copy_batch_skipped_empty_name_item_not_counted_in_total(
+        self, window
+    ) -> None:
+        """An item with an empty name (e.g. wiim_adapter.py:654 coercing a
+        missing device "Name" key to "") is skipped via `continue` before
+        ever being attempted -- it must not count toward n_items in the
+        final copy_batch_complete tally, or n_items * n_devices stops
+        matching succeeded + failed (round-4 review finding #5,
+        2026-07-19)."""
+        _setup_device(window)
+        items = [MagicMock(), MagicMock()]
+        items[0].name = "Preset1"
+        items[0].preset_type = "PEQ"
+        items[1].name = ""  # Orphaned/malformed entry -- skipped, not attempted
+        items[1].preset_type = "PEQ"
+
+        device1 = MagicMock(ip="192.168.1.201", name="Device A")
+        devices = [device1]
+
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: MagicMock(close=AsyncMock())
+        )
+        window._secondary_workflows._capability_prober_factory = (
+            lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: MagicMock()
+        )
+
+        emitted: list[tuple[int, int, int, int]] = []
+        window._secondary_workflows.copy_batch_complete.connect(
+            lambda *args: emitted.append(args)
+        )
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
+            ) as mock_read,
+            patch.object(
+                window._secondary_workflows, "_write_preset_to_adapter",
+                new_callable=AsyncMock,
+            ),
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
+            )
+
+        # Only the real item was ever read -- the empty-name item was
+        # skipped, not attempted (and therefore not a failure either).
+        mock_read.assert_called_once()
+        assert emitted == [(1, 1, 1, 0)]
+
+    def test_copy_batch_connects_once_per_device_not_per_preset(self, window) -> None:
+        """Regression test (branch-quality review, 2026-07-17):
+        _write_preset_copies_to_devices must connect + probe capabilities
+        exactly once per target device, not once per (preset, device) pair
+        -- copying 2 presets to 2 devices should make 2 connect/probe calls
+        total, not 4."""
+        _setup_device(window)
+        items = [MagicMock(), MagicMock()]
+        items[0].name = "Preset1"
+        items[0].preset_type = "PEQ"
+        items[1].name = "Preset2"
+        items[1].preset_type = "PEQ"
+
+        device1 = MagicMock(ip="192.168.1.201", name="Device A")
+        device2 = MagicMock(ip="192.168.1.202", name="Device B")
+        devices = [device1, device2]
+
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        http_client_factory = MagicMock(
+            side_effect=lambda ip: MagicMock(close=AsyncMock())
+        )
+        prober_factory = MagicMock(
+            side_effect=lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        window._secondary_workflows._wiim_http_client_factory = http_client_factory
+        window._secondary_workflows._capability_prober_factory = prober_factory
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: MagicMock()
+        )
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
+            ),
+            patch.object(
+                window._secondary_workflows, "_write_preset_to_adapter",
+                new_callable=AsyncMock,
+            ) as mock_write,
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
+            )
+
+        assert http_client_factory.call_count == 2
+        assert prober_factory.call_count == 2
+        assert mock_write.call_count == 4
+
+    def test_copy_batch_device_connect_failure_counts_all_its_presets_failed(
+        self, window
+    ) -> None:
+        """Regression test (branch-quality review, 2026-07-17): if a target
+        device fails to connect/probe, all presets destined for it count as
+        failed in one step (not attempted individually), while the other
+        device's presets still succeed and the totals still balance."""
+        _setup_device(window)
+        items = [MagicMock(), MagicMock()]
+        items[0].name = "Preset1"
+        items[0].preset_type = "PEQ"
+        items[1].name = "Preset2"
+        items[1].preset_type = "PEQ"
+
+        device_ok = MagicMock(ip="192.168.1.201", name="Device OK")
+        device_bad = MagicMock(ip="192.168.1.202", name="Device Unreachable")
+        devices = [device_ok, device_bad]
+
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        def _prober_factory(client: object) -> MagicMock:
+            prober = MagicMock()
+            if client is bad_client:
+                prober.probe = AsyncMock(side_effect=RuntimeError("unreachable"))
+            else:
+                prober.probe = AsyncMock(return_value=MagicMock())
+            return prober
+
+        ok_client = MagicMock(close=AsyncMock())
+        bad_client = MagicMock(close=AsyncMock())
+        clients_by_ip = {"192.168.1.201": ok_client, "192.168.1.202": bad_client}
+
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: clients_by_ip[ip]
+        )
+        window._secondary_workflows._capability_prober_factory = _prober_factory
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: MagicMock()
+        )
+
+        captured: list[tuple[int, int, int, int]] = []
+        window._secondary_workflows.copy_batch_complete.connect(
+            lambda n_items, n_devices, succeeded, failed: captured.append(
+                (n_items, n_devices, succeeded, failed)
+            )
+        )
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
+            ),
+            patch.object(
+                window._secondary_workflows, "_write_preset_to_adapter",
+                new_callable=AsyncMock,
+            ) as mock_write,
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
+            )
+
+        assert mock_write.call_count == 2  # only device_ok's 2 presets were attempted
+        assert captured == [(2, 2, 2, 2)]  # n_items, n_devices, succeeded, failed
+
     # --- Issue #79: Copy L/R RoomFit preserves channel_mode ---
 
     def test_issue79_copy_lr_roomfit_preserves_channel(self, window) -> None:
-        """#79: _do_copy_preset_to_device passes L/R for RoomFit copies."""
-        _setup_device(window)
+        """#79: _write_preset_to_adapter passes L/R for RoomFit copies."""
         # Simulate a RoomFit profile that is L/R
         peq_settings = MagicMock()
         peq_settings.channel_mode = "lr"
@@ -3079,40 +3629,66 @@ class TestSettingsUIState:
         peq_settings.bands_r = [_make_filter(200)]
         peq_settings.bands = []
 
-        # Mock the target device connection
-        with (
-            patch("src.gui.main_window.WiiMHttpClient") as mock_client_cls,
-            patch("src.gui.main_window.CapabilityProber") as mock_prober_cls,
-            patch("src.gui.main_window.WiiMAdapter") as mock_adapter_cls,
-            patch("src.gui.main_window.RoomFitSafeWrite") as mock_roomfit_safe_write_cls,
-        ):
-            mock_client = AsyncMock()
-            mock_client_cls.return_value = mock_client
-            mock_prober = AsyncMock()
-            mock_prober.probe = AsyncMock(return_value=_make_caps())
-            mock_prober_cls.return_value = mock_prober
-            mock_target_adapter = AsyncMock()
-            mock_adapter_cls.return_value = mock_target_adapter
+        target_adapter = MagicMock()
 
-            roomfit_safe_write = MagicMock()
-            roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
-            mock_roomfit_safe_write_cls.return_value = roomfit_safe_write
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
+        # _write_preset_to_adapter asserts both write factories are set
+        # unconditionally, even for a RoomFit-only call -- irrelevant here,
+        # just needs to be non-None.
+        window._secondary_workflows._safe_write_factory = lambda adapter: MagicMock()
 
-            import asyncio
+        import asyncio
 
+        asyncio.run(
+            window._secondary_workflows._write_preset_to_adapter(
+                target_adapter, "My RoomFit", "RoomFit", "wifi",
+                peq_settings.bands_l + peq_settings.bands_r,
+                ChannelMode.LR, peq_settings,
+            )
+        )
+        # RoomFit copy is verified via RoomFitSafeWrite (smoke #153),
+        # not a bare write_roomfit() call -- assert the L/R channel mode
+        # is passed through to its execute() call.
+        roomfit_safe_write.execute.assert_called_once()
+        call_kwargs = roomfit_safe_write.execute.call_args
+        assert call_kwargs.kwargs.get("channel_mode") == ChannelMode.LR
+
+    def test_copy_lr_roomfit_empty_channel_rejected_not_silently_copied(
+        self, window
+    ) -> None:
+        """A RoomFit preset with a genuinely empty right channel (a valid
+        device read-state, see WiiMAdapter._parse_lr) must be rejected the
+        same way the sibling PEQ copy branch already rejects it via
+        build_peq_settings()/resolve_channel_split() -- not silently copied
+        to the target device with an incomplete L/R split (round-4 review
+        finding #8, 2026-07-19)."""
+        _setup_device(window)
+        peq_settings = MagicMock()
+        peq_settings.channel_mode = "lr"
+        peq_settings.bands_l = [_make_filter(100)]
+        peq_settings.bands_r = []  # Genuinely empty, not None
+        peq_settings.bands = []
+
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.execute = AsyncMock()
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
+
+        import asyncio
+
+        with pytest.raises(ValueError, match="L/R filters missing"):
             asyncio.run(
-                window._do_copy_preset_to_device(
-                    "My RoomFit", "RoomFit", "192.168.1.200", "wifi",
-                    peq_settings.bands_l + peq_settings.bands_r,
-                    ChannelMode.LR, peq_settings,
+                window._secondary_workflows._write_preset_to_adapter(
+                    MagicMock(), "My RoomFit", "RoomFit", "wifi",
+                    peq_settings.bands_l, ChannelMode.LR, peq_settings,
                 )
             )
-            # RoomFit copy is verified via RoomFitSafeWrite (smoke #153),
-            # not a bare write_roomfit() call -- assert the L/R channel mode
-            # is passed through to its execute() call.
-            roomfit_safe_write.execute.assert_called_once()
-            call_kwargs = roomfit_safe_write.execute.call_args
-            assert call_kwargs.kwargs.get("channel_mode") == ChannelMode.LR
+        roomfit_safe_write.execute.assert_not_called()
 
     # --- Issue #85: Diagnostics raw_command_requested connected ---
 
@@ -3154,57 +3730,59 @@ class TestSettingsUIState:
 
 
 class TestSharedHelpers:
-    """Direct unit tests for shared_helpers functions (no Qt needed)."""
+    """Direct unit tests guarding against business logic re-accumulating in
+    src/gui/ (no Qt needed for any of it).
 
-    # --- Issue #64: shared_helpers.py is the single source of truth ---
+    #64 originally required a src/gui/shared_helpers.py module as the single
+    source of truth for channel-mode/profile logic that had been duplicated
+    across call sites. That module has since been fully emptied out one
+    function at a time (build_peq_settings/build_profile/is_lr_mode/
+    get_lr_filters/extract_filters/read_preset_preview -- see test_models.py,
+    test_wiim_adapter.py for their behavior-level coverage) and deleted
+    entirely once nothing imported it any more; parse_backup_filters/
+    load_backup_json, its last re-exports, already had direct importers in
+    src.repository.backup_manager. This test's job now is to confirm that
+    outcome and guard against any of these creeping back into src/gui/ as a
+    second copy.
+    """
 
-    def test_issue64_shared_helpers_created(self) -> None:
-        """#64: src/gui/shared_helpers.py exports the documented shared
-        functions, and main_window.py (which still needs channel-mode/
-        profile logic directly) imports from it rather than reimplementing
-        it locally.
-
-        Behavior-level coverage of each individual function already exists
-        elsewhere in this file (is_lr_mode, build_profile, build_peq_settings,
-        parse_backup_filters, get_lr_filters tests above); this test is
-        specifically about the "single source of truth" claim: that the
-        module exists with the right surface and that call-sites import
-        from it instead of duplicating the logic inline.
-        """
+    def test_issue64_business_logic_not_reduplicated_in_gui(self) -> None:
+        """#64: shared_helpers.py is gone, and none of the business logic it
+        used to hold has been reimplemented locally in main_window.py or
+        secondary_workflows.py."""
+        import importlib
         import inspect
 
-        from src.gui import main_window, secondary_workflows, shared_helpers
+        from src.gui import main_window, secondary_workflows
+        from src.models import channel_mode as channel_mode_module
+        from src.models import peq
+        from src.models import profile as profile_module
+        from src.translator import wiim_generator
 
-        # The documented shared surface (get_lr_filters, is_lr_mode,
-        # build_peq_settings, build_profile, parse_backup_filters) plus the
-        # closely related helpers that grew out of the same consolidation
-        # (extract_filters, load_backup_json, validate_filters_for_device).
-        for name in (
-            "get_lr_filters",
-            "is_lr_mode",
-            "build_peq_settings",
-            "build_profile",
-            "parse_backup_filters",
-            "extract_filters",
-            "load_backup_json",
-            "validate_filters_for_device",
-        ):
-            assert hasattr(shared_helpers, name), f"shared_helpers missing {name}"
-            assert callable(getattr(shared_helpers, name))
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("src.gui.shared_helpers")
 
-        # main_window.py imports from shared_helpers rather than defining its
-        # own local copies of the same logic.
-        main_window_source = inspect.getsource(main_window)
-        assert "from src.gui.shared_helpers import" in main_window_source
+        # Each function shared_helpers.py used to hold now lives with the
+        # domain model/module it belongs to, and nowhere else.
+        assert hasattr(wiim_generator, "validate_filters_for_device")
+        assert callable(wiim_generator.validate_filters_for_device)
+        assert hasattr(peq, "build_peq_settings")
+        assert callable(peq.build_peq_settings)
+        assert hasattr(peq, "extract_filters")
+        assert callable(peq.extract_filters)
+        assert hasattr(profile_module, "build_profile")
+        assert callable(profile_module.build_profile)
+        for name in ("is_lr_mode", "require_lr_filters"):
+            assert hasattr(channel_mode_module, name)
+            assert callable(getattr(channel_mode_module, name))
 
-        # secondary_workflows.py legitimately has no shared_helpers import
-        # now (PEQ redesign, mirrors #191): _do_undo() delegates backup
-        # parsing and PEQSettings reconstruction entirely to
-        # SafeWrite.undo() rather than calling build_peq_settings()/
-        # parse_backup_filters() locally -- zero shared_helpers usage here
-        # is the correct outcome of that delegation, not reimplementation.
+        # secondary_workflows.py legitimately has no equivalent local logic
+        # (PEQ redesign, mirrors #191): _do_undo() delegates backup parsing
+        # and PEQSettings reconstruction entirely to SafeWrite.undo() rather
+        # than calling build_peq_settings()/parse_backup_filters() locally.
         # Assert the delegation instead: no local re-parsing logic
         # duplicating what SafeWrite.undo() now owns.
+        main_window_source = inspect.getsource(main_window)
         secondary_workflows_source = inspect.getsource(secondary_workflows)
         for reimplemented_name in (
             "build_peq_settings", "parse_backup_filters", "load_backup_json",
@@ -3214,12 +3792,12 @@ class TestSharedHelpers:
 
         # Spot-check: no duplicate local reimplementation of is_lr_mode's
         # channel-string matching (the specific bug pattern smoke #55/#69
-        # were about) anywhere outside shared_helpers.py itself.
+        # were about) anywhere outside models.channel_mode itself.
         assert "def is_lr_mode" not in main_window_source
         assert "def is_lr_mode" not in secondary_workflows_source
-        assert inspect.getsourcefile(shared_helpers.is_lr_mode) == inspect.getsourcefile(
-            shared_helpers
-        )
+        assert inspect.getsourcefile(
+            channel_mode_module.is_lr_mode
+        ) == inspect.getsourcefile(channel_mode_module)
 
     # --- Issue #93: Ensure filter values are rounded to expected precision ---
 
@@ -3268,64 +3846,29 @@ class TestSharedHelpers:
             filters_l, filters_r, {}, {}, filters_l, filters_r, {}, {}
         )
 
-    def test_build_peq_settings_lr_without_explicit_filters_raises(self) -> None:
-        """L/R mode without filters_l/filters_r must raise, never guess a split."""
-        from src.gui.shared_helpers import build_peq_settings
+    def test_on_peq_ready_lr_without_explicit_bands_shows_error_and_returns(
+        self, window
+    ) -> None:
+        """_on_peq_ready's L/R-without-bands guard shows an error banner and
+        returns without advancing the wizard, rather than guessing a
+        channel split (Phase 5 _validate_and_populate_review decomposition
+        -- this is the guard's `return None` path)."""
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.current_filters = [_make_filter(100)]
+        state.channel_mode = ChannelMode.LR
 
-        filters = [_make_filter(100 * (i + 1)) for i in range(5)]
-        with pytest.raises(ValueError, match="refusing to guess channel split"):
-            build_peq_settings("wifi", filters, "L/R")
+        with (
+            patch.object(window._status_banner, "show_error") as mock_error,
+            patch.object(window._wizard_controller, "advance") as mock_advance,
+        ):
+            window._on_peq_ready(object())
 
-    def test_get_lr_filters_without_state_data_raises(self) -> None:
-        """get_lr_filters must raise when wizard state has no filters_l/filters_r."""
-        from src.gui.shared_helpers import get_lr_filters
-
-        state = MagicMock()
-        state.filters_l = None
-        state.filters_r = None
-        with pytest.raises(ValueError, match="refusing to guess channel split"):
-            get_lr_filters(state, [])
-
-    # --- is_lr_mode comprehensive ---
-
-    def test_is_lr_mode_left(self) -> None:
-        """is_lr_mode returns True for 'left'."""
-        assert is_lr_mode("left") is True
-
-    def test_is_lr_mode_right(self) -> None:
-        """is_lr_mode returns True for 'right'."""
-        assert is_lr_mode("right") is True
-
-    def test_is_lr_mode_mixed_case(self) -> None:
-        """is_lr_mode is case-insensitive."""
-        assert is_lr_mode("LR") is True
-        assert is_lr_mode("Lr") is True
-
-    # --- build_profile ---
-
-    def test_build_profile_lr_without_explicit_filters_raises(self) -> None:
-        """build_profile with L/R but no filters_l/filters_r must raise."""
-        filters = [_make_filter(100), _make_filter(200)]
-        with pytest.raises(ValueError, match="refusing to guess channel split"):
-            build_profile("Test", filters, "L/R")
-
-    def test_build_profile_lr_with_explicit_filters_preserves_split(self) -> None:
-        """build_profile with explicit filters_l/filters_r uses them as-is."""
-        filters = [_make_filter(100), _make_filter(200), _make_filter(300)]
-        filters_l = filters[:1]
-        filters_r = filters[1:]
-        profile = build_profile(
-            "Test", filters, "L/R", filters_l=filters_l, filters_r=filters_r
+        mock_error.assert_called_once_with(
+            "Could not determine L/R channel data for this source"
         )
-        assert profile.filters_l == filters_l
-        assert profile.filters_r == filters_r
+        mock_advance.assert_not_called()
 
-    def test_build_profile_stereo_keeps_filters(self) -> None:
-        """build_profile with Stereo keeps filters in single list."""
-        filters = [_make_filter(100), _make_filter(200)]
-        profile = build_profile("Test", filters, "Stereo")
-        assert profile.filters is not None
-        assert len(profile.filters) == 2
 
     # --- parse_backup_filters ---
 
@@ -3375,7 +3918,7 @@ class TestIssue194SingleSourceOperations:
 
         import asyncio
 
-        asyncio.run(window._do_load_peq_preset("My Preset"))
+        asyncio.run(window._primary_workflows._do_load_peq_preset("My Preset"))
 
         adapter.read_peq_preset_preview.assert_awaited_once_with("wifi", "My Preset")
 
@@ -3387,22 +3930,30 @@ class TestIssue194SingleSourceOperations:
 
         import asyncio
 
-        asyncio.run(window._do_device_pull())
+        asyncio.run(window._primary_workflows._do_device_pull())
 
         adapter.read_peq.assert_awaited_once_with("wifi")
 
     def test_issue194_read_preset_to_copy_uses_single_source(self, window) -> None:
         """The shared copy-flow read uses the first selected source -- not a
-        hardcoded 'wifi', and never the raw comma string."""
+        hardcoded 'wifi', and never the raw comma string. source_name is
+        resolved by the caller (MainWindow, from wizard state) and passed
+        in explicitly -- SecondaryWorkflowManager has no wizard state of
+        its own (docs/backlog.md item 2 Phase D)."""
         adapter = _setup_device(window)
         window._wizard_controller.state.selected_source = "bluetooth,wifi"
         adapter.read_peq_preset_preview = AsyncMock(
             return_value=self._preview_settings()
         )
+        source_name = window._wizard_controller.state.primary_source
 
         import asyncio
 
-        result = asyncio.run(window._read_preset_to_copy("My Preset", "PEQ"))
+        result = asyncio.run(
+            window._secondary_workflows._read_preset_to_copy(
+                source_name, "My Preset", "PEQ"
+            )
+        )
 
         assert result is not None
         adapter.read_peq_preset_preview.assert_awaited_once_with(

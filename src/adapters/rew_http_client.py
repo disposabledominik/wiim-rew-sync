@@ -83,7 +83,8 @@ class REWHttpApiClient:
         ad-hoc, inconsistent (and in one case 500-char-truncated) logging.
 
         Raises:
-            REWNotConnectedError: REW is not running or API is not enabled.
+            REWNotConnectedError: REW is not running, its API is not
+                enabled, or it did not respond within the client timeout.
         """
         self._request_count += 1
         req_id = self._request_count
@@ -91,6 +92,12 @@ class REWHttpApiClient:
 
         try:
             response = await self._client.get(url)
+        except httpx.TimeoutException as exc:
+            logger.error("TIMEOUT #%d → %s: %s", req_id, url, exc)
+            raise REWNotConnectedError(
+                "REW did not respond in time. Please ensure REW is running "
+                "and its HTTP API is enabled (localhost:4735)."
+            ) from exc
         except httpx.ConnectError as exc:
             logger.error("CONNECT_ERR #%d → %s: %s", req_id, url, exc)
             raise REWNotConnectedError(

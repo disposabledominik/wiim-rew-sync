@@ -12,6 +12,8 @@ from typing import Annotated
 
 from pydantic import BeforeValidator
 
+from src.models.canonical import CanonicalFilter
+
 
 class ChannelMode(Enum):
     """Canonical channel mode for PEQ settings.
@@ -82,8 +84,13 @@ class ChannelMode(Enum):
         return cls.STEREO
 
 
-def _coerce_channel_mode(value: str | ChannelMode) -> ChannelMode:
-    """Pydantic BeforeValidator: coerce str → ChannelMode for model fields."""
+def coerce_channel_mode(value: str | ChannelMode) -> ChannelMode:
+    """Coerce str or ChannelMode -> ChannelMode.
+
+    Used both as a Pydantic BeforeValidator for model fields (below) and by
+    is_lr_mode() -- the single place this str-or-ChannelMode coercion is
+    implemented, so the two callers can't drift apart.
+    """
     if isinstance(value, ChannelMode):
         return value
     return ChannelMode.from_any(value)
@@ -91,4 +98,103 @@ def _coerce_channel_mode(value: str | ChannelMode) -> ChannelMode:
 
 # Annotated type for use in Pydantic model fields.
 # Accepts str or ChannelMode at runtime and coerces to ChannelMode.
-ChannelModeField = Annotated[ChannelMode, BeforeValidator(_coerce_channel_mode)]
+ChannelModeField = Annotated[ChannelMode, BeforeValidator(coerce_channel_mode)]
+
+
+def is_lr_mode(channel_mode: str | ChannelMode) -> bool:
+    """Check if a channel mode represents L/R (dual-channel) mode.
+
+    Accepts both ChannelMode enum values and legacy string variants.
+    Handles all variants: "lr", "l/r", "L/R", "left", "right", ChannelMode.LR.
+    """
+    return coerce_channel_mode(channel_mode).is_lr
+
+
+def require_lr_filters(
+    filters_l: list[CanonicalFilter] | None,
+    filters_r: list[CanonicalFilter] | None,
+) -> tuple[list[CanonicalFilter], list[CanonicalFilter]]:
+    """Require explicit, non-empty per-channel filter lists; never guess a split.
+
+    Shared by PEQSettings/Profile construction from a combined filter list
+    plus channel mode (see build_peq_settings/build_profile).
+
+    Raises:
+        ValueError: if either filters_l or filters_r is missing or empty.
+            There is no safe way to reconstruct a channel boundary from a
+            combined list -- a positional 50/50 split is correct only by
+            coincidence when both channels happen to have equal length, and
+            silently wrong otherwise. An empty channel is treated the same
+            as a missing one (branch-quality review, 2026-07-18): a manually
+            edited or older-format profile can end up with one channel
+            missing/empty and the other populated, and without this check a
+            later push would silently write a flattened (all-filters-removed)
+            channel to the device instead of raising.
+    """
+    if not filters_l or not filters_r:
+        raise ValueError("L/R filters missing; refusing to guess channel split")
+    return filters_l, filters_r
+
+
+def resolve_channel_split(
+    channel_mode: str | ChannelMode,
+    filters_l: list[CanonicalFilter] | None,
+    filters_r: list[CanonicalFilter] | None,
+) -> tuple[ChannelMode, list[CanonicalFilter], list[CanonicalFilter]]:
+    """Coerce channel_mode and, for L/R mode, require explicit per-channel
+    filter lists -- the logic build_peq_settings/build_profile both need
+    before constructing their own model (each has a differently-shaped
+    schema for the inactive channel -- PEQSettings defaults to `[]`, Profile
+    requires `None` -- so model construction itself is left to each caller).
+
+    Returns:
+        Tuple of (resolved_mode, left, right). left/right are empty lists
+        when resolved_mode is not L/R -- callers should use `filters`
+        (the combined list) instead in that case, not these.
+
+    Raises:
+        ValueError: L/R mode without explicit, non-empty filters_l/filters_r
+            (see require_lr_filters).
+    """
+    mode = coerce_channel_mode(channel_mode)
+    if mode.is_lr:
+        left, right = require_lr_filters(filters_l, filters_r)
+        return mode, left, right
+    return mode, [], []
+
+
+def resolve_roomfit_channel_kwargs(
+    channel_mode: str | ChannelMode,
+    filters_l: list[CanonicalFilter] | None,
+    filters_r: list[CanonicalFilter] | None,
+) -> tuple[list[CanonicalFilter] | None, list[CanonicalFilter] | None]:
+    """Resolve the filters_l/filters_r arguments for RoomFitSafeWrite.execute().
+
+    Stereo mode needs no per-channel filters; L/R mode requires an explicit,
+    non-empty per-channel split (see require_lr_filters) -- this never
+    derives one by splitting a combined filter list.
+
+    Shared by primary_workflows._do_push's RoomFit branch and
+    secondary_workflows._write_preset_to_adapter's RoomFit branch, which
+    each independently hand-rolled this is_lr/require_lr_filters branch
+    before calling execute() (round-4 review finding #8, 2026-07-19).
+
+    Returns a plain (filters_l, filters_r) tuple rather than a kwargs dict
+    deliberately -- mypy can't verify a `dict[str, list[CanonicalFilter]]`
+    splatted via `**kwargs` won't collide with execute()'s other, differently
+    -typed keyword params (e.g. on_stage), so callers pass these two
+    positionally/by-name instead, matching execute()'s own None defaults.
+
+    Returns:
+        (None, None) for stereo mode; explicit, non-empty (left, right) for
+        L/R mode.
+
+    Raises:
+        ValueError: L/R mode without explicit, non-empty filters_l/filters_r.
+    """
+    mode = coerce_channel_mode(channel_mode)
+    if not mode.is_lr:
+        return None, None
+    return require_lr_filters(filters_l, filters_r)
+
+

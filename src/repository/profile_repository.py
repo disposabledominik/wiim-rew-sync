@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 import json
 import unicodedata
 from pathlib import Path
@@ -42,13 +41,20 @@ class ProfileRepository:
         """
         return self._profiles_dir / f"{unicodedata.normalize('NFC', name)}.json"
 
-    def save(self, profile: Profile) -> Path:
+    def save(self, profile: Profile, *, expected_existing_name: str | None = None) -> Path:
         """Save a profile to disk as JSON.
 
         Stereo profiles use the ``filters`` key only.
         L/R profiles use ``filters_l`` and ``filters_r`` only.
         The Pydantic model_validator already enforces this, so we serialize
         and exclude None fields to keep the JSON clean.
+
+        Args:
+            expected_existing_name: If the path already holds a profile with
+                exactly this name, it's not treated as a foreign collision --
+                used by ``rename()`` so renaming a profile to a differently
+                -composed (NFC/NFD) but visually-identical form of its own
+                current name doesn't raise against itself.
 
         Raises:
             ProfileNameCollisionError: If ``profile.name`` normalizes to the
@@ -59,7 +65,11 @@ class ProfileRepository:
         if path.exists():
             existing_raw = json.loads(path.read_text(encoding="utf-8"))
             existing_name = existing_raw.get("name")
-            if existing_name is not None and existing_name != profile.name:
+            if (
+                existing_name is not None
+                and existing_name != profile.name
+                and existing_name != expected_existing_name
+            ):
                 raise ProfileNameCollisionError(
                     f"Profile name '{profile.name}' collides with existing "
                     f"profile '{existing_name}' (same filename after Unicode "
@@ -95,7 +105,7 @@ class ProfileRepository:
         # Validate via Pydantic (enforces channel-mode/filter-key consistency)
         return Profile.model_validate(raw)
 
-    def list(self) -> list[Profile]:
+    def list_all(self) -> list[Profile]:
         """Return all profiles sorted by name (lexicographic, case-insensitive)."""
         profiles: list[Profile] = []
         for path in self._profiles_dir.glob("*.json"):
@@ -137,11 +147,27 @@ class ProfileRepository:
         data = profile.model_dump(mode="python")
         data["name"] = new_name
         new_profile = Profile.model_validate(data)
-        self.save(new_profile)
+        self.save(new_profile, expected_existing_name=old_name)
 
-        # Remove old file (only if new_name != old_name)
-        if old_name != new_name:
-            old_path.unlink()
+        # Remove the old file only if it's a *different* file on disk than
+        # what save() just wrote. Path.samefile() (stat-based: same
+        # device+inode) is used rather than string/Path equality, because
+        # whether two differently-spelled names collapse to the *same
+        # physical file* depends on the actual filesystem's case-folding
+        # behaviour, not on how Python happens to compare path strings.
+        # Path equality is case-insensitive on Windows (WindowsPath) but
+        # always case-sensitive on POSIX (PosixPath is a plain string
+        # compare, even on a case-insensitive volume like default macOS) --
+        # and a casefold comparison has the opposite problem: it collapses
+        # a case-only rename ("MyPreset" -> "mypreset") into "same path" even
+        # on this project's own case-sensitive WSL2/Ubuntu ext4 test
+        # environment, where they are genuinely two different files, which
+        # would skip the unlink and leave the stale old-cased file behind
+        # as an orphan. samefile() asks the OS directly, so it's correct on
+        # both case-sensitive and case-insensitive filesystems.
+        new_path = self._profile_path(new_name)
+        if not old_path.exists() or not old_path.samefile(new_path):
+            old_path.unlink(missing_ok=True)
 
     def duplicate(self, name: str, new_name: str) -> Profile:
         """Create a copy of a profile with a new name.
@@ -182,6 +208,6 @@ class ProfileRepository:
             profile.tags.remove(tag)
             self.save(profile)
 
-    def get_by_tag(self, tag: str) -> builtins.list[Profile]:
+    def get_by_tag(self, tag: str) -> list[Profile]:
         """Return all profiles that have the given tag."""
-        return [p for p in self.list() if tag in p.tags]
+        return [p for p in self.list_all() if tag in p.tags]

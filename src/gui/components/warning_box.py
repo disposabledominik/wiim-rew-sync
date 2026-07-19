@@ -1,9 +1,10 @@
 """Shared warning-box construction -- bold header + body inside a warning frame.
 
-Extracted from ``PushConfirmation``'s clamping/mode-mismatch warning frames
-so every dialog that needs to show a "this will do X, are you sure" style
-warning (or an informational caveat) builds it the same way, instead of
-hand-rolling the same `QFrame`/`class="warningBox"` scaffolding per caller.
+Extracted from the push-confirmation flow's clamping/mode-mismatch warning
+frames so every dialog that needs to show a "this will do X, are you sure"
+style warning (or an informational caveat) builds it the same way, instead
+of hand-rolling the same `QFrame`/`class="warningBox"` scaffolding per
+caller.
 """
 
 from __future__ import annotations

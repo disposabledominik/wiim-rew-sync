@@ -4,9 +4,19 @@ Tests the secondary workflows (undo, profile recall) by driving the async
 methods directly with mocked adapter factories and verifying signal
 emissions.
 
-Note: copy-to-sources, multi-device push, and copy-preset-to-device tests
-were removed (code quality audit, 2026-06-28) along with the corresponding
-dead SecondaryWorkflowManager methods — see docs/backlog.md.
+Note: copy-preset-to-device coverage (_write_preset_to_adapter,
+_do_copy_presets_batch_multi, _do_copy_local_profile_to_devices, etc.) lives
+in test_smoke_regression_operations.py instead of here (issue26/34/58/69/74/
+78/79/153/194 and others) -- those characterization tests were written
+against MainWindow during the original Phase D extraction (docs/backlog.md
+item 2) and never relocated. This file's own convention is undo/
+profile-recall workflows driven directly against the manager via mocked
+factories; a 2026-06-28 code-quality audit removed an earlier, unrelated
+set of copy-to-sources/multi-device-push tests here for methods that were
+genuinely dead at the time -- that note is retired as of the 2026-07-17
+branch-quality review, which found it had gone stale: the copy-to-device
+methods above are very much alive and wired to real UI actions in
+main_window.py (_on_copy_to_device_requested, _on_local_preset_copy_to_device_requested).
 
 Requirements: 8.1-8.6
 """
@@ -197,3 +207,234 @@ class TestFetchSourceSlots:
         await manager._do_fetch_source_slots()
 
         assert errors == ["device rejected EQGetSourceModes"]
+
+
+# ---------------------------------------------------------------------------
+# Undo RoomFit profile (moved here from MainWindow, docs/backlog.md item 2
+# Phase D -- was _do_undo_roomfit)
+# ---------------------------------------------------------------------------
+
+
+class TestUndoRoomfit:
+    """Test SecondaryWorkflowManager._do_undo_roomfit."""
+
+    @pytest.mark.asyncio
+    async def test_missing_backup_file_emits_failure(self) -> None:
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._current_adapter = MagicMock()
+        manager._roomfit_safe_write_factory = MagicMock()
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_roomfit("/nonexistent/backup.json", "wifi", "My Profile")
+
+        assert undo_signals == [(False, "No backup available for undo")]
+        manager._roomfit_safe_write_factory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_success_emits_restored_message(self, tmp_path) -> None:
+        backup_file = tmp_path / "roomfit_backup.json"
+        backup_file.write_text('{"was_new_profile": false}', encoding="utf-8")
+
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._current_adapter = MagicMock()
+        mock_roomfit_safe_write = AsyncMock()
+        mock_roomfit_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        manager._roomfit_safe_write_factory = MagicMock(
+            return_value=mock_roomfit_safe_write
+        )
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_roomfit(str(backup_file), "wifi", "My Profile")
+
+        assert undo_signals == [(True, "Profile 'My Profile' restored from backup")]
+        mock_roomfit_safe_write.undo.assert_called_once()
+        call_args = mock_roomfit_safe_write.undo.call_args
+        assert call_args[0][0] == backup_file
+        assert call_args[0][1] == "wifi"
+        assert call_args[0][2] == "My Profile"
+
+    @pytest.mark.asyncio
+    async def test_verification_failure_emits_error_message(self, tmp_path) -> None:
+        backup_file = tmp_path / "roomfit_backup.json"
+        backup_file.write_text('{"was_new_profile": false}', encoding="utf-8")
+
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._current_adapter = MagicMock()
+        mock_roomfit_safe_write = AsyncMock()
+        mock_roomfit_safe_write.undo = AsyncMock(
+            return_value=WriteResult(success=False, error_message="Rollback failed")
+        )
+        manager._roomfit_safe_write_factory = MagicMock(
+            return_value=mock_roomfit_safe_write
+        )
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_roomfit(str(backup_file), "wifi", "My Profile")
+
+        assert undo_signals == [(False, "Rollback failed")]
+
+    @pytest.mark.asyncio
+    async def test_exception_emits_failure_with_exception_text(self, tmp_path) -> None:
+        backup_file = tmp_path / "roomfit_backup.json"
+        backup_file.write_text('{"was_new_profile": false}', encoding="utf-8")
+
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._current_adapter = MagicMock()
+        mock_roomfit_safe_write = AsyncMock()
+        mock_roomfit_safe_write.undo = AsyncMock(
+            side_effect=ConnectionError("device unreachable")
+        )
+        manager._roomfit_safe_write_factory = MagicMock(
+            return_value=mock_roomfit_safe_write
+        )
+
+        undo_signals: list[tuple[bool, str]] = []
+        manager.undo_complete.connect(lambda ok, msg: undo_signals.append((ok, msg)))
+
+        await manager._do_undo_roomfit(str(backup_file), "wifi", "My Profile")
+
+        assert undo_signals == [(False, "device unreachable")]
+
+
+# ---------------------------------------------------------------------------
+# Undo multi-source push (moved here from MainWindow, docs/backlog.md item 2
+# Phase D -- was _do_undo_multi_source)
+# ---------------------------------------------------------------------------
+
+
+class TestUndoMultiSource:
+    """Test SecondaryWorkflowManager._do_undo_multi_source.
+
+    _do_undo_multi_source awaits each source's real restore via
+    _restore_backup() directly (fixed branch-quality review, 2026-07-18 --
+    previously it called the fire-and-forget undo_last_push() and tallied
+    scheduling success, not actual outcome; full characterization of that
+    prior gap lives in test_smoke_regression_operations.py, captured before
+    this method moved here). These tests mock _restore_backup() directly to
+    isolate this method's aggregation logic; _restore_backup()'s own
+    correctness (SafeWrite.undo() success/failure/missing-backup-file
+    handling) is covered by TestUndoSuccessWithValidBackup and
+    TestUndoMissingBackupFile above, which exercise it via _do_undo().
+    """
+
+    @pytest.mark.asyncio
+    async def test_single_entry_restores_and_emits_success(self) -> None:
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        restored: list[tuple[str, str]] = []
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            restored.append((src, path))
+            return True, "Previous filters restored"
+
+        manager._restore_backup = _restore  # type: ignore[assignment]
+
+        undo_signals: list[tuple[int, int, str]] = []
+        manager.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
+        )
+
+        await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
+
+        assert restored == [("wifi", "/tmp/backup_wifi.json")]
+        assert undo_signals == [(1, 0, "All 1 source(s) restored from backup")]
+
+    @pytest.mark.asyncio
+    async def test_restore_failure_emits_failure_tally(self) -> None:
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            return False, "Verification failed"
+
+        manager._restore_backup = _restore  # type: ignore[assignment]
+
+        undo_signals: list[tuple[int, int, str]] = []
+        manager.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
+        )
+
+        await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
+
+        assert undo_signals == [(0, 1, "0 restored, 1 failed")]
+
+    @pytest.mark.asyncio
+    async def test_partial_success_emits_both_counts(self) -> None:
+        """2 of 3 sources actually restore, 1 genuinely fails (e.g. device
+        unreachable during that source's SafeWrite.undo()).
+
+        Regression coverage for the snapshot-clearing bug (branch-quality
+        review, 2026-07-17): the manager's own tally must report succeeded=2
+        so MainWindow._on_undo_multi_source_complete can clear the pushed
+        snapshot on a partial success, not just a full one. Also regression
+        coverage for the scheduling-vs-outcome fix (2026-07-18): the tally
+        now reflects each source's real restore outcome, not just whether
+        scheduling it raised.
+        """
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        restored: list[tuple[str, str]] = []
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            if src == "bluetooth":
+                return False, "Device unreachable"
+            restored.append((src, path))
+            return True, "Previous filters restored"
+
+        manager._restore_backup = _restore  # type: ignore[assignment]
+
+        undo_signals: list[tuple[int, int, str]] = []
+        manager.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
+        )
+
+        await manager._do_undo_multi_source(
+            "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json;optical=/tmp/backup_opt.json"
+        )
+
+        assert restored == [
+            ("wifi", "/tmp/backup_wifi.json"),
+            ("optical", "/tmp/backup_opt.json"),
+        ]
+        assert undo_signals == [(2, 1, "2 restored, 1 failed")]
+
+    @pytest.mark.asyncio
+    async def test_zero_entries_emits_failure_not_false_success(self) -> None:
+        """A backup_paths_str that decodes to zero entries (empty or fully
+        malformed) must not fall through the loop and emit a misleading
+        "All 0 source(s) restored" success -- no current producer of
+        backup_paths_str can generate this today, but the guard is cheap
+        and correct to keep (round-4 review finding #6, PLAUSIBLE,
+        2026-07-19)."""
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        restore_calls: list[tuple[str, str]] = []
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            restore_calls.append((src, path))
+            return True, "Previous filters restored"
+
+        manager._restore_backup = _restore  # type: ignore[assignment]
+
+        undo_signals: list[tuple[int, int, str]] = []
+        manager.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
+        )
+
+        await manager._do_undo_multi_source("")
+
+        assert restore_calls == []
+        assert len(undo_signals) == 1
+        succeeded, failed, _msg = undo_signals[0]
+        assert succeeded == 0
+        assert failed != 0

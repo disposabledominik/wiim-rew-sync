@@ -561,6 +561,105 @@ class TestAcousticCapabilityProbe:
         assert len(fallback_lists) == 1
 
 
+class TestRoomfitCapabilityFileOverride:
+    """WiiM Mini/Muzo_Mini's confirmed RoomFit-misreporting quirk (smoke #36)
+    is corrected two ways, both model-name-free except for the exact-match
+    capability-file entry itself:
+
+    1. device_capabilities.json's "WiiM_Mini" entry (aliases: "Muzo_Mini")
+       exactly matches and force-overrides supports_roomfit* for that model.
+    2. CapabilityProber's own generic, protocol-level detection (empty
+       RoomFit profile list / GetAcousticCapability {"status": "Failed"},
+       docs/corrections.md 2026-07-10) independently gets the right answer
+       for ANY device, including unlisted ones, with no name-based guessing.
+
+    A third layer used to exist here -- a defensive fallback that force-
+    disabled RoomFit for any unlisted model whose name merely *contained*
+    "mini" -- but it was removed (docs/corrections.md, 2026-07-18): it was
+    pure speculation about hardware never tested (no unlisted "mini"-named
+    device has ever been confirmed to share the quirk), it risked disabling
+    RoomFit on a genuinely-supporting future device for no reason other than
+    its name, and it duplicated protection point 2 above, which already
+    handles the real WiiM Mini correctly without needing the model string at
+    all."""
+
+    @staticmethod
+    def _client_with(project: str, acoustic_response: dict) -> WiiMHttpClient:
+        client = _make_mock_client()
+        status = {**STATUS_EX_WIIM_PRO, "project": project}
+
+        async def mock_command(cmd: str) -> dict | str:
+            if cmd == "getStatusEx":
+                return status
+            if cmd == "GetAcousticCapability":
+                return acoustic_response
+            if cmd.startswith("EQGetLV2BandEx:"):
+                return EQ_GET_LV2_BAND_RESPONSE
+            if cmd.startswith("EQv2GetNewList:"):
+                if '"EQLevel": 2' in unquote(cmd):
+                    return {
+                        "custom": [
+                            {"Name": "RF1", "channelMode": "Stereo", "Type": "RC"}
+                        ],
+                        "preset": [],
+                    }
+                return EQ_GET_LV2_LIST_RESPONSE
+            return "unknown command"
+
+        client.command = AsyncMock(side_effect=mock_command)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_exact_capability_file_match_overrides_probed_roomfit(self) -> None:
+        """"WiiM_Mini" is an exact capability-file match -- forced off even
+        though GetAcousticCapability's RC block would otherwise report full
+        support."""
+        client = self._client_with(
+            "WiiM_Mini", TestAcousticCapabilityProbe.ACOUSTIC_FULL
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.capability_file_override is True
+        assert caps.supports_roomfit_read is False
+
+    @pytest.mark.asyncio
+    async def test_unlisted_mini_named_model_trusts_genuine_probe_result(self) -> None:
+        """Regression test for the fallback's removal: an unlisted model
+        whose name merely contains "mini" ("WiiM Mini 2", which does not
+        match "WiiM_Mini"/"Muzo_Mini" under exact/alias matching) now keeps
+        its genuinely-probed RoomFit support, same as any other unlisted
+        model -- the model string is not otherwise inspected."""
+        client = self._client_with(
+            "WiiM Mini 2", TestAcousticCapabilityProbe.ACOUSTIC_FULL
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.capability_file_override is False
+        assert caps.supports_roomfit is True
+        assert caps.supports_roomfit_read is True
+        assert caps.supports_roomfit_write is True
+
+    @pytest.mark.asyncio
+    async def test_non_mini_model_unaffected(self) -> None:
+        """A model with no capability-file entry and no "mini" in its name
+        keeps its genuinely-probed RoomFit support untouched."""
+        client = self._client_with(
+            "WiiM Amp Ultra", TestAcousticCapabilityProbe.ACOUSTIC_FULL
+        )
+
+        prober = CapabilityProber(client)
+        caps = await prober.probe()
+
+        assert caps.capability_file_override is False
+        assert caps.supports_roomfit is True
+        assert caps.supports_roomfit_read is True
+        assert caps.supports_roomfit_write is True
+
+
 class TestRoomFitFallbackProbe:
     """The read-only per-command RoomFit fallback (devices without
     GetAcousticCapability). Detection is: non-empty custom list, then a

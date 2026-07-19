@@ -511,6 +511,27 @@ class TestMyPresetsViewRename:
 
         assert len(emitted) == 0
 
+    def test_rename_sanitizes_disallowed_device_name_chars(self, qtbot) -> None:
+        """Smoke #235: _on_rename_finished() must sanitize the entered text
+        via sanitize_device_name() before emitting rename_requested -- a
+        name containing device-rejected characters (e.g. parentheses)
+        would otherwise reach a real device write unfiltered via "Copy to
+        Another Device"."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_presets([_make_profile("Old Name")])
+
+        item = view._list_widget.item(0)
+        view._list_widget.itemDoubleClicked.emit(item)
+        view._rename_editor.setText("New (Name)!")
+
+        with qtbot.waitSignal(view.rename_requested, timeout=1000) as blocker:
+            view._rename_editor.editingFinished.emit()
+
+        assert blocker.args == ["Old Name", "New Name"]
+
 
 class TestMyPresetsViewContextMenu:
     """Tests for context menu actions and signal emission."""

@@ -10,11 +10,22 @@ Strategies defined here (used across multiple PBT tasks):
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 from hypothesis import strategies as st
 
 from src.models.canonical import CanonicalFilter
+
+
+def iter_src_python_files() -> list[Path]:
+    """Return every .py file under src/, sorted -- shared by grep-based
+    architecture-rule guard tests (e.g. test_safe_write.py's
+    TestNoDirectWriteBypass, test_gui_adapter_injection.py) so each new rule
+    adds its own pattern/allowlist without re-implementing the source-tree
+    walk."""
+    repo_root = Path(__file__).resolve().parents[2]
+    return sorted((repo_root / "src").rglob("*.py"))
 
 
 def close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
@@ -26,7 +37,8 @@ def close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
     collector eventually reclaims it (often during an unrelated later test).
     Use this as the mock's ``side_effect`` to dispose of the coroutine (and
     any inner coroutine it captured as a local, e.g. ``_bridge_wrapper``
-    wrapping ``self._do_push()``) the moment the mock is called.
+    wrapping one of the ``_do_*`` workflow coroutines) the moment the mock
+    is called.
     """
     if not inspect.iscoroutine(value):
         return
@@ -81,10 +93,10 @@ def _suppress_blocking_message_boxes(monkeypatch):
     test's own `with`/decorator scope.
 
     This does NOT cover custom QDialog subclasses (QuickSetupDialog,
-    DevicePickerDialog, MeasurementPickerDialog, etc.) -- those must still
-    be mocked individually at their own static factory method (e.g.
-    `QuickSetupDialog.get_setup`), since there's no single shared base to
-    intercept generically the way QMessageBox's static methods allow.
+    DevicePickerDialog, etc.) -- those must still be mocked individually at
+    their own static factory method (e.g. `QuickSetupDialog.get_setup`),
+    since there's no single shared base to intercept generically the way
+    QMessageBox's static methods allow.
     """
     from PySide6.QtWidgets import QMessageBox
 

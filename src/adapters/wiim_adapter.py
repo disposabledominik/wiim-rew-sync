@@ -24,7 +24,7 @@ from src.adapters.wiim_commands import (
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
-from src.models.channel_mode import ChannelMode
+from src.models.channel_mode import ChannelMode, coerce_channel_mode
 from src.models.errors import (
     RoomFitUnsupportedError,
     WiiMResponseError,
@@ -451,16 +451,18 @@ class WiiMAdapter:
             WiiMConnectionError: Device unreachable.
         """
 
-        # Determine wire channel mode
-        if settings.channel_mode == ChannelMode.STEREO:
-            channel_mode_wire = "Stereo"
-        else:
-            channel_mode_wire = "L/R"
-
-        if channel_mode_wire == "L/R":
-            # L/R mode: write both channels
-            bands_l = settings.bands_l if settings.bands_l else settings.bands
-            bands_r = settings.bands_r if settings.bands_r else bands_l
+        if settings.channel_mode.is_lr:
+            # L/R mode: write both channels independently. No fallback
+            # between bands_l/bands_r -- an empty channel is a legitimate
+            # device read-state (see _parse_lr()), not a signal to reuse the
+            # other channel's bands. A prior version fell back to bands_l
+            # when bands_r was empty, which silently copied the left
+            # channel's filters into the right channel during rollback
+            # (safe_write.py restores an originally-read PEQSettings, which
+            # can have a genuinely asymmetric L/R split) -- corrupting the
+            # very state recoverability is supposed to restore.
+            bands_l = settings.bands_l
+            bands_r = settings.bands_r
             band_array_l, _warnings_l = generate_wiim_band_array(
                 bands_l, max_bands=self._capabilities.max_filters
             )
@@ -469,12 +471,12 @@ class WiiMAdapter:
             )
             await self._write_bands(
                 partial(
-                    self._write_peq_batch_lr,
+                    self._write_peq_batch,
                     source_name, band_array_l, band_array_r,
                 ),
                 partial(
-                    self._write_peq_sequential_lr,
-                    source_name, band_array_l, band_array_r, queue,
+                    self._write_peq_sequential,
+                    source_name, band_array_l, queue, band_array_r,
                 ),
             )
         else:
@@ -486,11 +488,11 @@ class WiiMAdapter:
             await self._write_bands(
                 partial(
                     self._write_peq_batch,
-                    source_name, band_array, channel_mode_wire,
+                    source_name, band_array,
                 ),
                 partial(
                     self._write_peq_sequential,
-                    source_name, band_array, channel_mode_wire, queue,
+                    source_name, band_array, queue,
                 ),
             )
 
@@ -547,20 +549,35 @@ class WiiMAdapter:
         self,
         source_name: str,
         band_array: list[float],
-        channel_mode: str,
+        band_array_r: list[float] | None = None,
     ) -> object:
         """Write all bands in a single EQSetLV2SourceBand payload.
+
+        Stereo when `band_array_r` is None (`band_array` becomes `EQBand`,
+        wire `channelMode` "Stereo"); L/R when given (`band_array`/
+        `band_array_r` become `EQBandL`/`EQBandR`, wire `channelMode`
+        "L/R") -- `band_array_r`'s presence is the sole signal for which
+        mode this write is; there is no separate `channel_mode` parameter
+        to keep in sync with it.
 
         Returns the raw device response so _write_bands() can inspect it
         for an explicit rejection when batch capability is still unknown.
         """
-        eq_band_params = _flat_array_to_band_params(
-            band_array, self._capabilities.max_filters
-        )
+        num_bands = self._capabilities.max_filters
+        payload: dict[str, object]
+        if band_array_r is not None:
+            payload = {
+                "channelMode": "L/R",
+                "EQBandL": _flat_array_to_band_params(band_array, num_bands),
+                "EQBandR": _flat_array_to_band_params(band_array_r, num_bands),
+            }
+        else:
+            payload = {
+                "channelMode": "Stereo",
+                "EQBand": _flat_array_to_band_params(band_array, num_bands),
+            }
         command = encode_wiim_command(
-            "EQSetLV2SourceBand",
-            {"channelMode": channel_mode, "EQBand": eq_band_params},
-            source_name=source_name,
+            "EQSetLV2SourceBand", payload, source_name=source_name
         )
         return await self._client.command(command)
 
@@ -568,10 +585,16 @@ class WiiMAdapter:
         self,
         source_name: str,
         band_array: list[float],
-        channel_mode: str,
         queue: WiiMCommandQueue | None,
+        band_array_r: list[float] | None = None,
     ) -> None:
         """Write bands one at a time via queue with 100ms inter-command delay.
+
+        Stereo when `band_array_r` is None (one `EQBand` per command, wire
+        `channelMode` "Stereo"); L/R when given (one command per band,
+        carrying that band's L+R params together as `EQBandL`/`EQBandR`,
+        wire `channelMode` "L/R") -- same single-source-of-truth as
+        `_write_peq_batch` above, no separate `channel_mode` parameter.
 
         # TODO (low-priority tech debt): when this write changes the source's
         # channelMode, each call before the last leaves not-yet-sent bands holding
@@ -581,15 +604,29 @@ class WiiMAdapter:
         # write); SafeWrite's read-back verification already catches a wrong end
         # state. See docs/corrections.md, 2026-07-04.
         """
+        channel_mode = "L/R" if band_array_r is not None else "Stereo"
         num_bands = self._capabilities.max_filters
         for i in range(num_bands):
-            band_params = _flat_array_to_band_params(
-                band_array[i * 4:(i + 1) * 4], 1, start_band=i
-            )
+            payload: dict[str, object]
+            if band_array_r is not None:
+                payload = {
+                    "channelMode": channel_mode,
+                    "EQBandL": _flat_array_to_band_params(
+                        band_array[i * 4:(i + 1) * 4], 1, start_band=i
+                    ),
+                    "EQBandR": _flat_array_to_band_params(
+                        band_array_r[i * 4:(i + 1) * 4], 1, start_band=i
+                    ),
+                }
+            else:
+                payload = {
+                    "channelMode": channel_mode,
+                    "EQBand": _flat_array_to_band_params(
+                        band_array[i * 4:(i + 1) * 4], 1, start_band=i
+                    ),
+                }
             command = encode_wiim_command(
-                "EQSetLV2SourceBand",
-                {"channelMode": channel_mode, "EQBand": band_params},
-                source_name=source_name,
+                "EQSetLV2SourceBand", payload, source_name=source_name
             )
 
             if queue is not None:
@@ -598,63 +635,6 @@ class WiiMAdapter:
                 await self._client.command(command)
 
             # 100ms delay between sequential band writes
-            if i < num_bands - 1:
-                await asyncio.sleep(0.1)
-
-    async def _write_peq_batch_lr(
-        self,
-        source_name: str,
-        band_array_l: list[float],
-        band_array_r: list[float],
-    ) -> object:
-        """Write L/R bands in a single EQSetLV2SourceBand payload.
-
-        Returns the raw device response so _write_bands() can inspect it
-        for an explicit rejection when batch capability is still unknown.
-        """
-        num_bands = self._capabilities.max_filters
-        eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
-        eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
-        command = encode_wiim_command(
-            "EQSetLV2SourceBand",
-            {"channelMode": "L/R", "EQBandL": eq_band_l, "EQBandR": eq_band_r},
-            source_name=source_name,
-        )
-        return await self._client.command(command)
-
-    async def _write_peq_sequential_lr(
-        self,
-        source_name: str,
-        band_array_l: list[float],
-        band_array_r: list[float],
-        queue: WiiMCommandQueue | None,
-    ) -> None:
-        """Write L/R bands one at a time via queue with 100ms inter-command delay.
-
-        Each command writes one band's L+R params together.
-
-        # TODO (low-priority tech debt): same mode-switch corner case as
-        # _write_peq_sequential -- see docs/corrections.md, 2026-07-04.
-        """
-        num_bands = self._capabilities.max_filters
-        for i in range(num_bands):
-            band_l = _flat_array_to_band_params(
-                band_array_l[i * 4:(i + 1) * 4], 1, start_band=i
-            )
-            band_r = _flat_array_to_band_params(
-                band_array_r[i * 4:(i + 1) * 4], 1, start_band=i
-            )
-            command = encode_wiim_command(
-                "EQSetLV2SourceBand",
-                {"channelMode": "L/R", "EQBandL": band_l, "EQBandR": band_r},
-                source_name=source_name,
-            )
-
-            if queue is not None:
-                await queue.enqueue(command)
-            else:
-                await self._client.command(command)
-
             if i < num_bands - 1:
                 await asyncio.sleep(0.1)
 
@@ -969,6 +949,20 @@ class WiiMAdapter:
         )
         return preview
 
+    async def read_preset_preview(
+        self, preset_type: str, source_name: str, preset_name: str
+    ) -> PEQSettings:
+        """Read+preview a preset, dispatching by preset_type.
+
+        Previewing briefly loads the preset onto the device's live DSP and
+        restores it after (see #166). Shared by every call site that reads
+        a named preset for export/save/copy, which otherwise each
+        independently reimplement this dispatch.
+        """
+        if preset_type == "RoomFit":
+            return await self.read_roomfit_preset_preview(source_name, preset_name)
+        return await self.read_peq_preset_preview(source_name, preset_name)
+
     async def restore_roomfit_active_profile(
         self, original_name: str, current_name: str, *, context: str
     ) -> None:
@@ -1078,67 +1072,70 @@ class WiiMAdapter:
         self._require_roomfit("read", "write")
 
         num_bands = self._capabilities.max_filters
-        mode = (
-            channel_mode
-            if isinstance(channel_mode, ChannelMode)
-            else ChannelMode.from_any(channel_mode)
-        )
+        mode = coerce_channel_mode(channel_mode)
 
-        if mode.is_lr and filters_l and filters_r:
-            # L/R mode: build EQBandL and EQBandR arrays
-            band_array_l, _ = generate_wiim_band_array(filters_l, max_bands=num_bands)
-            band_array_r, _ = generate_wiim_band_array(filters_r, max_bands=num_bands)
-
+        band_payload: dict[str, object]
+        if mode.is_lr:
+            # L/R mode: build EQBandL and EQBandR arrays independently, with
+            # no cross-channel fallback and no truthy-emptiness check on
+            # filters_l/filters_r -- branch selection depends only on
+            # mode.is_lr, matching write_peq()'s design (round-4 review
+            # fix). RoomFitSafeWrite.execute()'s rollback path restores an
+            # existing_settings.bands_l/bands_r pair read straight off the
+            # device, which can legitimately have one empty channel; a
+            # truthy check here would silently misroute that restore into
+            # the Stereo branch below, writing the wrong channelMode and
+            # data instead of restoring the original (asymmetric) state.
+            band_array_l, _ = generate_wiim_band_array(
+                filters_l or [], max_bands=num_bands
+            )
+            band_array_r, _ = generate_wiim_band_array(
+                filters_r or [], max_bands=num_bands
+            )
             eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
             eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
-
-            write_command = encode_wiim_command(
-                "EQSetLV2SourceBand",
-                {
-                    "channelMode": "L/R",
-                    "EQBandL": eq_band_l,
-                    "EQBandR": eq_band_r,
-                    # Matches the WiiM app's own write traffic; does NOT change
-                    # the saved profile's Type field (always "Custom" for
-                    # app-saved profiles regardless -- see the RoomFit "Quirk"
-                    # note in docs/wiim_api_notes.md and docs/corrections.md
-                    # 2026-07-04). Included for wire-format parity only.
-                    # ASSUMPTION: a fixed single value is correct for every
-                    # device -- untested on multi-output hardware, since the
-                    # owned fleet is Speaker-only (docs/corrections.md,
-                    # 2026-07-10).
-                    "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
-                },
-                source_name="",
-                eq_level=2,
-            )
+            channel_mode_value = "L/R"
+            band_payload = {"EQBandL": eq_band_l, "EQBandR": eq_band_r}
         else:
             # Stereo mode: single EQBand array
             band_array, _warnings = generate_wiim_band_array(filters, max_bands=num_bands)
             eq_band_params = _flat_array_to_band_params(band_array, num_bands)
+            channel_mode_value = "Stereo"
+            band_payload = {"EQBand": eq_band_params}
 
-            write_command = encode_wiim_command(
-                "EQSetLV2SourceBand",
-                {
-                    "channelMode": "Stereo",
-                    "EQBand": eq_band_params,
-                    # Matches the WiiM app's own write traffic; does NOT change
-                    # the saved profile's Type field (always "Custom" for
-                    # app-saved profiles regardless -- see the RoomFit "Quirk"
-                    # note in docs/wiim_api_notes.md and docs/corrections.md
-                    # 2026-07-04). Included for wire-format parity only.
-                    # ASSUMPTION: a fixed single value is correct for every
-                    # device -- untested on multi-output hardware, since the
-                    # owned fleet is Speaker-only (docs/corrections.md,
-                    # 2026-07-10).
-                    "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
-                },
-                source_name="",
-                eq_level=2,
-            )
+        write_command = encode_wiim_command(
+            "EQSetLV2SourceBand",
+            {
+                "channelMode": channel_mode_value,
+                **band_payload,
+                # Matches the WiiM app's own write traffic; does NOT change
+                # the saved profile's Type field (always "Custom" for
+                # app-saved profiles regardless -- see the RoomFit "Quirk"
+                # note in docs/wiim_api_notes.md and docs/corrections.md
+                # 2026-07-04). Included for wire-format parity only.
+                # ASSUMPTION: a fixed single value is correct for every
+                # device -- untested on multi-output hardware, since the
+                # owned fleet is Speaker-only (docs/corrections.md,
+                # 2026-07-10).
+                "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
+            },
+            source_name="",
+            eq_level=2,
+        )
 
-        # Write to buffer
-        await self._client.command(write_command)
+        # Write to buffer -- check for an explicit device-side rejection
+        # before proceeding to save, reusing _is_write_rejection() since
+        # this is the same EQSetLV2SourceBand command family the PEQ batch
+        # write path already checks it against (_write_bands()). Without
+        # this, a rejected band write was only caught two round-trips
+        # later by RoomFitSafeWrite.execute()'s post-write read-back
+        # verification -- not incorrect, just slower to fail. Code-review
+        # finding, not a hardware-tested behavior correction -- no
+        # corrections.md entry (that ledger is for assumptions that failed
+        # against real hardware, not this).
+        resp = await self._client.command(write_command)
+        if self._is_write_rejection(resp):
+            raise WiiMResponseError(f"RoomFit band write rejected by device: {resp!r}")
 
         # Save buffer to profile
         save_command = encode_wiim_command(

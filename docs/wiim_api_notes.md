@@ -550,14 +550,11 @@ Mini). Its `RC.Version` field turns out to be the real explanation for this fami
 **Do not use this family.** It duplicates functionality already covered by the confirmed `EQLevel:2`
 LV2 commands above, and on RoomFit-less devices it has been observed to corrupt a real `EQLevel:1`
 source's `channelMode`/`Name` — this app's own confirmed `EQChangeSourceFX`/`EQSourceOff` calls do
-not have this effect. **Confirmed (`docs/corrections.md`, 2026-07-10):** this family's inconsistent
-write behavior tracks `GetAcousticCapability`'s `RC.Version` field, not a calibration-session gate:
-`RC.Version:"1.1"` (WiiM Sound, WiiM Sound Lite) is exactly where `RoomCorrGetMode` returns a real
-`{"Mode":...}` response and `RoomCorrSet` actually mutates the buffer; `RC.Version:"1.0"` (WiiM Amp
-Ultra) is exactly where both are aliased/inert. WiiM Mini has no `RC` capability at all
-(`GetAcousticCapability` itself fails), consistent with having no RoomFit hardware. Only two
-`RC.Version` values have been observed so far — treat "`RC.Version >= 1.1`" as the working
-assumption, not a confirmed threshold; a device reporting some other version is untested. Full
+not have this effect. This family's inconsistent write behavior tracks `GetAcousticCapability`'s
+`RC.Version` field, not a calibration-session gate: real (mutating) behavior requires
+`RC.Version >= "1.1"` (a working assumption from the two values observed so far, not a confirmed
+threshold — an untested device may report a different value); `RC.Version:"1.0"` or no `RC`
+capability at all (`GetAcousticCapability` failing, e.g. WiiM Mini) means aliased/inert. Full
 investigation trail: `docs/corrections.md`, 2026-07-10.
 
 ### Other RC/subwoofer-related commands — out of scope, not used by this app

@@ -5,7 +5,12 @@ from __future__ import annotations
 from pydantic import BaseModel, model_validator
 
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode, ChannelModeField
+from src.models.channel_mode import (
+    ChannelMode,
+    ChannelModeField,
+    is_lr_mode,
+    resolve_channel_split,
+)
 
 
 class PEQSettings(BaseModel):
@@ -40,3 +45,52 @@ class PEQSettings(BaseModel):
             if self.bands:
                 raise ValueError("L/R PEQSettings must not have 'bands'")
         return self
+
+
+def extract_filters(peq_settings: PEQSettings) -> tuple[list[CanonicalFilter], ChannelMode]:
+    """Extract combined filter list and channel_mode from PEQSettings.
+
+    A plain function rather than a PEQSettings method deliberately: many
+    call sites (and their tests) pass a duck-typed stand-in for PEQSettings
+    with only channel_mode/bands/bands_l/bands_r set, and attribute access
+    keeps working against those the same way a method call would not.
+
+    Returns:
+        Tuple of (combined_filters, channel_mode).
+    """
+    if is_lr_mode(peq_settings.channel_mode):
+        filters = (peq_settings.bands_l or []) + (peq_settings.bands_r or [])
+        return filters, ChannelMode.LR
+    return list(peq_settings.bands), ChannelMode.STEREO
+
+
+def build_peq_settings(
+    source_name: str,
+    filters: list[CanonicalFilter],
+    channel_mode: str | ChannelMode,
+    filters_l: list[CanonicalFilter] | None = None,
+    filters_r: list[CanonicalFilter] | None = None,
+) -> PEQSettings:
+    """Construct PEQSettings with correct channel splitting.
+
+    For L/R mode: requires explicit filters_l/filters_r (raises ValueError
+    if missing -- never guesses a channel split).
+    For stereo: uses the full list as bands.
+
+    Raises:
+        ValueError: L/R mode without explicit filters_l/filters_r.
+    """
+    mode, left, right = resolve_channel_split(channel_mode, filters_l, filters_r)
+
+    if mode.is_lr:
+        return PEQSettings(
+            source_name=source_name,
+            channel_mode=ChannelMode.LR,
+            bands_l=left,
+            bands_r=right,
+        )
+    return PEQSettings(
+        source_name=source_name,
+        channel_mode=ChannelMode.STEREO,
+        bands=filters,
+    )

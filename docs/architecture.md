@@ -51,7 +51,7 @@ REW_Ad --> Local[REW App / EQ Text Files]
 - Enforces single-writer FIFO for all WiiM network write calls.
 - Default inter-command delay: 100 ms.
 - Supports: retries (up to 3), per-command timeout, cancellation.
-- **Bypassed** only when `supports_batch_write` is confirmed True — in that case, all 10 bands are sent in a single payload.
+- **Bypassed** for a batch write whenever `supports_batch_write` is not confirmed `False` — tri-state: `True` (confirmed) and `None` (undetermined, no connect-time write probe since 2026-07-10) both attempt the single-payload batch write; only a confirmed `False` uses the queued sequential path. The first `None`-state attempt records the outcome (`True`/`False`) on the capabilities object for the rest of the session. When bypassed, all of the device's bands (up to `max_filters`, not always 10 — see `docs/data_models.md`) are sent in a single payload.
 - Reads (non-mutating GET commands) do not go through the queue.
 
 ### Discovery Module

@@ -372,6 +372,38 @@ class TestFiltersPage:
         assert page._error_section.isVisible()
         assert "Failed to parse" in page._error_label.text()
 
+    def test_source_toggle_hides_stale_warnings(self, qtbot) -> None:
+        """Smoke #236: _on_source_toggled() must hide _warnings_section when
+        switching between File Import and Pull from REW API -- previously
+        only the file-import/REW-pull sections themselves were toggled, so
+        a stale warning box from a File Import stayed visible after
+        switching to Pull from REW API."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.show_warnings(["Gain clamped to +6 dB"])
+        assert page._warnings_section.isVisible()
+
+        page._rew_api_source_radio.setChecked(True)
+
+        assert not page._warnings_section.isVisible()
+
+    def test_source_toggle_hides_stale_error(self, qtbot) -> None:
+        """Smoke #236: _on_source_toggled() must hide _error_section when
+        switching source modes -- previously a stale parse-error box from a
+        File Import stayed visible after switching to Pull from REW API."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.show_error("Failed to parse REW file: invalid format")
+        assert page._error_section.isVisible()
+
+        page._rew_api_source_radio.setChecked(True)
+
+        assert not page._error_section.isVisible()
+
     def test_file_import_is_default_source(self, qtbot) -> None:
         """File Import section is visible and RewPullView hidden by default."""
         page = FiltersPage()

@@ -29,6 +29,7 @@ from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import ChannelMode
 from src.models.peq import PEQSettings
 from src.repository.backup_manager import BackupManager
+from src.tests.conftest import iter_src_python_files
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1723,11 +1724,6 @@ _ALLOWED_DIRECT_WRITE_FILES = {
 }
 
 
-def _iter_src_python_files() -> list[Path]:
-    repo_root = Path(__file__).resolve().parents[2]
-    return sorted((repo_root / "src").rglob("*.py"))
-
-
 class TestNoDirectWriteBypass:
     """Every device write must go through SafeWrite/RoomFitSafeWrite (the
     five-step backup/write/read-back/verify/rollback protocol) -- never a
@@ -1743,7 +1739,7 @@ class TestNoDirectWriteBypass:
         repo_root = Path(__file__).resolve().parents[2]
         violations: list[str] = []
 
-        for path in _iter_src_python_files():
+        for path in iter_src_python_files():
             rel_path = path.relative_to(repo_root)
             if rel_path in _ALLOWED_DIRECT_WRITE_FILES:
                 continue

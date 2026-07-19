@@ -7,7 +7,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, model_validator
 
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode, ChannelModeField
+from src.models.channel_mode import ChannelMode, ChannelModeField, resolve_channel_split
+from src.utils.fp_compare import gain_matches
 
 
 class Profile(BaseModel):
@@ -26,7 +27,13 @@ class Profile(BaseModel):
         """Enforce channel-mode/filter-key consistency.
 
         Stereo mode: only `filters` must be set.
-        L/R mode: only `filters_l` and `filters_r` must be set.
+        L/R mode: only `filters_l` and `filters_r` must be set, and neither
+        may be empty -- matching require_lr_filters' contract (an empty
+        channel is treated the same as a missing one, since there's no safe
+        way to reconstruct which channel it was later). Enforcing this here,
+        not just at require_lr_filters' call sites, means a profile that
+        would fail that check can never be constructed or loaded from disk
+        in the first place (branch-quality review, 2026-07-18).
         """
         if self.channel_mode == ChannelMode.STEREO:
             if self.filters is None:
@@ -34,7 +41,7 @@ class Profile(BaseModel):
             if self.filters_l is not None or self.filters_r is not None:
                 raise ValueError("Stereo profile must not have 'filters_l'/'filters_r'")
         else:  # ChannelMode.LR
-            if self.filters_l is None or self.filters_r is None:
+            if not self.filters_l or not self.filters_r:
                 raise ValueError("L/R profile must have 'filters_l' and 'filters_r'")
             if self.filters is not None:
                 raise ValueError("L/R profile must not have 'filters' key")
@@ -47,6 +54,26 @@ class Profile(BaseModel):
         if isinstance(cm, ChannelMode):
             data["channel_mode"] = cm.profile_value
         return data
+
+    def band_counts(self) -> tuple[int, int]:
+        """Count active and total bands for this profile.
+
+        A band is considered active if its gain is non-zero.
+
+        For L/R profiles, returns per-channel counts (each channel
+        separately, using the left channel as representative).
+
+        Returns:
+            Tuple of (active_band_count, total_band_count).
+        """
+        if self.channel_mode == ChannelMode.STEREO:
+            filters = self.filters or []
+        else:
+            filters = self.filters_l or []
+
+        total = len(filters)
+        active = sum(1 for f in filters if not gain_matches(f.gain_db, 0.0))
+        return active, total
 
 
 class BackupRecord(Profile):
@@ -70,3 +97,40 @@ class BackupRecord(Profile):
     # subsystem's enable-state it carries. None for RoomFit backups and any
     # backup file created before this field's introduction.
     pre_write_peq_enabled: bool | None = None
+
+
+def build_profile(
+    name: str,
+    filters: list[CanonicalFilter],
+    channel_mode: str | ChannelMode,
+    filters_l: list[CanonicalFilter] | None = None,
+    filters_r: list[CanonicalFilter] | None = None,
+) -> Profile:
+    """Sanitize name and construct Profile with correct channel mode.
+
+    Removes filesystem-unsafe characters from name.
+    For L/R mode: requires explicit filters_l/filters_r (raises ValueError
+    if missing -- never guesses a channel split).
+    For stereo: uses filters directly.
+
+    Raises:
+        ValueError: L/R mode without explicit filters_l/filters_r.
+    """
+    safe_name = name.translate(str.maketrans("", "", '/\\:*?"<>|'))
+    if not safe_name:
+        safe_name = "Untitled Preset"
+
+    mode, left, right = resolve_channel_split(channel_mode, filters_l, filters_r)
+
+    if mode.is_lr:
+        return Profile(
+            name=safe_name,
+            channel_mode=ChannelMode.LR,
+            filters_l=left,
+            filters_r=right,
+        )
+    return Profile(
+        name=safe_name,
+        channel_mode=ChannelMode.STEREO,
+        filters=filters,
+    )

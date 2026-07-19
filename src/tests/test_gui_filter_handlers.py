@@ -92,7 +92,7 @@ class TestFileImportHappyPath:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, [], list(filters), {}),
         ):
-            await window._do_file_import("/fake/path/eq.txt")
+            await window._primary_workflows._do_file_import("/fake/path/eq.txt")
 
         window._bridge.peq_ready.emit.assert_called_once_with(filters)
 
@@ -120,7 +120,7 @@ class TestFileImportHappyPath:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, warnings, list(filters), {}),
         ):
-            await window._do_file_import("/fake/path/eq.txt")
+            await window._primary_workflows._do_file_import("/fake/path/eq.txt")
 
         window._bridge.peq_ready.emit.assert_called_once_with(filters)
         window._bridge.progress_update.emit.assert_called_once()
@@ -160,7 +160,7 @@ class TestFileImportLR:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             side_effect=_fake_parse,
         ):
-            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+            await window._primary_workflows._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
 
         window._bridge.progress_update.emit.assert_called_once()
         msg = window._bridge.progress_update.emit.call_args[0][0]
@@ -176,7 +176,7 @@ class TestFileImportLR:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, [], list(filters), {}),
         ):
-            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+            await window._primary_workflows._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
 
         window._bridge.progress_update.emit.assert_not_called()
 
@@ -201,7 +201,7 @@ class TestFileImportErrors:
         ):
             # Call the wrapper which catches exceptions
             await window._bridge_wrapper(
-                "file_import", window._do_file_import("/nonexistent/file.txt")
+                "file_import", window._primary_workflows._do_file_import("/nonexistent/file.txt")
             )
 
         window._bridge.operation_error.emit.assert_called_once()
@@ -222,7 +222,7 @@ class TestFileImportErrors:
             ),
         ):
             await window._bridge_wrapper(
-                "file_import", window._do_file_import("/bad/file.txt")
+                "file_import", window._primary_workflows._do_file_import("/bad/file.txt")
             )
 
         window._bridge.operation_error.emit.assert_called_once()
@@ -277,9 +277,10 @@ class TestDevicePullHappyPath:
         mock_adapter = AsyncMock()
         mock_adapter.read_peq = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_device_pull()
+        await window._primary_workflows._do_device_pull()
 
         window._bridge.peq_ready.emit.assert_called_once_with(peq_settings)
 
@@ -303,9 +304,10 @@ class TestDevicePullHappyPath:
         mock_adapter = AsyncMock()
         mock_adapter.read_peq = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_device_pull()
+        await window._primary_workflows._do_device_pull()
 
         # State should have combined L+R filters
         state_filters = window._wizard_controller.state.current_filters
@@ -386,9 +388,9 @@ class TestREWPullHappyPath:
 
         mock_client = AsyncMock()
         mock_client.list_measurements = AsyncMock(return_value=measurements)
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_list_measurements()
+        await window._primary_workflows._do_rew_list_measurements()
 
         window._bridge.rew_measurements_ready.emit.assert_called_once_with(measurements)
 
@@ -400,9 +402,9 @@ class TestREWPullHappyPath:
         """
         mock_client = AsyncMock()
         mock_client.list_measurements = AsyncMock(return_value=[])
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_list_measurements()
+        await window._primary_workflows._do_rew_list_measurements()
 
         window._bridge.rew_measurements_ready.emit.assert_not_called()
         window._bridge.progress_update.emit.assert_called_once()
@@ -419,9 +421,9 @@ class TestREWPullHappyPath:
         window.show()
         mock_client = AsyncMock()
         mock_client.list_measurements = AsyncMock(return_value=[])
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_list_measurements()
+        await window._primary_workflows._do_rew_list_measurements()
 
         msg = window._bridge.progress_update.emit.call_args[0][0]
         assert msg.startswith("__info__")
@@ -432,16 +434,21 @@ class TestREWPullHappyPath:
 
     @pytest.mark.asyncio
     async def test_rew_list_empty_resets_sidebar_load_flag(self, window) -> None:
-        """The empty-measurement early return must clear _sidebar_load_in_progress,
-        otherwise the flag stays stuck True and corrupts the step indicator on
-        the next sidebar-triggered load.
+        """The empty-measurement early return must clear _sidebar_load_in_progress
+        once the info message reaches _on_progress_update (the reset itself
+        now lives there, not in the manager, since the manager has no access
+        to MainWindow's plain attributes), otherwise the flag stays stuck
+        True and corrupts the step indicator on the next sidebar-triggered
+        load.
         """
         mock_client = AsyncMock()
         mock_client.list_measurements = AsyncMock(return_value=[])
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
         window._sidebar_load_in_progress = True
 
-        await window._do_rew_list_measurements()
+        await window._primary_workflows._do_rew_list_measurements()
+        msg = window._bridge.progress_update.emit.call_args[0][0]
+        window._on_progress_update(msg)
 
         assert window._sidebar_load_in_progress is False
 
@@ -455,10 +462,10 @@ class TestREWPullHappyPath:
         mock_client.list_measurements = AsyncMock(
             side_effect=REWNotConnectedError("Cannot connect to REW")
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
         await window._bridge_wrapper(
-            "rew_list", window._do_rew_list_measurements()
+            "rew_list", window._primary_workflows._do_rew_list_measurements()
         )
 
         window._bridge.operation_error.emit.assert_called_once()
@@ -494,9 +501,9 @@ class TestREWPullLR:
         mock_client.get_filters_with_rows = AsyncMock(
             side_effect=[(filters_l, rows_l, {}), (filters_r, rows_r, {})]
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_get_filters_lr("uuid-left", "uuid-right")
+        await window._primary_workflows._do_rew_get_filters_lr("uuid-left", "uuid-right")
 
         window._bridge.progress_update.emit.assert_called_once()
         msg = window._bridge.progress_update.emit.call_args[0][0]
@@ -512,9 +519,9 @@ class TestREWPullLR:
         mock_client.get_filters_with_rows = AsyncMock(
             return_value=(filters, list(filters), {})
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_get_filters_lr("uuid-left", "uuid-right")
+        await window._primary_workflows._do_rew_get_filters_lr("uuid-left", "uuid-right")
 
         window._bridge.progress_update.emit.assert_not_called()
 
@@ -555,7 +562,7 @@ class TestFiltersOrigin:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, [], list(filters), {}),
         ):
-            await window._do_file_import("/fake/path/my_eq.txt")
+            await window._primary_workflows._do_file_import("/fake/path/my_eq.txt")
 
         assert window._wizard_controller.state.filters_origin == (
             "Imported from REW file: my_eq.txt"
@@ -568,7 +575,7 @@ class TestFiltersOrigin:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(filters, [], list(filters), {}),
         ):
-            await window._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
+            await window._primary_workflows._do_file_import_lr("/fake/left.txt", "/fake/right.txt")
 
         assert window._wizard_controller.state.filters_origin == (
             "Imported from REW files: L=left.txt, R=right.txt"
@@ -583,9 +590,10 @@ class TestFiltersOrigin:
         mock_adapter = AsyncMock()
         mock_adapter.read_peq = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_device_pull()
+        await window._primary_workflows._do_device_pull()
 
         assert window._wizard_controller.state.filters_origin == (
             "Pulled from device (source: wifi)"
@@ -600,9 +608,10 @@ class TestFiltersOrigin:
         mock_adapter = AsyncMock()
         mock_adapter.read_roomfit_preset_preview = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_roomfit_pull("Living Room")
+        await window._primary_workflows._do_roomfit_pull("Living Room")
 
         assert window._wizard_controller.state.filters_origin == (
             "RoomFit profile: Living Room"
@@ -617,9 +626,10 @@ class TestFiltersOrigin:
         mock_adapter = AsyncMock()
         mock_adapter.read_peq_preset_preview = AsyncMock(return_value=peq_settings)
         window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
         window._wizard_controller.state.selected_source = "wifi"
 
-        await window._do_load_peq_preset("Movie Night")
+        await window._primary_workflows._do_load_peq_preset("Movie Night")
 
         assert window._wizard_controller.state.filters_origin == (
             "PEQ preset: Movie Night"
@@ -632,9 +642,9 @@ class TestFiltersOrigin:
         mock_client.get_filters_with_rows = AsyncMock(
             return_value=(filters, list(filters), {})
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_get_filters("uuid-123", "Main Seat")
+        await window._primary_workflows._do_rew_get_filters("uuid-123", "Main Seat")
 
         assert window._wizard_controller.state.filters_origin == (
             "Pulled from REW measurement: Main Seat"
@@ -647,9 +657,9 @@ class TestFiltersOrigin:
         mock_client.get_filters_with_rows = AsyncMock(
             return_value=(filters, list(filters), {})
         )
-        window._rew_client = mock_client
+        window._primary_workflows._rew_client = mock_client
 
-        await window._do_rew_get_filters_lr(
+        await window._primary_workflows._do_rew_get_filters_lr(
             "uuid-left", "uuid-right", "Left Seat", "Right Seat"
         )
 

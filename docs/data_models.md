@@ -73,7 +73,7 @@ a `FilterRow` list (`CanonicalFilter | SkippedBand`, defined in `src/translator/
 preserves each skipped band's original position, alongside the plain `list[CanonicalFilter]` used for
 writes. `SkippedBand` carries the original REW type token and the skip reason; the Review table renders
 it as an unnumbered ("N/A"), crossed-out, dimmed row with the reason on hover. Bands cut for exceeding
-the device's band cap (`validate_filters_for_device` in `src/gui/shared_helpers.py`) are represented the
+the device's band cap (`validate_filters_for_device` in `src/translator/wiim_generator.py`) are represented the
 same way, but keep their original frequency/gain/Q for display since — unlike a type-level skip — the
 band itself was valid, just over the limit.
 
@@ -95,20 +95,25 @@ class DeviceCapabilities:
     supports_roomfit: bool              # True if a dedicated RoomFit band set exists; False on WiiM Mini
     supports_roomfit_read: bool         # True if RoomFit bands are readable (Level 2+)
     supports_roomfit_write: bool        # True if RoomFit bands are writable (Level 4)
-    roomfit_level: int                  # 0–4 (see PRD for level definitions); always 0 for WiiM Mini
     supports_lr_filters: bool          # True if independent L/R channel PEQ is available; True on all WiiM devices
     supports_profile_enumeration: bool  # True if device can list saved PEQ presets
-    supports_batch_write: bool          # True if all 10 bands can be set in one payload
-    max_filters: int                    # Number of PEQ bands; 10 on all WiiM devices
+    supports_batch_write: bool | None   # True/False once confirmed by a real write attempt; None until then (no connect-time write probe -- see docs/corrections.md, 2026-07-10)
+    rc_version: str                     # RC subsystem version from GetAcousticCapability (e.g. "1.0"); empty when absent/unsupported -- discriminates RoomCorr* command behavior, see wiim_api_notes.md
+    max_filters: int                    # Number of PEQ bands; 10 on most WiiM devices, 12 on WiiM Amp Ultra firmware 20260409+ (see docs/wiim_api_notes.md)
     model: str                          # e.g. "WiiM Ultra", "WiiM Mini", "WiiM Amp Pro"
     firmware: str                       # e.g. "6.0.1.20"
     uuid: str                           # Device UUID
     mac_address: str                    # Device MAC address
-    role: str                           # "solo", "master", or "slave"
     source_names: list[str]             # Available source names, e.g. ["wifi", "bluetooth"]
     supported_filter_types: list[str]   # WiiM-supported filter types, e.g. ["PEAK","LS","HS","LP","HP"]
     source_aliases: dict[str, str]      # Optional source name aliases from the device capability file
+    capability_file_override: bool      # True if a per-model override from the device capability file was merged in
+    used_generic_capabilities: bool     # True if no model-specific entry was found and generic defaults were used
 ```
+
+RoomFit support is three independent booleans (subsystem present / band-buffer readable / save-write
+confirmed), not a graduated level -- an earlier `roomfit_level` 0-4 field encoded probe *progress* rather
+than device reality and was removed (`docs/corrections.md`, 2026-07-10).
 
 All fields above are populated by `CapabilityProber.probe()`. After probing, `probe()` applies any matching
 per-model override from the device capability file (`src/models/device_capability_file.py`) before returning —

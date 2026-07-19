@@ -109,11 +109,11 @@ class TestSaveLoadRoundTrip:
         assert "filters" not in data
 
 
-# --- list ---
+# --- list_all ---
 
 
-class TestList:
-    """Test list() returns case-insensitive sorted names."""
+class TestListAll:
+    """Test list_all() returns case-insensitive sorted names."""
 
     def test_list_returns_sorted_case_insensitive(self, repo: ProfileRepository) -> None:
         """Profiles are sorted lexicographically, case-insensitive."""
@@ -121,13 +121,13 @@ class TestList:
         repo.save(_make_stereo_profile("alpha"))
         repo.save(_make_stereo_profile("Beta"))
 
-        profiles = repo.list()
+        profiles = repo.list_all()
         names = [p.name for p in profiles]
         assert names == ["alpha", "Beta", "Zebra"]
 
     def test_list_empty(self, repo: ProfileRepository) -> None:
         """Empty repository returns empty list."""
-        assert repo.list() == []
+        assert repo.list_all() == []
 
 
 # --- delete ---
@@ -142,7 +142,7 @@ class TestDelete:
         repo.save(profile)
         repo.delete("test-profile")
 
-        assert repo.list() == []
+        assert repo.list_all() == []
 
     def test_delete_missing_raises(self, repo: ProfileRepository) -> None:
         """Deleting a non-existent profile raises ProfileNotFoundError."""
@@ -170,6 +170,88 @@ class TestRename:
         assert loaded.name == "new-name"
         assert loaded.filters is not None
         assert len(loaded.filters) == 2
+
+    def test_rename_to_nfc_nfd_equivalent_of_own_name_does_not_raise_or_lose_data(
+        self, repo: ProfileRepository
+    ) -> None:
+        """Renaming a profile to a differently-composed (NFC vs NFD) but
+        visually-identical form of its own current name must not raise
+        ProfileNameCollisionError against itself, and -- critically -- must
+        not delete the profile in the process. _profile_path() normalizes
+        to NFC before building the path, so both names map to the same
+        on-disk file; naively fixing only the collision check would leave
+        rename()'s unconditional `if old_name != new_name: old_path.unlink()`
+        deleting the file save() just wrote (old_name/new_name differ as raw
+        strings even though they're the same file), silently destroying the
+        renamed profile. This test only passes if the profile still loads
+        correctly afterward -- checking for "no exception" alone would not
+        have caught that data-loss bug."""
+        nfc_name = unicodedata.normalize("NFC", "café")
+        nfd_name = unicodedata.normalize("NFD", "café")
+        assert nfc_name != nfd_name  # sanity: genuinely different raw strings
+        assert unicodedata.normalize("NFC", nfd_name) == nfc_name  # same normalized path
+
+        repo.save(_make_stereo_profile(nfc_name))
+
+        repo.rename(nfc_name, nfd_name)  # must not raise
+
+        loaded = repo.load(nfd_name)
+        assert loaded.name == nfd_name
+        assert loaded.filters is not None
+        assert len(loaded.filters) == 2
+
+    def test_rename_case_only_leaves_exactly_one_file(
+        self, repo: ProfileRepository
+    ) -> None:
+        """A case-only rename ("MyPreset" -> "mypreset") must leave exactly
+        one file on disk under the new name, on any filesystem.
+
+        Regression test: an earlier fix used a casefolded string comparison
+        to decide whether the old and new paths were "the same file," which
+        is wrong on a case-sensitive filesystem (this project's own WSL2/
+        Ubuntu ext4 test environment) -- there, "MyPreset.json" and
+        "mypreset.json" really are two different files, so the casefolded
+        comparison treated them as equal, skipped the unlink, and left the
+        stale old-cased file behind as an orphan alongside the correctly
+        renamed one. rename() now uses Path.samefile() (stat-based) instead,
+        which asks the OS directly and is correct regardless of the
+        filesystem's own case-folding behaviour.
+        """
+        repo.save(_make_stereo_profile("MyPreset"))
+
+        repo.rename("MyPreset", "mypreset")
+
+        on_disk = sorted(p.name for p in repo._profiles_dir.iterdir())
+        assert on_disk == ["mypreset.json"]
+
+        loaded = repo.load("mypreset")
+        assert loaded.name == "mypreset"
+        assert loaded.filters is not None
+        assert len(loaded.filters) == 2
+
+    def test_rename_to_name_colliding_with_unrelated_profile_still_raises(
+        self, repo: ProfileRepository
+    ) -> None:
+        """A rename whose target normalizes to the same path as a
+        genuinely unrelated, separately-saved profile must still raise --
+        the NFC/NFD self-rename fix (expected_existing_name) must only
+        exempt the caller's own known prior name, not any name. Renaming
+        "widget" to the NFC form of "café" while an unrelated profile
+        already occupies the NFD-equivalent (same normalized path) of
+        "café" is a real foreign collision, not a self-rename."""
+        nfc_name = unicodedata.normalize("NFC", "café")
+        nfd_name = unicodedata.normalize("NFD", "café")
+        assert unicodedata.normalize("NFC", nfd_name) == nfc_name  # same normalized path
+
+        repo.save(_make_stereo_profile("widget"))
+        repo.save(_make_stereo_profile(nfd_name))
+
+        with pytest.raises(ProfileNameCollisionError):
+            repo.rename("widget", nfc_name)
+
+        # Neither profile should have been touched by the failed rename.
+        assert repo.load("widget").name == "widget"
+        assert repo.load(nfd_name).name == nfd_name
 
 
 # --- duplicate ---
@@ -397,7 +479,7 @@ def test_list_sort_order_invariant(names: list[str], tmp_path: object) -> None:
         repo.save(profile)
         saved_names.append(name)
 
-    listed = repo.list()
+    listed = repo.list_all()
     listed_names = [p.name for p in listed]
     expected = sorted(saved_names, key=lambda n: (n.lower(), n))
     assert listed_names == expected

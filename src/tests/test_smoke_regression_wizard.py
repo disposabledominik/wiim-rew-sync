@@ -227,7 +227,9 @@ class TestCtrlRRescanShortcut:
     def test_shortcut_reaches_discovery(self, window) -> None:
         """_on_shortcut_refresh delegates to _on_refresh_requested, which
         schedules the real discovery coroutine via the bridge."""
-        with patch.object(window, "_do_discovery") as mock_do_discovery:
+        with patch.object(
+            window._primary_workflows, "_do_discovery"
+        ) as mock_do_discovery:
             window._on_shortcut_refresh()
 
         window._bridge.run_async.assert_called_once()
@@ -383,18 +385,38 @@ class TestIssue35AllCommonSources:
 
 
 # ---------------------------------------------------------------------------
-# Issue #36: WiiM Mini (roomfit_level >= 2 but in blocklist) -> PEQ_ONLY flow
+# Issue #36: a model known not to support RoomFit -> PEQ_ONLY flow, even if
+# it reports otherwise (model-name distrust now lives in CapabilityProber,
+# not here -- see the class docstring below).
 # ---------------------------------------------------------------------------
 
 
 class TestIssue36MiniRoomfitBlocklist:
-    """Smoke #36: WiiM Mini with roomfit_level=2 forced to PEQ_ONLY flow."""
+    """Smoke #36: a model known not to support RoomFit gets PEQ_ONLY flow
+    even if it reports otherwise.
 
-    def test_wiim_mini_roomfit_level_2_forced_peq_only(self, window) -> None:
-        """WiiM Mini with roomfit_level=2 gets PEQ_ONLY flow (blocklisted)."""
+    The correction lives entirely in CapabilityProber, not here (see
+    test_capability_prober.py::TestRoomfitCapabilityFileOverride and
+    TestRoomFitFallbackProbe, exercised through the real probe() flow rather
+    than a hand-built caps mock): the WiiM_Mini/Muzo_Mini capability-file
+    entry force-overrides supports_roomfit* for that exact model, and
+    CapabilityProber's generic protocol-level detection (empty RoomFit
+    profile list / no acoustic-capability subsystem) independently gets the
+    right answer for any device without needing its name at all -- there is
+    no model-string special-casing anywhere, in CapabilityProber or here.
+    _on_capabilities_ready() simply trusts caps.supports_roomfit_read, which
+    the prober has already corrected by the time this handler runs. The test
+    below confirms that trust: given an already-corrected caps object
+    (supports_roomfit_read=False, regardless of what model name it carries),
+    the wizard still ends up PEQ_ONLY.
+    """
+
+    def test_roomfit_read_false_forces_peq_only_regardless_of_model(self, window) -> None:
+        """caps.supports_roomfit_read=False (however it was determined)
+        always yields PEQ_ONLY -- no model-name logic left in this handler."""
         window._on_device_selected("192.168.1.100")
 
-        caps = _make_caps(model="WiiM Mini", roomfit_level=2, source_names=["wifi", "bluetooth"])
+        caps = _make_caps(model="WiiM Mini", roomfit_level=0, source_names=["wifi", "bluetooth"])
         window._on_capabilities_ready(caps)
 
         assert window._wizard_controller.flow_type == FlowType.PEQ_ONLY
@@ -528,7 +550,7 @@ class TestIssue73StereoImportChannelMode:
             "src.translator.rew_parser.REWParser.parse_file_with_rows",
             return_value=(mock_filters, [], list(mock_filters), {}),
         ):
-            await window._do_file_import("/tmp/stereo_eq.txt")
+            await window._primary_workflows._do_file_import("/tmp/stereo_eq.txt")
 
         # channel_mode should now be "Stereo" (not stale "L/R")
         assert window._wizard_controller.state.channel_mode == ChannelMode.STEREO

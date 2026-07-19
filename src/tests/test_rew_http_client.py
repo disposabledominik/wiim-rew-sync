@@ -82,6 +82,23 @@ async def test_list_measurements_connection_refused_raises_rew_not_connected(
 
 
 @respx.mock
+async def test_list_measurements_timeout_raises_rew_not_connected(
+    client: REWHttpApiClient,
+) -> None:
+    """A read timeout (distinct from connection-refused) also raises
+    REWNotConnectedError rather than propagating a raw httpx exception --
+    previously only httpx.ConnectError was caught, so a REW timeout
+    surfaced as an unmapped error instead of the documented "REW not
+    connected" message."""
+    respx.get(f"{BASE_URL}/measurements").mock(
+        side_effect=httpx.ReadTimeout("Timed out")
+    )
+
+    with pytest.raises(REWNotConnectedError, match="did not respond in time"):
+        await client.list_measurements()
+
+
+@respx.mock
 async def test_list_measurements_500_raises_without_calling_json(
     client: REWHttpApiClient,
 ) -> None:
