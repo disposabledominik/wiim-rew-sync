@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
+from src.utils.paths import ensure_suffix
 
 
 class ExportDialog(QDialog):
@@ -161,10 +162,7 @@ class ExportDialog(QDialog):
             "REW EQ Files (*.txt);;All Files (*)",
         )
         if file_path:
-            path = Path(file_path)
-            # Ensure .txt extension
-            if path.suffix.lower() != ".txt":
-                path = path.with_suffix(".txt")
+            path = ensure_suffix(Path(file_path), ".txt")
             self._stereo_path_edit.setText(str(path))
             self._export_path = path
             self._update_export_button()
@@ -186,8 +184,7 @@ class ExportDialog(QDialog):
             # Ensure _L.txt suffix
             if not path.stem.endswith("_L"):
                 path = path.with_stem(path.stem + "_L")
-            if path.suffix.lower() != ".txt":
-                path = path.with_suffix(".txt")
+            path = ensure_suffix(path, ".txt")
             self._left_path_edit.setText(str(path))
             self._export_path_l = path
 
@@ -216,8 +213,7 @@ class ExportDialog(QDialog):
             # Ensure _R.txt suffix
             if not path.stem.endswith("_R"):
                 path = path.with_stem(path.stem + "_R")
-            if path.suffix.lower() != ".txt":
-                path = path.with_suffix(".txt")
+            path = ensure_suffix(path, ".txt")
             self._right_path_edit.setText(str(path))
             self._export_path_r = path
             self._update_export_button()
