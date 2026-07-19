@@ -10,12 +10,15 @@ Strategies defined here (used across multiple PBT tasks):
 from __future__ import annotations
 
 import inspect
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from hypothesis import strategies as st
+from PySide6.QtWidgets import QApplication
 
+from src.gui.theme import _RESOLVED_THEME_PROPERTY
 from src.models.canonical import CanonicalFilter
 
 
@@ -131,6 +134,26 @@ def _suppress_blocking_message_boxes(monkeypatch):
     monkeypatch.setattr(
         QMessageBox, "information", lambda *a, **kw: QMessageBox.StandardButton.Ok
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_application_stylesheet() -> Generator[None, None, None]:
+    """Undo any global QApplication stylesheet a test applied via ThemeManager.
+
+    A handful of tests construct a real MainWindow, which calls
+    ThemeManager.apply_theme() and sets a QSS stylesheet directly on the
+    *shared* QApplication singleton (pytest-qt reuses one QApplication across
+    the whole session). Left unreset, that stylesheet leaks into every later
+    test that builds a bare widget directly -- their pixel-exact
+    sizeHint/eliding assertions were calibrated against a clean, unstyled
+    widget and fail once real QSS padding is in play. Reset after each test
+    so styling never crosses test boundaries.
+    """
+    yield
+    app = QApplication.instance()
+    if app is not None:
+        app.setStyleSheet("")  # type: ignore[attr-defined]
+        app.setProperty(_RESOLVED_THEME_PROPERTY, None)
 
 
 @pytest.fixture(autouse=True)

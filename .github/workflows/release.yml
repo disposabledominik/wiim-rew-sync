@@ -1,5 +1,9 @@
 name: Release
 
+# Tag convention: vMAJOR.MINOR.PATCH (e.g. v1.2.3). Note the pre-existing
+# v0.1 / v0.2 tags predate this pipeline and are two-part -- they will not
+# (and should not) trigger a release build. All new tags should be three-part
+# semver going forward.
 on:
   push:
     tags:
