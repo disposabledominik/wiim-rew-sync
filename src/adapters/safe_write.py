@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
-from src.models.errors import WiiMConnectionError, WiiMResponseError
+from src.models.errors import BackupError, WiiMConnectionError, WiiMResponseError
 from src.models.peq import PEQSettings
 from src.repository.backup_manager import (
     load_backup_json,
@@ -340,13 +340,14 @@ class SafeWrite:
             # writes -- see clamp_filters_for_verification's docstring), and
             # write_peq() truncates to max_filters when restoring it.
             rollback_read_back = await self._adapter.read_peq(source_name)
-        except (WiiMConnectionError, WiiMResponseError) as exc:
+        except (WiiMConnectionError, WiiMResponseError, BackupError) as exc:
             # The device became unreachable/unresponsive mid-rollback (e.g. a
-            # flaky LAN or hardware disconnect) -- this is just as much a
-            # rollback failure as a verification mismatch below, and must
-            # surface the same structured, loud signal rather than letting a
-            # raw connection exception propagate and lose the "a write was
-            # attempted and rollback could not be verified" context.
+            # flaky LAN or hardware disconnect), or the pre_rollback backup
+            # write itself failed (disk full, permission error) -- either is
+            # just as much a rollback failure as a verification mismatch
+            # below, and must surface the same structured, loud signal rather
+            # than letting a raw exception propagate and lose the "a write
+            # was attempted and rollback could not be verified" context.
             logger.critical(
                 "Rollback FAILED (device unreachable: %s). Manual recovery "
                 "required. Backup file: %s",
@@ -675,7 +676,29 @@ class RoomFitSafeWrite:
         )
 
         if is_new:
-            await self._adapter.delete_roomfit_profile(profile_name)
+            try:
+                await self._adapter.delete_roomfit_profile(profile_name)
+            except (WiiMConnectionError, WiiMResponseError) as exc:
+                # Device became unreachable/unresponsive while removing the
+                # new profile -- surface the same structured, loud signal as
+                # every other rollback-failure path below rather than
+                # letting a raw exception propagate.
+                logger.critical(
+                    "RoomFit rollback FAILED for profile '%s' (device "
+                    "unreachable: %s). Manual recovery required.",
+                    profile_name,
+                    exc,
+                )
+                return WriteResult(
+                    success=False,
+                    rollback_success=False,
+                    backup_path=backup_path,
+                    error_message=(
+                        f"RoomFit profile '{profile_name}' verification failed, "
+                        f"and the new profile could not be removed ({exc}). "
+                        f"Manual recovery required."
+                    ),
+                )
             await self._adapter.restore_roomfit_selection_and_enable_state(
                 original_active_name, original_enabled, profile_name,
                 context=f"writing '{profile_name}'",
@@ -691,15 +714,34 @@ class RoomFitSafeWrite:
             )
 
         assert existing_settings is not None
-        await self._adapter.write_roomfit(
-            source_name,
-            profile_name,
-            existing_settings.bands,
-            channel_mode=existing_settings.channel_mode,
-            filters_l=existing_settings.bands_l,
-            filters_r=existing_settings.bands_r,
-        )
-        rollback_read_back = await self._adapter.read_roomfit(source_name, profile_name)
+        try:
+            await self._adapter.write_roomfit(
+                source_name,
+                profile_name,
+                existing_settings.bands,
+                channel_mode=existing_settings.channel_mode,
+                filters_l=existing_settings.bands_l,
+                filters_r=existing_settings.bands_r,
+            )
+            rollback_read_back = await self._adapter.read_roomfit(source_name, profile_name)
+        except (WiiMConnectionError, WiiMResponseError) as exc:
+            logger.critical(
+                "RoomFit rollback FAILED for profile '%s' (device unreachable: "
+                "%s). Manual recovery required. Backup file: %s",
+                profile_name,
+                exc,
+                backup_path,
+            )
+            return WriteResult(
+                success=False,
+                rollback_success=False,
+                backup_path=backup_path,
+                error_message=(
+                    f"RoomFit profile '{profile_name}' verification failed, and "
+                    f"rollback could not be completed ({exc}). Manual recovery "
+                    f"required. Backup: {backup_path}"
+                ),
+            )
         verify_existing = _clamped_for_verification(
             existing_settings, self._adapter.capabilities.max_filters
         )

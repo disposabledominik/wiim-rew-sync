@@ -6,11 +6,14 @@ from pathlib import Path
 
 
 def ensure_suffix(path: Path, suffix: str) -> Path:
-    """Return *path* with *suffix* enforced, case-insensitively.
+    """Return *path* with *suffix* appended if not already present (case-insensitive).
 
-    Leaves an already-matching suffix untouched (case-preserving) instead of
-    appending a second one.
+    Appends rather than replacing any existing suffix -- Path.with_suffix() would
+    silently drop everything after the last "." instead, which truncates a filename
+    that merely contains an unrelated dot (e.g. "Living Room v1.2" -> "Living Room
+    v1.txt", quietly discarding the ".2"). Appending is idempotent (an already-.txt
+    path is returned unchanged) and never destroys part of a user-typed name.
     """
-    if path.suffix.lower() != suffix.lower():
-        return path.with_suffix(suffix)
-    return path
+    if str(path).lower().endswith(suffix.lower()):
+        return path
+    return Path(str(path) + suffix)

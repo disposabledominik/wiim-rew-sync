@@ -8,38 +8,63 @@ from src.utils.path_safety import sanitize_path_segment
 
 
 @pytest.mark.parametrize(
-    ("value", "expected"),
+    "value",
     [
-        ("normal-uuid-1234", "normal-uuid-1234"),
-        ("My Preset", "My Preset"),
-        ("", "unknown"),
-        (".", "unknown"),
-        ("..", "unknown"),
-        ("../../../etc/passwd", "......etcpasswd"),
-        ("/etc/passwd", "etcpasswd"),
-        ("..\\..\\evil", "....evil"),
-        ("a/b\\c", "abc"),
+        "normal-uuid-1234",
+        "My Preset",
+        "FF31F09E1A2B3C4D",
+        "living-room-v2",
     ],
 )
-def test_sanitize_path_segment(value: str, expected: str) -> None:
-    """Separators and null bytes are stripped; "." / ".." collapse to the fallback."""
-    assert sanitize_path_segment(value) == expected
+def test_sanitize_path_segment_passes_through_safe_values_unchanged(value: str) -> None:
+    """A value with no forbidden characters and no reserved name is returned as-is."""
+    assert sanitize_path_segment(value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        ".",
+        "..",
+        "../../../etc/passwd",
+        "/etc/passwd",
+        "..\\..\\evil",
+        "a/b\\c",
+        "foo\x00bar",
+        "AB/CD",
+        "AABB:CCDD",
+        'foo"bar',
+        "a*b",
+        "a?b",
+        "a<b>c",
+        "a|b",
+    ],
+)
+def test_sanitize_path_segment_rejects_unsafe_values(value: str) -> None:
+    """Any value containing a forbidden character, or equal to "."/"..", is rejected wholesale
+    (not stripped) -- falls back to the sentinel."""
+    assert sanitize_path_segment(value) == "unknown"
+
+
+@pytest.mark.parametrize("name", ["CON", "con", "Aux", "NUL", "COM1", "com9", "LPT1", "lpt9"])
+def test_sanitize_path_segment_rejects_windows_reserved_names(name: str) -> None:
+    """Windows-reserved device names are rejected case-insensitively."""
+    assert sanitize_path_segment(name) == "unknown"
 
 
 def test_sanitize_path_segment_custom_fallback() -> None:
     """A caller-supplied fallback is used instead of the default."""
     assert sanitize_path_segment("", fallback="unknown-device") == "unknown-device"
     assert sanitize_path_segment("..", fallback="unknown-device") == "unknown-device"
+    assert sanitize_path_segment("../evil", fallback="unknown-device") == "unknown-device"
 
 
-def test_sanitize_path_segment_strips_null_byte() -> None:
-    """Null bytes are stripped, not merely rejected."""
-    assert sanitize_path_segment("foo\x00bar") == "foobar"
-
-
-def test_sanitize_path_segment_result_never_contains_separators() -> None:
-    """The sanitized result never contains a path separator, for any input."""
-    for value in ("../../../x", "a/b/../c", "\\\\server\\share", "...."):
-        result = sanitize_path_segment(value)
-        assert "/" not in result
-        assert "\\" not in result
+def test_sanitize_path_segment_is_not_a_collision_vector() -> None:
+    """Two different unsafe inputs must never sanitize to two different, non-fallback strings
+    that happen to collide with each other or with a real legitimate value -- both of these
+    collapse to the *same* fallback rather than to two different mutated strings."""
+    assert sanitize_path_segment("AB/CD") == sanitize_path_segment("ABCD/") == "unknown"
+    # And the fallback itself never equals a value that would pass through unchanged for a
+    # plausible legitimate UUID/profile name.
+    assert sanitize_path_segment("AB/CD") != "ABCD"

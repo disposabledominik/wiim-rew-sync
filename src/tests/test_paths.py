@@ -22,5 +22,18 @@ def test_ensure_suffix_is_idempotent() -> None:
     assert ensure_suffix(Path("foo.txt"), ".txt") == Path("foo.txt")
 
 
-def test_ensure_suffix_replaces_a_different_suffix() -> None:
-    assert ensure_suffix(Path("foo.csv"), ".txt") == Path("foo.txt")
+def test_ensure_suffix_appends_after_a_different_suffix() -> None:
+    """A pre-existing, different suffix is not replaced -- it's kept, with the
+    target suffix appended. Losing information (e.g. that the file was a
+    .csv) is preferable to Path.with_suffix()'s silent truncation below."""
+    assert ensure_suffix(Path("foo.csv"), ".txt") == Path("foo.csv.txt")
+
+
+def test_ensure_suffix_never_truncates_a_name_containing_an_unrelated_dot() -> None:
+    """A version-number-style dot in a user-typed filename must never be
+    silently dropped -- this is the regression Path.with_suffix() caused:
+    Path("Living Room v1.2").with_suffix(".txt") == Path("Living Room v1.txt"),
+    silently discarding the ".2"."""
+    result = ensure_suffix(Path("Living Room v1.2"), ".txt")
+    assert result == Path("Living Room v1.2.txt")
+    assert "v1.2" in str(result)

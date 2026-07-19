@@ -1246,6 +1246,30 @@ class TestRoomFitNewProfile:
         assert write_call.kwargs["filters_l"] == left
         assert write_call.kwargs["filters_r"] == right
 
+    async def test_new_profile_delete_disconnect_returns_result_not_exception(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """A device disconnect while deleting the new (verification-failed)
+        profile must surface as a structured WriteResult(rollback_success=False),
+        not propagate as a raw exception -- mirrors SafeWrite._rollback's
+        equivalent protection for the PEQ path."""
+        intended_bands = _make_bands(freq=100.0)
+        bad_readback = _make_settings(bands=_make_bands(freq=999.0))
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = []
+        mock_roomfit_adapter.read_roomfit.return_value = bad_readback
+        mock_roomfit_adapter.delete_roomfit_profile.side_effect = WiiMConnectionError(
+            "device unreachable"
+        )
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "New Profile", intended_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is False
+        assert result.rollback_success is False
+        assert result.error_message is not None
+        assert "device unreachable" in result.error_message
+
 
 class TestRoomFitOverwriteProfile:
     """Profile already existed -> rollback shape is RESTORE."""
@@ -1298,6 +1322,35 @@ class TestRoomFitOverwriteProfile:
         mock_roomfit_adapter.delete_roomfit_profile.assert_not_called()
         # write_roomfit called twice: once for the new bands, once to restore
         assert mock_roomfit_adapter.write_roomfit.call_count == 2
+
+    async def test_overwrite_rollback_write_disconnect_returns_result_not_exception(
+        self, roomfit_safe_write: RoomFitSafeWrite, mock_roomfit_adapter: AsyncMock
+    ) -> None:
+        """A device disconnect during the rollback write (restoring the
+        pre-existing profile's bands) must surface as a structured
+        WriteResult(rollback_success=False), not propagate as a raw
+        exception -- mirrors SafeWrite._rollback's equivalent protection."""
+        new_bands = _make_bands(freq=100.0)
+        existing = _make_settings(bands=_make_bands(freq=200.0))
+        bad_readback = _make_settings(bands=_make_bands(freq=999.0))
+        mock_roomfit_adapter.list_roomfit_profiles.return_value = [{"Name": "Existing"}]
+        mock_roomfit_adapter.read_roomfit.side_effect = [
+            existing,       # backup read
+            bad_readback,   # post-write verify read: mismatch -> triggers rollback
+        ]
+        mock_roomfit_adapter.write_roomfit.side_effect = [
+            None,                                       # forward write succeeds
+            WiiMConnectionError("device unreachable"),   # rollback write disconnects
+        ]
+
+        result = await roomfit_safe_write.execute(
+            "wifi", "Existing", new_bands, ChannelMode.STEREO
+        )
+
+        assert result.success is False
+        assert result.rollback_success is False
+        assert result.error_message is not None
+        assert "device unreachable" in result.error_message
 
     async def test_overwrite_mismatch_restore_failure_logs_critical(
         self,
