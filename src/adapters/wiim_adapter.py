@@ -536,8 +536,8 @@ class WiiMAdapter:
             if known is True:
                 logger.warning(
                     "Batch PEQ write previously worked but was rejected this "
-                    "time (%r); falling back to sequential and re-probing on "
-                    "the next write.",
+                    "time (%r); falling back to sequential writes for the "
+                    "rest of this session.",
                     resp,
                 )
             else:

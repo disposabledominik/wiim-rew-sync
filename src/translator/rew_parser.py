@@ -149,7 +149,7 @@ def _validate_frequency(
 ) -> None:
     """Raise ValidationError if frequency is outside 10-22000 Hz."""
     if not (FREQ_MIN <= freq <= FREQ_MAX):
-        msg = f"Frequency {freq} Hz is outside valid range 10-22000 Hz"
+        msg = f"Frequency {freq} Hz is outside valid range {FREQ_MIN:g}-{FREQ_MAX:g} Hz"
         if line_number is not None:
             msg = f"Line {line_number}: {msg}"
         elif band_index is not None:
