@@ -27,6 +27,7 @@ from src.adapters.capability_prober import CapabilityProber
 from src.adapters.command_queue import WiiMCommandQueue
 from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
 from src.adapters.wiim_adapter import WiiMAdapter
+from src.adapters.wiim_commands import encode_wiim_command
 from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
 from src.models.canonical import CanonicalFilter
@@ -174,19 +175,14 @@ async def _probe_sources(
     A source is considered to have custom data if any band has non-zero gain
     or a non-PEAK/non-OFF filter type.
     """
-    import json
-    from urllib.parse import quote
-
     client = WiiMHttpClient(device, timeout=timeout)
     results: list[tuple[str, str, bool]] = []
     try:
         for source in _CANONICAL_SOURCES:
-            payload = json.dumps({
-                "source_name": source,
-                "pluginURI": "http://moddevices.com/plugins/caps/EqNp",
-            })
             try:
-                resp = await client.command(f"EQGetLV2SourceBandEx:{quote(payload)}")
+                resp = await client.command(
+                    encode_wiim_command("EQGetLV2SourceBandEx", source_name=source)
+                )
                 if not isinstance(resp, dict) or "channelMode" not in resp:
                     continue
                 mode = str(resp["channelMode"])
@@ -202,6 +198,15 @@ async def _probe_sources(
     return results
 
 
+# Threshold below which a gain is considered indistinguishable from silence
+# (i.e. "not customized"), for this diagnostic probe only. Deliberately not
+# fp_compare.GAIN_TOLERANCE_DB (0.05 dB) -- that constant answers a different
+# question (does a read-back gain match an intended one within the device's
+# write/verify precision), and swapping it in here would silently reclassify
+# any gain in (0.001, 0.05] dB from "customized" to "default."
+_ZERO_GAIN_EPSILON = 0.001
+
+
 def _has_custom_data(bands: list[dict[str, object]]) -> bool:
     """Check if band data contains any non-default values.
 
@@ -210,7 +215,7 @@ def _has_custom_data(bands: list[dict[str, object]]) -> bool:
     for entry in bands:
         param_name = str(entry.get("param_name", ""))
         value = float(str(entry.get("value", 0.0)))
-        if param_name.endswith("_gain") and abs(value) > 0.001:
+        if param_name.endswith("_gain") and abs(value) > _ZERO_GAIN_EPSILON:
             return True
         if param_name.endswith("_mode") and value not in (-1.0, 1.0):
             # Non-default mode (LS, HS, LP, HP)

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.adapters.safe_write import WriteResult
+from src.adapters.wiim_commands import encode_wiim_command
 from src.cli import main as cli
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
@@ -1192,3 +1193,69 @@ class TestLoadPreset:
             ])
 
         assert exc_info.value.code == 0
+
+
+class TestProbeSources:
+    """Tests for _probe_sources/_has_custom_data (cmd_diagnose's source probe)."""
+
+    async def test_probe_sources_command_matches_encode_wiim_command(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The command string sent must match encode_wiim_command's output
+        exactly -- that's the single hardware-validated shape for this
+        command family (also used in production by WiiMAdapter/
+        CapabilityProber), rather than a hand-rolled, differently-key-ordered
+        payload built locally."""
+        client_instance = AsyncMock()
+        client_instance.command = AsyncMock(
+            return_value={"channelMode": "Stereo", "EQBand": []}
+        )
+        client_instance.close = AsyncMock()
+        monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
+
+        await cli._probe_sources("192.168.1.50", timeout=5.0)
+
+        expected = encode_wiim_command("EQGetLV2SourceBandEx", source_name="wifi")
+        sent_commands = [c.args[0] for c in client_instance.command.call_args_list]
+        assert expected in sent_commands
+
+    async def test_probe_sources_reports_channel_mode_and_custom_data(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A source with a non-default gain is reported as has_custom_data=True."""
+        client_instance = AsyncMock()
+        client_instance.command = AsyncMock(
+            return_value={
+                "channelMode": "Stereo",
+                "EQBand": [{"param_name": "1_gain", "value": "3.0"}],
+            }
+        )
+        client_instance.close = AsyncMock()
+        monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
+
+        results = await cli._probe_sources("192.168.1.50", timeout=5.0)
+
+        assert ("wifi", "Stereo", True) in results
+
+
+class TestHasCustomData:
+    """Tests for _has_custom_data's zero-gain epsilon."""
+
+    def test_gain_within_epsilon_is_not_custom(self) -> None:
+        bands = [{"param_name": "1_gain", "value": "0.0005"}]
+        assert cli._has_custom_data(bands) is False
+
+    def test_gain_above_epsilon_is_custom(self) -> None:
+        bands = [{"param_name": "1_gain", "value": "0.01"}]
+        assert cli._has_custom_data(bands) is True
+
+    def test_non_default_mode_is_custom(self) -> None:
+        bands = [{"param_name": "1_mode", "value": "0.0"}]  # LS, not PEAK/OFF
+        assert cli._has_custom_data(bands) is True
+
+    def test_default_mode_and_zero_gain_is_not_custom(self) -> None:
+        bands = [
+            {"param_name": "1_mode", "value": "1.0"},
+            {"param_name": "1_gain", "value": "0.0"},
+        ]
+        assert cli._has_custom_data(bands) is False
