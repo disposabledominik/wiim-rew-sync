@@ -3,16 +3,19 @@
 CLAUDE.md: "Adapters are injected via constructor... never instantiate an
 adapter inside business logic." src/gui/adapter_factories.py is the one
 place allowed to call WiiMAdapter()/WiiMHttpClient()/CapabilityProber()/
-REWHttpApiClient() directly; MainWindow takes these as constructor-injected
-factory callables defaulting to that module's functions (see D1 in
-docs/backlog.md / MainWindow.__init__).
+REWHttpApiClient()/SafeWrite()/RoomFitSafeWrite() directly; MainWindow takes
+these as constructor-injected factory callables (or, for the latter two,
+lambdas delegating to that module's factory functions) defaulting to that
+module's functions (see D1 in docs/backlog.md / MainWindow.__init__).
 
 Mirrors test_safe_write.py::TestNoDirectWriteBypass's grep-based pattern
 (reusing its iter_src_python_files() helper from conftest.py) for the same
 reason: a cheap CI check beats waiting for a manual audit to notice a
 regression -- 4 such direct-instantiation call sites were found and fixed
 in main_window.py by exactly that kind of manual audit before this test
-existed.
+existed. SafeWrite/RoomFitSafeWrite were added to this pattern after a
+follow-up review found main_window.py constructing them directly, outside
+this guard's original scope.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from src.tests.conftest import close_coroutine_tree, iter_src_python_files
 
 _DIRECT_ADAPTER_INSTANTIATION_PATTERN = re.compile(
     r"\bWiiMAdapter\(|\bWiiMHttpClient\(|\bCapabilityProber\(|\bREWHttpApiClient\("
+    r"|\bSafeWrite\(|\bRoomFitSafeWrite\("
 )
 _ALLOWED_DIRECT_INSTANTIATION_FILES = {
     Path("src/gui/adapter_factories.py"),

@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from src.adapters.capability_prober import CapabilityProber
 from src.adapters.rew_http_client import REWHttpApiClient
+from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.models.capabilities import DeviceCapabilities
+from src.repository.backup_manager import BackupManager
 
 
 def make_rew_client() -> REWHttpApiClient:
@@ -38,3 +40,15 @@ def make_capability_prober(client: WiiMHttpClient) -> CapabilityProber:
 def make_wiim_adapter(client: WiiMHttpClient, caps: DeviceCapabilities) -> WiiMAdapter:
     """Construct a WiiM adapter for the given client and probed capabilities."""
     return WiiMAdapter(client, caps)
+
+
+def make_safe_write(adapter: WiiMAdapter, backup_manager: BackupManager) -> SafeWrite:
+    """Construct the PEQ safe-write protocol wrapper for the given adapter."""
+    return SafeWrite(adapter, backup_manager)
+
+
+def make_roomfit_safe_write(
+    adapter: WiiMAdapter, backup_manager: BackupManager
+) -> RoomFitSafeWrite:
+    """Construct the RoomFit safe-write protocol wrapper for the given adapter."""
+    return RoomFitSafeWrite(adapter, backup_manager)

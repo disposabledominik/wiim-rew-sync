@@ -37,13 +37,14 @@ from PySide6.QtWidgets import (
 
 from src.adapters.capability_prober import CapabilityProber
 from src.adapters.rew_http_client import MeasurementSummary, REWHttpApiClient
-from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
 from src.gui.adapter_factories import (
     make_capability_prober,
     make_rew_client,
+    make_roomfit_safe_write,
+    make_safe_write,
     make_wiim_adapter,
     make_wiim_http_client,
 )
@@ -280,9 +281,14 @@ class MainWindow(QMainWindow):
         # Built once, shared by both PrimaryWorkflowManager and
         # SecondaryWorkflowManager's configure() calls below -- avoids
         # defining the same two lambdas twice (branch-quality review,
-        # 2026-07-17).
-        self._safe_write_factory = lambda adapter: SafeWrite(adapter, self._backup_manager)
-        self._roomfit_safe_write_factory = lambda adapter: RoomFitSafeWrite(
+        # 2026-07-17). Delegates construction to adapter_factories.py, the
+        # one file allowed to name these classes directly (mirrors the
+        # WiiMAdapter/WiiMHttpClient/CapabilityProber/REWHttpApiClient
+        # factories just below).
+        self._safe_write_factory = lambda adapter: make_safe_write(
+            adapter, self._backup_manager
+        )
+        self._roomfit_safe_write_factory = lambda adapter: make_roomfit_safe_write(
             adapter, self._backup_manager
         )
 
