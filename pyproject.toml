@@ -134,7 +134,7 @@ strict_equality = true
 extra_checks = true
 
 [[tool.mypy.overrides]]
-module = ["PySide6.*", "zeroconf.*", "respx.*"]
+module = ["PySide6.*", "zeroconf.*", "respx.*", "src._version"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

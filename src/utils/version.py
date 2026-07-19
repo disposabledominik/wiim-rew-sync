@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib.metadata
 
-_FALLBACK_VERSION = "0.0.0-dev"
+_FALLBACK_VERSION = "0.0.0.dev0"
 
 
 def get_app_version() -> str:
@@ -23,7 +23,7 @@ def get_app_version() -> str:
     try:
         from src._version import __version__
 
-        return __version__
+        return str(__version__)
     except ImportError:
         pass
 
