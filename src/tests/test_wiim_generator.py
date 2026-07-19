@@ -8,8 +8,13 @@ from __future__ import annotations
 import logging
 
 from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 from src.translator._warnings import FilterRow, SkippedBand
-from src.translator.wiim_generator import generate_wiim_band_array, validate_filters_for_device
+from src.translator.wiim_generator import (
+    generate_wiim_band_array,
+    resolve_review_validation,
+    validate_filters_for_device,
+)
 from src.translator.wiim_parser import parse_wiim_band_array
 
 # ---------------------------------------------------------------------------
@@ -577,3 +582,122 @@ class TestValidateFiltersForDevice:
         assert len(truncated) == 1
         assert rows == filters
         assert warnings == []
+
+
+# ---------------------------------------------------------------------------
+# Test: resolve_review_validation() -- channel-mode branching + validation
+# (moved out of MainWindow._validate_and_populate_review, round-4 review
+# finding #7, 2026-07-19)
+# ---------------------------------------------------------------------------
+
+
+class _FakePeqData:
+    """Minimal duck-typed stand-in for a PEQSettings-like read result --
+    resolve_review_validation() only ever reads these 3 attributes via
+    getattr(), never isinstance-checks the real type."""
+
+    def __init__(
+        self,
+        channel_mode: object = None,
+        bands_l: list[CanonicalFilter] | None = None,
+        bands_r: list[CanonicalFilter] | None = None,
+    ) -> None:
+        self.channel_mode = channel_mode
+        self.bands_l = bands_l
+        self.bands_r = bands_r
+
+
+class TestResolveReviewValidation:
+    def test_explicit_lr_bands_validates_each_channel_independently(self) -> None:
+        left = [_peak(freq=100.0)]
+        right = [_peak(freq=200.0), _peak(freq=300.0)]
+        peq_data = _FakePeqData(channel_mode=ChannelMode.LR, bands_l=left, bands_r=right)
+
+        result = resolve_review_validation(
+            peq_data, ChannelMode.STEREO, [], [], [], [], 10, None,
+        )
+
+        assert result is not None
+        assert result.resolved_channel_mode == ChannelMode.LR
+        assert result.filters_l == left
+        assert result.filters_r == right
+        assert result.current_filters == left + right
+        # Stereo-only fields stay at their empty defaults
+        assert result.clamping_map == {}
+        assert result.rows == []
+
+    def test_explicit_lr_bands_prefixes_warnings_by_channel(self) -> None:
+        left = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=20.0, q=1.0)]
+        right = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-20.0, q=1.0)]
+        peq_data = _FakePeqData(channel_mode=ChannelMode.LR, bands_l=left, bands_r=right)
+
+        result = resolve_review_validation(
+            peq_data, ChannelMode.STEREO, [], [], [], [], 10, None,
+        )
+
+        assert result is not None
+        assert any(w.startswith("Left:") for w in result.warnings)
+        assert any(w.startswith("Right:") for w in result.warnings)
+
+    def test_lr_mode_without_explicit_bands_guard_fires(self, caplog) -> None:
+        """Reaching L/R mode with no explicit bands_l/bands_r on peq_data is
+        an invariant break (every real producer always supplies both) --
+        refuse to guess a channel split, log, and return None rather than
+        silently showing wrong-channel data (same class of bug as smoke
+        #92/#93)."""
+        log = logging.getLogger("wiim_rew_sync.app")
+        log.propagate = True
+        try:
+            with caplog.at_level(logging.ERROR, logger="wiim_rew_sync.app"):
+                result = resolve_review_validation(
+                    object(), ChannelMode.LR, [], [], [], [], 10, None,
+                )
+        finally:
+            log.propagate = False
+
+        assert result is None
+        assert any(
+            "refusing" in record.message.lower() for record in caplog.records
+        )
+
+    def test_stereo_mode_validates_combined_filters(self) -> None:
+        filters = [_peak(freq=100.0), _peak(freq=200.0)]
+
+        result = resolve_review_validation(
+            object(), ChannelMode.STEREO, filters, [], [], [], 10, None,
+        )
+
+        assert result is not None
+        assert result.resolved_channel_mode == ChannelMode.STEREO
+        assert result.current_filters == filters
+        # L/R-only fields stay at their empty defaults
+        assert result.filters_l == []
+        assert result.filters_r == []
+
+    def test_stereo_mode_truncates_and_flags_clamping(self) -> None:
+        filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0 + i, gain_db=20.0, q=1.0)
+            for i in range(12)
+        ]
+
+        result = resolve_review_validation(
+            object(), ChannelMode.STEREO, filters, [], [], [], 10, None,
+        )
+
+        assert result is not None
+        assert len(result.current_filters) == 10
+        assert result.clamping_map
+        assert any("Only the first" in w for w in result.warnings)
+
+    def test_empty_pending_rows_falls_back_to_filters(self) -> None:
+        """An empty (not None) pending_rows list must still be treated as
+        "nothing pending" -- validate_filters_for_device() falls back to
+        `filters` itself for row display order, same as passing None."""
+        filters = [_peak(freq=100.0)]
+
+        result = resolve_review_validation(
+            object(), ChannelMode.STEREO, filters, [], [], [], 10, None,
+        )
+
+        assert result is not None
+        assert result.rows == filters

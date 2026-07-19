@@ -4,7 +4,7 @@ Tests the secondary workflows (undo, profile recall) by driving the async
 methods directly with mocked adapter factories and verifying signal
 emissions.
 
-Note: copy-preset-to-device coverage (_do_copy_preset_to_device,
+Note: copy-preset-to-device coverage (_write_preset_to_adapter,
 _do_copy_presets_batch_multi, _do_copy_local_profile_to_devices, etc.) lives
 in test_smoke_regression_operations.py instead of here (issue26/34/58/69/74/
 78/79/153/194 and others) -- those characterization tests were written

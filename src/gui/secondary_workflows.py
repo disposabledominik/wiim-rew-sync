@@ -526,7 +526,10 @@ class SecondaryWorkflowManager(QObject):
         target device once and reuse the adapter across every preset copied
         to it, instead of reconnecting + re-probing capabilities on every
         (preset, device) pair -- the connect step doesn't change between
-        presets copied seconds apart in the same batch.
+        presets copied seconds apart in the same batch. `_do_copy_preset_to_device`
+        itself was later deleted (round-4 review finding #10, 2026-07-19) once
+        this method became the sole production write primitive and the older
+        one had zero remaining callers.
 
         No per-item success banner: earlier (pre-Phase-D) code showed a
         StatusBanner success message after every individual (preset,
@@ -604,53 +607,6 @@ class SecondaryWorkflowManager(QObject):
             await target_adapter.save_peq_profile(
                 target_source, preset_name
             )
-
-    async def _do_copy_preset_to_device(
-        self,
-        preset_name: str,
-        preset_type: str,
-        target_ip: str,
-        target_source: str,
-        filters: list[CanonicalFilter],
-        channel_mode: ChannelMode,
-        peq_settings: PEQSettings,
-    ) -> None:
-        """Connect to a target device and write one already-read preset to it.
-
-        Single-item entry point (also used directly by tests). The batch
-        path (`_write_preset_copies_to_devices`) connects once per device
-        instead of calling this per (preset, device) pair, to avoid
-        redundant re-probing (branch-quality review, 2026-07-17) -- see
-        `_write_preset_to_adapter` for the actual write/verify/save logic.
-
-        The read/preview step happens once, earlier, via
-        _read_preset_to_copy() -- shared across every target device this
-        preset is being copied to (#171).
-
-        Args:
-            preset_name: Name of the preset/profile to copy.
-            preset_type: "PEQ" or "RoomFit".
-            target_ip: IP address of the target device.
-            target_source: Target source name on the remote device.
-            filters: Filters read from the source preset (see _read_preset_to_copy).
-            channel_mode: Channel mode of the source preset.
-            peq_settings: Full PEQSettings read from the source preset (carries
-                bands_l/bands_r for L/R mode).
-        """
-        assert self._wiim_http_client_factory is not None
-        assert self._capability_prober_factory is not None
-        assert self._target_adapter_factory is not None
-
-        target_client = self._wiim_http_client_factory(target_ip)
-        try:
-            target_caps = await self._capability_prober_factory(target_client).probe()
-            target_adapter = self._target_adapter_factory(target_client, target_caps)
-            await self._write_preset_to_adapter(
-                target_adapter, preset_name, preset_type, target_source,
-                filters, channel_mode, peq_settings,
-            )
-        finally:
-            await target_client.close()
 
     async def _write_preset_copies_to_devices(
         self,

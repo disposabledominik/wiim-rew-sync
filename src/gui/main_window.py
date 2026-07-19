@@ -234,11 +234,12 @@ class MainWindow(QMainWindow):
                 the real adapter (make_capability_prober).
             wiim_adapter_factory: Constructs a WiiM adapter for a given
                 client + probed capabilities. Overridable for tests;
-                defaults to the real adapter (make_wiim_adapter). Distinct
-                from the per-connection `wiim_adapter_factory` lambda passed
-                to PrimaryWorkflowManager/SecondaryWorkflowManager below --
-                that one captures a specific `caps` value per device
-                connection and calls this one internally.
+                defaults to the real adapter (make_wiim_adapter). This is
+                the same callable passed as `target_adapter_factory` to
+                SecondaryWorkflowManager.configure() below -- construction
+                is identical for the currently-connecting device and an
+                unfamiliar copy-to-device target, so one factory serves
+                both.
         """
         super().__init__()
 
@@ -1510,9 +1511,10 @@ class MainWindow(QMainWindow):
     ) -> tuple[list[str], int] | None:
         """Validate filters against device limits and populate ReviewPage.
 
-        Branches on channel mode (smoke #28): explicit L/R bands supplied
-        by peq_data, wizard-state L/R without explicit bands (a guard
-        against an invariant break, see below), or stereo.
+        Thin pass-through to translator.wiim_generator.resolve_review_validation()
+        (the actual validation/branching logic, moved out of src/gui/ per
+        CLAUDE.md's "GUI has zero business logic" rule -- round-4 review
+        finding #7, 2026-07-19) plus this class's own state/widget updates.
 
         Returns:
             (warnings, validated_count) on success, or None if the
@@ -1520,7 +1522,7 @@ class MainWindow(QMainWindow):
             error banner; the caller must return without advancing the
             wizard.
         """
-        from src.translator.wiim_generator import validate_filters_for_device
+        from src.translator.wiim_generator import resolve_review_validation
 
         # Determine device max_filters and supported filter types
         max_filters = DEFAULT_MAX_BANDS
@@ -1535,87 +1537,56 @@ class MainWindow(QMainWindow):
                 getattr(self._device_caps, "supported_filter_types", None) or None
             )
 
-        channel = state.channel_mode
+        # Read pending-rows/notes state before resolve_review_validation()'s
+        # result is used to clear it below -- order matters, the validated
+        # result is built from these fields' pre-clear values.
+        result = resolve_review_validation(
+            peq_data,
+            state.channel_mode,
+            state.current_filters,
+            state.pending_rows,
+            state.pending_rows_l,
+            state.pending_rows_r,
+            max_filters,
+            supported_filter_types,
+        )
 
-        # Check if peq_data carries explicit L/R bands
-        peq_channel = getattr(peq_data, "channel_mode", None)
-        bands_l = getattr(peq_data, "bands_l", None)
-        bands_r = getattr(peq_data, "bands_r", None)
-
-        if (
-            peq_channel is not None
-            and is_lr_mode(peq_channel)
-            and bands_l is not None
-            and bands_r is not None
-        ):
-            # Update wizard state to reflect actual L/R mode from device
-            state.channel_mode = ChannelMode.LR
-            channel = ChannelMode.LR
-
-            # Validate each channel independently
-            validated_l, warnings_l, clamping_l, rows_l = validate_filters_for_device(
-                list(bands_l), max_filters, state.pending_rows_l or None,
-                supported_filter_types,
-            )
-            validated_r, warnings_r, clamping_r, rows_r = validate_filters_for_device(
-                list(bands_r), max_filters, state.pending_rows_r or None,
-                supported_filter_types,
-            )
-            notes_l = state.pending_conversion_notes_l
-            notes_r = state.pending_conversion_notes_r
-            self._clear_pending_lr_rows()
-
-            # Merge warnings — prefix with channel so the combined status
-            # text (joined with " | ") doesn't leave the user guessing
-            # which side a truncation/clamping warning applies to.
-            all_warnings = [f"Left: {w}" for w in warnings_l] + [
-                f"Right: {w}" for w in warnings_r
-            ]
-
-            # Update state with truncated filters and separate L/R lists
-            state.current_filters = validated_l + validated_r
-            state.filters_l = validated_l
-            state.filters_r = validated_r
-
-            self._review_page.set_lr_filters(
-                validated_l,
-                validated_r,
-                clamping_l,
-                clamping_r,
-                rows_l,
-                rows_r,
-                notes_l,
-                notes_r,
-            )
-        elif channel.is_lr:
-            # Every producer of peq_ready in L/R mode (file_import_lr,
-            # device_pull, roomfit_pull, rew_get_filters_lr) always
-            # supplies explicit bands_l/bands_r — read_peq/read_roomfit
-            # raise rather than return L/R mode without both. Reaching
-            # this branch means that invariant broke; refuse to guess
-            # a channel split instead of silently writing wrong-channel
-            # data (same class of bug as smoke #92/#93).
-            logger.error(
-                "L/R mode without explicit bands_l/bands_r — refusing "
-                "to guess channel split"
-            )
+        if result is None:
+            # Logged inside resolve_review_validation() already; this only
+            # needs to surface it to the user and reset pending state.
             self._status_banner.show_error(
                 "Could not determine L/R channel data for this source"
             )
             self._clear_pending_lr_rows()
             return None
-        else:
-            # Stereo: validate the full list
-            validated, all_warnings, clamping_map, rows = validate_filters_for_device(
-                state.current_filters, max_filters, state.pending_rows or None,
-                supported_filter_types,
+
+        state.channel_mode = result.resolved_channel_mode
+        state.current_filters = result.current_filters
+
+        if result.resolved_channel_mode.is_lr:
+            state.filters_l = result.filters_l
+            state.filters_r = result.filters_r
+            notes_l = state.pending_conversion_notes_l
+            notes_r = state.pending_conversion_notes_r
+            self._clear_pending_lr_rows()
+            self._review_page.set_lr_filters(
+                result.filters_l,
+                result.filters_r,
+                result.clamping_l,
+                result.clamping_r,
+                result.rows_l,
+                result.rows_r,
+                notes_l,
+                notes_r,
             )
+        else:
             notes = state.pending_conversion_notes
             self._clear_pending_stereo_rows()
-            state.current_filters = validated
-            self._review_page.set_filters(validated, clamping_map, rows, notes)
+            self._review_page.set_filters(
+                result.current_filters, result.clamping_map, result.rows, notes
+            )
 
-        return all_warnings, len(state.current_filters)
+        return result.warnings, len(state.current_filters)
 
     @Slot(object)
     def _on_peq_ready(self, peq_data: object) -> None:
@@ -2134,10 +2105,13 @@ class MainWindow(QMainWindow):
     # _on_preset_load_into_editor/_export_filters_as_rew now calls the
     # manager directly.
 
-    # _read_preset_to_copy, _do_copy_preset_to_device,
+    # _read_preset_to_copy, _write_preset_to_adapter,
     # _write_preset_copies_to_devices, _do_copy_presets_batch_multi,
     # _do_copy_local_profile_to_devices moved to SecondaryWorkflowManager
     # (src/gui/secondary_workflows.py) — docs/backlog.md item 2, Phase D.
+    # (_do_copy_preset_to_device, also moved here at Phase D, was deleted --
+    # round-4 review finding #10 -- once _write_preset_to_adapter became the
+    # actual production write primitive and it had zero remaining callers.)
     # Dispatch from _on_copy_to_device_requested/
     # _on_local_preset_copy_to_device_requested now calls the manager
     # directly; results arrive via copy_batch_complete/
@@ -2808,7 +2782,7 @@ class MainWindow(QMainWindow):
         - PresetsDeviceView "Copy to Another Device" → dispatched from
           MainWindow's own _do_copy_presets_batch_multi, which calls the
           read/write primitives on SecondaryWorkflowManager
-          (_read_preset_to_copy / _do_copy_preset_to_device).
+          (_read_preset_to_copy / _write_preset_to_adapter).
         - MyPresetsView "Load" → profile recall → populate ReviewPage
         - PushPage "Undo" → undo_last_push flow
         - SecondaryWorkflowManager completion signals → UI updates

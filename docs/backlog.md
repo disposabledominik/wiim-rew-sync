@@ -434,14 +434,54 @@ echoes what a device/file actually returned. Reverted before commit; not landed.
 Also confirmed and left as-is (matches the existing severity/rationale from round 3's disposition
 list — same reasoning, not re-litigated): the `_store_lr_state` `self.parent()` duck-typing and the
 `_do_copy_presets_batch_multi` empty-`target_devices` edge case were both re-flagged by this round
-and are the same items already recorded above. Two larger findings deferred rather than fixed in
-this round: extracting `_validate_and_populate_review()`'s ~110 lines of validation/branching logic
-out of `main_window.py` (a real violation of CLAUDE.md's "GUI has zero business logic" rule, and
-testable without Qt today, but a large enough change to warrant its own pass rather than folding
-into this round); and `_do_copy_preset_to_device` being a test-only production method with no
-production callers (kept — it's a legitimate isolated-primitive test entry point, not obviously
-dead code) plus `adapter_factories.py`'s DI surface not being exercised by non-default factory
-substitution in any current test (a judgment call, not a bug).
+and are the same items already recorded above.
+
+**Update (2026-07-19): the 3 deferred findings above (#7 extraction, #10 dead method, #11 DI audit)
+were tackled in a follow-up pass, all closed for real rather than re-affirmed as "leave as-is":**
+
+- **#7 — extracted `_validate_and_populate_review()`'s validation/branching logic.** Added
+  `resolve_review_validation()` (+ `ReviewValidationResult` dataclass) to
+  `src/translator/wiim_generator.py`, right after `validate_filters_for_device()` which it directly
+  builds on (same relationship `build_peq_settings()` has to `resolve_channel_split()` in `models/`).
+  `_validate_and_populate_review()` in `main_window.py` shrank from ~110 lines to a ~55-line thin
+  wrapper: call the pure function, then only state assignment + `ReviewPage.set_lr_filters()`/
+  `set_filters()` calls remain in `src/gui/`. Two pieces of logic moved into the pure function beyond
+  the bare branch bodies: the `pending_rows or None` conversion (previously repeated at all 3
+  `validate_filters_for_device()` call sites) is now done once, internally; and the guard-fire
+  branch's `logger.error(...)` call moved with it, matching `wiim_generator.py`'s own existing
+  convention of a validation function logging its own findings (`clamp_with_warning`). A harmless
+  dead local-variable reassignment in the original (`channel = ChannelMode.LR`, never read again)
+  fell out naturally in the rewrite. New `TestResolveReviewValidation` class in
+  `test_wiim_generator.py` covers all 3 branches directly, no Qt/`WizardState`/`MainWindow` involved;
+  the existing `_on_peq_ready`-driven characterization tests in `test_smoke_regression_operations.py`
+  needed zero changes, confirming the extraction is behavior-preserving.
+- **#10 — deleted `_do_copy_preset_to_device`.** Confirmed by reading all 6 of its test call sites
+  that none exercised the connect step itself (each just patched `adapter_factories.*` to get a mock
+  adapter into the delegate call to `_write_preset_to_adapter`, the real write primitive since the
+  earlier finding-#9 restructure) — so the method was pure connect-then-delegate-then-close
+  boilerplate with zero production callers. Migrated all 6 tests to call `_write_preset_to_adapter`
+  directly with a hand-built adapter mock, which also **removed** the 3-line
+  `patch(...)`/`patch(...)`/`patch(...)` context manager each test needed only for the now-gone
+  connect step. **Bonus consolidation this produced for free**: the 3-line target-device "connect"
+  sequence (`wiim_http_client_factory` → `capability_prober_factory(...).probe()` →
+  `target_adapter_factory(...)`) existed at exactly 2 places in `secondary_workflows.py` before this
+  change (inside `_do_copy_preset_to_device` and inside `_write_preset_copies_to_devices`'s per-device
+  loop); deleting the former took it from 2 occurrences to 1, with no separate extraction needed.
+  Fixed 2 stale comments in `main_window.py` and one in `test_gui_integration_secondary.py`'s module
+  docstring that still named the deleted method as the current-state implementation.
+- **#11 — added a real substitution test for `MainWindow`'s constructor-injected adapter factories.**
+  Every existing test substituted `SecondaryWorkflowManager`'s post-`configure()` attributes directly,
+  never `MainWindow.__init__`'s actual constructor kwargs — so nothing proved the DI surface's
+  advertised "swappable" property actually worked end-to-end, only that a static grep guard
+  (`test_gui_adapter_injection.py`) didn't fire. New `TestMainWindowFactoryInjection` class
+  constructs a `MainWindow` with 4 sentinel-returning factories and drives it through
+  device-select → capabilities-ready, asserting each sentinel is what actually ends up on
+  `MainWindow` *and* is the exact callable identity threaded through to
+  `SecondaryWorkflowManager.configure()` — not a re-wrapped copy. No production code changed (the DI
+  surface itself was real, not dead) beyond fixing `MainWindow.__init__`'s docstring for
+  `wiim_adapter_factory`, which contrasted itself against a per-connection lambda that round-4's own
+  earlier Commit 7 had already deleted; it now correctly names the surviving `target_adapter_factory`
+  parameter instead.
 
 ---
 

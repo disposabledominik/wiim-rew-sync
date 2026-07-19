@@ -21,8 +21,10 @@ Clamping rules (logs WARNING per clip):
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 from src.models.canonical import CanonicalFilter, FilterType
+from src.models.channel_mode import ChannelMode, is_lr_mode
 from src.models.constants import DEFAULT_MAX_BANDS, GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.translator._warnings import FilterRow, SkippedBand, ValidationWarning
 from src.utils.clamping import clamp, clamp_with_warning
@@ -333,3 +335,129 @@ def validate_filters_for_device(
         )
 
     return filters, warnings, clamping_map, rows
+
+
+@dataclass
+class ReviewValidationResult:
+    """Result of resolve_review_validation() -- what a caller needs to
+    populate a filter-review UI and update its own channel/filter state.
+
+    Only one of the two field groups is populated per call, mirroring
+    resolve_channel_split()'s own "empty when not applicable" contract
+    (models/channel_mode.py) rather than a tagged union -- not a new
+    pattern, just consistent with the sibling function this one is modeled
+    on: stereo mode leaves filters_l/filters_r/clamping_l/clamping_r/
+    rows_l/rows_r at their empty defaults; L/R mode leaves clamping_map/
+    rows at theirs. current_filters is always populated (the combined,
+    authoritative list) regardless of mode.
+    """
+
+    warnings: list[str]
+    resolved_channel_mode: ChannelMode
+    current_filters: list[CanonicalFilter]
+    clamping_map: dict[int, list[str]] = field(default_factory=dict)
+    rows: list[FilterRow] = field(default_factory=list)
+    filters_l: list[CanonicalFilter] = field(default_factory=list)
+    filters_r: list[CanonicalFilter] = field(default_factory=list)
+    clamping_l: dict[int, list[str]] = field(default_factory=dict)
+    clamping_r: dict[int, list[str]] = field(default_factory=dict)
+    rows_l: list[FilterRow] = field(default_factory=list)
+    rows_r: list[FilterRow] = field(default_factory=list)
+
+
+def resolve_review_validation(
+    peq_data: object,
+    channel_mode: ChannelMode,
+    current_filters: list[CanonicalFilter],
+    pending_rows: list[FilterRow],
+    pending_rows_l: list[FilterRow],
+    pending_rows_r: list[FilterRow],
+    max_filters: int,
+    supported_filter_types: list[str] | None,
+) -> ReviewValidationResult | None:
+    """Validate filters against device limits ahead of populating a review UI.
+
+    Branches on channel mode (smoke #28): explicit L/R bands supplied by
+    peq_data, wizard-state L/R without explicit bands (a guard against an
+    invariant break, see below), or stereo.
+
+    Args:
+        peq_data: PEQ settings object or filter list from the operation --
+            duck-typed via getattr(), since callers may pass either a
+            PEQSettings-like object (channel_mode/bands_l/bands_r
+            attributes) or a plain filter list.
+        channel_mode: The caller's current channel mode (e.g. wizard state),
+            used only when peq_data doesn't carry explicit L/R bands.
+        current_filters: Combined filter list to validate in the stereo case.
+        pending_rows/pending_rows_l/pending_rows_r: Prior-attempt display
+            rows to preserve skip placeholders from, or an empty list if
+            none are pending -- converted to validate_filters_for_device()'s
+            own None-means-"use filters" convention internally.
+        max_filters: Device's maximum supported bands.
+        supported_filter_types: Device's supported canonical filter types,
+            or None for no restriction.
+
+    Returns:
+        None if the L/R-without-explicit-bands guard fired -- every producer
+        of this data in L/R mode is expected to always supply explicit
+        bands_l/bands_r; reaching this case means that invariant broke, so
+        this refuses to guess a channel split instead of silently showing
+        wrong-channel data (same class of bug as smoke #92/#93). Already
+        logged when this happens; the caller only needs to surface an error
+        to the user and stop.
+
+        Otherwise, a ReviewValidationResult with the resolved channel mode
+        and validated filters.
+    """
+    peq_channel = getattr(peq_data, "channel_mode", None)
+    bands_l = getattr(peq_data, "bands_l", None)
+    bands_r = getattr(peq_data, "bands_r", None)
+
+    if (
+        peq_channel is not None
+        and is_lr_mode(peq_channel)
+        and bands_l is not None
+        and bands_r is not None
+    ):
+        validated_l, warnings_l, clamping_l, rows_l = validate_filters_for_device(
+            list(bands_l), max_filters, pending_rows_l or None, supported_filter_types,
+        )
+        validated_r, warnings_r, clamping_r, rows_r = validate_filters_for_device(
+            list(bands_r), max_filters, pending_rows_r or None, supported_filter_types,
+        )
+        all_warnings = [f"Left: {w}" for w in warnings_l] + [
+            f"Right: {w}" for w in warnings_r
+        ]
+        return ReviewValidationResult(
+            warnings=all_warnings,
+            resolved_channel_mode=ChannelMode.LR,
+            current_filters=validated_l + validated_r,
+            filters_l=validated_l,
+            filters_r=validated_r,
+            clamping_l=clamping_l,
+            clamping_r=clamping_r,
+            rows_l=rows_l,
+            rows_r=rows_r,
+        )
+
+    if channel_mode.is_lr:
+        # Every producer of this data in L/R mode always supplies explicit
+        # bands_l/bands_r -- reaching here means that invariant broke;
+        # refuse to guess a channel split instead of silently showing
+        # wrong-channel data (same class of bug as smoke #92/#93).
+        logger.error(
+            "L/R mode without explicit bands_l/bands_r — refusing "
+            "to guess channel split"
+        )
+        return None
+
+    validated, all_warnings, clamping_map, rows = validate_filters_for_device(
+        current_filters, max_filters, pending_rows or None, supported_filter_types,
+    )
+    return ReviewValidationResult(
+        warnings=all_warnings,
+        resolved_channel_mode=channel_mode,
+        current_filters=validated,
+        clamping_map=clamping_map,
+        rows=rows,
+    )
