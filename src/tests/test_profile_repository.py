@@ -254,6 +254,34 @@ class TestRename:
         assert repo.load(nfd_name).name == nfd_name
 
 
+class TestPathTraversalSafety:
+    """rename()/duplicate() set the new name directly, bypassing
+    build_profile()'s cosmetic sanitization -- _profile_path() itself must
+    still refuse to escape the profiles directory regardless of caller."""
+
+    def test_rename_to_traversal_name_stays_inside_profiles_dir(
+        self, repo: ProfileRepository
+    ) -> None:
+        """Renaming to a name containing '../' segments must not write
+        outside repo._profiles_dir."""
+        repo.save(_make_stereo_profile("original"))
+        repo.rename("original", "../../../../tmp/evil")
+
+        on_disk = list(repo._profiles_dir.iterdir())
+        assert all(p.parent == repo._profiles_dir for p in on_disk)
+
+    def test_duplicate_to_traversal_name_stays_inside_profiles_dir(
+        self, repo: ProfileRepository
+    ) -> None:
+        """Duplicating to a name containing '../' segments must not write
+        outside repo._profiles_dir."""
+        repo.save(_make_stereo_profile("original"))
+        repo.duplicate("original", "../../../../tmp/evil")
+
+        on_disk = list(repo._profiles_dir.iterdir())
+        assert all(p.parent == repo._profiles_dir for p in on_disk)
+
+
 # --- duplicate ---
 
 
