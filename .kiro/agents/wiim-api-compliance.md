@@ -27,13 +27,13 @@ All PEQ commands must use the LV2 family: `EQGetLV2BandEx`, `EQSetLV2Band`, `EQG
 ### Rule 5 — URL-encode JSON payloads
 JSON payloads appended to `httpapi.asp?command=...` query strings must be URL-encoded. Flag any code that builds a WiiM command URL with raw (un-encoded) JSON.
 
-### Rule 10 — Timeout handling
+### Rule 11 — Timeout handling
 Every network call (httpx request) must have an explicit timeout. The project default is 5 seconds. Flag any `httpx` call missing a `timeout` parameter or using `timeout=None`.
 
-### Rule 11 — Logging
+### Rule 12 — Logging
 Every WiiM API call must be logged to `wiim_api.log` and every REW API call to `rew_api.log`. Flag network calls that lack corresponding log statements.
 
-### Rule 15 — Dependency injection
+### Rule 16 — Dependency injection
 Adapter constructors must accept their dependencies (HTTP clients, loggers, config) via parameters. Flag adapters that instantiate their own dependencies internally (e.g., creating an `httpx.AsyncClient` inside `__init__` without it being injectable).
 
 ## How to Report

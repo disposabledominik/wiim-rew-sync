@@ -725,7 +725,7 @@ async def _load_preset(
     side effect to guard against -- unlike read_peq_preset_preview()'s preview/restore
     use of the same underlying command.
 
-    Domain rule: PEQ presets are global and loadable onto any source (rules.md rule 7).
+    Domain rule: PEQ presets are global and loadable onto any source (rules.md rule 9).
     """
     client = WiiMHttpClient(device, timeout=timeout)
     results: dict[str, bool] = {}

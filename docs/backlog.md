@@ -10,7 +10,7 @@ current release but may be reconsidered in future versions. Backend support may 
 
 **What:** Full-flow validation against real WiiM device(s) covering GUI-era scenarios that can't
 be automated (multiroom groups, RoomFit push with naming, device reboot mid-write, etc.) — see
-`docs/qa.md` and `docs/qa_signoff.md` §5.
+`docs/qa_signoff.md` §5.
 
 **Status:** Kept open at the device owner's request. `docs/qa.md`, the pre-GUI `docs/qa_signoff.md`,
 and `docs/smoke_test_procedure.md` have been consolidated into one current `docs/qa_signoff.md`
@@ -66,6 +66,27 @@ enough decision to warrant its own design pass.
 **To reactivate:** Decide whether cross-source auto-rollback is wanted (and how it should behave
 if the rollback itself fails), or whether documenting the manual-undo path in the GUI's push
 failure message is sufficient. Implement in `PrimaryWorkflowManager._do_push()`'s PEQ branch.
+
+---
+
+## 4. CI Release Pipeline (No Published Download Path)
+
+**What:** There is no `.github/workflows/` (or equivalent CI) in this repo, and no published
+GitHub Release with attached binaries. `packaging/README.md` documents how to *build* a standalone
+executable per platform, but a non-technical user — this project's own stated target audience —
+cannot currently download and run it without someone building it for them first.
+
+**Why deferred:** Setting up automated cross-platform builds (Windows/macOS/Linux each require
+building on that OS per `packaging/README.md`) and a release/signing process is new infrastructure,
+not a bug fix, and the project is still in the hardware-QA-pending phase (see item 1) — shipping a
+polished download experience ahead of that isn't the current priority.
+
+**Status:** Not started.
+
+**To reactivate:** Add a GitHub Actions workflow that builds the three PyInstaller targets (see
+`packaging/README.md`'s per-platform build steps) on their respective OS runners and attaches the
+artifacts to a GitHub Release, then update `README.md`'s Getting Started section to link the
+release page directly instead of pointing at manual build instructions.
 
 ---
 

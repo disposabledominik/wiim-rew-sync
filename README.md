@@ -35,7 +35,18 @@ Use at your own risk.**
 - Dry-run mode: preview a translated import before writing anything to a device
 - Safe write protocol on every device write: backup → write → read back → verify → rollback on mismatch
 
-## Installation
+## Getting Started
+
+This app targets non-technical users running a standalone desktop app, not a Python toolchain.
+Build a standalone executable for your platform (Windows `.exe`, macOS `.app`, or a single Linux
+binary — no Python required to *run* it) by following [packaging/README.md](packaging/README.md),
+then launch it like any other desktop app. The in-app Help → Getting Started guide walks through
+connecting to a device and pushing your first set of filters.
+
+There is no published pre-built download yet — building it yourself (or having someone build it
+for you) is currently the only path to a runnable executable.
+
+## For Developers
 
 Requires Python 3.12+.
 
@@ -47,16 +58,11 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-## Usage
-
-### GUI
+### Run from source (GUI)
 
 ```bash
 python packaging/entry_gui.py
 ```
-
-A standalone packaged executable (no Python required) can be built per-platform — see
-[packaging/README.md](packaging/README.md).
 
 ### CLI
 
@@ -96,9 +102,11 @@ including why the full test suite shouldn't be run mid-task.
 
 ## Project Status
 
-CLI proof-of-concept and GUI implementation are complete and have passed automated QA (470 tests,
-96.5%+ coverage on the translation engine, zero lint/type errors). Hardware QA against physical
-devices for the GUI-era flows is still pending — see [docs/qa_signoff.md](docs/qa_signoff.md).
+CLI proof-of-concept and GUI implementation are complete and pass an automated test/lint/type-check
+gate on every change. Hardware QA against physical devices for the GUI-era flows is ongoing — see
+[docs/qa_signoff.md](docs/qa_signoff.md) and [docs/backlog.md](docs/backlog.md) for current status
+and open items (deliberately not pinned to a snapshot test count/date here, since that goes stale
+almost immediately — see those docs instead).
 
 ## Documentation
 

@@ -105,7 +105,7 @@ def load_capability_file(path: Path) -> LoadedCapabilityFile:
     Malformed entries are logged and skipped rather than raising -- a bad
     file degrades to "no overrides" (full generic probed behaviour) for the
     affected model(s), never a crash, per the Uncertainty Protocol
-    (.kiro/steering/rules.md #18). The same applies to `default_max_bands`:
+    (.kiro/steering/rules.md #19). The same applies to `default_max_bands`:
     missing or invalid values degrade to the built-in `DEFAULT_MAX_BANDS`.
     """
     if not path.exists():
