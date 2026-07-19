@@ -34,7 +34,11 @@ logger = logging.getLogger("wiim_rew_sync.discovery")
 _MDNS_GRACE_PERIOD: float = 1.5
 
 
-async def _enrich_device(device: DeviceInfo, timeout: float) -> DeviceInfo:
+async def _enrich_device(
+    device: DeviceInfo,
+    timeout: float,
+    http_client_factory: Callable[[str], WiiMHttpClient] | None = None,
+) -> DeviceInfo:
     """Enrich a DeviceInfo by calling getStatusEx if model/firmware are empty.
 
     Only needed for mDNS-discovered devices whose TXT records may be sparse.
@@ -45,9 +49,12 @@ async def _enrich_device(device: DeviceInfo, timeout: float) -> DeviceInfo:
     if device.model and device.firmware:
         return device  # Already populated (e.g. from TXT records or subnet scan)
 
-    from src.adapters.wiim_http import WiiMHttpClient
+    if http_client_factory is not None:
+        client = http_client_factory(device.ip)
+    else:
+        from src.adapters.wiim_http import WiiMHttpClient
 
-    client = WiiMHttpClient(device.ip, timeout=timeout)
+        client = WiiMHttpClient(device.ip, timeout=timeout)
     try:
         resp = await client.command("getStatusEx")
     except Exception:
@@ -248,7 +255,10 @@ class DiscoveryModule:
         the model and firmware fields. Runs enrichment in parallel.
         """
         enriched = await asyncio.gather(
-            *[_enrich_device(d, self._timeout) for d in devices]
+            *[
+                _enrich_device(d, self._timeout, self._http_client_factory)
+                for d in devices
+            ]
         )
         return list(enriched)
 

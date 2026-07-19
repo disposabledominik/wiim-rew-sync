@@ -48,7 +48,16 @@ class Profile(BaseModel):
         return self
 
     def model_dump(self, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
-        """Override to serialize channel_mode as its profile_value string."""
+        """Override to serialize channel_mode as its profile_value string.
+
+        model_dump_json() is deliberately NOT overridden to match -- every
+        serialization call site in this codebase goes through
+        json.dumps(profile.model_dump()), never model_dump_json() directly.
+        A naive json.dumps(self.model_dump(**kwargs)) mirror isn't safe in
+        general since model_dump_json() accepts a few JSON-only kwargs
+        (e.g. indent) that don't apply to model_dump(). Do not call
+        model_dump_json() on Profile until that's addressed.
+        """
         data = super().model_dump(**kwargs)
         cm = data.get("channel_mode")
         if isinstance(cm, ChannelMode):

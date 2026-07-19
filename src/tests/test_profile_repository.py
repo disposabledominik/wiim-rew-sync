@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import unicodedata
 from typing import Literal
 
@@ -128,6 +129,29 @@ class TestListAll:
     def test_list_empty(self, repo: ProfileRepository) -> None:
         """Empty repository returns empty list."""
         assert repo.list_all() == []
+
+    def test_corrupt_profile_file_is_skipped_and_logged(
+        self, repo: ProfileRepository, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A profile file that fails to parse must be skipped (not raise)
+        AND logged -- previously this failure mode was silently swallowed,
+        making a corrupted profile file unreportable via a support bundle."""
+        repo.save(_make_stereo_profile("good-profile"))
+        corrupt_path = repo._profiles_dir / "corrupt.json"
+        corrupt_path.write_text("{not valid json", encoding="utf-8")
+
+        app_logger = logging.getLogger("wiim_rew_sync.app")
+        app_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.app"):
+                profiles = repo.list_all()
+        finally:
+            app_logger.propagate = False
+
+        assert [p.name for p in profiles] == ["good-profile"]
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "corrupt.json" in warnings[0].message
 
 
 # --- delete ---

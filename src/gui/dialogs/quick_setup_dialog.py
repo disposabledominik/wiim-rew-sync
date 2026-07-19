@@ -34,6 +34,7 @@ from src.gui.constants import (
     SPACING_MD,
     SPACING_SM,
 )
+from src.models.constants import DEFAULT_SOURCE
 
 
 class QuickSetupDialog(QDialog):
@@ -231,7 +232,7 @@ class QuickSetupDialog(QDialog):
         for source in self._available_sources:
             cb = QCheckBox(source)
             if (preset_sources and source in preset_sources) or (
-                not preset_sources and source == "wifi"
+                not preset_sources and source == DEFAULT_SOURCE
             ):
                 cb.setChecked(True)
                 cb.setProperty("class", "accent")
@@ -292,6 +293,6 @@ class QuickSetupDialog(QDialog):
                 name for name, cb in self._source_checkboxes.items() if cb.isChecked()
             ]
         elif not self._selected_sources:
-            self._selected_sources = ["wifi"]
+            self._selected_sources = [DEFAULT_SOURCE]
 
         self.accept()

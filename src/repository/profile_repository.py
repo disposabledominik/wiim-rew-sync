@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import unicodedata
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from src.models.errors import ProfileNameCollisionError, ProfileNotFoundError
 from src.models.profile import Profile
 from src.translator.schema_migrator import migrate_profile
 from src.utils.path_safety import sanitize_path_segment
+
+logger = logging.getLogger("wiim_rew_sync.app")
 
 
 class ProfileRepository:
@@ -124,8 +127,8 @@ class ProfileRepository:
                 raw = migrate_profile(raw)
                 profile = Profile.model_validate(raw)
                 profiles.append(profile)
-            except (json.JSONDecodeError, ValueError, KeyError):
-                # Skip invalid profile files
+            except (json.JSONDecodeError, ValueError, KeyError) as exc:
+                logger.warning("Skipping unreadable profile %s: %s", path, exc)
                 continue
         profiles.sort(key=lambda p: (p.name.lower(), p.name))
         return profiles

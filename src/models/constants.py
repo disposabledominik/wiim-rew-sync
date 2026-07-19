@@ -15,6 +15,10 @@ GAIN_MAX: float = 12.0
 Q_MIN: float = 0.01
 Q_MAX: float = 24.0
 
+# Frequency limits (Hz)
+FREQ_MIN: float = 10.0
+FREQ_MAX: float = 22000.0
+
 # Default number of PEQ bands a WiiM device supports, used as a fallback
 # when capability probing can't determine the device's actual band count.
 DEFAULT_MAX_BANDS: int = 10

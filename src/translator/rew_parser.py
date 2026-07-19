@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from src.models.canonical import CanonicalFilter
+from src.models.constants import FREQ_MAX, FREQ_MIN
 from src.models.errors import ParseError, ValidationError
 from src.translator._warnings import FilterRow, SkippedBand, ValidationWarning
 
@@ -147,7 +148,7 @@ def _validate_frequency(
     freq: float, *, line_number: int | None = None, band_index: int | None = None
 ) -> None:
     """Raise ValidationError if frequency is outside 10-22000 Hz."""
-    if not (10.0 <= freq <= 22000.0):
+    if not (FREQ_MIN <= freq <= FREQ_MAX):
         msg = f"Frequency {freq} Hz is outside valid range 10-22000 Hz"
         if line_number is not None:
             msg = f"Line {line_number}: {msg}"

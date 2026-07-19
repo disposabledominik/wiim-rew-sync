@@ -527,3 +527,48 @@ async def test_mdns_enrichment_populates_model_firmware() -> None:
     assert enriched.firmware == "6.1.0.5"
     assert enriched.name == "Bedroom Speaker"
     assert enriched.ip == "192.168.1.77"
+
+
+async def test_enrich_device_uses_injected_http_client_factory() -> None:
+    """_enrich_device() must honor an injected http_client_factory instead
+    of always constructing a real WiiMHttpClient directly -- matching the
+    same DI contract SubnetScanner already honors, so a caller (e.g.
+    DiscoveryModule) that injects a factory for testing/DI purposes actually
+    has it reach this function too."""
+    from src.discovery.discovery_module import _enrich_device
+
+    bare_device = DeviceInfo(ip="192.168.1.77", name="Bedroom Speaker", model="", firmware="")
+
+    mock_client = AsyncMock()
+    mock_client.command = AsyncMock(
+        return_value={"project": "WiiM_Pro", "Release": "6.1.0.5", "uuid": "abc"}
+    )
+    mock_client.close = AsyncMock()
+    factory = MagicMock(return_value=mock_client)
+
+    enriched = await _enrich_device(bare_device, timeout=5.0, http_client_factory=factory)
+
+    factory.assert_called_once_with("192.168.1.77")
+    assert enriched.model == "WiiM_Pro"
+
+
+async def test_discovery_module_passes_its_factory_through_to_enrich_device() -> None:
+    """DiscoveryModule's own injected http_client_factory must reach
+    _enrich_device via _enrich_mdns_devices, not just SubnetScanner -- the
+    factory was previously stored on self._http_client_factory but only
+    ever read when constructing SubnetScanner, never passed to
+    _enrich_device."""
+    mock_client = AsyncMock()
+    mock_client.command = AsyncMock(
+        return_value={"project": "WiiM_Pro", "Release": "6.1.0.5", "uuid": "abc"}
+    )
+    mock_client.close = AsyncMock()
+    factory = MagicMock(return_value=mock_client)
+
+    module = DiscoveryModule(timeout=5.0, http_client_factory=factory)
+    bare_device = DeviceInfo(ip="192.168.1.77", name="Bedroom Speaker", model="", firmware="")
+
+    enriched = await module._enrich_mdns_devices([bare_device])
+
+    factory.assert_called_once_with("192.168.1.77")
+    assert enriched[0].model == "WiiM_Pro"

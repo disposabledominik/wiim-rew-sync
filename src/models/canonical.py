@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
+from src.models.constants import FREQ_MAX, FREQ_MIN
+
 FilterType = Literal["PEAK", "LS", "HS", "LP", "HP", "OFF", "UNKNOWN"]
 
 
@@ -25,7 +27,7 @@ class CanonicalFilter(BaseModel):
     @classmethod
     def frequency_in_range(cls, v: float) -> float:
         """Frequency must be between 10 Hz and 22 kHz."""
-        if not (10.0 <= v <= 22000.0):
+        if not (FREQ_MIN <= v <= FREQ_MAX):
             raise ValueError(f"frequency_hz {v} out of range 10-22000 Hz")
         return v
 

@@ -567,7 +567,7 @@ class FiltersPage(QWidget):
         path = self._browse_rew_file("Select REW Filter File")
         if path:
             self._stereo_path = path
-            self._stereo_file_label.setText(path.rsplit("/", 1)[-1])
+            self._stereo_file_label.setText(Path(path).name)
             self._next_btn.setEnabled(True)
 
     @Slot()
@@ -576,7 +576,7 @@ class FiltersPage(QWidget):
         path = self._browse_rew_file("Select Left Channel REW File")
         if path:
             self._left_path = path
-            self._left_file_label.setText(path.rsplit("/", 1)[-1])
+            self._left_file_label.setText(Path(path).name)
             self._update_lr_import_button()
 
     @Slot()
@@ -585,7 +585,7 @@ class FiltersPage(QWidget):
         path = self._browse_rew_file("Select Right Channel REW File")
         if path:
             self._right_path = path
-            self._right_file_label.setText(path.rsplit("/", 1)[-1])
+            self._right_file_label.setText(Path(path).name)
             self._update_lr_import_button()
 
     @Slot()
