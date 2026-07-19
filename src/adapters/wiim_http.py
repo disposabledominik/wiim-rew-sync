@@ -94,7 +94,7 @@ class WiiMHttpClient:
             raise WiiMTimeoutError(
                 f"Device {self._ip} did not respond within {self._timeout}s"
             ) from exc
-        except httpx.ConnectError as exc:
+        except httpx.RequestError as exc:
             logger.error("CONNECT_ERR #%d → %s: %s", req_id, url, exc)
             raise WiiMConnectionError(
                 f"Cannot connect to device {self._ip}: {exc}"

@@ -44,11 +44,12 @@ class REWHttpApiClient:
 
     Args:
         base_url: REW API base URL (no trailing slash).
+        timeout: Request timeout in seconds.
     """
 
-    def __init__(self, base_url: str = "http://localhost:4735") -> None:
+    def __init__(self, base_url: str = "http://localhost:4735", timeout: float = 5.0) -> None:
         self._base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(timeout=httpx.Timeout(5.0))
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout))
         self._parser = REWParser()
         # Per-client request counter -- mirrors WiiMHttpClient: gives each
         # REQ/RESP pair a shared short ID so the response line can reference
@@ -98,7 +99,7 @@ class REWHttpApiClient:
                 "REW did not respond in time. Please ensure REW is running "
                 "and its HTTP API is enabled (localhost:4735)."
             ) from exc
-        except httpx.ConnectError as exc:
+        except httpx.RequestError as exc:
             logger.error("CONNECT_ERR #%d → %s: %s", req_id, url, exc)
             raise REWNotConnectedError(
                 "REW is not connected. Please ensure REW is running and "
