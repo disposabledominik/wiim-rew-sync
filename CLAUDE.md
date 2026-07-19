@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+**All development happens on the `development` branch unless the user explicitly names a different
+branch for a specific task.**
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
