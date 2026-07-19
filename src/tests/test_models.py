@@ -5,7 +5,12 @@ from pydantic import ValidationError as PydanticValidationError
 
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities, DeviceInfo
-from src.models.channel_mode import is_lr_mode, require_lr_filters
+from src.models.channel_mode import (
+    ChannelMode,
+    is_lr_mode,
+    require_lr_filters,
+    resolve_roomfit_channel_kwargs,
+)
 from src.models.errors import (
     BackupError,
     ParseError,
@@ -144,6 +149,46 @@ class TestRequireLrFilters:
         left = _sample_filters()
         with pytest.raises(ValueError, match="refusing to guess channel split"):
             require_lr_filters(left, [])
+
+
+class TestResolveRoomfitChannelKwargs:
+    """Tests for resolve_roomfit_channel_kwargs() -- shared by
+    primary_workflows._do_push's RoomFit branch and secondary_workflows.
+    _write_preset_to_adapter's RoomFit branch, which each hand-rolled this
+    is_lr/require_lr_filters branch independently before (round-4 review
+    finding #8, 2026-07-19)."""
+
+    def test_stereo_mode_returns_none_none(self) -> None:
+        """(None, None) matches RoomFitSafeWrite.execute()'s own defaults
+        for filters_l/filters_r -- stereo mode needs no per-channel data."""
+        assert resolve_roomfit_channel_kwargs(ChannelMode.STEREO, None, None) == (
+            None,
+            None,
+        )
+
+    def test_lr_mode_returns_explicit_filters(self) -> None:
+        left = _sample_filters()
+        right = [CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=0.0, q=1.0)]
+        assert resolve_roomfit_channel_kwargs(ChannelMode.LR, left, right) == (
+            left,
+            right,
+        )
+
+    def test_lr_mode_never_splits_a_combined_list(self) -> None:
+        """Never derive filters_l/filters_r from a stereo filter set --
+        only explicit, already-separate per-channel lists are accepted."""
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            resolve_roomfit_channel_kwargs(ChannelMode.LR, None, None)
+
+    def test_lr_mode_empty_right_channel_raises(self) -> None:
+        left = _sample_filters()
+        with pytest.raises(ValueError, match="refusing to guess channel split"):
+            resolve_roomfit_channel_kwargs(ChannelMode.LR, left, [])
+
+    def test_accepts_string_channel_mode(self) -> None:
+        left = _sample_filters()
+        right = [CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=0.0, q=1.0)]
+        assert resolve_roomfit_channel_kwargs("l/r", left, right) == (left, right)
 
 
 # ---------------------------------------------------------------------------

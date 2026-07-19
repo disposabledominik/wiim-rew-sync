@@ -1006,6 +1006,42 @@ class TestWriteRoomfit:
         assert write_payload["source_name"] == ""
         assert write_payload["rc_output"] == "AUDIO_OUTPUT_SPEAKER_MODE"
 
+    async def test_write_roomfit_lr_empty_right_channel_stays_lr(
+        self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
+    ) -> None:
+        """A genuinely empty right channel (legitimate device read-state,
+        restored as-is by RoomFitSafeWrite's rollback path) must still be
+        written as channelMode "L/R" with an empty EQBandR, not silently
+        misrouted into the Stereo branch. The prior `filters_l and
+        filters_r` truthy check took the Stereo branch whenever either
+        channel was empty -- writing the wrong channelMode and, on
+        rollback, failing to restore the original asymmetric split
+        (round-4 review finding #2, 2026-07-19)."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters_l = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+
+        mock_client.command.side_effect = ["OK", "OK"]
+
+        await adapter.write_roomfit(
+            "wifi",
+            "REW Export",
+            filters=[],
+            channel_mode="left",
+            filters_l=filters_l,
+            filters_r=[],
+        )
+
+        calls = mock_client.command.call_args_list
+        write_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        assert write_payload["channelMode"] == "L/R"
+        assert "EQBandL" in write_payload
+        assert "EQBandR" in write_payload
+        assert "EQBand" not in write_payload
+
     async def test_write_roomfit_rejected_band_write_raises_before_save(
         self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
     ) -> None:

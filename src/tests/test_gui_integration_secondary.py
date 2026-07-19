@@ -407,3 +407,34 @@ class TestUndoMultiSource:
             ("optical", "/tmp/backup_opt.json"),
         ]
         assert undo_signals == [(2, 1, "2 restored, 1 failed")]
+
+    @pytest.mark.asyncio
+    async def test_zero_entries_emits_failure_not_false_success(self) -> None:
+        """A backup_paths_str that decodes to zero entries (empty or fully
+        malformed) must not fall through the loop and emit a misleading
+        "All 0 source(s) restored" success -- no current producer of
+        backup_paths_str can generate this today, but the guard is cheap
+        and correct to keep (round-4 review finding #6, PLAUSIBLE,
+        2026-07-19)."""
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        restore_calls: list[tuple[str, str]] = []
+
+        async def _restore(src: str, path: str) -> tuple[bool, str]:
+            restore_calls.append((src, path))
+            return True, "Previous filters restored"
+
+        manager._restore_backup = _restore  # type: ignore[assignment]
+
+        undo_signals: list[tuple[int, int, str]] = []
+        manager.undo_multi_source_complete.connect(
+            lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
+        )
+
+        await manager._do_undo_multi_source("")
+
+        assert restore_calls == []
+        assert len(undo_signals) == 1
+        succeeded, failed, _msg = undo_signals[0]
+        assert succeeded == 0
+        assert failed != 0

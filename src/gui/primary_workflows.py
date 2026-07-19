@@ -31,7 +31,12 @@ from PySide6.QtCore import QObject, Signal
 
 from src.adapters.safe_write import WriteResult
 from src.gui.wizard_controller import FlowType
-from src.models.channel_mode import ChannelMode, is_lr_mode, require_lr_filters
+from src.models.channel_mode import (
+    ChannelMode,
+    is_lr_mode,
+    require_lr_filters,
+    resolve_roomfit_channel_kwargs,
+)
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.models.profile import build_profile
 from src.repository.backup_manager import encode_multi_source_backup_paths
@@ -62,6 +67,16 @@ class EmptyPresetFiltersError(Exception):
     it flows through the injected bridge_wrapper's existing error-mapping
     path (see MainWindow._map_error) to reach the status banner.
     """
+
+
+def _extract_profile_names(profiles: list[dict[str, Any]]) -> list[str]:
+    """Extract non-empty "Name" values from a list_roomfit_profiles() result.
+
+    Shared by _do_populate_name_profiles/_do_list_roomfit_profiles -- both
+    need the same "Name" key with the same empty-string skip, just for two
+    different downstream signals (round-4 review finding #9, 2026-07-19).
+    """
+    return [p.get("Name", "") for p in profiles if p.get("Name")]
 
 
 class PrimaryWorkflowManager(QObject):
@@ -1043,7 +1058,7 @@ class PrimaryWorkflowManager(QObject):
         try:
             if wiim_adapter.capabilities.supports_roomfit:
                 profiles = await wiim_adapter.list_roomfit_profiles(source_name)
-                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
+                profile_names = _extract_profile_names(profiles)
                 try:
                     roomfit_enabled, active_profile = await wiim_adapter.get_roomfit_status()
                 except Exception:
@@ -1073,7 +1088,7 @@ class PrimaryWorkflowManager(QObject):
         try:
             if wiim_adapter.capabilities.supports_roomfit:
                 profiles = await wiim_adapter.list_roomfit_profiles(source_name)
-                profile_names = [p.get("Name", "") for p in profiles if p.get("Name")]
+                profile_names = _extract_profile_names(profiles)
                 self.filters_roomfit_profiles_ready.emit(profile_names)
             else:
                 self.filters_roomfit_profiles_ready.emit([])
@@ -1185,18 +1200,23 @@ class PrimaryWorkflowManager(QObject):
                 self._bridge.progress_update.emit(
                     f"Writing RoomFit profile '{profile_name}'..."
                 )
-                # Use stored L/R lists if available (avoids naive 50/50 split)
-                channel_kwargs: dict[str, Any] = {}
-                if channel_mode.is_lr:
-                    left, right = require_lr_filters(state.filters_l, state.filters_r)
-                    channel_kwargs = {"filters_l": left, "filters_r": right}
+                # Never derive filters_l/filters_r by splitting the combined
+                # `filters` list -- resolve_roomfit_channel_kwargs() requires
+                # them explicitly already-separate (round-4 review finding
+                # #8, 2026-07-19: shared with secondary_workflows.
+                # _write_preset_to_adapter, which hand-rolled this same
+                # branch independently before).
+                roomfit_filters_l, roomfit_filters_r = resolve_roomfit_channel_kwargs(
+                    channel_mode, state.filters_l, state.filters_r
+                )
                 result = await roomfit_safe_write.execute(
                     source_name,
                     profile_name,
                     filters,
                     channel_mode=channel_mode,
+                    filters_l=roomfit_filters_l,
+                    filters_r=roomfit_filters_r,
                     on_stage=on_stage,
-                    **channel_kwargs,
                 )
 
                 if result.success:
@@ -1210,6 +1230,29 @@ class PrimaryWorkflowManager(QObject):
         else:
             # PEQ: use SafeWrite protocol — push to ALL selected sources
             safe_write = self._safe_write_factory(wiim_adapter)
+
+            # Validate the L/R split up front -- channel_mode/state.filters_l/
+            # state.filters_r don't vary per source, so if this is going to
+            # raise it raises identically on every iteration below. Catching
+            # it here (matching the RoomFit branch's own try/except a few
+            # lines up) means a bad split fails cleanly via write_complete,
+            # same as every other push failure, instead of the raw
+            # ValueError propagating past this method to _bridge_wrapper's
+            # generic operation_error handler, which never touches PushPage
+            # (round-4 review finding #4, 2026-07-19). Deliberately scoped to
+            # just this check, not a blanket try/except around the loop --
+            # safe_write.execute()'s own exceptions (e.g. a connection drop
+            # mid-push) still propagate to _bridge_wrapper unchanged, per
+            # the existing, tested convention for the PEQ push path.
+            if channel_mode.is_lr:
+                try:
+                    require_lr_filters(state.filters_l, state.filters_r)
+                except ValueError as exc:
+                    result = WriteResult(
+                        success=False, error_message=str(exc), backup_path=None
+                    )
+                    self._bridge.write_complete.emit(result)
+                    return
 
             last_result = None
             backup_paths: list[tuple[str, str]] = []

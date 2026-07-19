@@ -30,7 +30,11 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from src.gui.primary_workflows import EmptyPresetFiltersError
 from src.models.canonical import CanonicalFilter
-from src.models.channel_mode import ChannelMode, coerce_channel_mode, is_lr_mode
+from src.models.channel_mode import (
+    ChannelMode,
+    coerce_channel_mode,
+    resolve_roomfit_channel_kwargs,
+)
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.repository.backup_manager import (
     decode_multi_source_backup_paths,
@@ -429,6 +433,22 @@ class SecondaryWorkflowManager(QObject):
         """
         assert self._bridge is not None
         entries = decode_multi_source_backup_paths(backup_paths_str)
+        if not entries:
+            # No current producer of backup_paths_str can generate a
+            # degenerate zero-entry string today (round-4 review finding
+            # #6, 2026-07-19, PLAUSIBLE not CONFIRMED) -- but without this
+            # guard, the loop below never runs, failed stays 0, and the
+            # success branch fires a misleading "All 0 source(s) restored"
+            # banner while succeeded==0 also skips clearing the stale
+            # pushed-filters snapshot. Defensive, cheap to keep correct.
+            logger.error(
+                "Undo multi-source: no backup entries decoded from '%s'",
+                backup_paths_str,
+            )
+            self.undo_multi_source_complete.emit(
+                0, 1, "No sources to restore -- backup data was empty or malformed"
+            )
+            return
         succeeded = 0
         failed = 0
 
@@ -538,21 +558,31 @@ class SecondaryWorkflowManager(QObject):
             # same protocol as the main Push flow (smoke #153), not a bare
             # write_roomfit() with no verification at all.
             roomfit_safe_write = self._roomfit_safe_write_factory(target_adapter)
-            if is_lr_mode(channel_mode):
-                # Use the L/R bands just read from the source preset —
-                # not wizard state, which may be stale or unrelated to
-                # this preset (e.g. never populated in this session).
-                result = await roomfit_safe_write.execute(
-                    target_source, preset_name, filters,
-                    channel_mode=ChannelMode.LR,
-                    filters_l=peq_settings.bands_l,
-                    filters_r=peq_settings.bands_r,
-                )
-            else:
-                result = await roomfit_safe_write.execute(
-                    target_source, preset_name, filters,
-                    channel_mode=ChannelMode.STEREO,
-                )
+            # Use the L/R bands just read from the source preset -- not
+            # wizard state, which may be stale or unrelated to this preset
+            # (e.g. never populated in this session).
+            # resolve_roomfit_channel_kwargs() rejects an incomplete split
+            # the same way build_peq_settings() already does for the PEQ
+            # branch below (via resolve_channel_split) -- without this, a
+            # source preset with one legitimately-empty channel (a valid
+            # device read-state, see WiiMAdapter._parse_lr) could be
+            # silently copied to a target device with an incomplete L/R
+            # split, when the equivalent PEQ copy is already rejected.
+            # Shared with primary_workflows._do_push's RoomFit branch,
+            # which hand-rolled this same is_lr/require_lr_filters check
+            # independently before (round-4 review finding #8, 2026-07-19).
+            # Raises ValueError, caught by the per-preset try/except in
+            # _write_preset_copies_to_devices's caller loop, same as the
+            # RuntimeError below for a verification failure.
+            roomfit_filters_l, roomfit_filters_r = resolve_roomfit_channel_kwargs(
+                channel_mode, peq_settings.bands_l, peq_settings.bands_r
+            )
+            result = await roomfit_safe_write.execute(
+                target_source, preset_name, filters,
+                channel_mode=channel_mode,
+                filters_l=roomfit_filters_l,
+                filters_r=roomfit_filters_r,
+            )
             if not result.success:
                 raise RuntimeError(
                     result.error_message or "RoomFit copy verification failed"
@@ -740,11 +770,17 @@ class SecondaryWorkflowManager(QObject):
 
         reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
         read_failed = 0
+        skipped = 0
 
         for item in items:
             preset_name = getattr(item, "name", "")
             preset_type = getattr(item, "preset_type", "PEQ")
             if not preset_name:
+                # Never attempted -- not a read failure, so it must not
+                # count toward n_items below either, or the batch-complete
+                # totals (n_items * n_devices vs succeeded + failed) stop
+                # matching (round-4 review finding #5, 2026-07-19).
+                skipped += 1
                 continue
 
             self._bridge.progress_update.emit(f"Reading '{preset_name}'...")
@@ -766,7 +802,9 @@ class SecondaryWorkflowManager(QObject):
         )
         failed = read_failed + write_failed
 
-        self.copy_batch_complete.emit(len(items), len(target_devices), succeeded, failed)
+        self.copy_batch_complete.emit(
+            len(items) - skipped, len(target_devices), succeeded, failed
+        )
 
     @Slot(str, str, list, str, list, object, object)
     def copy_local_profile_to_devices(

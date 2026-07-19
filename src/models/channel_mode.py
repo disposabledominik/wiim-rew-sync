@@ -163,3 +163,38 @@ def resolve_channel_split(
     return mode, [], []
 
 
+def resolve_roomfit_channel_kwargs(
+    channel_mode: str | ChannelMode,
+    filters_l: list[CanonicalFilter] | None,
+    filters_r: list[CanonicalFilter] | None,
+) -> tuple[list[CanonicalFilter] | None, list[CanonicalFilter] | None]:
+    """Resolve the filters_l/filters_r arguments for RoomFitSafeWrite.execute().
+
+    Stereo mode needs no per-channel filters; L/R mode requires an explicit,
+    non-empty per-channel split (see require_lr_filters) -- this never
+    derives one by splitting a combined filter list.
+
+    Shared by primary_workflows._do_push's RoomFit branch and
+    secondary_workflows._write_preset_to_adapter's RoomFit branch, which
+    each independently hand-rolled this is_lr/require_lr_filters branch
+    before calling execute() (round-4 review finding #8, 2026-07-19).
+
+    Returns a plain (filters_l, filters_r) tuple rather than a kwargs dict
+    deliberately -- mypy can't verify a `dict[str, list[CanonicalFilter]]`
+    splatted via `**kwargs` won't collide with execute()'s other, differently
+    -typed keyword params (e.g. on_stage), so callers pass these two
+    positionally/by-name instead, matching execute()'s own None defaults.
+
+    Returns:
+        (None, None) for stereo mode; explicit, non-empty (left, right) for
+        L/R mode.
+
+    Raises:
+        ValueError: L/R mode without explicit, non-empty filters_l/filters_r.
+    """
+    mode = coerce_channel_mode(channel_mode)
+    if not mode.is_lr:
+        return None, None
+    return require_lr_filters(filters_l, filters_r)
+
+

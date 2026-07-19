@@ -355,6 +355,94 @@ a future review pass:
   `utils/` would be a reasonable small follow-up if any of these sites are touched again, but not
   worth a standalone commit today.
 
+**Update (2026-07-19): PR #1 review, fourth round.** A further max-effort review found 11 more
+candidates, framed as "the same empty-L/R-channel bug family, four points in the lifecycle" plus 6
+independent/cleanup findings. Each was re-verified against source before acting, per the discipline
+established in the round-3 entry above — one proposed fix (empty-channel handling in
+`_validate_and_populate_review`) turned out to be **wrong** and was not applied; see below.
+
+Fixed:
+- **`write_roomfit()`'s branch-selection bug** (`wiim_adapter.py`) — `if mode.is_lr and filters_l
+  and filters_r:` took the *Stereo* branch whenever either channel was empty, writing the wrong
+  `channelMode` and data. The correct fix is not "reject empty channels" (see below) but the same
+  fix round 3 already applied to `write_peq()`: branch on `mode.is_lr` alone, with no cross-channel
+  fallback and no truthy check — `RoomFitSafeWrite.execute()`'s rollback path restores a
+  `filters_l`/`filters_r` pair read straight off the device, which can legitimately be asymmetric,
+  and the old truthy check silently misrouted that restore into the wrong branch.
+- **`_do_push`'s PEQ branch had no local exception handling**, unlike its sibling RoomFit branch —
+  an L/R push with one empty channel raises `ValueError` from `build_peq_settings()`
+  (`resolve_channel_split`/`require_lr_filters`), which used to propagate to `_bridge_wrapper`'s
+  generic `operation_error` handler instead of driving `PushPage.set_failure()` via `write_complete`
+  like every other push failure. Fixed by validating the L/R split once, up front (channel_mode and
+  `state.filters_l`/`filters_r` don't vary per source in the loop below, so if this is going to raise
+  it raises identically on every iteration) — deliberately *not* a blanket `try/except` around the
+  whole loop, since that would also swallow `safe_write.execute()`'s own exceptions (e.g. a
+  connection drop mid-push), which an existing test (`test_push_exception_emits_operation_error`)
+  specifically expects to keep propagating to `_bridge_wrapper` unchanged.
+- **`_do_copy_presets_batch_multi`'s item-count mismatch** — an item with an empty name was skipped
+  via `continue` without decrementing the `len(items)` used in the final `copy_batch_complete` tally,
+  so `n_items * n_devices` could stop matching `succeeded + failed`. Fixed by tracking a `skipped`
+  count and subtracting it from the emitted `n_items`.
+- **`_do_undo_multi_source`'s zero-entries edge case** (PLAUSIBLE, not CONFIRMED reachable by any
+  current producer of the backup-paths string) — a defensive guard was added so a zero-entry decode
+  emits an explicit failure instead of falling through the loop to a misleading "All 0 source(s)
+  restored" success banner.
+- **`_write_preset_to_adapter`'s RoomFit copy branch had no `require_lr_filters` guard**, unlike its
+  sibling PEQ branch (which gets this for free via `build_peq_settings`) — a source preset with a
+  legitimately-empty channel could be silently copied to a target device with an incomplete L/R
+  split, when the equivalent PEQ copy is already rejected. Added the same `require_lr_filters` call
+  the PEQ branch already gets transitively, for parity. (Originally logged in this list as "finding
+  #8" — mislabeled; it's actually the copy-path half of finding #2's "no guard, unlike the push
+  path" gap. Finding #8 itself, "Duplicated L/R-split resolution," is the item directly below.)
+- **Finding #8, "Duplicated L/R-split resolution"** — `_do_push`'s RoomFit branch and
+  `_write_preset_to_adapter`'s RoomFit branch (the guard just added above) each independently
+  hand-rolled `is_lr_mode`/`require_lr_filters` + a `filters_l`/`filters_r` branch before calling
+  `roomfit_safe_write.execute()`, instead of sharing one helper the way `build_peq_settings`/
+  `build_profile` already share `resolve_channel_split()`. Added `resolve_roomfit_channel_kwargs()`
+  to `channel_mode.py` and pointed both call sites at it — it returns `(None, None)` for stereo
+  (matching `execute()`'s own defaults) or an explicit, non-empty `(filters_l, filters_r)` for L/R,
+  raising via `require_lr_filters` otherwise. **Confirmed this never derives a channel by splitting
+  a combined/stereo filter list** — it only validates that `filters_l`/`filters_r` are already
+  separately populated before returning them; the domain rule ("never guess a channel split") is
+  unchanged, just centralized. Returns a tuple rather than a kwargs dict deliberately: an earlier
+  draft returned `dict[str, list[CanonicalFilter]]` for `**kwargs` splatting, which `mypy` correctly
+  rejected (`execute()`'s `on_stage: Callable | None` param is a different type than the dict's
+  values, and mypy can't verify a splatted dict's keys won't collide with it) — the tuple form
+  matches `execute()`'s own `filters_l`/`filters_r` signature exactly and sidesteps the issue.
+- **Trivial dedup**: `_do_populate_name_profiles`/`_do_list_roomfit_profiles`'s identical
+  `[p.get("Name", "") for p in profiles if p.get("Name")]` line extracted to a shared
+  `_extract_profile_names()` helper.
+
+**Not fixed — the review's proposed root-cause fix was itself incorrect, caught before landing:**
+the review framed the four items above as stemming from one root cause, "`PEQSettings`'s L/R
+branch never rejects an empty `bands_l`/`bands_r`," and proposed tightening
+`check_band_keys_match_channel_mode` the same way `Profile`'s validator was tightened in `dc72487`.
+That fix was drafted and then reverted before commit: `PEQSettings` must stay permissive for L/R
+read-state, since `WiiMAdapter._parse_lr()` legitimately constructs an asymmetric instance straight
+from a real device response (a channel with zero active bands is valid, not corrupt), and
+`RoomFitSafeWrite`'s rollback path depends on restoring exactly that state, asymmetry included. A
+second proposed fix (tightening `_validate_and_populate_review`'s `bands_l is not None and bands_r
+is not None` guard to also reject empty-but-present channels) was drafted, then found to directly
+*revert* a previously-fixed, still-tested bug: issue #120 (`test_smoke_high_level.py`,
+`test_rew_parser_lr_bleed_unequal_bands`) specifically changed that guard from a truthy check to an
+`is not None` check so a genuinely-empty channel is honored as "no filters for that channel" during
+review-population, instead of being rejected outright or naively 50/50-split. The correct scope for
+"empty means missing" is push/write-intent boundaries (`build_peq_settings`, `write_roomfit`'s
+callers, preset copy) — not the read-state model itself, and not the review-population step that
+echoes what a device/file actually returned. Reverted before commit; not landed.
+
+Also confirmed and left as-is (matches the existing severity/rationale from round 3's disposition
+list — same reasoning, not re-litigated): the `_store_lr_state` `self.parent()` duck-typing and the
+`_do_copy_presets_batch_multi` empty-`target_devices` edge case were both re-flagged by this round
+and are the same items already recorded above. Two larger findings deferred rather than fixed in
+this round: extracting `_validate_and_populate_review()`'s ~110 lines of validation/branching logic
+out of `main_window.py` (a real violation of CLAUDE.md's "GUI has zero business logic" rule, and
+testable without Qt today, but a large enough change to warrant its own pass rather than folding
+into this round); and `_do_copy_preset_to_device` being a test-only production method with no
+production callers (kept — it's a legitimate isolated-primitive test entry point, not obviously
+dead code) plus `adapter_factories.py`'s DI surface not being exercised by non-default factory
+substitution in any current test (a judgment call, not a bug).
+
 ---
 
 ## 3. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)

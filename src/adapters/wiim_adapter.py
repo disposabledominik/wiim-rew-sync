@@ -1075,10 +1075,23 @@ class WiiMAdapter:
         mode = coerce_channel_mode(channel_mode)
 
         band_payload: dict[str, object]
-        if mode.is_lr and filters_l and filters_r:
-            # L/R mode: build EQBandL and EQBandR arrays
-            band_array_l, _ = generate_wiim_band_array(filters_l, max_bands=num_bands)
-            band_array_r, _ = generate_wiim_band_array(filters_r, max_bands=num_bands)
+        if mode.is_lr:
+            # L/R mode: build EQBandL and EQBandR arrays independently, with
+            # no cross-channel fallback and no truthy-emptiness check on
+            # filters_l/filters_r -- branch selection depends only on
+            # mode.is_lr, matching write_peq()'s design (round-4 review
+            # fix). RoomFitSafeWrite.execute()'s rollback path restores an
+            # existing_settings.bands_l/bands_r pair read straight off the
+            # device, which can legitimately have one empty channel; a
+            # truthy check here would silently misroute that restore into
+            # the Stereo branch below, writing the wrong channelMode and
+            # data instead of restoring the original (asymmetric) state.
+            band_array_l, _ = generate_wiim_band_array(
+                filters_l or [], max_bands=num_bands
+            )
+            band_array_r, _ = generate_wiim_band_array(
+                filters_r or [], max_bands=num_bands
+            )
             eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
             eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
             channel_mode_value = "L/R"

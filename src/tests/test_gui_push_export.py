@@ -307,6 +307,32 @@ class TestPushChannelMode:
         assert settings.bands_l == filters_l
         assert settings.bands_r == filters_r
 
+    @pytest.mark.asyncio
+    async def test_push_lr_mode_empty_channel_emits_write_complete_failure(
+        self, window
+    ) -> None:
+        """An L/R push with one empty channel raises ValueError from
+        build_peq_settings() (resolve_channel_split -> require_lr_filters).
+        Unlike the RoomFit branch, the PEQ branch had no local try/except,
+        so this used to propagate to _bridge_wrapper's generic
+        operation_error handler instead of driving PushPage.set_failure()
+        via write_complete like every other push failure does (round-4
+        review finding #4, 2026-07-19)."""
+        mock_safe_write = _setup_push_state(window)
+        window._wizard_controller.state.channel_mode = ChannelMode.LR
+        window._wizard_controller.state.filters_l = [_make_filter(100.0)]
+        window._wizard_controller.state.filters_r = []
+        window._wizard_controller.state.current_filters = [_make_filter(100.0)]
+        mock_safe_write.execute = AsyncMock()
+
+        await window._primary_workflows._do_push()
+
+        mock_safe_write.execute.assert_not_called()
+        window._bridge.write_complete.emit.assert_called_once()
+        emitted_result = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted_result.success is False
+        window._bridge.operation_error.emit.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Export — Happy Path

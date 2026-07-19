@@ -3482,6 +3482,67 @@ class TestSettingsUIState:
             assert "1 preset(s)" in msg
             assert "3 device(s)" in msg
 
+    def test_copy_batch_skipped_empty_name_item_not_counted_in_total(
+        self, window
+    ) -> None:
+        """An item with an empty name (e.g. wiim_adapter.py:654 coercing a
+        missing device "Name" key to "") is skipped via `continue` before
+        ever being attempted -- it must not count toward n_items in the
+        final copy_batch_complete tally, or n_items * n_devices stops
+        matching succeeded + failed (round-4 review finding #5,
+        2026-07-19)."""
+        _setup_device(window)
+        items = [MagicMock(), MagicMock()]
+        items[0].name = "Preset1"
+        items[0].preset_type = "PEQ"
+        items[1].name = ""  # Orphaned/malformed entry -- skipped, not attempted
+        items[1].preset_type = "PEQ"
+
+        device1 = MagicMock(ip="192.168.1.201", name="Device A")
+        devices = [device1]
+
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: MagicMock(close=AsyncMock())
+        )
+        window._secondary_workflows._capability_prober_factory = (
+            lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        window._secondary_workflows._target_adapter_factory = (
+            lambda client, caps: MagicMock()
+        )
+
+        emitted: list[tuple[int, int, int, int]] = []
+        window._secondary_workflows.copy_batch_complete.connect(
+            lambda *args: emitted.append(args)
+        )
+
+        with (
+            patch.object(
+                window._secondary_workflows, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
+            ) as mock_read,
+            patch.object(
+                window._secondary_workflows, "_write_preset_to_adapter",
+                new_callable=AsyncMock,
+            ),
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, devices, "wifi", "wifi"
+                )
+            )
+
+        # Only the real item was ever read -- the empty-name item was
+        # skipped, not attempted (and therefore not a failure either).
+        mock_read.assert_called_once()
+        assert emitted == [(1, 1, 1, 0)]
+
     def test_copy_batch_connects_once_per_device_not_per_preset(self, window) -> None:
         """Regression test (branch-quality review, 2026-07-17):
         _write_preset_copies_to_devices must connect + probe capabilities
@@ -3654,6 +3715,39 @@ class TestSettingsUIState:
             roomfit_safe_write.execute.assert_called_once()
             call_kwargs = roomfit_safe_write.execute.call_args
             assert call_kwargs.kwargs.get("channel_mode") == ChannelMode.LR
+
+    def test_copy_lr_roomfit_empty_channel_rejected_not_silently_copied(
+        self, window
+    ) -> None:
+        """A RoomFit preset with a genuinely empty right channel (a valid
+        device read-state, see WiiMAdapter._parse_lr) must be rejected the
+        same way the sibling PEQ copy branch already rejects it via
+        build_peq_settings()/resolve_channel_split() -- not silently copied
+        to the target device with an incomplete L/R split (round-4 review
+        finding #8, 2026-07-19)."""
+        _setup_device(window)
+        peq_settings = MagicMock()
+        peq_settings.channel_mode = "lr"
+        peq_settings.bands_l = [_make_filter(100)]
+        peq_settings.bands_r = []  # Genuinely empty, not None
+        peq_settings.bands = []
+
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.execute = AsyncMock()
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
+
+        import asyncio
+
+        with pytest.raises(ValueError, match="L/R filters missing"):
+            asyncio.run(
+                window._secondary_workflows._write_preset_to_adapter(
+                    MagicMock(), "My RoomFit", "RoomFit", "wifi",
+                    peq_settings.bands_l, ChannelMode.LR, peq_settings,
+                )
+            )
+        roomfit_safe_write.execute.assert_not_called()
 
     # --- Issue #85: Diagnostics raw_command_requested connected ---
 
