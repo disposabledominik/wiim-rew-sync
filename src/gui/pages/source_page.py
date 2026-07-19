@@ -27,6 +27,7 @@ from src.gui.constants import (
     LIST_ITEM_HEIGHT,
     SPACING_MD,
 )
+from src.models.constants import DEFAULT_SOURCE
 
 
 class SourcePage(QWidget):
@@ -69,7 +70,7 @@ class SourcePage(QWidget):
         self._active_source = active_source
 
         # Default to "wifi" if no active source detected (most common use case)
-        default_source = active_source if active_source else "wifi"
+        default_source = active_source if active_source else DEFAULT_SOURCE
 
         # Clear existing source checkboxes
         self._source_checkboxes.clear()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import unicodedata
 from typing import Literal
 
@@ -129,6 +130,29 @@ class TestListAll:
         """Empty repository returns empty list."""
         assert repo.list_all() == []
 
+    def test_corrupt_profile_file_is_skipped_and_logged(
+        self, repo: ProfileRepository, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A profile file that fails to parse must be skipped (not raise)
+        AND logged -- previously this failure mode was silently swallowed,
+        making a corrupted profile file unreportable via a support bundle."""
+        repo.save(_make_stereo_profile("good-profile"))
+        corrupt_path = repo._profiles_dir / "corrupt.json"
+        corrupt_path.write_text("{not valid json", encoding="utf-8")
+
+        app_logger = logging.getLogger("wiim_rew_sync.app")
+        app_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.app"):
+                profiles = repo.list_all()
+        finally:
+            app_logger.propagate = False
+
+        assert [p.name for p in profiles] == ["good-profile"]
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "corrupt.json" in warnings[0].message
+
 
 # --- delete ---
 
@@ -252,6 +276,34 @@ class TestRename:
         # Neither profile should have been touched by the failed rename.
         assert repo.load("widget").name == "widget"
         assert repo.load(nfd_name).name == nfd_name
+
+
+class TestPathTraversalSafety:
+    """rename()/duplicate() set the new name directly, bypassing
+    build_profile()'s cosmetic sanitization -- _profile_path() itself must
+    still refuse to escape the profiles directory regardless of caller."""
+
+    def test_rename_to_traversal_name_stays_inside_profiles_dir(
+        self, repo: ProfileRepository
+    ) -> None:
+        """Renaming to a name containing '../' segments must not write
+        outside repo._profiles_dir."""
+        repo.save(_make_stereo_profile("original"))
+        repo.rename("original", "../../../../tmp/evil")
+
+        on_disk = list(repo._profiles_dir.iterdir())
+        assert all(p.parent == repo._profiles_dir for p in on_disk)
+
+    def test_duplicate_to_traversal_name_stays_inside_profiles_dir(
+        self, repo: ProfileRepository
+    ) -> None:
+        """Duplicating to a name containing '../' segments must not write
+        outside repo._profiles_dir."""
+        repo.save(_make_stereo_profile("original"))
+        repo.duplicate("original", "../../../../tmp/evil")
+
+        on_disk = list(repo._profiles_dir.iterdir())
+        assert all(p.parent == repo._profiles_dir for p in on_disk)
 
 
 # --- duplicate ---

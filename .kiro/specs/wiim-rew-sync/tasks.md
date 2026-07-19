@@ -701,7 +701,7 @@ Findings from full codebase integrity review. Decisions documented here for futu
   - Exit code 0 if all sources succeed, 1 if any fail (but continue attempting remaining sources)
   - Does NOT use Safe_Write_Protocol (loading a preset is a single atomic API call, not a raw band write)
   - Add unit test with mocked adapter verifying each source gets `load_peq_profile` called
-  - _Domain rule: PEQ presets are global and loadable onto any source (rules.md rule 7)_
+  - _Domain rule: PEQ presets are global and loadable onto any source (rules.md rule 9)_
   - _Prerequisite for GUI Redesign Requirement 15.13_
 
 ### Phase 11: Code Hygiene (from integrity review)

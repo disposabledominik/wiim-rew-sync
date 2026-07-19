@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+**All development happens on the `development` branch unless the user explicitly names a different
+branch for a specific task.**
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
@@ -65,7 +68,7 @@ src/
 ├── gui/          # PySide6 — pages (wizard steps), dialogs, components, panels, views
 ├── cli/          # CLI entry point (original proof-of-concept, still used for scripting)
 ├── logging/      # three rotating logs: app.log, wiim_api.log, rew_api.log
-└── tests/        # mirrors src/ structure, test_<module>.py
+└── tests/        # flat, one test_<module>.py per module (no subdirectories)
 ```
 
 - **Canonical model is the hub.** Every conversion goes REW→Canonical→WiiM or WiiM→Canonical→REW.
@@ -159,7 +162,7 @@ code, actively guard against both:
   answer (the No/decline branch, or asserting the dialog was/wasn't shown), in which case patch
   `PySide6.QtWidgets.QMessageBox.<method>` locally; it layers correctly over the fixture's default.
   **Custom `QDialog` subclasses are not covered by that fixture** (`QuickSetupDialog`,
-  `DevicePickerDialog`, `MeasurementPickerDialog`, pickers, etc.) — each must still be mocked
+  `DevicePickerDialog`, pickers, etc.) — each must still be mocked
   individually at its own static factory method (e.g. `QuickSetupDialog.get_setup`) in any test
   whose code path reaches it. If you add a new modal dialog and a test starts hanging (or a real
   window pops up during `pytest`), this is almost always the cause — extend the autouse fixture for

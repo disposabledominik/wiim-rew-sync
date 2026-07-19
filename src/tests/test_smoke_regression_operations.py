@@ -1973,6 +1973,36 @@ class TestPresets:
         )
         mock_show_error.assert_called_once_with("Push failed: Clamped values rejected")
 
+    def test_write_complete_rollback_failure_shows_critical_ui(self, window) -> None:
+        """_on_write_complete's `critical` flag (derived from
+        result.rollback_success is False) must actually reach
+        PushPage.set_failure(critical=True) -- the sibling case to
+        test_issue121 above, which only ever exercised rollback_success=True.
+        This closes the gap between PushPage.set_failure(critical=True)'s own
+        unit test (test_gui_pages.py) and the MainWindow wiring that's
+        supposed to trigger it for the "write AND rollback both failed"
+        case design principle #1 (safety before convenience) depends on
+        actually surfacing loudly."""
+        _setup_device(window)
+        result = WriteResult(
+            success=False,
+            rollback_success=False,
+            backup_path="/tmp/backup.json",
+            error_message="Write verification AND rollback failed. Manual recovery required.",
+        )
+
+        with (
+            patch.object(window._push_page, "set_failure") as mock_set_failure,
+            patch.object(window._status_banner, "show_error"),
+        ):
+            window._on_write_complete(result)
+
+        mock_set_failure.assert_called_once_with(
+            "Write verification AND rollback failed. Manual recovery required.",
+            "/tmp/backup.json",
+            True,
+        )
+
     # --- Issue #123: L/R clamping uses separate maps per channel ---
 
     def test_issue123_lr_clamping_separate_maps(self, window) -> None:

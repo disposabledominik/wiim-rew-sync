@@ -37,13 +37,14 @@ from PySide6.QtWidgets import (
 
 from src.adapters.capability_prober import CapabilityProber
 from src.adapters.rew_http_client import MeasurementSummary, REWHttpApiClient
-from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite
 from src.adapters.wiim_adapter import WiiMAdapter
 from src.adapters.wiim_http import WiiMHttpClient
 from src.discovery.discovery_module import DiscoveryModule
 from src.gui.adapter_factories import (
     make_capability_prober,
     make_rew_client,
+    make_roomfit_safe_write,
+    make_safe_write,
     make_wiim_adapter,
     make_wiim_http_client,
 )
@@ -107,6 +108,7 @@ from src.repository.backup_manager import BackupManager, is_multi_source_backup_
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
 from src.utils.device_name import sanitize_device_name
+from src.utils.paths import ensure_suffix
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
@@ -279,9 +281,14 @@ class MainWindow(QMainWindow):
         # Built once, shared by both PrimaryWorkflowManager and
         # SecondaryWorkflowManager's configure() calls below -- avoids
         # defining the same two lambdas twice (branch-quality review,
-        # 2026-07-17).
-        self._safe_write_factory = lambda adapter: SafeWrite(adapter, self._backup_manager)
-        self._roomfit_safe_write_factory = lambda adapter: RoomFitSafeWrite(
+        # 2026-07-17). Delegates construction to adapter_factories.py, the
+        # one file allowed to name these classes directly (mirrors the
+        # WiiMAdapter/WiiMHttpClient/CapabilityProber/REWHttpApiClient
+        # factories just below).
+        self._safe_write_factory = lambda adapter: make_safe_write(
+            adapter, self._backup_manager
+        )
+        self._roomfit_safe_write_factory = lambda adapter: make_roomfit_safe_write(
             adapter, self._backup_manager
         )
 
@@ -2026,6 +2033,25 @@ class MainWindow(QMainWindow):
         all_profiles = self._profile_repository.list_all()
         self._my_presets_view.set_presets(all_profiles)
 
+    def _prompt_stereo_export_path(self, title: str, default_name: str) -> str | None:
+        """Show the stereo REW-export save dialog; return the confirmed
+        .txt path, or None if the user cancelled.
+
+        Shared by _export_filters_as_rew's and _on_preset_export_requested's
+        stereo branches -- both built this exact dialog-and-suffix sequence
+        independently before this extraction.
+        """
+        default_dir = self._settings.rew_folder or str(Path.home())
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            title,
+            str(Path(default_dir) / f"{default_name}.txt"),
+            "REW EQ Files (*.txt)",
+        )
+        if not path:
+            return None
+        return str(ensure_suffix(Path(path), ".txt"))
+
     def _export_filters_as_rew(
         self, filters: list[CanonicalFilter], channel_mode: str | ChannelMode
     ) -> None:
@@ -2073,20 +2099,10 @@ class MainWindow(QMainWindow):
             # Stereo mode: single file dialog
             state = self._wizard_controller.state
             default_name = self._device_prefixed_name(state.selected_source or DEFAULT_SOURCE)
-            default_dir = self._settings.rew_folder or str(Path.home())
-            path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Export REW EQ File",
-                str(Path(default_dir) / f"{default_name}.txt"),
-                "REW EQ Files (*.txt)",
-            )
-            if not path:
+            path = self._prompt_stereo_export_path("Export REW EQ File", default_name)
+            if path is None:
                 logger.debug("Export cancelled by user")
                 return
-
-            # Ensure .txt extension
-            if not path.lower().endswith(".txt"):
-                path += ".txt"
 
             self._primary_workflows.export_file(filters, path)
             logger.info("Export REW: %s", path)
@@ -3139,19 +3155,13 @@ class MainWindow(QMainWindow):
             # handles L/R splitting internally
             export_path = str(path_l.parent / path_l.stem.replace("_L", "")) + ".txt"
         else:
-            default_dir = self._settings.rew_folder or str(Path.home())
-            path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Export Preset as REW File",
-                str(Path(default_dir) / f"{export_default_name}.txt"),
-                "REW EQ Files (*.txt)",
+            export_path_or_none = self._prompt_stereo_export_path(
+                "Export Preset as REW File", export_default_name
             )
-            if not path:
+            if export_path_or_none is None:
                 logger.debug("Preset export cancelled")
                 return
-            if not path.lower().endswith(".txt"):
-                path += ".txt"
-            export_path = path
+            export_path = export_path_or_none
 
         self._status_banner.show_progress(f"Exporting '{preset_name}'...")
         self._primary_workflows.export_preset(preset_name, preset_type, export_path)

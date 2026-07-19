@@ -99,6 +99,27 @@ async def test_list_measurements_timeout_raises_rew_not_connected(
 
 
 @respx.mock
+async def test_list_measurements_read_error_raises_rew_not_connected(
+    client: REWHttpApiClient,
+) -> None:
+    """A mid-response httpx.ReadError (not a ConnectError subclass) must
+    still raise REWNotConnectedError, not propagate as a raw httpx error."""
+    respx.get(f"{BASE_URL}/measurements").mock(
+        side_effect=httpx.ReadError("connection reset")
+    )
+
+    with pytest.raises(REWNotConnectedError, match="REW is not connected"):
+        await client.list_measurements()
+
+
+def test_constructor_honors_custom_timeout() -> None:
+    """REWHttpApiClient(timeout=X) is applied to the underlying httpx client,
+    mirroring WiiMHttpClient's existing timeout parameter."""
+    client = REWHttpApiClient(base_url=BASE_URL, timeout=1.5)
+    assert client._client.timeout.connect == 1.5
+
+
+@respx.mock
 async def test_list_measurements_500_raises_without_calling_json(
     client: REWHttpApiClient,
 ) -> None:

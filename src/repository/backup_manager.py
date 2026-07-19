@@ -13,6 +13,7 @@ from src.models.channel_mode import ChannelMode
 from src.models.errors import BackupError
 from src.models.peq import PEQSettings
 from src.models.profile import BackupRecord
+from src.utils.path_safety import sanitize_path_segment
 
 
 def load_backup_json(path: Path) -> dict[str, Any]:
@@ -139,6 +140,11 @@ class BackupManager:
     def __init__(self, storage_root: Path) -> None:
         self._backup_dir = storage_root / "backups"
 
+    def _device_dir(self, device_uuid: str) -> Path:
+        """Return the per-device backup directory for a (possibly untrusted) uuid."""
+        safe_uuid = sanitize_path_segment(device_uuid, fallback="unknown-device")
+        return self._backup_dir / safe_uuid
+
     def create_backup(
         self,
         settings: PEQSettings,
@@ -172,7 +178,7 @@ class BackupManager:
             BackupError: if retention cleanup fails or file cannot be written.
         """
         device_uuid = capabilities.uuid
-        device_dir = self._backup_dir / device_uuid
+        device_dir = self._device_dir(device_uuid)
         device_dir.mkdir(parents=True, exist_ok=True)
 
         # Enforce retention BEFORE writing the new file
@@ -256,7 +262,7 @@ class BackupManager:
 
     def list_backups(self, device_uuid: str) -> list[Path]:
         """Return backup paths for a device UUID, sorted oldest-first."""
-        device_dir = self._backup_dir / device_uuid
+        device_dir = self._device_dir(device_uuid)
         if not device_dir.exists():
             return []
         backups = sorted(device_dir.glob("*.json"))

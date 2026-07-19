@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import unicodedata
 from pathlib import Path
 
@@ -10,6 +11,9 @@ from src.models.channel_mode import ChannelMode
 from src.models.errors import ProfileNameCollisionError, ProfileNotFoundError
 from src.models.profile import Profile
 from src.translator.schema_migrator import migrate_profile
+from src.utils.path_safety import sanitize_path_segment
+
+logger = logging.getLogger("wiim_rew_sync.app")
 
 
 class ProfileRepository:
@@ -38,8 +42,17 @@ class ProfileRepository:
         that visually-identical names (e.g. composed vs. decomposed forms)
         always map to the same path, instead of colliding unpredictably on
         normalization-insensitive filesystems like NTFS.
+
+        ``sanitize_path_segment`` is a traversal backstop, not the cosmetic
+        filename sanitization ``build_profile()`` already applies to
+        ``profile.name`` -- it guarantees this method can never be tricked
+        into escaping ``_profiles_dir`` even for callers (``rename()``,
+        ``duplicate()``) that set a name directly without going through
+        ``build_profile()`` first.
         """
-        return self._profiles_dir / f"{unicodedata.normalize('NFC', name)}.json"
+        normalized = unicodedata.normalize("NFC", name)
+        safe_name = sanitize_path_segment(normalized, fallback="Untitled Preset")
+        return self._profiles_dir / f"{safe_name}.json"
 
     def save(self, profile: Profile, *, expected_existing_name: str | None = None) -> Path:
         """Save a profile to disk as JSON.
@@ -114,8 +127,8 @@ class ProfileRepository:
                 raw = migrate_profile(raw)
                 profile = Profile.model_validate(raw)
                 profiles.append(profile)
-            except (json.JSONDecodeError, ValueError, KeyError):
-                # Skip invalid profile files
+            except (json.JSONDecodeError, ValueError, KeyError) as exc:
+                logger.warning("Skipping unreadable profile %s: %s", path, exc)
                 continue
         profiles.sort(key=lambda p: (p.name.lower(), p.name))
         return profiles

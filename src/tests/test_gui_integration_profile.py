@@ -17,7 +17,6 @@ from src.gui.components.step_indicator import _StepState
 from src.gui.main_window import PAGE_INDICES, MainWindow
 from src.gui.wizard_controller import WizardStep
 from src.models.canonical import CanonicalFilter
-from src.tests.conftest import close_coroutine_tree
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,16 +50,7 @@ def _make_profile(*, filters: list[CanonicalFilter] | None = None, name: str = "
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def mock_bridge() -> MagicMock:
-    """Create a MagicMock async bridge with expected signal attributes."""
-    bridge = MagicMock()
-    bridge.start = MagicMock()
-    bridge.shutdown = MagicMock()
-    bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
-    return bridge
+# mock_bridge is defined in conftest.py, shared across GUI integration test files.
 
 
 @pytest.fixture()

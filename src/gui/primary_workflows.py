@@ -40,6 +40,7 @@ from src.models.channel_mode import (
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.models.profile import build_profile
 from src.repository.backup_manager import encode_multi_source_backup_paths
+from src.utils.paths import ensure_suffix
 
 if TYPE_CHECKING:
     from src.adapters.capability_prober import CapabilityProber
@@ -930,11 +931,7 @@ class PrimaryWorkflowManager(QObject):
         )
 
         generator = REWGenerator()
-        file_path = Path(path)
-
-        # Ensure .txt extension
-        if file_path.suffix.lower() != ".txt":
-            file_path = file_path.with_suffix(".txt")
+        file_path = ensure_suffix(Path(path), ".txt")
 
         if is_lr_mode(peq_settings.channel_mode):
             # L/R mode: generate two files

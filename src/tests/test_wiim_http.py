@@ -84,6 +84,20 @@ async def test_connection_refused_raises_wiim_connection_error(client: WiiMHttpC
 
 
 @respx.mock
+async def test_mid_response_read_error_raises_wiim_connection_error(
+    client: WiiMHttpClient,
+) -> None:
+    """A mid-response httpx.ReadError (not a ConnectError subclass) must
+    still map to WiiMConnectionError, not propagate as a raw httpx error."""
+    respx.get(f"{BASE_URL}?command=getStatusEx").mock(
+        side_effect=httpx.ReadError("connection reset")
+    )
+
+    with pytest.raises(WiiMConnectionError, match="Cannot connect"):
+        await client.command("getStatusEx")
+
+
+@respx.mock
 async def test_http_500_raises_wiim_response_error(client: WiiMHttpClient) -> None:
     """Non-200 HTTP status raises WiiMResponseError."""
     respx.get(f"{BASE_URL}?command=badCommand").mock(

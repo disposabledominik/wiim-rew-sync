@@ -300,6 +300,60 @@ class TestListBackups:
         assert result == []
 
 
+class TestPathTraversalSafety:
+    """A device's own (unauthenticated, network-supplied) uuid must never be
+    usable to write or read outside the backup storage root."""
+
+    def test_create_backup_with_traversal_uuid_stays_inside_backup_dir(
+        self,
+        backup_manager: BackupManager,
+        stereo_settings: PEQSettings,
+        tmp_path: Path,
+    ) -> None:
+        """A malicious device-reported uuid containing '../' segments must
+        not let create_backup() write outside self._backup_dir."""
+        malicious_caps = DeviceCapabilities(
+            supports_peq=True,
+            max_filters=10,
+            model="WiiM Pro",
+            firmware="4.8.6",
+            uuid="../../../../tmp/evil",
+        )
+        path = backup_manager.create_backup(stereo_settings, malicious_caps, "pre_write")
+
+        backups_root = tmp_path / "backups"
+        assert backups_root in path.parents
+
+    def test_create_backup_with_absolute_path_uuid_stays_inside_backup_dir(
+        self,
+        backup_manager: BackupManager,
+        stereo_settings: PEQSettings,
+        tmp_path: Path,
+    ) -> None:
+        """A device-reported uuid that looks like an absolute path must not
+        override the backup directory."""
+        malicious_caps = DeviceCapabilities(
+            supports_peq=True,
+            max_filters=10,
+            model="WiiM Pro",
+            firmware="4.8.6",
+            uuid="/etc/passwd",
+        )
+        path = backup_manager.create_backup(stereo_settings, malicious_caps, "pre_write")
+
+        backups_root = tmp_path / "backups"
+        assert backups_root in path.parents
+
+    def test_list_backups_with_traversal_uuid_does_not_escape(
+        self,
+        backup_manager: BackupManager,
+    ) -> None:
+        """list_backups() must apply the same sanitization as create_backup()
+        so a malicious uuid always resolves to the same (contained) directory."""
+        result = backup_manager.list_backups("../../../../tmp/evil")
+        assert result == []
+
+
 class TestMultiSourceBackupPathEncoding:
     """encode/decode_multi_source_backup_paths and is_multi_source_backup_path.
 

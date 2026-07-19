@@ -4,7 +4,7 @@ Tracks issues found during manual smoke testing of the GUI integration.
 
 ## Issue Status Legend
 
-- **Status:** `FIXED` | `OPEN` | `WONTFIX`
+- **Status:** `FIXED` | `OPEN` | `WONTFIX` | `REASSIGNED` (superseded by a different, more accurately-scoped issue number; see that row's Notes for the cross-reference)
 - **Test:** `YES` (unit test exists) | `NO` (needs test) | `N/A` (not testable in automation)
 
 ## Issues
