@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import inspect
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from hypothesis import strategies as st
@@ -57,6 +58,24 @@ def close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
             close_coroutine_tree(local_value, seen)
 
     value.close()
+
+
+@pytest.fixture()
+def mock_bridge() -> MagicMock:
+    """Create a MagicMock async bridge with expected signal attributes.
+
+    Shared by every test file that drives MainWindow through a mocked
+    AsyncBridge -- was previously copy-pasted near-verbatim across
+    test_wizard_integration.py, test_gui_integration_profile.py, and
+    test_main_window_settings.py. ``run_async``'s side_effect uses
+    close_coroutine_tree so the coroutine handed to it never triggers a
+    "never awaited" RuntimeWarning during later garbage collection.
+    """
+    bridge = MagicMock()
+    bridge.start = MagicMock()
+    bridge.shutdown = MagicMock()
+    bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
+    return bridge
 
 
 @pytest.fixture(autouse=True)

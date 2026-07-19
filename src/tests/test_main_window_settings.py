@@ -12,23 +12,14 @@ Verifies:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import PAGE_INDICES, MainWindow
-from src.tests.conftest import close_coroutine_tree
 
-
-@pytest.fixture()
-def mock_bridge() -> MagicMock:
-    """Create a MagicMock async bridge with expected signal attributes."""
-    bridge = MagicMock()
-    bridge.start = MagicMock()
-    bridge.shutdown = MagicMock()
-    bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
-    return bridge
+# mock_bridge is defined in conftest.py, shared across GUI integration test files.
 
 
 @pytest.fixture()
