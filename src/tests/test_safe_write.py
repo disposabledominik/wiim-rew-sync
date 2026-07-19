@@ -27,6 +27,7 @@ from src.adapters.wiim_adapter import WiiMAdapter
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import ChannelMode
+from src.models.errors import WiiMConnectionError
 from src.models.peq import PEQSettings
 from src.repository.backup_manager import BackupManager
 from src.tests.conftest import iter_src_python_files
@@ -416,6 +417,32 @@ class TestRollbackFailure:
 
         assert result.error_message is not None
         assert "backup" in result.error_message.lower()
+
+    async def test_rollback_device_disconnect_returns_result_not_exception(
+        self, safe_write: SafeWrite, mock_adapter: AsyncMock
+    ) -> None:
+        """A device disconnect mid-rollback (e.g. WiiMConnectionError raised
+        from the rollback's own read_peq call) must surface as a structured
+        WriteResult(rollback_success=False), not propagate as a raw
+        exception -- this is just as much a rollback failure as a
+        verification mismatch, and callers only handle the former."""
+        intended = _make_settings(bands=_make_bands(freq=100.0))
+        original = _make_settings(bands=_make_bands(freq=200.0))
+        bad_readback = _make_settings(bands=_make_bands(freq=500.0))
+
+        mock_adapter.read_peq.side_effect = [
+            original,       # Step 1: current state
+            bad_readback,   # Step 3: read-back mismatch -> triggers rollback
+            WiiMConnectionError("device unreachable"),  # Rollback: pre_rollback read
+        ]
+
+        result = await safe_write.execute("wifi", intended)
+
+        assert result.success is False
+        assert result.rollback_success is False
+        assert result.backup_path is not None
+        assert result.error_message is not None
+        assert "device unreachable" in result.error_message
 
 
 # ---------------------------------------------------------------------------

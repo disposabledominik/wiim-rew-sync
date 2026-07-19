@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.models.errors import WiiMConnectionError, WiiMResponseError
 from src.models.peq import PEQSettings
 from src.repository.backup_manager import (
     load_backup_json,
@@ -317,27 +318,52 @@ class SafeWrite:
         """
         capabilities = self._adapter.capabilities
 
-        # Create pre_rollback backup of current (corrupted) state
-        current_state = await self._adapter.read_peq(source_name)
-        self._backup_manager.create_backup(current_state, capabilities, "pre_rollback")
+        try:
+            # Create pre_rollback backup of current (corrupted) state
+            current_state = await self._adapter.read_peq(source_name)
+            self._backup_manager.create_backup(current_state, capabilities, "pre_rollback")
 
-        # Write backup state back via queue
-        await self._adapter.write_peq(source_name, original_settings, self._queue)
+            # Write backup state back via queue
+            await self._adapter.write_peq(source_name, original_settings, self._queue)
 
-        # Restore the source's original enable-state -- a failed push must
-        # have no lasting device-visible effect, regardless of whether the
-        # band rollback below verifies successfully. Best-effort, mirrors
-        # RoomFitSafeWrite's failure-path enable-state restore.
-        await self._adapter.set_peq_enabled_best_effort(
-            source_name, original_settings.enabled, context="after rollback"
-        )
+            # Restore the source's original enable-state -- a failed push must
+            # have no lasting device-visible effect, regardless of whether the
+            # band rollback below verifies successfully. Best-effort, mirrors
+            # RoomFitSafeWrite's failure-path enable-state restore.
+            await self._adapter.set_peq_enabled_best_effort(
+                source_name, original_settings.enabled, context="after rollback"
+            )
 
-        # Verify rollback succeeded. Same reasoning as the primary write
-        # verify above: original_settings may carry more bands than
-        # max_filters (the device can report more bands than this app
-        # writes -- see clamp_filters_for_verification's docstring), and
-        # write_peq() truncates to max_filters when restoring it.
-        rollback_read_back = await self._adapter.read_peq(source_name)
+            # Verify rollback succeeded. Same reasoning as the primary write
+            # verify above: original_settings may carry more bands than
+            # max_filters (the device can report more bands than this app
+            # writes -- see clamp_filters_for_verification's docstring), and
+            # write_peq() truncates to max_filters when restoring it.
+            rollback_read_back = await self._adapter.read_peq(source_name)
+        except (WiiMConnectionError, WiiMResponseError) as exc:
+            # The device became unreachable/unresponsive mid-rollback (e.g. a
+            # flaky LAN or hardware disconnect) -- this is just as much a
+            # rollback failure as a verification mismatch below, and must
+            # surface the same structured, loud signal rather than letting a
+            # raw connection exception propagate and lose the "a write was
+            # attempted and rollback could not be verified" context.
+            logger.critical(
+                "Rollback FAILED (device unreachable: %s). Manual recovery "
+                "required. Backup file: %s",
+                exc,
+                backup_path,
+            )
+            return WriteResult(
+                success=False,
+                rollback_success=False,
+                backup_path=backup_path,
+                error_message=(
+                    f"Write verification failed, and rollback could not be "
+                    f"completed ({exc}). Manual recovery required. "
+                    f"Backup: {backup_path}"
+                ),
+            )
+
         verify_original = _clamped_for_verification(original_settings, capabilities.max_filters)
         if verify_bands(verify_original, rollback_read_back):
             return WriteResult(
