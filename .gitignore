@@ -36,6 +36,9 @@ htmlcov/
 # Linting
 .ruff_cache/
 
+# setuptools_scm generated version file (regenerated on every install/build)
+src/_version.py
+
 # Logs (runtime-generated, not source)
 logs/
 *.log

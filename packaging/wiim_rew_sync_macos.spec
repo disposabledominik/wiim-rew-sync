@@ -60,8 +60,16 @@ excluded_modules = [
 
 # Data files to bundle (help articles for in-app user guide)
 import os
+import sys
 _SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 _PROJECT_ROOT = os.path.join(_SPEC_DIR, '..')
+
+# Resolve the app version the same way the running app does (single source
+# of truth: src/utils/version.py, backed by the setuptools_scm-generated
+# src/_version.py written during `pip install -e ".[package]"`).
+sys.path.insert(0, os.path.abspath(_PROJECT_ROOT))
+from src.utils.version import get_app_version
+_APP_VERSION = get_app_version()
 
 help_src = os.path.join(_PROJECT_ROOT, "src", "gui", "assets", "help")
 datas_list = []
@@ -164,7 +172,7 @@ app = BUNDLE(
     bundle_identifier="com.wiim-rew-sync.app",
     info_plist={
         "CFBundleDisplayName": "WiiM-REW-Sync",
-        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleShortVersionString": _APP_VERSION,
         "NSHighResolutionCapable": True,
     },
 )

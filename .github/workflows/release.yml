@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            spec: packaging/wiim_rew_sync_windows.spec
+            asset: WiiM-REW-Sync-windows-x64.zip
+          - os: macos-latest
+            spec: packaging/wiim_rew_sync_macos.spec
+            asset: WiiM-REW-Sync-macos.zip
+          - os: ubuntu-latest
+            spec: packaging/wiim_rew_sync_linux.spec
+            asset: WiiM-REW-Sync-linux-x64.zip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full tag history so setuptools_scm resolves the tagged version
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project (package extras -> PyInstaller)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[package]"
+
+      - name: Show resolved version (sanity check)
+        run: python -c "from src.utils.version import get_app_version; print(get_app_version())"
+
+      - name: Build with PyInstaller
+        run: pyinstaller ${{ matrix.spec }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/WiiM-REW-Sync.exe -DestinationPath ${{ matrix.asset }}
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent dist/WiiM-REW-Sync.app ${{ matrix.asset }}
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          chmod +x dist/WiiM-REW-Sync
+          (cd dist && zip -X ../${{ matrix.asset }} WiiM-REW-Sync)
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Create draft release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum *.zip > SHA256SUMS.txt
+
+      - name: Create draft GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --generate-notes \
+            --title "${GITHUB_REF_NAME}" \
+            artifacts/WiiM-REW-Sync-windows-x64.zip \
+            artifacts/WiiM-REW-Sync-macos.zip \
+            artifacts/WiiM-REW-Sync-linux-x64.zip \
+            artifacts/SHA256SUMS.txt

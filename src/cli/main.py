@@ -45,6 +45,7 @@ from src.models.peq import PEQSettings
 from src.repository.backup_manager import BackupManager
 from src.translator import TranslationEngine
 from src.utils.app_dirs import get_app_data_dir
+from src.utils.version import get_app_version
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
@@ -784,6 +785,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wiim-rew-sync",
         description="WiiM <-> REW PEQ sync CLI (proof of concept).",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {get_app_version()}",
     )
     parser.add_argument(
         "--timeout",
