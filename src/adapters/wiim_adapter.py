@@ -512,38 +512,49 @@ class WiiMAdapter:
     ) -> None:
         """Dispatch a band write to the batch or sequential path.
 
-        ``supports_batch_write`` is tri-state: True/False use the
-        corresponding path directly (identical to the old behavior). None
-        means "not yet determined" -- there is no connect-time write probe
-        anymore (2026-07-10 redesign; the old probe performed a real
-        EQSetLV2Band write) -- so the first real push attempts the batch
-        form, and on an explicit device-side rejection falls back to
-        sequential within the same call, recording the outcome on the
-        capabilities object for the rest of the session. Network errors
-        propagate without recording anything -- they say nothing about
-        batch support.
+        ``supports_batch_write`` is tri-state: False skips straight to the
+        sequential path. None means "not yet determined" -- there is no
+        connect-time write probe anymore (2026-07-10 redesign; the old probe
+        performed a real EQSetLV2Band write) -- so the first real push
+        attempts the batch form, and on an explicit device-side rejection
+        falls back to sequential within the same call, recording the outcome
+        on the capabilities object for the rest of the session. True still
+        attempts the batch form first, but an explicit rejection is checked
+        for regardless of prior state -- a device that previously accepted
+        batch writes can start rejecting them (firmware quirk, state change),
+        and that's demoted back to False/sequential the same way a first-time
+        rejection is, rather than only being caught one round-trip later by
+        SafeWrite's read-back verification. Network errors propagate without
+        recording anything -- they say nothing about batch support.
         """
         known = self._capabilities.supports_batch_write
         if known is False:
             await sequential()
             return
         resp = await batch()
-        if known is None:
-            if self._is_write_rejection(resp):
+        if self._is_write_rejection(resp):
+            if known is True:
+                logger.warning(
+                    "Batch PEQ write previously worked but was rejected this "
+                    "time (%r); falling back to sequential and re-probing on "
+                    "the next write.",
+                    resp,
+                )
+            else:
                 logger.info(
                     "Batch PEQ write rejected by device (%r); recording "
                     "supports_batch_write=False and falling back to "
                     "sequential writes.",
                     resp,
                 )
-                self._capabilities.supports_batch_write = False
-                await sequential()
-            else:
-                logger.info(
-                    "Batch PEQ write accepted; recording "
-                    "supports_batch_write=True."
-                )
-                self._capabilities.supports_batch_write = True
+            self._capabilities.supports_batch_write = False
+            await sequential()
+        elif known is None:
+            logger.info(
+                "Batch PEQ write accepted; recording "
+                "supports_batch_write=True."
+            )
+            self._capabilities.supports_batch_write = True
 
     async def _write_peq_batch(
         self,

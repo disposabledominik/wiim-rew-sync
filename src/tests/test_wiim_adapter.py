@@ -431,6 +431,24 @@ class TestWritePeqBatch:
         assert "a_mode" in call_args
         assert "j_mode" in call_args
 
+    async def test_batch_rejection_falls_back_to_sequential_even_when_previously_true(
+        self, batch_adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """A device that previously accepted batch writes (supports_batch_write
+        already True) but rejects this one must still be detected and fall
+        back to sequential -- previously the rejection check only ran when
+        supports_batch_write was None (first attempt), so a later rejection
+        with known=True went unnoticed here and was only ever caught one
+        round-trip later by SafeWrite's read-back verification."""
+        mock_client.command.side_effect = [{"status": "Failed"}, *(["OK"] * 10)]
+        settings = self._make_settings()
+
+        await batch_adapter.write_peq("wifi", settings)
+
+        # 1 rejected batch attempt + 10 sequential band writes
+        assert mock_client.command.call_count == 11
+        assert batch_adapter.capabilities.supports_batch_write is False
+
 
 # ---------------------------------------------------------------------------
 # Tests: write_peq — Sequential path
