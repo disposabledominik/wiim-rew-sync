@@ -45,21 +45,37 @@ def _get_rotating_handlers(logger: logging.Logger) -> list[RotatingFileHandler]:
 
 
 def _remove_all_handlers(logger: logging.Logger) -> None:
-    """Close and remove all handlers from *logger*."""
+    """Close and remove the RotatingFileHandlers configure_logging() added.
+
+    Only targets that handler type -- NOT a blanket removal of everything on
+    *logger* -- because pytest's own log-capturing machinery (caplog) can
+    also have a handler attached to these same loggers (e.g. from another
+    test file's ``caplog.at_level(logger=...)`` still active up the call
+    stack). Blindly stripping those causes duplicate-capture interference in
+    unrelated tests later in the same session.
+    """
     for handler in list(logger.handlers):
-        handler.close()
-        logger.removeHandler(handler)
+        if isinstance(handler, RotatingFileHandler):
+            handler.close()
+            logger.removeHandler(handler)
 
 
 def _cleanup_loggers(*names: str) -> None:
     """Remove all handlers from the named loggers (test isolation)."""
     for name in names:
         _remove_all_handlers(logging.getLogger(name))
-    # Also strip any StreamHandlers added to the root logger
+    # Also strip *only* the stderr StreamHandler that configure_logging()
+    # itself adds to the root logger -- mirror its own detection check
+    # exactly. Blindly removing every root handler (as this used to do)
+    # also tears out pytest's own log-capturing handler, which lives on
+    # root too; that interference accumulates across this file's many
+    # configure_logging() calls and causes duplicate record capture in
+    # unrelated tests that run later in the same session.
     root = logging.getLogger()
     for h in list(root.handlers):
-        h.close()
-        root.removeHandler(h)
+        if isinstance(h, logging.StreamHandler) and h.stream is sys.stderr:
+            h.close()
+            root.removeHandler(h)
 
 
 # ---------------------------------------------------------------------------

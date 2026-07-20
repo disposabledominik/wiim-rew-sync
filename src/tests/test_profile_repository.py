@@ -149,9 +149,22 @@ class TestListAll:
             app_logger.propagate = False
 
         assert [p.name for p in profiles] == ["good-profile"]
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        # De-duplicate by object identity: once any earlier test in the
+        # session has left this logger's `propagate` at False (its
+        # production-accurate steady state, set by configure_logging() --
+        # see src/logging/setup.py), pytest's own log-capture machinery
+        # auto-attaches directly to it (it specially handles non-propagating
+        # loggers so their records aren't missed), on top of the normal
+        # propagation-based capture -- delivering the same LogRecord object
+        # to caplog twice. The application only logs the warning once;
+        # verified by direct handler-count instrumentation. Assert on unique
+        # record identity, not raw list length, so this doesn't depend on
+        # what ran earlier in the same pytest session.
+        warnings = {
+            id(r): r for r in caplog.records if r.levelno == logging.WARNING
+        }.values()
         assert len(warnings) == 1
-        assert "corrupt.json" in warnings[0].message
+        assert "corrupt.json" in next(iter(warnings)).message
 
 
 # --- delete ---

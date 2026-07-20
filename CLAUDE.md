@@ -1,7 +1,10 @@
 # CLAUDE.md
 
 **All development happens on the `development` branch unless the user explicitly names a different
-branch for a specific task.**
+branch for a specific task.** This means every pull request's **base branch must be `development`,
+not `main`** — `main` only receives merges from `development` (e.g. when cutting a release). If a PR
+was opened against `main` by mistake, retarget it (`base` branch update) rather than closing and
+reopening.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 

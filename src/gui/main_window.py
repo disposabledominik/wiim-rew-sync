@@ -109,6 +109,7 @@ from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
 from src.utils.device_name import sanitize_device_name
 from src.utils.paths import ensure_suffix
+from src.utils.version import get_app_version
 
 logger = logging.getLogger("wiim_rew_sync.app")
 
@@ -2599,11 +2600,12 @@ class MainWindow(QMainWindow):
         """Show About dialog (Help > About)."""
         from PySide6.QtWidgets import QMessageBox
 
+        version = get_app_version()
         QMessageBox.about(
             self,
             "About WiiM \u2194 REW PEQ Sync",
             "<h3>WiiM \u2194 REW PEQ Sync</h3>"
-            "<p><b>Version 0.1.0</b></p>"
+            f"<p><b>Version {version}</b></p>"
             "<p>Transfer parametric EQ and RoomFit filter configurations "
             "between Room EQ Wizard (REW) and WiiM devices on your local network.</p>"
             "<p><b>Features:</b></p>"

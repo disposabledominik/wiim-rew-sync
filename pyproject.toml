@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "wheel", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "wiim-rew-sync"
-version = "0.1.0"
+dynamic = ["version"]
 description = "WiiM ↔ REW PEQ Sync Tool — transfer parametric EQ configurations between REW and WiiM devices"
 requires-python = ">=3.12"
 dependencies = [
@@ -38,6 +38,13 @@ wiim-rew-sync = "src.cli.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
+
+# ---------------------------------------------------------------------------
+# setuptools_scm — derive the package version from git tags (v1.2.3 -> 1.2.3)
+# ---------------------------------------------------------------------------
+[tool.setuptools_scm]
+version_file = "src/_version.py"
+fallback_version = "0.0.0.dev0"
 
 # ---------------------------------------------------------------------------
 # pytest
@@ -127,7 +134,7 @@ strict_equality = true
 extra_checks = true
 
 [[tool.mypy.overrides]]
-module = ["PySide6.*", "zeroconf.*", "respx.*"]
+module = ["PySide6.*", "zeroconf.*", "respx.*", "src._version"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

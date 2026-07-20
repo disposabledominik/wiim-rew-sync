@@ -8,11 +8,12 @@ Privacy: SHALL NOT include user filter data, profiles, or backup files.
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZipFile
+
+from src.utils.version import get_app_version
 
 
 def generate_support_bundle(
@@ -82,18 +83,7 @@ def generate_support_bundle(
             )
 
         # Add version.txt
-        version = _get_app_version()
+        version = get_app_version()
         zf.writestr("version.txt", version)
 
     return zip_path
-
-
-def _get_app_version() -> str:
-    """Retrieve the application version string.
-
-    Tries ``importlib.metadata`` first; falls back to hardcoded "0.1.0".
-    """
-    try:
-        return importlib.metadata.version("wiim-rew-sync")
-    except importlib.metadata.PackageNotFoundError:
-        return "0.1.0"

@@ -117,8 +117,10 @@ class TestBundleContents:
 
         # Version should be a non-empty string
         assert version
-        # Should look like a version (e.g. "0.1.0")
-        assert re.match(r"\d+\.\d+\.\d+", version)
+        # Should look like a version (e.g. "0.1.0", or a setuptools_scm dev
+        # version like "0.3.dev18+g69e8453ba" for an untagged/pre-release
+        # commit -- not always 3 dot-separated components).
+        assert re.match(r"\d+(\.\d+)+", version)
 
     def test_returns_path_to_zip(self, output_dir: Path, log_dir: Path) -> None:
         result = generate_support_bundle(output_dir, log_dir)
