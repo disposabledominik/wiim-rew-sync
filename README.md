@@ -38,13 +38,26 @@ Use at your own risk.**
 ## Getting Started
 
 This app targets non-technical users running a standalone desktop app, not a Python toolchain.
-Build a standalone executable for your platform (Windows `.exe`, macOS `.app`, or a single Linux
-binary — no Python required to *run* it) by following [packaging/README.md](packaging/README.md),
-then launch it like any other desktop app. The in-app Help → Getting Started guide walks through
-connecting to a device and pushing your first set of filters.
+Download the pre-built executable for your platform below, or build it yourself by following
+[packaging/README.md](packaging/README.md) — no Python required to *run* the app either way. Once
+you have it, launch it like any other desktop app; the in-app Help → Getting Started guide walks
+through connecting to a device and pushing your first set of filters.
 
-There is no published pre-built download yet — building it yourself (or having someone build it
-for you) is currently the only path to a runnable executable.
+### Download
+
+- **Windows:** [WiiM-REW-Sync-windows-x64.zip](https://github.com/disposabledominik/wiim-rew-sync/releases/latest/download/WiiM-REW-Sync-windows-x64.zip)
+- **macOS:** [WiiM-REW-Sync-macos.zip](https://github.com/disposabledominik/wiim-rew-sync/releases/latest/download/WiiM-REW-Sync-macos.zip)
+- **Linux:** [WiiM-REW-Sync-linux-x64.zip](https://github.com/disposabledominik/wiim-rew-sync/releases/latest/download/WiiM-REW-Sync-linux-x64.zip)
+
+These links always point to the newest published [release](https://github.com/disposabledominik/wiim-rew-sync/releases). Each release also includes a `SHA256SUMS.txt` to verify your download.
+
+> **Testing status:** Only the **Windows** build has been verified on real hardware so far. The
+> macOS and Linux builds come from the same automated pipeline and are expected to work, but
+> haven't been hardware-tested yet — please [open an issue](https://github.com/disposabledominik/wiim-rew-sync/issues)
+> if you run into problems on those platforms.
+
+macOS builds are currently unsigned, so Gatekeeper will block the first launch — see
+[packaging/README.md](packaging/README.md#macos-app-bundle) for the one-command workaround.
 
 ## For Developers
 
