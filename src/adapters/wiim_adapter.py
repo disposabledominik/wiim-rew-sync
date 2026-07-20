@@ -1171,6 +1171,13 @@ class WiiMAdapter:
         # entirely (not defaulted to the old hard-coded value) when the live
         # query fails, is unsupported, or returns an unexpected shape.
         active_output_mode = await self._query_active_output_mode()
+        if active_output_mode is None:
+            logger.warning(
+                "Writing RoomFit profile %r without rc_output -- active "
+                "output mode could not be determined (see preceding log "
+                "entry for why).",
+                profile_name,
+            )
 
         extra_payload: dict[str, object] = {
             "channelMode": channel_mode_value,

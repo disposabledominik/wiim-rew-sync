@@ -1142,6 +1142,76 @@ class TestWriteRoomfit:
         else:
             assert write_payload["rc_output"] == expected_rc_output
 
+    async def test_write_roomfit_logs_warning_when_rc_output_omitted(
+        self,
+        mock_client: AsyncMock,
+        roomfit_write_capabilities: DeviceCapabilities,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A write proceeding without rc_output (active output mode unknown)
+        is logged as a warning naming the profile, not just silently omitted --
+        see the info-level diagnostic from _query_active_output_mode() itself
+        for *why* the query failed."""
+        import logging
+
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+
+        mock_client.command.side_effect = [
+            WiiMConnectionError("device unreachable"),
+            "OK",
+            "OK",
+        ]
+
+        logger = logging.getLogger("wiim_rew_sync.wiim_api")
+        logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.wiim_api"):
+                await adapter.write_roomfit("wifi", "REW Export", filters)
+        finally:
+            logger.propagate = False
+
+        assert any(
+            "REW Export" in rec.message and "rc_output" in rec.message
+            for rec in caplog.records
+        )
+
+    async def test_write_roomfit_no_warning_when_rc_output_present(
+        self,
+        mock_client: AsyncMock,
+        roomfit_write_capabilities: DeviceCapabilities,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """No omission warning fires when the active output mode query succeeds."""
+        import logging
+
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+
+        mock_client.command.side_effect = [
+            {"mode": "AUDIO_OUTPUT_SPEAKER_MODE"},
+            "OK",
+            "OK",
+        ]
+
+        logger = logging.getLogger("wiim_rew_sync.wiim_api")
+        logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="wiim_rew_sync.wiim_api"):
+                await adapter.write_roomfit("wifi", "REW Export", filters)
+        finally:
+            logger.propagate = False
+
+        assert not any("rc_output" in rec.message for rec in caplog.records)
+
 
 class TestQueryActiveOutputMode:
     """Test the private _query_active_output_mode() helper directly (same
