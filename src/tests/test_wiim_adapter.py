@@ -956,6 +956,7 @@ class TestWriteRoomfit:
         ]
 
         mock_client.command.side_effect = [
+            {"mode": "AUDIO_OUTPUT_SPEAKER_MODE"},  # getActiveSoundCardOutputMode
             "OK",  # EQSetLV2SourceBand response
             "OK",  # EQSourceSave response
         ]
@@ -963,29 +964,29 @@ class TestWriteRoomfit:
         await adapter.write_roomfit("wifi", "REW Export", filters)
 
         calls = mock_client.command.call_args_list
-        assert len(calls) == 2
-        # First: write to buffer with EQLevel: 2. Band read/write requires
+        assert len(calls) == 3
+        assert calls[0][0][0] == "getActiveSoundCardOutputMode"
+        # Second: write to buffer with EQLevel: 2. Band read/write requires
         # source_name="" -- present but empty, not omitted; omitting it was
         # the root cause of a RoomFit-detection regression (docs/corrections.md
         # 2026-07-04).
-        assert "EQSetLV2SourceBand:" in calls[0][0][0]
-        assert "EQLevel" in calls[0][0][0]
-        assert "wifi" not in calls[0][0][0]
-        write_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        assert "EQSetLV2SourceBand:" in calls[1][0][0]
+        assert "EQLevel" in calls[1][0][0]
+        assert "wifi" not in calls[1][0][0]
+        write_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
         assert write_payload["source_name"] == ""
-        # rc_output matches the WiiM app's own write traffic; it does NOT
+        # rc_output reflects the live-queried active output mode; it does NOT
         # change the saved profile's Type field (always "Custom" for
         # app-saved profiles -- see the RoomFit "Quirk" note in
         # docs/wiim_api_notes.md and docs/corrections.md 2026-07-04).
-        assert "rc_output" in calls[0][0][0]
-        assert "AUDIO_OUTPUT_SPEAKER_MODE" in calls[0][0][0]
-        # Second: save to profile (EQSourceSave is profile CRUD -- source_name
+        assert write_payload["rc_output"] == "AUDIO_OUTPUT_SPEAKER_MODE"
+        # Third: save to profile (EQSourceSave is profile CRUD -- source_name
         # omitted entirely).
-        assert "EQSourceSave:" in calls[1][0][0]
-        assert "EQLevel" in calls[1][0][0]
-        assert "REW%20Export" in calls[1][0][0]
-        assert "wifi" not in calls[1][0][0]
-        save_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
+        assert "EQSourceSave:" in calls[2][0][0]
+        assert "EQLevel" in calls[2][0][0]
+        assert "REW%20Export" in calls[2][0][0]
+        assert "wifi" not in calls[2][0][0]
+        save_payload = json.loads(unquote(calls[2][0][0].split(":", 1)[1]))
         assert "source_name" not in save_payload
 
     async def test_write_roomfit_lr_success(
@@ -1003,7 +1004,11 @@ class TestWriteRoomfit:
         filters_l = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
         filters_r = [CanonicalFilter(type="LS", frequency_hz=120.0, gain_db=2.0, q=0.71)]
 
-        mock_client.command.side_effect = ["OK", "OK"]
+        mock_client.command.side_effect = [
+            {"mode": "AUDIO_OUTPUT_SPEAKER_MODE"},
+            "OK",
+            "OK",
+        ]
 
         await adapter.write_roomfit(
             "wifi",
@@ -1015,8 +1020,8 @@ class TestWriteRoomfit:
         )
 
         calls = mock_client.command.call_args_list
-        assert len(calls) == 2
-        write_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        assert len(calls) == 3
+        write_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
         assert write_payload["channelMode"] == "L/R"
         assert "EQBandL" in write_payload
         assert "EQBandR" in write_payload
@@ -1042,7 +1047,11 @@ class TestWriteRoomfit:
         )
         filters_l = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
 
-        mock_client.command.side_effect = ["OK", "OK"]
+        mock_client.command.side_effect = [
+            {"mode": "AUDIO_OUTPUT_SPEAKER_MODE"},
+            "OK",
+            "OK",
+        ]
 
         await adapter.write_roomfit(
             "wifi",
@@ -1054,7 +1063,7 @@ class TestWriteRoomfit:
         )
 
         calls = mock_client.command.call_args_list
-        write_payload = json.loads(unquote(calls[0][0][0].split(":", 1)[1]))
+        write_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
         assert write_payload["channelMode"] == "L/R"
         assert "EQBandL" in write_payload
         assert "EQBandR" in write_payload
@@ -1080,9 +1089,103 @@ class TestWriteRoomfit:
         with pytest.raises(WiiMResponseError, match="rejected"):
             await adapter.write_roomfit("wifi", "REW Export", filters)
 
-        # Only the band write was attempted -- EQSourceSave must not fire.
-        assert mock_client.command.call_count == 1
-        assert "EQSetLV2SourceBand:" in mock_client.command.call_args_list[0][0][0]
+        # The output-mode query (call 0) also receives {"status": "Failed"}
+        # -- a dict with no usable "mode" key, so it degrades gracefully to
+        # rc_output being omitted rather than raising. Only the query and
+        # the rejected band write were attempted -- EQSourceSave must not fire.
+        assert mock_client.command.call_count == 2
+        assert mock_client.command.call_args_list[0][0][0] == "getActiveSoundCardOutputMode"
+        assert "EQSetLV2SourceBand:" in mock_client.command.call_args_list[1][0][0]
+
+    @pytest.mark.parametrize(
+        "first_response, expected_rc_output",
+        [
+            # Real mode reported -- rc_output is no longer a fixed constant,
+            # it reflects whatever getActiveSoundCardOutputMode reports as
+            # the device's current output, e.g. AUX on a WiiM Ultra
+            # (docs/corrections.md, 2026-07-20).
+            ({"mode": "AUDIO_OUTPUT_AUX_MODE"}, "AUDIO_OUTPUT_AUX_MODE"),
+            # Query raises (network error, unsupported command on older
+            # firmware) -- omit rc_output, never fall back to the old
+            # hard-coded value, which is confirmed wrong on non-Speaker
+            # devices.
+            (WiiMConnectionError("device unreachable"), None),
+            # Bare non-dict response (generic-LinkPlay "unknown command"
+            # shape) -- omit rc_output, don't raise.
+            ("unknown command", None),
+            # Dict response without a usable 'mode' key -- omit rc_output,
+            # don't raise or write a bogus value.
+            ({"audioCast": "0", "btSource": "0"}, None),
+        ],
+    )
+    async def test_write_roomfit_rc_output_reflects_queried_mode(
+        self,
+        mock_client: AsyncMock,
+        roomfit_write_capabilities: DeviceCapabilities,
+        first_response: object,
+        expected_rc_output: str | None,
+    ) -> None:
+        """rc_output is populated from the live getActiveSoundCardOutputMode
+        query on success, and omitted entirely (never defaulted) on any
+        failure shape."""
+        from src.models.canonical import CanonicalFilter
+
+        adapter = WiiMAdapter(
+            http_client=mock_client, capabilities=roomfit_write_capabilities
+        )
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=80.0, gain_db=-4.0, q=1.41)]
+
+        mock_client.command.side_effect = [first_response, "OK", "OK"]
+
+        await adapter.write_roomfit("wifi", "REW Export", filters)
+
+        calls = mock_client.command.call_args_list
+        write_payload = json.loads(unquote(calls[1][0][0].split(":", 1)[1]))
+        if expected_rc_output is None:
+            assert "rc_output" not in write_payload
+        else:
+            assert write_payload["rc_output"] == expected_rc_output
+
+
+class TestQueryActiveOutputMode:
+    """Test the private _query_active_output_mode() helper directly (same
+    pattern as TestRequireRoomfit calling _require_roomfit() directly)."""
+
+    async def test_returns_mode_string(self, adapter: WiiMAdapter, mock_client: AsyncMock) -> None:
+        mock_client.command.return_value = {"mode": "AUDIO_OUTPUT_COAX_MODE"}
+
+        result = await adapter._query_active_output_mode()
+
+        assert result == "AUDIO_OUTPUT_COAX_MODE"
+        assert mock_client.command.call_args[0][0] == "getActiveSoundCardOutputMode"
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "unknown command",
+            {"audioCast": "0"},
+            {"mode": ""},
+            {"mode": None},
+            {"mode": 123},
+        ],
+    )
+    async def test_returns_none_on_unusable_response(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock, response: object
+    ) -> None:
+        mock_client.command.return_value = response
+
+        result = await adapter._query_active_output_mode()
+
+        assert result is None
+
+    async def test_returns_none_on_raise(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        mock_client.command.side_effect = WiiMConnectionError("device unreachable")
+
+        result = await adapter._query_active_output_mode()
+
+        assert result is None
 
 
 class TestRequireRoomfit:

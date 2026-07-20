@@ -1037,6 +1037,41 @@ class WiiMAdapter:
                     exc_info=True,
                 )
 
+    async def _query_active_output_mode(self) -> str | None:
+        """Best-effort read of the device's currently active sound-card output.
+
+        Bare, no-payload GET -- issued fresh before every RoomFit write since the
+        active output can change between connect-time capability probing and a
+        later push. Externally corroborated (captured traffic from a different
+        open-source project, not yet confirmed on this project's own owned
+        hardware -- docs/corrections.md, 2026-07-20) that
+        ``getActiveSoundCardOutputMode`` returns e.g.
+        ``{"mode": "AUDIO_OUTPUT_AUX_MODE", ...}``.
+
+        Never raises: this is advisory input to write_roomfit()'s rc_output
+        field, not a required capability check. Any failure -- network error,
+        unsupported command, or an unusable response shape -- is caught and
+        logged, returning None so the caller omits rc_output entirely rather
+        than guessing.
+        """
+        try:
+            resp = expect_dict_response(
+                await self._client.command("getActiveSoundCardOutputMode"),
+                "getActiveSoundCardOutputMode",
+            )
+            mode = resp.get("mode")
+            if not isinstance(mode, str) or not mode:
+                raise WiiMResponseError(f"No usable 'mode' field in {resp!r}")
+        except Exception:
+            logger.info(
+                "getActiveSoundCardOutputMode query failed or returned no "
+                "usable 'mode' field; rc_output will be omitted from the "
+                "RoomFit write payload.",
+                exc_info=True,
+            )
+            return None
+        return mode
+
     async def write_roomfit(
         self,
         source_name: str,
@@ -1114,22 +1149,28 @@ class WiiMAdapter:
             channel_mode_value = "Stereo"
             band_payload = {"EQBand": eq_band_params}
 
+        # Matches the WiiM app's own write traffic when present; does NOT
+        # change the saved profile's Type field (always "Custom" for
+        # app-saved profiles regardless -- see the RoomFit "Quirk" note in
+        # docs/wiim_api_notes.md and docs/corrections.md 2026-07-04). Queried
+        # live via _query_active_output_mode() immediately below rather than
+        # hard-coded -- a fixed "AUDIO_OUTPUT_SPEAKER_MODE" is confirmed
+        # wrong on non-Speaker devices (docs/corrections.md, 2026-07-10).
+        # Omitted entirely (not defaulted to the old hard-coded value) when
+        # the live query fails, is unsupported, or returns an unexpected
+        # shape -- see docs/corrections.md, 2026-07-20.
+        active_output_mode = await self._query_active_output_mode()
+
+        extra_payload: dict[str, object] = {
+            "channelMode": channel_mode_value,
+            **band_payload,
+        }
+        if active_output_mode is not None:
+            extra_payload["rc_output"] = active_output_mode
+
         write_command = encode_wiim_command(
             "EQSetLV2SourceBand",
-            {
-                "channelMode": channel_mode_value,
-                **band_payload,
-                # Matches the WiiM app's own write traffic; does NOT change
-                # the saved profile's Type field (always "Custom" for
-                # app-saved profiles regardless -- see the RoomFit "Quirk"
-                # note in docs/wiim_api_notes.md and docs/corrections.md
-                # 2026-07-04). Included for wire-format parity only.
-                # ASSUMPTION: a fixed single value is correct for every
-                # device -- untested on multi-output hardware, since the
-                # owned fleet is Speaker-only (docs/corrections.md,
-                # 2026-07-10).
-                "rc_output": "AUDIO_OUTPUT_SPEAKER_MODE",
-            },
+            extra_payload,
             source_name="",
             eq_level=2,
         )
