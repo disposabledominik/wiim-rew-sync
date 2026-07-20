@@ -1049,25 +1049,36 @@ class WiiMAdapter:
         ``{"mode": "AUDIO_OUTPUT_AUX_MODE", ...}``.
 
         Never raises: this is advisory input to write_roomfit()'s rc_output
-        field, not a required capability check. Any failure -- network error,
-        unsupported command, or an unusable response shape -- is caught and
-        logged, returning None so the caller omits rc_output entirely rather
-        than guessing.
+        field, not a required capability check. Any failure -- network error
+        or an unsupported command -- is caught and logged; an unusable
+        response shape is handled the same way, without raising. Either case
+        returns None so the caller omits rc_output entirely rather than
+        guessing.
+
+        # ASSUMPTION: the externally-corroborated response shape above
+        # (top-level string ``mode`` field) holds on this project's own
+        # hardware too -- unconfirmed; see docs/corrections.md, 2026-07-20.
         """
         try:
             resp = expect_dict_response(
                 await self._client.command("getActiveSoundCardOutputMode"),
                 "getActiveSoundCardOutputMode",
             )
-            mode = resp.get("mode")
-            if not isinstance(mode, str) or not mode:
-                raise WiiMResponseError(f"No usable 'mode' field in {resp!r}")
         except Exception:
             logger.info(
-                "getActiveSoundCardOutputMode query failed or returned no "
-                "usable 'mode' field; rc_output will be omitted from the "
-                "RoomFit write payload.",
+                "getActiveSoundCardOutputMode query failed; rc_output will "
+                "be omitted from the RoomFit write payload.",
                 exc_info=True,
+            )
+            return None
+
+        mode = resp.get("mode")
+        if not isinstance(mode, str) or not mode:
+            logger.info(
+                "getActiveSoundCardOutputMode returned no usable 'mode' "
+                "field (%r); rc_output will be omitted from the RoomFit "
+                "write payload.",
+                resp,
             )
             return None
         return mode
@@ -1154,11 +1165,11 @@ class WiiMAdapter:
         # app-saved profiles regardless -- see the RoomFit "Quirk" note in
         # docs/wiim_api_notes.md and docs/corrections.md 2026-07-04). Queried
         # live via _query_active_output_mode() immediately below rather than
-        # hard-coded -- a fixed "AUDIO_OUTPUT_SPEAKER_MODE" is confirmed
-        # wrong on non-Speaker devices (docs/corrections.md, 2026-07-10).
-        # Omitted entirely (not defaulted to the old hard-coded value) when
-        # the live query fails, is unsupported, or returns an unexpected
-        # shape -- see docs/corrections.md, 2026-07-20.
+        # hard-coded -- a fixed "AUDIO_OUTPUT_SPEAKER_MODE" is externally
+        # corroborated (not project-hardware-confirmed) as wrong on
+        # non-Speaker devices (docs/corrections.md, 2026-07-20). Omitted
+        # entirely (not defaulted to the old hard-coded value) when the live
+        # query fails, is unsupported, or returns an unexpected shape.
         active_output_mode = await self._query_active_output_mode()
 
         extra_payload: dict[str, object] = {

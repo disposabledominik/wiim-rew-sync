@@ -1107,15 +1107,12 @@ class TestWriteRoomfit:
             ({"mode": "AUDIO_OUTPUT_AUX_MODE"}, "AUDIO_OUTPUT_AUX_MODE"),
             # Query raises (network error, unsupported command on older
             # firmware) -- omit rc_output, never fall back to the old
-            # hard-coded value, which is confirmed wrong on non-Speaker
-            # devices.
+            # hard-coded value. The full matrix of other failure shapes
+            # (non-dict response, missing/empty/non-string 'mode') is
+            # covered directly against the helper in
+            # TestQueryActiveOutputMode below -- this just proves the
+            # wiring into write_roomfit() omits the key on any failure.
             (WiiMConnectionError("device unreachable"), None),
-            # Bare non-dict response (generic-LinkPlay "unknown command"
-            # shape) -- omit rc_output, don't raise.
-            ("unknown command", None),
-            # Dict response without a usable 'mode' key -- omit rc_output,
-            # don't raise or write a bogus value.
-            ({"audioCast": "0", "btSource": "0"}, None),
         ],
     )
     async def test_write_roomfit_rc_output_reflects_queried_mode(
@@ -1126,8 +1123,7 @@ class TestWriteRoomfit:
         expected_rc_output: str | None,
     ) -> None:
         """rc_output is populated from the live getActiveSoundCardOutputMode
-        query on success, and omitted entirely (never defaulted) on any
-        failure shape."""
+        query on success, and omitted entirely (never defaulted) on failure."""
         from src.models.canonical import CanonicalFilter
 
         adapter = WiiMAdapter(
@@ -1151,32 +1147,30 @@ class TestQueryActiveOutputMode:
     """Test the private _query_active_output_mode() helper directly (same
     pattern as TestRequireRoomfit calling _require_roomfit() directly)."""
 
-    async def test_returns_mode_string(self, adapter: WiiMAdapter, mock_client: AsyncMock) -> None:
-        mock_client.command.return_value = {"mode": "AUDIO_OUTPUT_COAX_MODE"}
-
-        result = await adapter._query_active_output_mode()
-
-        assert result == "AUDIO_OUTPUT_COAX_MODE"
-        assert mock_client.command.call_args[0][0] == "getActiveSoundCardOutputMode"
-
     @pytest.mark.parametrize(
-        "response",
+        "response, expected",
         [
-            "unknown command",
-            {"audioCast": "0"},
-            {"mode": ""},
-            {"mode": None},
-            {"mode": 123},
+            ({"mode": "AUDIO_OUTPUT_COAX_MODE"}, "AUDIO_OUTPUT_COAX_MODE"),
+            ("unknown command", None),
+            ({"audioCast": "0"}, None),
+            ({"mode": ""}, None),
+            ({"mode": None}, None),
+            ({"mode": 123}, None),
         ],
     )
-    async def test_returns_none_on_unusable_response(
-        self, adapter: WiiMAdapter, mock_client: AsyncMock, response: object
+    async def test_returns_mode_or_none(
+        self,
+        adapter: WiiMAdapter,
+        mock_client: AsyncMock,
+        response: object,
+        expected: str | None,
     ) -> None:
         mock_client.command.return_value = response
 
         result = await adapter._query_active_output_mode()
 
-        assert result is None
+        assert result == expected
+        assert mock_client.command.call_args[0][0] == "getActiveSoundCardOutputMode"
 
     async def test_returns_none_on_raise(
         self, adapter: WiiMAdapter, mock_client: AsyncMock
