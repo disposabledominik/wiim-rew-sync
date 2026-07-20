@@ -450,6 +450,25 @@ EQSetLV2SourceBand:{"EQLevel":2,"source_name":"","pluginURI":"...","channelMode"
 Response format identical to PEQ (`channelMode`, `EQBandL`/`EQBandR` or `EQBand`, `Name`,
 `EQStat`). Writes only touch the working buffer — must be followed by `EQSourceSave` to persist.
 
+### Active output query
+```
+getActiveSoundCardOutputMode
+```
+Bare, no-payload GET. Returns the device's currently active sound output, e.g.:
+```json
+{"audioCast":"0","btSource":"0","cardId":"hw:0,1","devName":"...","index":"1","mode":"AUDIO_OUTPUT_AUX_MODE"}
+```
+Used by `write_roomfit()` (`WiiMAdapter._query_active_output_mode()`) to populate the write
+payload's `rc_output` field (see "Write workflow" below and the `rc_output` note in "Profile list
+response") with the device's real active output instead of a fixed value -- a fixed
+`"AUDIO_OUTPUT_SPEAKER_MODE"` is externally corroborated (not project-hardware-confirmed) as wrong
+on devices without a Speaker output (see `docs/corrections.md`, 2026-07-20). Externally corroborated
+(captured traffic from a different open-source project) across 3 sample devices -- WiiM Ultra ->
+`AUDIO_OUTPUT_AUX_MODE`, Amp Ultra -> `AUDIO_OUTPUT_SPEAKER_MODE`, Amp -> `AUDIO_OUTPUT_AUX_MODE` --
+all returning a top-level `mode` string, but **not yet confirmed against this project's own owned
+hardware**. If the query fails, is unsupported, or returns an unexpected shape, `rc_output` is
+omitted from the write payload entirely rather than falling back to a guessed value.
+
 ### Write workflow
 1. `EQv2SourceLoad` — load target profile into the working buffer
 2. `EQSetLV2SourceBand` (`EQLevel:2`, `source_name:""`) — modify bands (round every value to 3
@@ -501,6 +520,9 @@ metadata).
   "preset": []
 }
 ```
+`rc_output` here reflects whatever the device's own calibration process (or this app's write path)
+populated at save time -- see "Active output query" above for how this app now determines its value.
+
 `Type` is `"RC"` only for profiles created by the device's own calibration process — profiles saved
 via this app's `EQSourceSave` always get `Type:"Custom"`, regardless of payload fields
 (`docs/corrections.md`, 2026-07-04). `UpdateAt` (Unix millis) is set by calibration; absent
