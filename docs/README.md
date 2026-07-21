@@ -35,3 +35,9 @@
 | Document | Description |
 |----------|-------------|
 | [../packaging/README.md](../packaging/README.md) | Build instructions for Windows, macOS, Linux executables |
+
+## Contributing
+
+| Document | Description |
+|----------|-------------|
+| [../CONTRIBUTING.md](../CONTRIBUTING.md) | Dev setup, CLI usage, test/lint/type-check workflow, code style, testing philosophy |

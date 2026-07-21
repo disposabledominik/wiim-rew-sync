@@ -68,8 +68,12 @@ build/
 Thumbs.db
 desktop.ini
 
-# Kiro IDE internal (keep steering.md and specs, exclude generated cache)
-.kiro/settings/
+# Kiro IDE / AI-agent config (personal dev-tool config, not project documentation)
+.kiro/
+AGENTS.md
+
+# Kiro-hook launcher scripts (personal machine paths, only meaningful with .kiro/hooks)
+scripts/hook_*
 
 # Example files
 docs/device_capability_examples

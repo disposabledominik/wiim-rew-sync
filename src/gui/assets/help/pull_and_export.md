@@ -99,8 +99,12 @@ Filter  2: ON  PK  Fc   250 Hz  Gain   2.5 dB  Q  2.00
 ...
 ```
 
-This is the same format that REW produces when you export from its EQ
-window, so you can re-import it into REW at any time.
+This is the same human-readable format REW itself produces via
+**EQ window &rarr; Filter Tasks &rarr; Export filter settings as text**,
+so it's useful for reference, sharing, or re-importing back into *this
+app*. Note that REW's own **Import Filters** feature only accepts REW's
+own `.req` filter-settings format &mdash; this text export cannot be
+loaded back into REW.
 
 ## Backup and Restore
 
