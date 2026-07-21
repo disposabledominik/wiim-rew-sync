@@ -37,11 +37,10 @@ Use at your own risk.**
 
 ## Getting Started
 
-This app targets non-technical users running a standalone desktop app, not a Python toolchain.
-Download the pre-built executable for your platform below, or build it yourself by following
-[packaging/README.md](packaging/README.md) — no Python required to *run* the app either way. Once
-you have it, launch it like any other desktop app; the in-app Help → Getting Started guide walks
-through connecting to a device and pushing your first set of filters.
+Download the pre-built executable for your platform below — no Python required. Launch it like any
+other desktop app; the in-app Help → Getting Started guide walks through connecting to a device and
+pushing your first set of filters. Prefer to build from source instead? See
+[packaging/README.md](packaging/README.md).
 
 ### Download
 
@@ -59,40 +58,6 @@ These links always point to the newest published [release](https://github.com/di
 macOS builds are currently unsigned, so Gatekeeper will block the first launch — see
 [packaging/README.md](packaging/README.md#macos-app-bundle) for the one-command workaround.
 
-## For Developers
-
-Requires Python 3.12+.
-
-```bash
-git clone <repo-url>
-cd wiim-rew-sync
-python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-```
-
-### Run from source (GUI)
-
-```bash
-python packaging/entry_gui.py
-```
-
-### CLI
-
-The CLI was the original proof-of-concept and remains useful for scripting and headless use:
-
-```bash
-wiim-rew-sync list-devices
-wiim-rew-sync list-sources --device <ip>
-wiim-rew-sync get-filters --device <ip> --source wifi
-wiim-rew-sync dry-run-import --file my_measurement.txt
-wiim-rew-sync set-filters --file my_measurement.txt --device <ip> --source wifi
-wiim-rew-sync peq-toggle --device <ip> --source wifi --state on
-```
-
-Run `wiim-rew-sync <command> --help` for the full option list, or `wiim-rew-sync --help` for all
-commands (sources, RoomFit profiles, presets, etc.).
-
 ## Troubleshooting
 
 **Device discovery slow or not finding your WiiM device on Windows?** Windows Firewall blocks
@@ -102,30 +67,20 @@ under **Settings → Network & Internet → Wi-Fi → (your network name) → Ne
 restart the app. See the in-app Help → Troubleshooting guide
 ([source](src/gui/assets/help/troubleshooting.md)) for this and other common issues.
 
-## Development
-
-```bash
-python3 -m pytest src/tests/test_<module>.py -v --no-cov   # targeted tests (fast)
-python3 -m ruff check src/                                  # lint
-python3 -m mypy src/                                        # type check
-```
-
-See [.kiro/steering/tech.md](.kiro/steering/tech.md) for the full test/lint/type-check workflow,
-including why the full test suite shouldn't be run mid-task.
-
 ## Project Status
 
-CLI proof-of-concept and GUI implementation are complete and pass an automated test/lint/type-check
-gate on every change. Hardware QA against physical devices for the GUI-era flows is ongoing — see
+The app is actively developed and used; hardware QA against physical devices is ongoing — see
 [docs/qa_signoff.md](docs/qa_signoff.md) and [docs/backlog.md](docs/backlog.md) for current status
-and open items (deliberately not pinned to a snapshot test count/date here, since that goes stale
-almost immediately — see those docs instead).
+and known issues.
 
 ## Documentation
 
 Full documentation — architecture, API notes, QA reports, and the deferred-features backlog —
-lives in [docs/](docs/README.md). Project context and mandatory domain rules for contributors are
-in [.kiro/steering/](.kiro/steering).
+lives in [docs/](docs/README.md).
+
+## Contributing
+
+Want to run from source, use the CLI, or contribute code? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

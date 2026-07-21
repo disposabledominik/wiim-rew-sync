@@ -2606,6 +2606,8 @@ class MainWindow(QMainWindow):
             "About WiiM \u2194 REW PEQ Sync",
             "<h3>WiiM \u2194 REW PEQ Sync</h3>"
             f"<p><b>Version {version}</b></p>"
+            '<p><a href="https://github.com/disposabledominik/wiim-rew-sync">'
+            "github.com/disposabledominik/wiim-rew-sync</a></p>"
             "<p>Transfer parametric EQ and RoomFit filter configurations "
             "between Room EQ Wizard (REW) and WiiM devices on your local network.</p>"
             "<p><b>Features:</b></p>"

@@ -2533,7 +2533,7 @@ class TestGetSourceSlotOverview:
                 "pluginURI": "http://moddevices.com/plugins/caps/EqNp",
             },
             {
-                "source_name": "dominik",
+                "source_name": "office",
                 "Name": "Test",
                 "channelMode": "L/R",
                 "EQStat": "Off",
@@ -2549,7 +2549,7 @@ class TestGetSourceSlotOverview:
         assert slots[0].enabled is True
         assert slots[1].source_name == "wifi,bluetooth,auxIn"
         assert slots[1].is_known_source is False
-        assert slots[2].source_name == "dominik"
+        assert slots[2].source_name == "office"
         assert slots[2].is_known_source is False
         assert slots[2].channel_mode == "L/R"
 
