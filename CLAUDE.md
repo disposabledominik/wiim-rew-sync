@@ -171,10 +171,3 @@ code, actively guard against both:
   window pops up during `pytest`), this is almost always the cause — extend the autouse fixture for
   a new `QMessageBox` method, or add the per-test static-method mock for a new custom dialog; don't
   work around it by clicking through it manually.
-
-## Steering docs
-
-[.kiro/steering/](.kiro/steering) has the full, unabridged versions of the above plus things you'll
-rarely need: the complete numbered domain-rules list, workflow phase gates, and the parallel
-sub-agent dispatch/collision-analysis rules for orchestrating multi-task waves. Read the relevant
-one when a task touches that territory; don't load all four by default.

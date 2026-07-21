@@ -2,7 +2,9 @@
 
 ## REW EQ Text File Format
 
-This is the primary import/export format for this application. REW exports PEQ filters as plain text files.
+This is the primary import/export format for this application. REW exports PEQ filters as plain text files via **EQ window &rarr; Filter Tasks &rarr; Export filter settings as text**.
+
+**This format is one-directional as far as REW is concerned.** REW can produce this `.txt` file, and this app can both read it (import) and write it (export), but REW's own **Import Filters** feature only accepts REW's separate `.req` filter-settings format &mdash; it cannot re-import the `.txt` text export, including files this app generates. Do not describe this app's `.txt` export as something a user can "load back into REW."
 
 ### Exact format spec
 

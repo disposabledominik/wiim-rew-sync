@@ -20,7 +20,7 @@ Build instructions for creating standalone executables using PyInstaller.
 ### Build Steps
 
 ```cmd
-cd C:\Users\domin\Desktop\Misc\_dev\wiim-rew-sync
+cd C:\path\to\wiim-rew-sync
 
 :: Create a Windows-native virtual environment
 python -m venv .venv-win

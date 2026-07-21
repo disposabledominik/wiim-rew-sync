@@ -7,7 +7,7 @@ Task 32 phase gate. All tests must pass before GUI development begins.
 ## Setup
 
 ```bash
-cd /mnt/c/Users/domin/Desktop/Misc/_dev/wiim-rew-sync
+cd /path/to/wiim-rew-sync
 
 # Create and activate virtual environment (first time only)
 python3 -m venv .venv
@@ -297,7 +297,7 @@ Document any differences between expected and actual API behavior here. These wi
 
 ## What To Do After
 
-- If all tests PASS: Tell Kiro "All CLI hardware tests pass" and we proceed to the GUI phase.
+- If all tests PASS: record that all CLI hardware tests pass and proceed to the GUI phase.
 - If any test FAILS: Copy the exact error output and share it. We'll fix the issue and re-test.
 
 ---
