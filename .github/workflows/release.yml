@@ -30,7 +30,7 @@ jobs:
             spec: packaging/wiim_rew_sync_linux.spec
             asset: WiiM-REW-Sync-linux-x64.zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full tag history so setuptools_scm resolves the tagged version
 
