@@ -30,11 +30,11 @@ jobs:
             spec: packaging/wiim_rew_sync_linux.spec
             asset: WiiM-REW-Sync-linux-x64.zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full tag history so setuptools_scm resolves the tagged version
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -66,7 +66,7 @@ jobs:
           (cd dist && zip -X ../${{ matrix.asset }} WiiM-REW-Sync)
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
@@ -81,7 +81,7 @@ jobs:
       contents: write
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
