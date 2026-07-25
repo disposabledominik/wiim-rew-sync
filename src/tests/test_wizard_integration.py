@@ -402,11 +402,17 @@ class TestUndoAfterPush:
         assert window.wizard_controller.state.last_backup_path == "/backups/peq_backup_001.json"
 
         # Trigger undo
-        with patch.object(
-            window._secondary_workflows, "undo_last_push"
-        ) as mock_undo:
+        with (
+            patch.object(window._secondary_workflows, "undo_last_push") as mock_undo,
+            patch.object(window._push_page, "start_undo") as mock_start_undo,
+        ):
             window._on_undo_requested()
             mock_undo.assert_called_once_with("wifi", "/backups/peq_backup_001.json")
+            # #undo-progress-display: the push page must switch into its
+            # undo-mode stepper/badge before the restore is dispatched, not
+            # only once undo_complete arrives -- otherwise the user sees no
+            # progress at all while the restore is in flight.
+            mock_start_undo.assert_called_once()
 
     def test_undo_complete_success_shows_banner(self, make_window) -> None:
         """Successful undo shows success message in StatusBanner and on the

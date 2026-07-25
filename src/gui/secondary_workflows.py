@@ -323,18 +323,21 @@ class SecondaryWorkflowManager(QObject):
             Tuple of (success, message) -- message is the restored-
             confirmation text on success, or the error text on failure.
         """
-        assert self._safe_write_factory is not None
-        assert self._current_adapter is not None
+        assert self._safe_write_factory is not None, "configure() must run before undo"
+        assert self._current_adapter is not None, "configure() must run before undo"
 
         path = Path(backup_path) if isinstance(backup_path, str) else backup_path
 
-        # Check if backup file exists (Req 8.5)
+        # Check if backup file exists (Req 8.5). Deliberately ahead of the
+        # _bridge assert below -- a missing backup is an ordinary, expected
+        # outcome (no configure()/bridge setup required to detect it), not
+        # a configuration-invariant violation.
         if not path or not path.is_file():
             logger.error("Undo requested but backup file not found: %s", path)
             return False, "No backup available"
 
         try:
-            assert self._bridge is not None
+            assert self._bridge is not None, "configure() must run before undo"
             safe_write = self._safe_write_factory(self._current_adapter)
             result = await safe_write.undo(
                 path, source_name, on_stage=self._bridge.stage_changed.emit
@@ -380,9 +383,9 @@ class SecondaryWorkflowManager(QObject):
             return
 
         try:
-            assert self._bridge is not None
-            assert self._roomfit_safe_write_factory is not None
-            assert self._current_adapter is not None
+            assert self._bridge is not None, "configure() must run before undo"
+            assert self._roomfit_safe_write_factory is not None, "configure() must run before undo"
+            assert self._current_adapter is not None, "configure() must run before undo"
 
             self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
             roomfit_safe_write = self._roomfit_safe_write_factory(self._current_adapter)

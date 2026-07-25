@@ -1688,6 +1688,34 @@ class TestRoomFitPushThenUndoPreservesActiveProfile:
         assert device.active_name == "Living Room"
         assert device.enabled is False
 
+    async def test_undo_new_profile_still_reports_on_stage_progress(
+        self, tmp_path: Path
+    ) -> None:
+        """Undoing a new-profile push skips the bands-restore execute()
+        call entirely (nothing to restore), but the selection/enable-state
+        restore below it still does real device I/O -- on_stage must still
+        fire so a caller's progress stepper (e.g. PushPage) doesn't sit
+        frozen on "pending" for the whole call."""
+        device = _FakeRoomFitDevice(active_name="Living Room", enabled=False)
+        device.profiles["Living Room"] = _make_settings(bands=_make_bands(freq=50.0))
+
+        backup_manager = BackupManager(tmp_path)
+        safe_write = RoomFitSafeWrite(adapter=device, backup_manager=backup_manager)
+
+        new_bands = _make_bands(freq=100.0)
+        push_result = await safe_write.execute(
+            "wifi", "Movie Night", new_bands, ChannelMode.STEREO
+        )
+        assert push_result.success is True
+
+        seen: list[str] = []
+        undo_result = await safe_write.undo(
+            push_result.backup_path, "wifi", "Movie Night", on_stage=seen.append
+        )
+
+        assert undo_result.success is True
+        assert seen == ["writing", "done"]
+
 
 class TestRoomFitLevelUpgrade:
     """#191: a verified-successful push when write capability was

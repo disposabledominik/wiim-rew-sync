@@ -828,8 +828,11 @@ class RoomFitSafeWrite:
                 if the backup indicates a new-profile push).
             on_stage: Optional callback forwarded to the bands-restore
                 ``execute()`` call (see its own ``on_stage`` for the
-                contract); not invoked at all for a new-profile-push undo,
-                which skips the bands-restore step entirely.
+                contract). For a new-profile-push undo, which skips the
+                bands-restore step entirely, it's instead invoked directly
+                with "writing" then "done" so a caller's progress stepper
+                still reflects the selection/enable-state restore that runs
+                in that case, rather than sitting frozen on "pending".
 
         Returns:
             WriteResult. For a new-profile-push undo: success with no bands
@@ -859,11 +862,22 @@ class RoomFitSafeWrite:
             )
             if not result.success:
                 return result
+        elif on_stage is not None:
+            # New-profile-push undo skips the bands-restore execute() call
+            # entirely -- execute() is the only place that invokes on_stage,
+            # so without this a caller's progress stepper (e.g. PushPage's
+            # Backup/Write/Verify rows) would sit frozen on "pending" for
+            # the whole call even though the selection/enable-state restore
+            # below still does real device I/O.
+            on_stage("writing")
 
         if pre_write_active_profile is not None:
             await self._adapter.restore_roomfit_selection_and_enable_state(
                 pre_write_active_profile, pre_write_roomfit_enabled, profile_name,
                 context=f"undoing push to '{profile_name}'",
             )
+
+        if was_new_profile is True and on_stage is not None:
+            on_stage("done")
 
         return result if result is not None else WriteResult(success=True, backup_path=None)
