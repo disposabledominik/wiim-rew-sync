@@ -94,6 +94,7 @@ class TestUndoSuccessWithValidBackup:
         backup_file.write_text("{}", encoding="utf-8")
 
         manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
 
         mock_sw = AsyncMock()
         mock_sw.undo = AsyncMock(return_value=WriteResult(success=True, backup_path=None))
@@ -134,6 +135,7 @@ class TestUndoSuccessWithValidBackup:
         backup_file.write_text("{}", encoding="utf-8")
 
         manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
 
         mock_sw = AsyncMock()
         mock_sw.undo = AsyncMock(

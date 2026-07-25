@@ -314,6 +314,11 @@ class SecondaryWorkflowManager(QObject):
         rather than undo_last_push()'s fire-and-forget scheduling -- branch-
         quality review, 2026-07-18).
 
+        Threads on_stage into SafeWrite.undo() (which forwards it to its
+        internal execute() call, same as a normal push) so PushPage's
+        existing Backup/Write/Verify stepper reflects real undo progress
+        instead of the caller only having a one-line status banner message.
+
         Returns:
             Tuple of (success, message) -- message is the restored-
             confirmation text on success, or the error text on failure.
@@ -328,9 +333,12 @@ class SecondaryWorkflowManager(QObject):
             logger.error("Undo requested but backup file not found: %s", path)
             return False, "No backup available"
 
+        assert self._bridge is not None
         try:
             safe_write = self._safe_write_factory(self._current_adapter)
-            result = await safe_write.undo(path, source_name)
+            result = await safe_write.undo(
+                path, source_name, on_stage=self._bridge.stage_changed.emit
+            )
 
             if result.success:
                 logger.info("Undo last push: completed successfully")
@@ -378,7 +386,9 @@ class SecondaryWorkflowManager(QObject):
         try:
             self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
             roomfit_safe_write = self._roomfit_safe_write_factory(self._current_adapter)
-            result = await roomfit_safe_write.undo(path, source_name, profile_name)
+            result = await roomfit_safe_write.undo(
+                path, source_name, profile_name, on_stage=self._bridge.stage_changed.emit
+            )
             if not result.success:
                 self.undo_complete.emit(
                     False, result.error_message or "RoomFit undo verification failed"
@@ -423,6 +433,12 @@ class SecondaryWorkflowManager(QObject):
         branch-quality review, 2026-07-18 -- see docs/corrections.md for the
         prior scheduling-vs-outcome gap this replaces.
 
+        Emits push_round_changed per source -- the same signal
+        PrimaryWorkflowManager._do_push uses for a multi-source push -- so
+        PushPage's round label ("Restoring X (i of N)" in undo mode) tracks
+        real per-source progress, on top of _restore_backup()'s own
+        stage_changed emits for the Backup/Write/Verify stepper.
+
         Emits undo_multi_source_complete (succeeded, failed, message) rather
         than the shared undo_complete(bool, str) the other two undo paths
         use -- MainWindow needs the succeeded count independently of the
@@ -451,9 +467,11 @@ class SecondaryWorkflowManager(QObject):
             return
         succeeded = 0
         failed = 0
+        total = len(entries)
 
-        for source_name, bp in entries:
+        for i, (source_name, bp) in enumerate(entries):
             self._bridge.progress_update.emit(f"Restoring {source_name}...")
+            self._bridge.push_round_changed.emit(source_name, i + 1, total)
             success, message = await self._restore_backup(source_name, bp)
             if success:
                 succeeded += 1

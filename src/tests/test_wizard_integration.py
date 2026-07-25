@@ -409,7 +409,8 @@ class TestUndoAfterPush:
             mock_undo.assert_called_once_with("wifi", "/backups/peq_backup_001.json")
 
     def test_undo_complete_success_shows_banner(self, make_window) -> None:
-        """Successful undo shows success message in StatusBanner."""
+        """Successful undo shows success message in StatusBanner and on the
+        Push page's own result card (not just the transient banner)."""
         window = make_window()
 
         # Simulate undo_complete signal from SecondaryWorkflowManager
@@ -417,15 +418,20 @@ class TestUndoAfterPush:
 
         assert window.status_banner._message_label.text() == "Previous filters restored"
         assert window.status_banner.property("status") == "success"
+        assert window._push_page._result_message.text() == "Previous filters restored"
+        assert not window._push_page._undo_button.isVisibleTo(window._push_page)
 
     def test_undo_complete_failure_shows_error(self, make_window) -> None:
-        """Failed undo shows error in StatusBanner."""
+        """Failed undo shows error in StatusBanner and on the Push page's
+        own result card, with Undo left visible so the user can retry."""
         window = make_window()
 
         window._on_undo_complete(False, "Backup file not found")
 
         assert "Undo failed" in window.status_banner._message_label.text()
         assert window.status_banner.property("status") == "error"
+        assert "Undo failed" in window._push_page._result_message.text()
+        assert window._push_page._undo_button.isVisibleTo(window._push_page)
 
 
 # ---------------------------------------------------------------------------

@@ -1535,6 +1535,15 @@ QLabel#PushPageDryRunBadge {
     font-weight: 600;
 }
 
+QLabel#PushPageUndoBadge {
+    background-color: #F57C00;
+    color: #FFFFFF;
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
 QLabel#PushPageResultIcon {
     font-size: 36px;
 }

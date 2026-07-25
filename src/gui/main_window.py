@@ -1229,6 +1229,7 @@ class MainWindow(QMainWindow):
         Requirement 18.2: Restore from most recent backup.
         """
         backup_path = self._wizard_controller.state.last_backup_path
+        self._push_page.start_undo()
 
         if self._wizard_controller.flow_type == FlowType.ROOMFIT:
             # RoomFit undo: restore backed-up bands to the same profile name
@@ -3439,7 +3440,7 @@ class MainWindow(QMainWindow):
 
     @Slot(bool, str)
     def _on_undo_complete(self, success: bool, message: str) -> None:
-        """Handle undo completion — show result in StatusBanner.
+        """Handle undo completion — show result on PushPage and StatusBanner.
 
         Requirement 18.4: Display "Previous filters restored" on success.
 
@@ -3447,18 +3448,20 @@ class MainWindow(QMainWindow):
             success: Whether the undo succeeded.
             message: Human-readable result message.
         """
-        self._push_page.mark_undo_complete(success)
         if success:
+            self._push_page.set_undo_success(message)
             self._clear_pushed_snapshot()
             self._status_banner.show_success(message)
         else:
+            self._push_page.set_undo_failure(message)
             self._status_banner.show_error(f"Undo failed: {message}")
 
     @Slot(int, int, str)
     def _on_undo_multi_source_complete(
         self, succeeded: int, failed: int, message: str
     ) -> None:
-        """Handle multi-source undo completion — show result in StatusBanner.
+        """Handle multi-source undo completion — show result on PushPage
+        and StatusBanner.
 
         Unlike _on_undo_complete's binary success flag, a multi-source undo
         can partially succeed: the pushed-filters snapshot must be cleared
@@ -3476,9 +3479,10 @@ class MainWindow(QMainWindow):
         if succeeded > 0:
             self._clear_pushed_snapshot()
         if failed == 0:
-            self._push_page.mark_undo_complete(True)
+            self._push_page.set_undo_success(message)
             self._status_banner.show_success(message)
         else:
+            self._push_page.set_undo_failure(message)
             self._status_banner.show_error(message)
 
     @Slot(int, int, int, int)

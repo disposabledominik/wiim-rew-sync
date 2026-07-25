@@ -887,45 +887,91 @@ class TestPushPage:
         with qtbot.waitSignal(page.undo_requested, timeout=1000):
             qtbot.mouseClick(page._undo_button, Qt.MouseButton.LeftButton)
 
-    def test_mark_undo_complete_disables_button_on_success(self, qtbot) -> None:
-        """A successful undo disables the Undo button -- clicking it again
-        would be ambiguous (nothing left to undo)."""
+    def test_start_undo_shows_badge_and_resets_stepper(self, qtbot) -> None:
+        """start_undo() re-shows the stepper (reset to pending) and the
+        "UNDO" badge, reusing set_success()'s collapsed-stepper result state
+        as the starting point (mirrors clicking Undo right after a push)."""
         page = PushPage()
         qtbot.addWidget(page)
         page.show()
-
         page.set_success()
-        assert page._undo_button.isEnabled()
 
-        page.mark_undo_complete(True)
+        page.start_undo()
 
-        assert not page._undo_button.isEnabled()
+        assert page._progress_container.isVisible()
+        assert not page._result_container.isVisible()
+        assert page._undo_badge.isVisible()
+        assert all(row.status == "pending" for row in page._stage_rows.values())
 
-    def test_mark_undo_complete_keeps_button_enabled_on_failure(self, qtbot) -> None:
-        """A failed undo leaves the button enabled so the user can retry."""
+    def test_set_push_round_uses_restoring_text_in_undo_mode(self, qtbot) -> None:
+        """The round label reuses set_push_round() for undo, but with
+        "Restoring" instead of "Pushing to" once start_undo() has run."""
         page = PushPage()
         qtbot.addWidget(page)
         page.show()
+        page.start_undo()
 
-        page.set_success()
-        page.mark_undo_complete(False)
+        page.set_push_round("optical", 2, 3)
 
-        assert page._undo_button.isEnabled()
+        assert page._round_label.isVisible()
+        assert page._round_label.text() == "Restoring optical (2 of 3)"
 
-    def test_reset_reenables_undo_button(self, qtbot) -> None:
-        """A fresh push cycle re-enables Undo, even if a prior push's undo
-        had disabled it."""
+    def test_set_undo_success_hides_undo_and_secondary_actions(self, qtbot) -> None:
+        """A successful undo shows the given message, hides Undo (nothing
+        left to undo-the-undo) and the Export/Save links, but keeps the
+        "UNDO" badge visible so the result reads as the undo's, not the
+        original push's."""
         page = PushPage()
         qtbot.addWidget(page)
         page.show()
-
         page.set_success()
-        page.mark_undo_complete(True)
-        assert not page._undo_button.isEnabled()
+        page.start_undo()
+
+        page.set_undo_success("Previous filters restored")
+
+        assert page._result_container.isVisible()
+        assert page._result_message.text() == "Previous filters restored"
+        assert page._undo_badge.isVisible()
+        assert page._ok_button.isVisible()
+        assert not page._undo_button.isVisible()
+        assert not page._secondary_row.isVisible()
+
+    def test_set_undo_failure_keeps_undo_button_for_retry(self, qtbot) -> None:
+        """A failed undo leaves the Undo button visible so the user can
+        retry, and keeps the "UNDO" badge visible on the failure card."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_success()
+        page.start_undo()
+
+        page.set_undo_failure("Backup file not found")
+
+        assert page._result_container.isVisible()
+        assert "Undo failed" in page._result_message.text()
+        assert page._detail_label.text() == "Backup file not found"
+        assert page._undo_badge.isVisible()
+        assert page._ok_button.isVisible()
+        assert page._undo_button.isVisible()
+        assert not page._secondary_row.isVisible()
+
+    def test_reset_clears_undo_mode_and_badge(self, qtbot) -> None:
+        """A fresh push cycle clears undo mode (round label reverts to
+        "Pushing to") and hides the "UNDO" badge, even after a prior push's
+        undo had turned both on."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_success()
+        page.start_undo()
+        page.set_undo_success("Previous filters restored")
+        assert page._undo_badge.isVisible()
 
         page.reset()
 
-        assert page._undo_button.isEnabled()
+        assert not page._undo_badge.isVisible()
+        page.set_push_round("optical", 2, 3)
+        assert page._round_label.text() == "Pushing to optical (2 of 3)"
 
     def test_dry_run_result_shows_badge(self, qtbot) -> None:
         """set_dry_run_result shows the DRY RUN badge."""
