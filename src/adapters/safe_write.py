@@ -845,8 +845,13 @@ class RoomFitSafeWrite:
             parse_backup_restore_metadata(backup_data)
         )
 
+        # Computed once and reused below -- was_new_profile is a tri-state
+        # (True / False / None for old-format backups), but every branch
+        # below only cares about the True-vs-not-True split.
+        is_new_profile_push = was_new_profile is True
+
         result: WriteResult | None = None
-        if was_new_profile is not True:
+        if not is_new_profile_push:
             # Covers False and None (old-format backups only ever existed
             # for the overwrite case) -- restore bands via the normal
             # execute() protocol.
@@ -877,7 +882,7 @@ class RoomFitSafeWrite:
                 context=f"undoing push to '{profile_name}'",
             )
 
-        if was_new_profile is True and on_stage is not None:
+        if is_new_profile_push and on_stage is not None:
             on_stage("done")
 
         return result if result is not None else WriteResult(success=True, backup_path=None)

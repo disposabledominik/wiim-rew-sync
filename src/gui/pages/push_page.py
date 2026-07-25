@@ -190,9 +190,7 @@ class PushPage(QWidget):
         """
         self._undo_mode = True
         self._show_progress_state()
-        self._status_badge.setText("UNDO")
-        set_qss_property(self._status_badge, "class", "undo")
-        self._status_badge.setVisible(True)
+        self._activate_status_badge("UNDO", "undo")
         self._round_label.setVisible(False)
         for row in self._stage_rows.values():
             row.set_status("pending")
@@ -256,12 +254,7 @@ class PushPage(QWidget):
             backup_path: Path to the backup file for manual recovery.
             critical: True if rollback also failed (critical state).
         """
-        if not self._fail_active_stage():
-            # Nothing ever reached "active" (e.g. the write never started),
-            # so a stepper of three untouched pending circles would only
-            # look like nothing was attempted -- collapse it, same as a
-            # clean success.
-            self._progress_container.setVisible(False)
+        self._fail_active_stage()
 
         self._show_result_state()
         if critical:
@@ -311,9 +304,7 @@ class PushPage(QWidget):
         """
         self._progress_container.setVisible(False)
         self._show_result_state()
-        self._status_badge.setText("DRY RUN")
-        set_qss_property(self._status_badge, "class", "dryRun")
-        self._status_badge.setVisible(True)
+        self._activate_status_badge("DRY RUN", "dryRun")
         self._result_icon.setText("\u2139")  # info icon
         self._set_result_class("info")
         self._result_message.setText("Dry Run Complete - Nothing Was Changed")
@@ -369,11 +360,7 @@ class PushPage(QWidget):
             message: Human-readable error text, as reported by
                 SecondaryWorkflowManager.
         """
-        if not self._fail_active_stage():
-            # Same collapse as set_failure(): an undo that failed before any
-            # stage activated (e.g. the backup file was already missing)
-            # shouldn't show three untouched pending circles.
-            self._progress_container.setVisible(False)
+        self._fail_active_stage()
 
         self._show_result_state()
         self._result_icon.setText("\u26A0")  # warning triangle
@@ -404,26 +391,23 @@ class PushPage(QWidget):
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _fail_active_stage(self) -> bool:
-        """Mark whichever stage row is currently "active" as "failed".
+    def _fail_active_stage(self) -> None:
+        """Mark whichever stage row is currently "active" as "failed", or
+        collapse the stepper entirely if no stage was ever active.
 
         Shared by set_failure() and set_undo_failure() -- both terminate a
-        run at whatever stage it was interrupted on, so both need the same
-        "find the active row" lookup.
-
-        Returns:
-            True if a row was active and marked failed. False if the run
-            never reached an on_stage callback at all (e.g. the backup file
-            was already missing) -- every row is still "pending" in that
-            case, and the caller should collapse the stepper entirely
-            rather than show three untouched circles next to a failure.
+        run at whatever stage it was interrupted on. If nothing ever
+        reached "active" (e.g. the backup file was already missing), every
+        row is still "pending" -- a stepper of three untouched circles next
+        to a failure would only look like nothing was attempted, so this
+        collapses it instead, the same as a clean success.
         """
         for key in reversed(_STAGES):
             row = self._stage_rows[key]
             if row.status == "active":
                 row.set_status("failed")
-                return True
-        return False
+                return
+        self._progress_container.setVisible(False)
 
     def _clear_success_filters(self) -> None:
         """Clear stored read-back filter data and hide the "Show" button."""
@@ -491,6 +475,16 @@ class PushPage(QWidget):
         badge.setSizePolicy(size_policy)
         badge.setVisible(False)
         return badge
+
+    def _activate_status_badge(self, text: str, css_class: str) -> None:
+        """Show the shared status badge as either DRY RUN or UNDO.
+
+        Shared by start_undo() and set_dry_run_result() so the
+        text/class/visibility dance only needs to be written once.
+        """
+        self._status_badge.setText(text)
+        set_qss_property(self._status_badge, "class", css_class)
+        self._status_badge.setVisible(True)
 
     def _setup_ui(self) -> None:
         """Build the page layout."""

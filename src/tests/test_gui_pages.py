@@ -886,8 +886,7 @@ class TestPushPage:
 
         page.set_failure("No backup available", "/tmp/backup.json")
 
-        assert not page._progress_container.isVisible()
-        assert all(row.status == "pending" for row in page._stage_rows.values())
+        self._assert_stepper_collapsed(page)
 
     def test_set_undo_failure_collapses_stepper_when_no_stage_ever_started(
         self, qtbot
@@ -902,6 +901,12 @@ class TestPushPage:
 
         page.set_undo_failure("No backup available")
 
+        self._assert_stepper_collapsed(page)
+
+    @staticmethod
+    def _assert_stepper_collapsed(page: PushPage) -> None:
+        """Shared assertion for the two collapses-with-nothing-active tests
+        above: the progress container is hidden and every row is untouched."""
         assert not page._progress_container.isVisible()
         assert all(row.status == "pending" for row in page._stage_rows.values())
 
