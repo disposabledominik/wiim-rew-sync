@@ -333,8 +333,8 @@ class SecondaryWorkflowManager(QObject):
             logger.error("Undo requested but backup file not found: %s", path)
             return False, "No backup available"
 
-        assert self._bridge is not None
         try:
+            assert self._bridge is not None
             safe_write = self._safe_write_factory(self._current_adapter)
             result = await safe_write.undo(
                 path, source_name, on_stage=self._bridge.stage_changed.emit
@@ -374,16 +374,16 @@ class SecondaryWorkflowManager(QObject):
         D) -- results reported via undo_complete, same signal
         undo_last_push()/_do_undo() above already use.
         """
-        assert self._bridge is not None
-        assert self._roomfit_safe_write_factory is not None
-        assert self._current_adapter is not None
-
         path = Path(backup_path) if backup_path else Path(".")
         if not path.exists() or not path.is_file():
             self.undo_complete.emit(False, "No backup available for undo")
             return
 
         try:
+            assert self._bridge is not None
+            assert self._roomfit_safe_write_factory is not None
+            assert self._current_adapter is not None
+
             self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
             roomfit_safe_write = self._roomfit_safe_write_factory(self._current_adapter)
             result = await roomfit_safe_write.undo(

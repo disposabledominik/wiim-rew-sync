@@ -1198,8 +1198,9 @@ class TestElidingLabel:
         assert label.sizeHint().width() == full_hint_width
 
 
-def test_pushpage_dry_run_badge_preserves_reserved_space(qtbot) -> None:
-    """#109: toggling the dry-run badge must not shift the layout below it.
+def test_pushpage_status_badge_preserves_reserved_space(qtbot) -> None:
+    """#109: toggling the shared DRY RUN/UNDO status badge must not shift
+    the layout below it.
 
     sizeHint() alone can't catch this regression -- Qt widgets report a
     non-zero sizeHint whether or not they're visible, so a plain
@@ -1223,15 +1224,15 @@ def test_pushpage_dry_run_badge_preserves_reserved_space(qtbot) -> None:
     page.show()
     qtbot.wait(10)
 
-    assert not page._dry_run_badge.isVisible()
+    assert not page._status_badge.isVisible()
     hidden_y = page._progress_container.pos().y()
 
-    page._dry_run_badge.setVisible(True)
+    page._status_badge.setVisible(True)
     qtbot.wait(10)
     shown_y = page._progress_container.pos().y()
     assert shown_y == hidden_y
 
-    page._dry_run_badge.setVisible(False)
+    page._status_badge.setVisible(False)
     qtbot.wait(10)
     hidden_again_y = page._progress_container.pos().y()
     assert hidden_again_y == hidden_y
@@ -1240,8 +1241,8 @@ def test_pushpage_dry_run_badge_preserves_reserved_space(qtbot) -> None:
     # still show/hide the badge as expected (behavioral smoke check).
     page.set_dry_run_result("Preview")
     qtbot.wait(10)
-    assert page._dry_run_badge.isVisible()
+    assert page._status_badge.isVisible()
 
     page.reset()
     qtbot.wait(10)
-    assert not page._dry_run_badge.isVisible()
+    assert not page._status_badge.isVisible()

@@ -875,6 +875,36 @@ class TestPushPage:
 
         assert page._progress_container.isVisible()
 
+    def test_set_failure_collapses_stepper_when_no_stage_ever_started(self, qtbot) -> None:
+        """A failure reported before any on_stage callback ever fired (e.g.
+        the backup file was already missing) has no "active" stage to mark
+        "failed" -- the stepper must collapse instead of showing three
+        untouched pending circles next to the failure message."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure("No backup available", "/tmp/backup.json")
+
+        assert not page._progress_container.isVisible()
+        assert all(row.status == "pending" for row in page._stage_rows.values())
+
+    def test_set_undo_failure_collapses_stepper_when_no_stage_ever_started(
+        self, qtbot
+    ) -> None:
+        """Same collapse as set_failure(), for an undo that fails before
+        start_undo()'s stepper ever advances past "pending" (e.g. the
+        backup file is missing)."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.start_undo()
+
+        page.set_undo_failure("No backup available")
+
+        assert not page._progress_container.isVisible()
+        assert all(row.status == "pending" for row in page._stage_rows.values())
+
     def test_undo_signal_emitted(self, qtbot) -> None:
         """Clicking Undo button emits undo_requested."""
         page = PushPage()
@@ -900,7 +930,8 @@ class TestPushPage:
 
         assert page._progress_container.isVisible()
         assert not page._result_container.isVisible()
-        assert page._undo_badge.isVisible()
+        assert page._status_badge.isVisible()
+        assert page._status_badge.text() == "UNDO"
         assert all(row.status == "pending" for row in page._stage_rows.values())
 
     def test_set_push_round_uses_restoring_text_in_undo_mode(self, qtbot) -> None:
@@ -931,7 +962,8 @@ class TestPushPage:
 
         assert page._result_container.isVisible()
         assert page._result_message.text() == "Previous filters restored"
-        assert page._undo_badge.isVisible()
+        assert page._status_badge.isVisible()
+        assert page._status_badge.text() == "UNDO"
         assert page._ok_button.isVisible()
         assert not page._undo_button.isVisible()
         assert not page._secondary_row.isVisible()
@@ -950,7 +982,8 @@ class TestPushPage:
         assert page._result_container.isVisible()
         assert "Undo failed" in page._result_message.text()
         assert page._detail_label.text() == "Backup file not found"
-        assert page._undo_badge.isVisible()
+        assert page._status_badge.isVisible()
+        assert page._status_badge.text() == "UNDO"
         assert page._ok_button.isVisible()
         assert page._undo_button.isVisible()
         assert not page._secondary_row.isVisible()
@@ -965,11 +998,11 @@ class TestPushPage:
         page.set_success()
         page.start_undo()
         page.set_undo_success("Previous filters restored")
-        assert page._undo_badge.isVisible()
+        assert page._status_badge.isVisible()
 
         page.reset()
 
-        assert not page._undo_badge.isVisible()
+        assert not page._status_badge.isVisible()
         page.set_push_round("optical", 2, 3)
         assert page._round_label.text() == "Pushing to optical (2 of 3)"
 
@@ -981,7 +1014,8 @@ class TestPushPage:
 
         page.set_dry_run_result("10 bands translated, no changes written")
 
-        assert page._dry_run_badge.isVisible()
+        assert page._status_badge.isVisible()
+        assert page._status_badge.text() == "DRY RUN"
         assert "Dry Run Complete" in page._result_message.text()
 
     def test_failure_detail_not_clipped_at_min_window_height(self, qtbot) -> None:
