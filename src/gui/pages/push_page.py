@@ -254,12 +254,7 @@ class PushPage(QWidget):
             backup_path: Path to the backup file for manual recovery.
             critical: True if rollback also failed (critical state).
         """
-        # Mark last active stage as failed
-        for key in reversed(_STAGES):
-            row = self._stage_rows[key]
-            if row.status == "active":
-                row.set_status("failed")
-                break
+        self._fail_active_stage()
 
         self._show_result_state()
         if critical:
@@ -365,11 +360,7 @@ class PushPage(QWidget):
             message: Human-readable error text, as reported by
                 SecondaryWorkflowManager.
         """
-        for key in reversed(_STAGES):
-            row = self._stage_rows[key]
-            if row.status == "active":
-                row.set_status("failed")
-                break
+        self._fail_active_stage()
 
         self._show_result_state()
         self._result_icon.setText("\u26A0")  # warning triangle
@@ -400,6 +391,19 @@ class PushPage(QWidget):
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _fail_active_stage(self) -> None:
+        """Mark whichever stage row is currently "active" as "failed".
+
+        Shared by set_failure() and set_undo_failure() -- both terminate a
+        run at whatever stage it was interrupted on, so both need the same
+        "find the active row" lookup.
+        """
+        for key in reversed(_STAGES):
+            row = self._stage_rows[key]
+            if row.status == "active":
+                row.set_status("failed")
+                break
 
     def _clear_success_filters(self) -> None:
         """Clear stored read-back filter data and hide the "Show" button."""
@@ -445,6 +449,21 @@ class PushPage(QWidget):
         self._result_container.setVisible(True)
         self._round_label.setVisible(False)
 
+    @staticmethod
+    def _make_badge(text: str, object_name: str, parent: QWidget) -> QLabel:
+        """Build a small pill-shaped status badge (DRY RUN / UNDO).
+
+        Uses setRetainSizeWhenHidden so toggling a badge's visibility never
+        shifts the layout of the content below it.
+        """
+        badge = QLabel(text, parent)
+        badge.setObjectName(object_name)
+        size_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        size_policy.setRetainSizeWhenHidden(True)
+        badge.setSizePolicy(size_policy)
+        badge.setVisible(False)
+        return badge
+
     def _setup_ui(self) -> None:
         """Build the page layout."""
         content_layout, content_wrapper = build_centered_content(self)
@@ -473,28 +492,14 @@ class PushPage(QWidget):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(SPACING_MD)
 
-        # Dry Run badge (hidden by default). Reserves its layout space even
-        # while hidden so toggling it via set_dry_run_result()/reset() doesn't
-        # shift the progress/result content below it (#109).
-        self._dry_run_badge = QLabel("DRY RUN", body)
-        self._dry_run_badge.setObjectName("PushPageDryRunBadge")
-        size_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        size_policy.setRetainSizeWhenHidden(True)
-        self._dry_run_badge.setSizePolicy(size_policy)
-        self._dry_run_badge.setVisible(False)
+        # Dry Run / Undo badges (both hidden by default). Reserve their
+        # layout space even while hidden so toggling them via
+        # set_dry_run_result()/start_undo()/reset() doesn't shift the
+        # progress/result content below them (#109).
+        self._dry_run_badge = self._make_badge("DRY RUN", "PushPageDryRunBadge", body)
         body_layout.addWidget(self._dry_run_badge)
 
-        # Undo badge (hidden by default). Shown for the duration of an undo
-        # run -- through both the reused progress stepper and the terminal
-        # result card -- so it's always unambiguous that the visible result
-        # is for the undo, not the original push (same retain-size trick as
-        # the dry run badge, so toggling it doesn't shift layout below it).
-        self._undo_badge = QLabel("UNDO", body)
-        self._undo_badge.setObjectName("PushPageUndoBadge")
-        undo_badge_size_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        undo_badge_size_policy.setRetainSizeWhenHidden(True)
-        self._undo_badge.setSizePolicy(undo_badge_size_policy)
-        self._undo_badge.setVisible(False)
+        self._undo_badge = self._make_badge("UNDO", "PushPageUndoBadge", body)
         body_layout.addWidget(self._undo_badge)
 
         # Multi-source round indicator (hidden for a single-source push).
