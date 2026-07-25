@@ -24,6 +24,7 @@ dev = [
     "respx>=0.21.0",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
+    "pip-audit>=2.7.0",
 ]
 package = [
     "pyinstaller>=6.0.0",

@@ -13,8 +13,30 @@ permissions:
   contents: write
 
 jobs:
+  dependency-audit:
+    name: Dependency security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project (package extras) + pip-audit
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install -e ".[package]" pip-audit
+
+      - name: pip-audit (fail release on known vulnerabilities)
+        run: pip-audit
+
   build:
     name: Build (${{ matrix.os }})
+    needs: dependency-audit
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
