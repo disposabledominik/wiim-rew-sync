@@ -42,7 +42,11 @@ from src.models.errors import (
     WiiMResponseError,
 )
 from src.models.peq import PEQSettings
-from src.repository.backup_manager import BackupManager
+from src.repository.backup_manager import (
+    BackupManager,
+    load_backup_json,
+    parse_backup_restore_metadata,
+)
 from src.translator import TranslationEngine
 from src.utils.app_dirs import get_app_data_dir
 from src.utils.version import get_app_version
@@ -477,6 +481,105 @@ def cmd_set_filters(
 
 
 # ---------------------------------------------------------------------------
+# restore-backup — restore a PEQ source from a backup JSON file
+# ---------------------------------------------------------------------------
+
+
+async def _restore_backup(device: str, file: str, source: str, timeout: float) -> WriteResult:
+    """Probe device, restore a PEQ source's bands + enable state from a
+    backup JSON file via SafeWrite.undo() -- the same protocol the GUI's
+    Undo button uses, so this restore is itself backed up, verified, and
+    rolled back on failure like any other write (smoke #241: the app's
+    critical-failure screen has told users to run this since it exists to
+    close that gap -- rollback failing there leaves a backup file with no
+    other in-app way back onto the device).
+    """
+    path = Path(file)
+    backup_data = load_backup_json(path)
+    # was_new_profile is only ever set on a RoomFit backup (see
+    # RoomFitSafeWrite.execute()) -- PEQ backups never write that key.
+    # SafeWrite.undo() only knows how to parse PEQ-shaped backups, so reject
+    # a RoomFit one with a clear message rather than raising deep inside it.
+    _, _, was_new_profile, _ = parse_backup_restore_metadata(backup_data)
+    if was_new_profile is not None:
+        raise ValidationError(
+            f"'{path}' is a RoomFit backup, not a PEQ backup. "
+            "restore-backup only supports PEQ backups currently."
+        )
+
+    client = WiiMHttpClient(device, timeout=timeout)
+    try:
+        print("Probing device capabilities...")
+        capabilities = await CapabilityProber(client).probe()
+        adapter = WiiMAdapter(client, capabilities)
+        backup_manager = BackupManager(get_app_data_dir())
+
+        # Same tri-state batch-write handling as _set_filters -- see its
+        # comment for why None must not be treated as False.
+        queue: WiiMCommandQueue | None = None
+        if capabilities.supports_batch_write is False:
+            queue = WiiMCommandQueue(client)
+            await queue.start()
+
+        safe_write = SafeWrite(adapter, backup_manager, queue)
+
+        print("Backing up current state...")
+        print("Restoring from backup...")
+        result = await safe_write.undo(path, source)
+
+        if result.success:
+            print("Verifying...")
+            print("Done! Previous filters restored.")
+        elif result.rollback_success is True:
+            print("Verifying...")
+            print("ROLLBACK: verification failed, state before this restore kept.")
+        else:
+            print("Verifying...")
+            print("ROLLBACK FAILED: manual recovery required.")
+
+        if queue is not None:
+            await queue.drain_and_stop()
+
+        return result
+    finally:
+        await client.close()
+
+
+def cmd_restore_backup(device: str, file: str, source: str, timeout: float) -> int:
+    """Restore a PEQ source from a backup JSON file using the safe-write protocol.
+
+    Exit code 0 on verified success, 1 on any failure.
+    """
+    try:
+        result = asyncio.run(_restore_backup(device, file, source, timeout))
+    except (WiiMConnectionError, WiiMResponseError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except (ValidationError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"Error: cannot read backup file '{file}': {exc}", file=sys.stderr)
+        return 1
+
+    if result.success:
+        print("Verified successfully.")
+        return 0
+
+    if result.rollback_success is True:
+        print("Verification FAILED. Rolled back to state before this restore.")
+        return 1
+
+    # Rollback also failed — CRITICAL
+    print(
+        f"CRITICAL: verification and rollback both failed. "
+        f"Manual recovery required. Backup: {result.backup_path}",
+        file=sys.stderr,
+    )
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # list-roomfit-profiles — list RoomFit profiles on device
 # ---------------------------------------------------------------------------
 
@@ -885,6 +988,23 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    restore_backup = subparsers.add_parser(
+        "restore-backup",
+        help=(
+            "Restore a PEQ source's filters from an automatic backup JSON file "
+            "(the file path shown on a push failure or in the app data backup "
+            "directory) using the safe-write protocol."
+        ),
+    )
+    restore_backup.add_argument(
+        "--file", required=True, help="Path to a backup JSON file."
+    )
+    restore_backup.add_argument("--device", required=True, help="Device IP address.")
+    restore_backup.add_argument(
+        "--source", required=True,
+        help="Audio input source the backup was taken from (e.g. wifi).",
+    )
+
     list_roomfit = subparsers.add_parser(
         "list-roomfit-profiles",
         help="List RoomFit profiles stored on a device.",
@@ -980,6 +1100,8 @@ def run(argv: list[str] | None = None) -> int:
             save_as=args.save_as,
             file_right=args.file_right,
         )
+    if args.command == "restore-backup":
+        return cmd_restore_backup(args.device, args.file, args.source, args.timeout)
     if args.command == "list-roomfit-profiles":
         return cmd_list_roomfit_profiles(args.device, args.timeout)
     if args.command == "get-roomfit-filters":

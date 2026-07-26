@@ -795,6 +795,37 @@ class TestPushPage:
         assert page._ok_button.isVisible()
         assert not page._undo_button.isVisible()
 
+    def test_set_failure_partial_sources_offers_undo(self, qtbot) -> None:
+        """#242: a multi-source push that failed partway through must offer
+        Undo (for the sources that already succeeded) instead of the
+        ordinary failure state's no-Undo behavior, and must not claim a
+        full restore in its message."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "wifi=/tmp/wifi.json", critical=False, partial_sources=1
+        )
+
+        assert page._ok_button.isVisible()
+        assert page._undo_button.isVisible()
+        msg = page._result_message.text().lower()
+        assert "not restored" in msg
+        assert "safely restored" not in page._detail_label.text().lower()
+
+    def test_set_failure_no_partial_sources_still_hides_undo(self, qtbot) -> None:
+        """A single-source (or first-source) failure keeps the pre-#242
+        behavior: no Undo, "device safely restored" message."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure("Verification mismatch", "/tmp/backup.json")
+
+        assert not page._undo_button.isVisible()
+        assert "safely restored" in page._detail_label.text().lower()
+
     def test_set_push_round_hidden_for_single_source(self, qtbot) -> None:
         """total<=1 keeps the round label hidden -- nothing to disambiguate."""
         page = PushPage()

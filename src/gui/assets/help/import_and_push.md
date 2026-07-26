@@ -122,14 +122,12 @@ After a successful push, you can:
 When multiple sources are selected in the Source step, they are written one
 after another.
 
-- **If every source succeeds**, Undo restores all of them to their pre-push
-  state, each from its own backup.
-- **If a source fails**, the push stops there. That source is rolled back to
-  its previous settings automatically, but any sources already written
-  before it keep their new filters — and because the push as a whole
-  failed, the Undo button is not offered. Each of those earlier sources
-  still has its own backup file on disk (see "Backup Files" in the
-  Troubleshooting section), so nothing is lost, but restoring them is a
-  manual step today.
-
-If that matters for your setup, push to one source at a time.
+- **If every source succeeds**, the result screen shows the normal success
+  state, and Undo restores all of them to their pre-push state, each from
+  its own backup.
+- **If a source fails**, the push stops there — sources after it in the list
+  are never attempted. That source is rolled back to its previous settings
+  automatically by its own write attempt. Sources already written before it
+  keep their new filters and are **not** automatically rolled back; the
+  result screen tells you how many, and its Undo button restores exactly
+  those sources (not the one that failed, which is already back to normal).

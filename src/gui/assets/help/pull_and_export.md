@@ -124,10 +124,18 @@ app's data directory.
 If something goes wrong after a push, you have two options:
 
 - **Undo** — Click the Undo button on the push result screen to immediately
-  restore your previous settings. For multi-source pushes, Undo restores
-  all affected sources.
-- **Manual restore** — Backups are saved as JSON files in the app data
-  folder. You can find the backup path in Settings under "Paths."
+  restore your previous settings. For a multi-source push where every
+  source succeeded, Undo restores all of them; if one source failed partway
+  through, Undo restores only the sources that were written before the
+  failure (see "Multi-Source Push" in the Import & Push section).
+- **Manual restore via CLI** — Backups are saved as JSON files in the app
+  data folder (path shown in Settings under "Paths"). Neither the GUI nor
+  REW can load a backup file directly, but the command-line tool can write
+  it straight back to the device:
+  `wiim-rew-sync restore-backup --device <ip> --source <source> --file <backup path>`.
+  This is also the recovery path if a push fails so badly that even the
+  automatic rollback can't reach the device — see "Backup Files" in the
+  Troubleshooting section.
 
 ### Backup Lifecycle
 

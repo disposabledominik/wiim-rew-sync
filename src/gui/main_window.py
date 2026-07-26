@@ -1717,11 +1717,24 @@ class MainWindow(QMainWindow):
             # rollback restore itself failed too -- the only state that needs
             # the "Critical: Manual recovery required" UI, not just any failure.
             critical = getattr(result, "rollback_success", None) is False
-            self._push_page.set_failure(error_msg, backup_path, critical)
+            # >0 only on a multi-source PEQ push where earlier sources
+            # succeeded before this one failed (smoke #242) -- those sources
+            # were left written, not rolled back. partial_backup_paths (kept
+            # separate from backup_path, which stays this failing source's
+            # own backup for the critical-recovery display above) is their
+            # encoded backup string; record it the same way a successful
+            # push does, so _on_undo_requested's existing
+            # is_multi_source_backup_path() branch lets the user Undo them.
+            partial_sources = getattr(result, "partial_sources", 0) or 0
+            partial_backup_paths = getattr(result, "partial_backup_paths", None)
+            if partial_sources and partial_backup_paths:
+                self._wizard_controller.state.last_backup_path = partial_backup_paths
+            self._push_page.set_failure(error_msg, backup_path, critical, partial_sources)
             self._status_banner.show_error(f"Push failed: {error_msg}")
             logger.error(
-                "Push failed (critical=%s): %s. Backup: %s",
+                "Push failed (critical=%s, partial_sources=%d): %s. Backup: %s",
                 critical,
+                partial_sources,
                 error_msg,
                 backup_path or "(none)",
             )

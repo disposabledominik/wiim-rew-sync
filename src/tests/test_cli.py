@@ -507,6 +507,195 @@ def test_set_filters_via_main_exits_zero_on_success(
 
 
 # ---------------------------------------------------------------------------
+# restore-backup (smoke #241 -- CLI recovery path for a critical push failure)
+# ---------------------------------------------------------------------------
+
+
+_PEQ_BACKUP_JSON = """{
+    "channel_mode": "stereo",
+    "filters": [
+        {"type": "PEAK", "frequency_hz": 100.0, "gain_db": -3.0, "q": 1.0}
+    ]
+}"""
+
+_ROOMFIT_BACKUP_JSON = """{
+    "channel_mode": "stereo",
+    "filters": [],
+    "was_new_profile": false,
+    "pre_write_active_profile": "Main Seat",
+    "pre_write_roomfit_enabled": true
+}"""
+
+
+def _patch_restore_backup_stack(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    caps: DeviceCapabilities | None = None,
+    undo_result: WriteResult | None = None,
+) -> MagicMock:
+    """Patch the write stack for restore-backup tests. Mirrors
+    _patch_set_filters_stack but patches SafeWrite.undo() (which
+    restore-backup calls directly), not .execute()."""
+    if caps is None:
+        caps = _make_caps()
+
+    client_instance = MagicMock()
+    client_instance.close = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMHttpClient", MagicMock(return_value=client_instance))
+
+    prober_instance = MagicMock()
+    prober_instance.probe = AsyncMock(return_value=caps)
+    monkeypatch.setattr(cli, "CapabilityProber", MagicMock(return_value=prober_instance))
+
+    adapter_instance = MagicMock()
+    monkeypatch.setattr(cli, "WiiMAdapter", MagicMock(return_value=adapter_instance))
+
+    monkeypatch.setattr(cli, "BackupManager", MagicMock())
+    monkeypatch.setattr(cli, "get_app_data_dir", MagicMock(return_value=Path("/tmp/test")))
+
+    safe_write_instance = MagicMock()
+    safe_write_instance.undo = AsyncMock(return_value=undo_result)
+    monkeypatch.setattr(cli, "SafeWrite", MagicMock(return_value=safe_write_instance))
+
+    queue_instance = MagicMock()
+    queue_instance.start = AsyncMock()
+    queue_instance.drain_and_stop = AsyncMock()
+    monkeypatch.setattr(cli, "WiiMCommandQueue", MagicMock(return_value=queue_instance))
+
+    return safe_write_instance
+
+
+def test_restore_backup_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    backup_file = tmp_path / "backup.json"
+    backup_file.write_text(_PEQ_BACKUP_JSON, encoding="utf-8")
+
+    safe_write_instance = _patch_restore_backup_stack(
+        monkeypatch, undo_result=WriteResult(success=True, backup_path=tmp_path / "new.json")
+    )
+
+    code = cli.cmd_restore_backup(
+        device="192.168.1.50", file=str(backup_file), source="wifi", timeout=5.0
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Verified successfully." in out
+    assert "Previous filters restored" in out
+    # undo() is called with the backup path and source -- not execute(),
+    # which would skip the enable-state restore SafeWrite.undo() does.
+    safe_write_instance.undo.assert_called_once_with(backup_file, "wifi")
+
+
+def test_restore_backup_rollback_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    backup_file = tmp_path / "backup.json"
+    backup_file.write_text(_PEQ_BACKUP_JSON, encoding="utf-8")
+
+    _patch_restore_backup_stack(
+        monkeypatch,
+        undo_result=WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path=tmp_path / "new.json",
+            error_message="Write verification failed.",
+        ),
+    )
+
+    code = cli.cmd_restore_backup(
+        device="192.168.1.50", file=str(backup_file), source="wifi", timeout=5.0
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "Verification FAILED. Rolled back to state before this restore." in captured.out
+
+
+def test_restore_backup_critical_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    backup_file = tmp_path / "backup.json"
+    backup_file.write_text(_PEQ_BACKUP_JSON, encoding="utf-8")
+
+    _patch_restore_backup_stack(
+        monkeypatch,
+        undo_result=WriteResult(
+            success=False,
+            rollback_success=False,
+            backup_path=tmp_path / "new.json",
+            error_message="Write verification AND rollback failed.",
+        ),
+    )
+
+    code = cli.cmd_restore_backup(
+        device="192.168.1.50", file=str(backup_file), source="wifi", timeout=5.0
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "CRITICAL" in captured.err
+    assert "Manual recovery required" in captured.err
+
+
+def test_restore_backup_rejects_roomfit_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A RoomFit backup (has 'was_new_profile') isn't shaped like a PEQ
+    backup -- SafeWrite.undo() can't parse it, so restore-backup must
+    reject it up front with a clear message instead of misbehaving."""
+    backup_file = tmp_path / "roomfit_backup.json"
+    backup_file.write_text(_ROOMFIT_BACKUP_JSON, encoding="utf-8")
+
+    safe_write_instance = _patch_restore_backup_stack(monkeypatch)
+
+    code = cli.cmd_restore_backup(
+        device="192.168.1.50", file=str(backup_file), source="wifi", timeout=5.0
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "RoomFit backup" in captured.err
+    safe_write_instance.undo.assert_not_called()
+
+
+def test_restore_backup_missing_file(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = cli.cmd_restore_backup(
+        device="192.168.1.50", file="/nonexistent/backup.json", source="wifi", timeout=5.0
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "cannot read backup file" in captured.err
+
+
+def test_restore_backup_via_main_exits_zero_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup_file = tmp_path / "backup.json"
+    backup_file.write_text(_PEQ_BACKUP_JSON, encoding="utf-8")
+
+    _patch_restore_backup_stack(
+        monkeypatch, undo_result=WriteResult(success=True, backup_path=tmp_path / "new.json")
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(
+            [
+                "restore-backup",
+                "--file", str(backup_file),
+                "--device", "192.168.1.50",
+                "--source", "wifi",
+            ]
+        )
+
+    assert exc_info.value.code == 0
+
+
+# ---------------------------------------------------------------------------
 # get-filters L/R auto-detection (hardware validation findings)
 # ---------------------------------------------------------------------------
 

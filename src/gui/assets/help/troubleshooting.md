@@ -134,10 +134,10 @@ After a successful push, click "Undo" on the result screen to restore
 your previous configuration. This is available immediately after pushing
 and uses the same automatic backup.
 
-For multi-source pushes, Undo restores every source that was written to.
-Note that Undo is only offered when the whole push succeeded — see
-"Multi-Source Push" in the Import & Push section for what to do if one
-source in a multi-source push fails.
+For a multi-source push, Undo restores every source that was actually
+written — whether that's all of them (a fully successful push) or only the
+ones written before a failure partway through (see "Multi-Source Push" in
+the Import & Push section).
 
 ### Backup Files
 
@@ -148,18 +148,18 @@ as a JSON file. You can find the path:
 - In Settings under "Paths" (backup directory)
 
 Backups are kept separate from your saved presets, so they do **not** appear
-in My Saved Presets, and the app has no "open a backup file" button. Nothing
-in the app or the CLI reads a backup `.json` directly — both import filters
-from REW text files. To get a backup back onto a device, convert it by hand:
+in My Saved Presets, and the app has no "open a backup file" button. To
+restore one, use the command-line tool:
 
-1. Open the backup `.json` in any text editor. Each entry under `filters`
-   (or `filters_l` / `filters_r` for L/R backups) has a `type`,
-   `frequency_hz`, `gain_db`, and `q`.
-2. Write those values into a REW EQ text file — the exact layout is shown
-   under "Export Format" in the Pull & Export section of this guide. The
-   quickest way to get a correctly-formatted starting point is to export any
-   preset from this app, then edit the numbers.
-3. Import that file the normal way and push it.
+```
+wiim-rew-sync restore-backup --device <ip> --source <source> --file <backup path>
+```
+
+This runs the same backup/write/verify/rollback protocol as a normal push,
+so the restore itself is safe — it backs up whatever is currently on the
+device before writing the old filters back. RoomFit backups aren't
+supported by this command yet; only PEQ source backups can be restored this
+way today.
 
 Keep the backup file until you've confirmed the device is back to normal —
 it holds everything needed to reconstruct your previous settings.
