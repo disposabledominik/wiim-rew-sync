@@ -5,6 +5,12 @@ Build instructions for creating standalone executables using PyInstaller.
 > **Important:** PyInstaller is NOT a cross-compiler. You must build on the target OS.
 > A Windows `.exe` must be built on Windows, a macOS `.app` on macOS, etc.
 
+> **You usually don't need this page.** Pushing a `vX.Y.Z` tag makes
+> [`.github/workflows/release.yml`](../.github/workflows/release.yml) build all three platforms on
+> their own runners and attach the zips to a draft GitHub Release — see
+> [docs/release_process.md](../docs/release_process.md). Build by hand only to test a packaging
+> change locally before tagging.
+
 ---
 
 ## Windows (.exe)
@@ -38,7 +44,7 @@ pyinstaller packaging/wiim_rew_sync_windows.spec
 ### Output
 
 ```
-dist\WiiM-REW-Sync.exe   (~60 MB)
+dist\WiiM-REW-Sync.exe   (~70-90 MB)
 ```
 
 ### Verify
@@ -94,8 +100,8 @@ dist/WiiM-REW-Sync.app/   (~60-90 MB)
 ### Verify
 
 1. Double-click `dist/WiiM-REW-Sync.app` — or from terminal: `open dist/WiiM-REW-Sync.app`
-2. Check that `~/.config/wiim-rew-sync/logs/` was created on first launch.
-3. Check that `~/.config/wiim-rew-sync/profiles/` was created.
+2. Check that `~/Library/Application Support/wiim-rew-sync/logs/` was created on first launch.
+3. Check that `~/Library/Application Support/wiim-rew-sync/profiles/` was created.
 
 ### Notes
 
@@ -158,8 +164,9 @@ dist/WiiM-REW-Sync   (~60-90 MB)
 ### Verify
 
 1. Run: `./dist/WiiM-REW-Sync`
-2. Check that `~/.config/wiim-rew-sync/logs/` was created on first launch.
-3. Check that `~/.config/wiim-rew-sync/profiles/` was created.
+2. Check that `~/.local/share/wiim-rew-sync/logs/` was created on first launch
+   (or `$XDG_DATA_HOME/wiim-rew-sync/logs/` if that variable is set).
+3. Check that `~/.local/share/wiim-rew-sync/profiles/` was created.
 
 ### Notes
 

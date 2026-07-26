@@ -5,10 +5,13 @@ your WiiM device.
 
 ## Selecting Sources (PEQ Only)
 
-PEQ filters are per-input. The Source step shows common audio inputs
-(Wi-Fi, Bluetooth, HDMI, Optical, Line In, etc.) as checkboxes. You can
-select one or more sources — the same filter set will be pushed to all
-selected sources in one operation.
+PEQ filters are per-input. The Source step lists the inputs your device
+actually reports as enabled (Wi-Fi, Bluetooth, HDMI, Optical, Line In, and
+so on) as checkboxes, so the list differs between models. On a WiiM Mini,
+which doesn't report its inputs, a standard list is shown instead.
+
+You can select one or more sources — the same filter set will be pushed to
+all selected sources in one operation.
 
 ### Channel Modes
 
@@ -58,7 +61,7 @@ After loading, the Review step shows a table of all filter bands:
 
 | Column    | Description                           |
 |-----------|---------------------------------------|
-| Band      | Filter number (1–10)                  |
+| Band      | Filter number (1 up to your device's band count) |
 | Type      | Filter type (PK, LS, HS, LP, HP)      |
 | Frequency | Center frequency in Hz                |
 | Gain      | Boost or cut in dB                    |
@@ -69,13 +72,12 @@ After loading, the Review step shows a table of all filter bands:
   indicator. The cell shows the final value that will be written; hover to
   see the original value from your file.
 - Filter types with no WiiM equivalent (e.g. Notch, Modal, All Pass, Linkwitz
-  Transform) are dropped and shown as a crossed-out, unnumbered ("N/A") row —
-  hover it to see why. Bands cut for exceeding the device's band limit are
-  shown the same way.
-- Filter types auto-converted to a different WiiM-supported type, and bare
-  LP/HP filters that had no Q specified in your file (filled in with REW's
-  documented default of 0.7071), are flagged with a small indicator on the
-  Type or Q column — hover for details. These are not dropped, just adjusted.
+  Transform, and REW's slope-based shelves) are dropped and shown as a
+  crossed-out, unnumbered ("N/A") row — hover it to see why. Bands cut for
+  exceeding the device's band limit are shown the same way.
+- Bare LP/HP filters that had no Q specified in your file (filled in with
+  REW's documented default of 0.7071) are flagged with a small indicator on
+  the Q column — hover for details. These are not dropped, just filled in.
 - For L/R mode, the table shows separate Left and Right tabs.
 
 ## Dry Run Mode
@@ -93,7 +95,7 @@ see any change on your device, check whether Dry Run is still checked.
 
 The first time you uncheck it, the app will offer to turn off this default
 for future sessions. You can also change it any time in
-**Settings > General > "Enable Dry Run by default for new sessions"**.
+**Settings > Behavior > "Enable Dry Run by default for new sessions"**.
 
 ## Pushing to Device
 
@@ -107,13 +109,25 @@ protocol:
 
 After a successful push, you can:
 
+- Click **Show Pushed Filters** to see exactly what the device reported
+  back after the write — useful for confirming the values landed as intended
 - Click **Undo** to instantly restore your previous settings (works for all
   sources that were written to)
-- Click **Export** to save the pushed filters as a REW file
-- Click **Save Preset** to store the configuration in your local library
+- Click **Export as REW File** to save the pushed filters as a REW file
+- Click **Save to My Presets** to store the configuration in your local
+  library
 
 ### Multi-Source Push
 
-When multiple sources are selected in the Source step, all are written in
-sequence. If any source fails verification, only that source is rolled back.
-Undo restores all sources to their pre-push state.
+When multiple sources are selected in the Source step, they are written one
+after another.
+
+- **If every source succeeds**, the result screen shows the normal success
+  state, and Undo restores all of them to their pre-push state, each from
+  its own backup.
+- **If a source fails**, the push stops there — sources after it in the list
+  are never attempted. That source is rolled back to its previous settings
+  automatically by its own write attempt. Sources already written before it
+  keep their new filters and are **not** automatically rolled back; the
+  result screen tells you how many, and its Undo button restores exactly
+  those sources (not the one that failed, which is already back to normal).

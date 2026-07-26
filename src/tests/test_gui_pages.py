@@ -795,6 +795,100 @@ class TestPushPage:
         assert page._ok_button.isVisible()
         assert not page._undo_button.isVisible()
 
+    def test_set_failure_partial_sources_offers_undo(self, qtbot) -> None:
+        """#242: a multi-source push that failed partway through must offer
+        Undo (for the sources that already succeeded) instead of the
+        ordinary failure state's no-Undo behavior, and must not claim a
+        full restore in its message."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "wifi=/tmp/wifi.json", critical=False, partial_sources=1
+        )
+
+        assert page._ok_button.isVisible()
+        assert page._undo_button.isVisible()
+        msg = page._result_message.text().lower()
+        assert "not restored" in msg
+        assert "safely restored" not in page._detail_label.text().lower()
+
+    def test_set_failure_critical_and_partial_sources_explains_undo(self, qtbot) -> None:
+        """A source can fail its OWN rollback (critical) while earlier
+        sources in the same multi-source push already succeeded
+        (partial_sources > 0) -- these are independent failure modes and can
+        co-occur. The Undo button's visibility is unconditional on
+        partial_sources alone, so without this, it would appear in the
+        critical UI with zero explanation of what it restores (found during
+        review: the critical branch's message never mentioned
+        partial_sources at all)."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Rollback failed", "/tmp/optical.json", critical=True, partial_sources=2
+        )
+
+        assert page._undo_button.isVisible()
+        detail = page._detail_label.text().lower()
+        assert "critical" in page._result_message.text().lower()
+        assert "2 other source" in detail
+        assert "not automatically rolled back" in detail
+        assert "restore-backup" in detail  # manual recovery steps still shown
+
+    def test_set_failure_no_partial_sources_still_hides_undo(self, qtbot) -> None:
+        """A single-source (or first-source) failure keeps the pre-#242
+        behavior: no Undo, "device safely restored" message."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure("Verification mismatch", "/tmp/backup.json")
+
+        assert not page._undo_button.isVisible()
+        assert "safely restored" in page._detail_label.text().lower()
+
+    def test_set_failure_critical_recovery_command_is_valid_cli_invocation(
+        self, qtbot
+    ) -> None:
+        """The critical-failure recovery text tells the user to run a
+        specific `restore-backup` command -- if that command is missing a
+        required flag (found during review: it omitted --source), copying
+        it verbatim fails with an argparse error instead of recovering, in
+        the exact worst-case state the message exists to get the user out
+        of. Parse the shown command with the CLI's real argument parser
+        (after substituting its placeholders) so any future required-flag
+        drift here fails loudly instead of only being caught by manual
+        review."""
+        import shlex
+
+        from src.cli.main import _build_parser
+
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure("Rollback failed", "/tmp/backup.json", critical=True)
+
+        detail = page._detail_label.text()
+        run_line = next(line for line in detail.splitlines() if "Run:" in line)
+        command = run_line.split("Run:", 1)[1].strip()
+        command = (
+            command.replace("<ip>", "192.168.1.50")
+            .replace("<source>", "wifi")
+            .replace("<backup path>", "/tmp/backup.json")
+        )
+        tokens = shlex.split(command)
+        assert tokens[0] == "wiim-rew-sync"
+
+        # parse_args() calls sys.exit(2) on a missing required argument --
+        # letting that propagate uncaught is exactly the failure signal
+        # wanted here.
+        args = _build_parser().parse_args(tokens[1:])
+        assert args.command == "restore-backup"
+
     def test_set_push_round_hidden_for_single_source(self, qtbot) -> None:
         """total<=1 keeps the round label hidden -- nothing to disambiguate."""
         page = PushPage()

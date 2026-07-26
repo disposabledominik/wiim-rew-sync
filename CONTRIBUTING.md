@@ -8,7 +8,7 @@ test/lint/type-check workflow, and the conventions the codebase follows.
 Requires Python 3.12+.
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/disposabledominik/wiim-rew-sync.git
 cd wiim-rew-sync
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
@@ -29,6 +29,7 @@ wiim-rew-sync list-sources --device <ip>
 wiim-rew-sync get-filters --device <ip> --source wifi
 wiim-rew-sync dry-run-import --file my_measurement.txt
 wiim-rew-sync set-filters --file my_measurement.txt --device <ip> --source wifi
+wiim-rew-sync restore-backup --device <ip> --source wifi --file <backup path>
 wiim-rew-sync peq-toggle --device <ip> --source wifi --state on
 ```
 
@@ -56,6 +57,10 @@ Task completion gate before calling any change done:
 1. `pytest` for the touched module(s) passes
 2. `ruff check src/` — zero errors
 3. `mypy src/` — zero errors (`src/translator/` and `src/models/` run under strict-mode overrides)
+
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same three gates plus
+`pip-audit` and the full suite with its coverage threshold on every PR, so a change that skips the
+local gate will be caught there rather than merged.
 
 ## Code style
 

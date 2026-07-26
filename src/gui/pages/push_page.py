@@ -244,15 +244,34 @@ class PushPage(QWidget):
         self._undo_button.setVisible(True)
         self._secondary_row.setVisible(True)
 
-    def set_failure(self, message: str, backup_path: str, critical: bool = False) -> None:
+    def set_failure(
+        self,
+        message: str,
+        backup_path: str,
+        critical: bool = False,
+        partial_sources: int = 0,
+    ) -> None:
         """Transition to failure state.
 
         Shows warning/critical icon, error message, and recovery info.
 
         Args:
             message: Human-readable error description.
-            backup_path: Path to the backup file for manual recovery.
+            backup_path: Path to the backup file for THIS failing source's
+                own backup (for manual/critical recovery) -- always a single
+                file path, even when partial_sources > 0. The prior
+                sources' backups (for Undo) are not passed through this
+                parameter at all; the caller stores their separately-encoded
+                string directly on wizard state for the Undo click handler
+                to pick up (see encode_multi_source_backup_paths).
             critical: True if rollback also failed (critical state).
+            partial_sources: On a multi-source PEQ push, the count of
+                sources that already succeeded before this one failed --
+                those were left written, not automatically rolled back
+                (smoke #242). 0 for every other failure, including a
+                single-source push whose own SafeWrite rollback ran. Can be
+                combined with critical=True (this source's own rollback also
+                failed) -- both messages are shown in that case.
         """
         self._fail_active_stage()
 
@@ -265,9 +284,38 @@ class PushPage(QWidget):
                 f"{message}\n\n"
                 f"Recovery steps:\n"
                 f"1. Open the backup file below\n"
-                f"2. Use Settings > Restore from Backup\n"
-                f"3. Or manually restore via CLI\n\n"
+                f"2. Run: wiim-rew-sync restore-backup --device <ip> "
+                f"--source <source> --file <backup path>\n\n"
                 f"Backup: {backup_path}"
+            )
+            if partial_sources:
+                # Both this source's own rollback AND an earlier source in
+                # the same multi-source push can fail independently -- the
+                # Undo button below (unconditional on partial_sources alone)
+                # would otherwise appear with no explanation of what it
+                # restores in this combined case, and no indication it does
+                # NOT cover the source above (that still needs the manual
+                # steps regardless of what Undo does).
+                plural = "s" if partial_sources != 1 else ""
+                detail_text += (
+                    f"\n\n{partial_sources} other source{plural} were also written "
+                    f"before this failure and were NOT automatically rolled back. "
+                    f"Click Undo to restore {'them' if partial_sources != 1 else 'it'} "
+                    f"-- this is separate from the source above, which still needs "
+                    f"the manual recovery steps regardless."
+                )
+        elif partial_sources:
+            self._result_icon.setText("\u26A0")  # warning triangle
+            self._set_result_class("warning")
+            plural = "s" if partial_sources != 1 else ""
+            self._result_message.setText(
+                f"Push failed - {partial_sources} source{plural} not restored"
+            )
+            detail_text = (
+                f"{message}\n\n"
+                f"{partial_sources} source{plural} were written before this failure and "
+                f"were NOT automatically rolled back. Click Undo to restore "
+                f"{'them' if partial_sources != 1 else 'it'}."
             )
         else:
             self._result_icon.setText("\u26A0")  # warning triangle
@@ -282,15 +330,18 @@ class PushPage(QWidget):
         self._detail_label.setText(detail_text)
         self._detail_label.setVisible(True)
         self._backup_path_label.setText(backup_path)
-        self._backup_path_label.setVisible(bool(backup_path))
+        self._backup_path_label.setVisible(bool(backup_path) and not partial_sources)
 
         # No filter data on failure — the rolled-back/deleted state isn't
         # useful to show, only the failure message matters here.
         self._clear_success_filters()
 
-        # Show failure actions
+        # Show failure actions. Undo is only offered for the partial
+        # multi-source case (smoke #242) -- every other failure path has
+        # nothing left to undo, either because SafeWrite already rolled the
+        # single source back, or because rollback itself failed (critical).
         self._ok_button.setVisible(True)
-        self._undo_button.setVisible(False)
+        self._undo_button.setVisible(bool(partial_sources))
         self._secondary_row.setVisible(False)
 
     def set_dry_run_result(self, summary: str) -> None:

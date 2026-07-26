@@ -2,9 +2,10 @@
 
 ## Supported Versions
 
-This project does not yet have tagged public releases with a support window. Only the latest state
-of the `development` branch (and `main`, once synced from `development`) is supported — please make
-sure you're on the latest commit before reporting an issue.
+Only the most recent published [release](https://github.com/disposabledominik/wiim-rew-sync/releases)
+and the latest state of the `development` branch (and `main`, once synced from `development`) are
+supported. Older tags do not receive fixes — please confirm the issue is present on the latest
+release or commit before reporting it.
 
 ## Reporting a Vulnerability
 

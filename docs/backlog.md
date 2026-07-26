@@ -17,7 +17,7 @@ and `docs/smoke_test_procedure.md` have been consolidated into one current `docs
 (manual QA & sign-off guide, automated-gate checklist, scenario traceability matrix). One
 genuinely `OPEN` issue remains in `docs/smoke_test_issues.md` (#119, an intermittent
 window-restore-from-maximized clipping bug — low severity, needs a consistent repro); the
-automated suite is at 1181+ tests.
+automated suite is at 1500+ tests across 60 files.
 
 **To reactivate:** Close out #119 and formally fill in `docs/qa_signoff.md`'s sign-off form with
 current test counts/coverage.
@@ -54,43 +54,64 @@ are left in their new state. CLAUDE.md's design principles ("Safety before conve
 "automatic rollback on verification failure") read as applying at the whole-push level, not just
 per-source, so this is a real gap, not just a UX rough edge.
 
-**Why deferred:** Backup paths for all sources written before the failure are still collected and
-returned, so the *user* can manually undo each succeeded source today — the data needed for a fix
-already exists, this is a missing automation, not a missing capability. Fixing it properly means
-either auto-invoking undo on sources 1..N-1 when source N fails (risk of a rollback-of-a-rollback
-failure) or pre-staging backups for all sources before writing any of them — either is a large
-enough decision to warrant its own design pass.
+**Why deferred:** Backup paths for all sources written before the failure are collected and
+surfaced (smoke #242), so the *user* can undo each succeeded source with one click today — the
+gap that remains is *automatic* rollback, not recoverability. Auto-invoking undo on sources 1..N-1
+when source N fails risks a rollback-of-a-rollback failure and is a large enough decision (does a
+failed auto-rollback also need its own critical-recovery UI?) to warrant its own design pass, so
+it's still deferred.
 
-**Status:** Not started.
+**Status:** Partially addressed (smoke #242, `c132304`). `PushPage.set_failure()` now shows an
+accurate "N source(s) not restored" message instead of the misleading "device safely restored"
+line, and offers a one-click Undo for the sources that were actually written (via
+`WriteResult.partial_backup_paths` + the existing multi-source undo path) — closing the
+"document/expose the manual-undo path" option below. Automatic cross-source rollback is still not
+implemented.
 
-**To reactivate:** Decide whether cross-source auto-rollback is wanted (and how it should behave
-if the rollback itself fails), or whether documenting the manual-undo path in the GUI's push
-failure message is sufficient. Implement in `PrimaryWorkflowManager._do_push()`'s PEQ branch.
+**To reactivate:** Decide whether automatic cross-source rollback is wanted on top of the current
+one-click manual Undo, and how it should behave if that rollback itself fails. Implement in
+`PrimaryWorkflowManager._do_push()`'s PEQ branch.
 
 ---
 
-## 4. CI Release Pipeline (No Published Download Path)
+## 4. Backup Files Have No Source Identifier (Found During PR Review)
 
-**What:** There is no `.github/workflows/` (or equivalent CI) in this repo, and no published
-GitHub Release with attached binaries. `packaging/README.md` documents how to *build* a standalone
-executable per platform, but a non-technical user — this project's own stated target audience —
-cannot currently download and run it without someone building it for them first.
+**What:** `BackupManager.create_backup()` takes a `PEQSettings` (which carries `source_name`), but
+never persists that source name anywhere in the resulting `BackupRecord` — `name` is
+`backup_{device_uuid}_{timestamp}`, and the file itself is named only `{timestamp}.json` under a
+per-device-UUID directory (`backup_manager.py`). Nothing in the filename or JSON content ties a
+backup to the source it was taken from.
 
-**Why deferred:** Setting up automated cross-platform builds (Windows/macOS/Linux each require
-building on that OS per `packaging/README.md`) and a release/signing process is new infrastructure,
-not a bug fix, and the project is still in the hardware-QA-pending phase (see item 1) — shipping a
-polished download experience ahead of that isn't the current priority.
+**Why it matters:** The CLI's `restore-backup` command (smoke #241) requires `--source` as a
+separate argument precisely because the backup file can't supply it. In practice this only works
+reliably when restoring from the exact path the app just printed on a failure. Browsing the backup
+directory later — e.g. to pick the right file among several from a partial multi-source failure
+(smoke #242) — gives no way to tell which backup belongs to which source.
+
+**Why deferred:** A schema change (`BackupRecord` gaining a `source_name` field, or the filename
+being stemmed with it) needs migration handling for existing backup files on users' machines, and
+is out of scope for the PR that surfaced it. Not blocking, since the current callers (GUI Undo,
+CLI `restore-backup`) always have the source name available from elsewhere when they need it.
 
 **Status:** Not started.
 
-**To reactivate:** Add a GitHub Actions workflow that builds the three PyInstaller targets (see
-`packaging/README.md`'s per-platform build steps) on their respective OS runners and attaches the
-artifacts to a GitHub Release, then update `README.md`'s Getting Started section to link the
-release page directly instead of pointing at manual build instructions.
+**To reactivate:** Add `source_name: str | None` to `BackupRecord` (optional, so old backup files
+without it still validate), have `create_backup()` populate it from `settings.source_name`, and
+consider stemming the filename with it too for at-a-glance browsing. Update `restore-backup` to
+default `--source` from the backup file when present, keeping the flag for older files.
 
 ---
 
 ## Completed / Closed Items (Archive)
+
+### CI Release Pipeline (No Published Download Path)
+**Completed.** `.github/workflows/ci.yml` runs ruff/mypy/pip-audit/pytest on every PR and on
+pushes to `development`; `.github/workflows/release.yml` builds the three PyInstaller targets on
+their respective OS runners on a `vX.Y.Z` tag push and attaches them, plus `SHA256SUMS.txt`, to a
+draft GitHub Release. `README.md`'s Getting Started section links the published downloads directly,
+and `docs/release_process.md` documents the cut-a-release checklist. Remaining known gap: macOS
+builds are unsigned (Gatekeeper workaround documented in `packaging/README.md`), and only the
+Windows build has been hardware-verified so far.
 
 ### MainWindow God-Object — Extract Business Logic from GUI Layer (Tech Debt)
 **Completed:** 2026-07-19. `src/gui/main_window.py` shrank from ~4,739 to 3,760 lines. All

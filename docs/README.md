@@ -42,3 +42,5 @@
 | Document | Description |
 |----------|-------------|
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Dev setup, CLI usage, test/lint/type-check workflow, code style, testing philosophy |
+| [../DEPENDENCIES.md](../DEPENDENCIES.md) | Runtime/dev/packaging dependencies, why each was chosen, end-user system requirements |
+| [../SECURITY.md](../SECURITY.md) | Supported versions and how to privately report a vulnerability |

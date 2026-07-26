@@ -48,7 +48,11 @@ fallback. This can take 10-15 seconds longer (it probes every address on
 your subnet) but can find devices that mDNS misses.
 
 If the device still does not appear, verify it is reachable by navigating
-to `http://<device-ip>:443/httpapi.asp?command=getStatusEx` in a browser.
+to `https://<device-ip>/httpapi.asp?command=getStatusEx` in a browser. WiiM
+devices use a self-signed certificate, so your browser will warn about the
+connection not being private — that warning is expected here; continue past
+it. A page of JSON starting with device details means the device is
+reachable and the problem is discovery, not connectivity.
 
 ## Parse Errors
 
@@ -70,10 +74,14 @@ If you see a parse error when importing a REW file:
 
 ### Too Many Filters
 
-- WiiM devices support up to 10 PEQ bands (12 on some newer firmware
-  versions). If your REW file contains more filters than your device
-  supports, only the first N enabled filters are imported.
-- The app shows a warning when filters are truncated.
+- This app writes up to 10 PEQ bands. Some newer firmware exposes 12, but
+  the app stays at 10 to match what the WiiM Home app itself offers.
+- If your REW file contains more bands than that, the extra ones are cut
+  from the end — the first 10 are kept, in file order, whether or not
+  individual bands are switched off.
+- The app shows a warning when bands are cut, and the Review table lists
+  each cut band as a crossed-out row so you can see exactly what was
+  dropped before you push.
 
 ## Push Failures
 
@@ -126,7 +134,10 @@ After a successful push, click "Undo" on the result screen to restore
 your previous configuration. This is available immediately after pushing
 and uses the same automatic backup.
 
-For multi-source pushes, Undo restores all sources that were written to.
+For a multi-source push, Undo restores every source that was actually
+written — whether that's all of them (a fully successful push) or only the
+ones written before a failure partway through (see "Multi-Source Push" in
+the Import & Push section).
 
 ### Backup Files
 
@@ -136,8 +147,22 @@ as a JSON file. You can find the path:
 - In the error message shown on screen
 - In Settings under "Paths" (backup directory)
 
-To manually restore: re-connect to your device, load the backup file as
-a preset from My Saved Presets, and push it again.
+Backups are kept separate from your saved presets, so they do **not** appear
+in My Saved Presets, and the app has no "open a backup file" button. To
+restore one, use the command-line tool:
+
+```
+wiim-rew-sync restore-backup --device <ip> --source <source> --file <backup path>
+```
+
+This runs the same backup/write/verify/rollback protocol as a normal push,
+so the restore itself is safe — it backs up whatever is currently on the
+device before writing the old filters back. RoomFit backups aren't
+supported by this command yet; only PEQ source backups can be restored this
+way today.
+
+Keep the backup file until you've confirmed the device is back to normal —
+it holds everything needed to reconstruct your previous settings.
 
 ## Wrong Capabilities Detected for Your Device
 
@@ -222,8 +247,16 @@ If you encounter an issue you cannot resolve, generate a support bundle:
 2. Scroll to the "Support" section.
 3. Click "Generate Support Bundle."
 
-This creates a zip file containing your app logs and configuration
-(no personal data or EQ settings). Share this file when seeking help.
+This creates a zip file containing your app logs, your app settings, and a
+dump of the connected device's capabilities.
+
+**Check it before sharing it publicly.** The bundle deliberately leaves out
+your saved presets and backup files, but the API logs inside it record the
+actual requests and responses exchanged with your device — so they do
+contain the EQ values you pushed or read, along with your device's name,
+UUID, MAC address, and local IP address. That's exactly what makes the
+bundle useful for diagnosis, but it's worth knowing before you attach it to
+a public forum post. It's a plain `.zip` — open it and look if in doubt.
 
 ### Log Files
 

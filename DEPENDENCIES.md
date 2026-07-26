@@ -45,6 +45,7 @@ Only needed for building from source, running tests, and linting:
 | respx | ≥ 0.21.0 | Mock httpx requests in tests |
 | ruff | ≥ 0.4.0 | Linter and formatter |
 | mypy | ≥ 1.10.0 | Static type checker |
+| pip-audit | ≥ 2.7.0 | Dependency vulnerability scan (CI gate, also runs before a release build) |
 
 ---
 
@@ -55,9 +56,13 @@ Only needed for building from source, running tests, and linting:
 | PyInstaller | ≥ 6.0.0 | Bundles everything into a single portable executable |
 
 The final artifact is:
-- **Windows**: `wiim-rew-sync.exe` (single file, no installer needed)
-- **macOS**: `wiim-rew-sync.app` (drag-and-drop bundle)
-- **Linux**: `wiim-rew-sync` (single ELF binary)
+- **Windows**: `WiiM-REW-Sync.exe` (single file, no installer needed)
+- **macOS**: `WiiM-REW-Sync.app` (drag-and-drop bundle)
+- **Linux**: `WiiM-REW-Sync` (single ELF binary)
+
+These are built automatically for all three platforms by
+[`.github/workflows/release.yml`](.github/workflows/release.yml) when a `vX.Y.Z` tag is pushed;
+building them by hand is only needed for local testing.
 
 ---
 
@@ -77,7 +82,7 @@ The final artifact is:
 
 ```bash
 # Clone the repository
-git clone https://github.com/<your-org>/wiim-rew-sync.git
+git clone https://github.com/disposabledominik/wiim-rew-sync.git
 cd wiim-rew-sync
 
 # Create a virtual environment (recommended)

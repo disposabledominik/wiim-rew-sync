@@ -1270,18 +1270,37 @@ class PrimaryWorkflowManager(QObject):
                 result = await safe_write.execute(source_name, settings, on_stage=on_stage)
                 last_result = result
 
-                # Collect backup path for undo (smoke #77)
+                if not result.success:
+                    # Abort on first failure. Sources 0..i-1 (already in
+                    # backup_paths) succeeded and are NOT automatically
+                    # rolled back here -- each already passed its own
+                    # SafeWrite verification, so this is a cross-source gap,
+                    # not a per-source one (docs/backlog.md item 3). Source i
+                    # itself already rolled back via its own SafeWrite.execute()
+                    # call, so its backup is deliberately excluded below --
+                    # nothing to undo there. Surface the prior sources'
+                    # backups so PushPage can offer Undo for them instead of
+                    # claiming a full restore that didn't happen (smoke #242).
+                    # Mutated onto the existing `result` in place, not a new
+                    # WriteResult -- this keeps backup_path/rollback_success/
+                    # error_message exactly as SafeWrite.execute() returned
+                    # them for source i (the failing one), unchanged from the
+                    # single-source-failure case, which needs source i's own
+                    # backup_path for its critical-recovery display.
+                    if backup_paths:
+                        result.partial_sources = len(backup_paths)
+                        result.partial_backup_paths = encode_multi_source_backup_paths(
+                            backup_paths
+                        )
+                    self._bridge.write_complete.emit(result)
+                    return
+
+                # Collect backup path for undo only for sources that
+                # actually succeeded (smoke #77, refined for #242 above --
+                # a failed source's own backup is excluded, see comment above).
                 bp_path = result.backup_path
                 if bp_path:
                     backup_paths.append((source_name, str(bp_path)))
-
-                if not result.success:
-                    # Abort on first failure. Sources 1..i-1 already succeeded and are
-                    # NOT automatically rolled back here -- each already passed its own
-                    # SafeWrite verification, so this is a cross-source gap, not a
-                    # per-source one. Known limitation, see docs/backlog.md item 4.
-                    self._bridge.write_complete.emit(result)
-                    return
 
             # All sources succeeded — store all backup paths for undo
             if last_result and last_result.success:

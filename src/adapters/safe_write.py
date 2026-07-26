@@ -53,6 +53,23 @@ class WriteResult:
     # was intended. Left None on failure: the rolled-back/deleted state isn't
     # useful to show, only the failure message is.
     read_back: PEQSettings | None = None
+    # The next two fields are set only by PrimaryWorkflowManager._do_push()'s
+    # multi-source PEQ loop, by mutating this exact WriteResult in place
+    # (not replacing it) right before emitting it on a mid-loop failure --
+    # deliberately preserving every other field (backup_path, in particular)
+    # as this failing source's own SafeWrite.execute() result, unchanged
+    # from the single-source case. 0/None for every single-source result and
+    # for the all-succeeded case, neither of which goes through that path.
+    #
+    # partial_sources: count of sources that already succeeded (and were
+    # NOT rolled back -- see backlog.md item 3) before this one failed.
+    partial_sources: int = 0
+    # partial_backup_paths: those sources' backups, pre-encoded via
+    # encode_multi_source_backup_paths() -- kept separate from backup_path
+    # above (which stays this source's own backup) so PushPage can offer
+    # Undo for the prior sources without losing this source's own recovery
+    # info, instead of claiming a full restore that didn't happen (#242).
+    partial_backup_paths: str | None = None
 
 
 def compare_band_lists(

@@ -21,13 +21,16 @@ This project delivers a lightweight cross-platform desktop tool to transfer para
 8. **Multi-Source Push**: Source step allows multi-select. Same filter set pushed to all selected sources in one operation with per-source backup and undo.
 
 ## RoomFit Requirements (Experimental)
-RoomFit capabilities are treated progressively:
-- **Level 0**: No visibility.
-- **Level 1**: Active state visible.
-- **Level 2**: Readable.
-- **Level 3**: Exportable.
-- **Level 4**: Writable.
-The application must dynamically determine this level and adapt the UI.
+RoomFit capability is detected as three independent booleans on `DeviceCapabilities`
+(see [data_models.md](data_models.md)), and the UI adapts to each:
+- `supports_roomfit`: the RoomFit subsystem exists on this device at all.
+- `supports_roomfit_read`: RoomFit bands can be read back from the device.
+- `supports_roomfit_write`: RoomFit profiles can be saved to the device.
+
+An earlier design used a graduated 0-4 `roomfit_level` ladder; it was removed because it encoded
+probe *progress* rather than device reality (`corrections.md`, 2026-07-10). The field is still
+accepted in the device capability file for backward compatibility, where it maps onto the three
+booleans above.
 
 ## Error Handling & Security
 - Handle offline devices, API timeouts, malformed files, unsupported types, and network drops gracefully.

@@ -210,6 +210,108 @@ class TestPushMultiSourceRound:
 
 
 # ---------------------------------------------------------------------------
+# Push — Multi-source partial failure (smoke #242)
+# ---------------------------------------------------------------------------
+
+
+class TestPushMultiSourcePartialFailure:
+    """A multi-source push that fails partway through must surface the
+    prior-succeeded sources' backups for Undo, and must NOT lose the
+    failing source's own backup_path/rollback_success/error_message --
+    see WriteResult.partial_sources/partial_backup_paths docstrings.
+    """
+
+    @pytest.mark.asyncio
+    async def test_second_of_three_sources_failing_reports_one_partial_source(
+        self, window
+    ) -> None:
+        """wifi succeeds, optical fails, hdmi is never attempted. The emitted
+        result must carry partial_sources=1 and an encoded backup string for
+        wifi alone -- not for a source that never ran.
+        """
+        mock_safe_write = _setup_push_state(window)
+        window._wizard_controller.state.selected_sources = ["wifi", "optical", "hdmi"]
+        wifi_result = WriteResult(
+            success=True, rollback_success=None, backup_path=Path("/backups/wifi.json")
+        )
+        optical_result = WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path=Path("/backups/optical.json"),
+            error_message="Verification mismatch on band 2",
+        )
+        mock_safe_write.execute = AsyncMock(side_effect=[wifi_result, optical_result])
+
+        await window._primary_workflows._do_push()
+
+        # Only wifi and optical were attempted -- hdmi is never reached.
+        assert mock_safe_write.execute.call_count == 2
+
+        window._bridge.write_complete.emit.assert_called_once()
+        emitted = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted is optical_result  # mutated in place, not replaced
+        assert emitted.success is False
+        assert emitted.partial_sources == 1
+        assert emitted.partial_backup_paths == "wifi=/backups/wifi.json"
+        # The failing source's OWN backup/rollback/error info must survive
+        # unchanged -- that's what critical-recovery display depends on.
+        assert emitted.backup_path == Path("/backups/optical.json")
+        assert emitted.rollback_success is True
+        assert emitted.error_message == "Verification mismatch on band 2"
+
+    @pytest.mark.asyncio
+    async def test_first_source_failing_reports_zero_partial_sources(self, window) -> None:
+        """No prior source succeeded, so there's nothing to offer Undo for --
+        partial_sources must stay 0 and partial_backup_paths must stay None,
+        exactly like a single-source failure (the common case).
+        """
+        mock_safe_write = _setup_push_state(window)
+        window._wizard_controller.state.selected_sources = ["wifi", "optical"]
+        failure = WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path=Path("/backups/wifi.json"),
+            error_message="Verification mismatch",
+        )
+        mock_safe_write.execute = AsyncMock(return_value=failure)
+
+        await window._primary_workflows._do_push()
+
+        assert mock_safe_write.execute.call_count == 1
+        emitted = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted.partial_sources == 0
+        assert emitted.partial_backup_paths is None
+        assert emitted.backup_path == Path("/backups/wifi.json")
+
+    @pytest.mark.asyncio
+    async def test_main_window_offers_undo_for_partial_multi_source_failure(
+        self, window
+    ) -> None:
+        """MainWindow._on_write_complete must pass partial_sources through to
+        PushPage.set_failure() and store the encoded prior-sources backup
+        string (not the failing source's own backup_path) as
+        last_backup_path, so a subsequent Undo click restores the right
+        sources via the existing multi-source undo path.
+        """
+        result = WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path=Path("/backups/optical.json"),
+            error_message="Verification mismatch",
+            partial_sources=1,
+            partial_backup_paths="wifi=/backups/wifi.json",
+        )
+
+        with patch.object(window._push_page, "set_failure") as mock_set_failure:
+            window._on_write_complete(result)
+
+        mock_set_failure.assert_called_once_with(
+            "Verification mismatch", str(Path("/backups/optical.json")), False, 1
+        )
+        assert window._wizard_controller.state.last_backup_path == "wifi=/backups/wifi.json"
+
+
+# ---------------------------------------------------------------------------
 # Push — Exception via bridge_wrapper
 # ---------------------------------------------------------------------------
 

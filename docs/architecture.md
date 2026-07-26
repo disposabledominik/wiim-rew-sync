@@ -43,7 +43,7 @@ REW_Ad --> Local[REW App / EQ Text Files]
 
 ### Profile Repository
 - Manages local JSON storage of user profiles and automatic backups.
-- Storage location: OS-appropriate app data directory (e.g. `%APPDATA%\wiim-rew-sync\` on Windows, `~/.config/wiim-rew-sync/` on Linux/macOS).
+- Storage location: OS-appropriate app data directory (`src/utils/app_dirs.py`) — `%APPDATA%\wiim-rew-sync\` on Windows, `~/Library/Application Support/wiim-rew-sync/` on macOS, `$XDG_DATA_HOME/wiim-rew-sync/` (default `~/.local/share/wiim-rew-sync/`) on Linux.
 - Supports: save, load, rename, delete, duplicate, tag, list, migrate schema.
 - Backups are stored separately from user profiles (not visible in the profile library UI).
 
@@ -148,13 +148,16 @@ The main window uses a wizard-based flow with a persistent sidebar for navigatio
 ├──────────┬──────────────────────────────────────────────────┤
 │ Sidebar  │  Wizard Content Area (QStackedWidget)            │
 │          │                                                  │
-│ • Home   │  Step Indicator (Connect → EQ Type → Source →    │
-│ • Presets│                   Filters → Review → Push)       │
-│   on Dev │  ┌──────────────────────────────────────────┐   │
-│ • My     │  │ Active Wizard Page                       │   │
-│   Presets│  │ (one of 7 pages based on current step)   │   │
-│ • Settings│ │                                          │   │
-│          │  └──────────────────────────────────────────┘   │
+│ • Resume │  Step Indicator (Connect → EQ Type → Source →    │
+│   Setup  │                   Filters → Review → Push)       │
+│ • Presets│  ┌──────────────────────────────────────────┐   │
+│   on Dev │  │ Active Wizard Page                       │   │
+│ • My     │  │ (one of 7 pages based on current step)   │   │
+│   Presets│  │                                          │   │
+│ • Pull   │  └──────────────────────────────────────────┘   │
+│   from   │                                                  │
+│   REW    │                                                  │
+│ • Settings│                                                 │
 │ • Help   │                                                  │
 ├──────────┴──────────────────────────────────────────────────┤
 │  Status Banner (operation feedback)                         │
@@ -177,8 +180,10 @@ The main window uses a wizard-based flow with a persistent sidebar for navigatio
 
 | View | Purpose |
 |------|---------|
+| Resume Setup | Returns to the current wizard step (nav key `home`); no visible change if already there |
 | Presets on Device | Browse PEQ presets and RoomFit profiles on connected device; Export/Save/Load/Copy actions |
-| My Saved Presets | Local preset library with toolbar (Load/Rename/Duplicate/Delete) |
+| My Saved Presets | Local preset library with toolbar (Load/Copy to Another Device/Rename/Duplicate/Delete) |
+| Pull from REW | Embedded measurement picker (`RewPullView`) for a running REW session; also embedded in FiltersPage's "Pull from REW API" mode |
 | Settings | Theme, paths, support bundle generation |
 | Help (User Guide) | In-app markdown help with searchable TOC |
 | Diagnostics | Raw API command browser, capability dump (developer tool, menu-accessible) |
