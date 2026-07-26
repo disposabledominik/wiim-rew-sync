@@ -401,6 +401,15 @@ class PushPage(QWidget):
         row is still "pending" -- a stepper of three untouched circles next
         to a failure would only look like nothing was attempted, so this
         collapses it instead, the same as a clean success.
+
+        This same fallback is also what a multi-source undo hits on a mixed
+        outcome (an earlier source fails, a later one succeeds): the later
+        source's own successful run leaves every row "complete", not
+        "active", by the time set_undo_failure() is called for the overall
+        result. Collapsing here rather than guessing is correct in that case
+        too -- a single 3-row stepper can't represent N independent
+        per-source outcomes, and the failure banner's "X restored, Y failed"
+        text already carries the real information.
         """
         for key in reversed(_STAGES):
             row = self._stage_rows[key]

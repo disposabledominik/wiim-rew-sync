@@ -67,6 +67,29 @@ class TestUndoMissingBackupFile:
         assert success is False
         assert message == "No backup available"
 
+    @pytest.mark.asyncio
+    async def test_restore_backup_raises_when_bridge_not_configured(
+        self, tmp_path
+    ) -> None:
+        """configure()-invariant violations are programmer errors, not
+        ordinary undo failures -- _restore_backup() must let the
+        `self._bridge is not None` assert propagate (for _bridge_wrapper's
+        loud crash-log path) rather than swallowing it into a graceful
+        undo_complete(False, ...) signal. Only reachable if a real backup
+        file exists but configure() was never called -- round-5 code-review
+        finding, 2026-07-26.
+        """
+        backup_file = tmp_path / "backup.json"
+        backup_file.write_text("{}", encoding="utf-8")
+
+        manager = SecondaryWorkflowManager()
+        manager._current_adapter = MagicMock()
+        manager._safe_write_factory = MagicMock()
+        # manager._bridge deliberately left at its default (None).
+
+        with pytest.raises(AssertionError, match="configure"):
+            await manager._restore_backup("wifi", str(backup_file))
+
 
 # ---------------------------------------------------------------------------
 # Undo success with valid backup file
@@ -219,6 +242,24 @@ class TestFetchSourceSlots:
 
 class TestUndoRoomfit:
     """Test SecondaryWorkflowManager._do_undo_roomfit."""
+
+    @pytest.mark.asyncio
+    async def test_raises_when_bridge_not_configured(self, tmp_path) -> None:
+        """Same configure()-invariant-must-propagate requirement as
+        _restore_backup() -- see
+        test_restore_backup_raises_when_bridge_not_configured above.
+        Round-5 code-review finding, 2026-07-26.
+        """
+        backup_file = tmp_path / "roomfit_backup.json"
+        backup_file.write_text('{"was_new_profile": false}', encoding="utf-8")
+
+        manager = SecondaryWorkflowManager()
+        manager._current_adapter = MagicMock()
+        manager._roomfit_safe_write_factory = MagicMock()
+        # manager._bridge deliberately left at its default (None).
+
+        with pytest.raises(AssertionError, match="configure"):
+            await manager._do_undo_roomfit(str(backup_file), "wifi", "My Profile")
 
     @pytest.mark.asyncio
     async def test_missing_backup_file_emits_failure(self) -> None:

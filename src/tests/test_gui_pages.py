@@ -903,6 +903,43 @@ class TestPushPage:
 
         self._assert_stepper_collapsed(page)
 
+    def test_set_undo_failure_collapses_after_earlier_source_fails_later_succeeds(
+        self, qtbot
+    ) -> None:
+        """Multi-source undo: an earlier source can fail partway through,
+        but if a later source then runs to completion, its "done" call
+        marks every row "complete" via set_stage()'s forward-fill --
+        overwriting the earlier failure's "active" row. By the time the
+        aggregate failure is reported, _fail_active_stage() finds no
+        "active" row and collapses the stepper rather than showing a
+        misleading all-green completion next to a failure message. Covers
+        the reverse ordering of
+        test_undo_multi_source_partial_failure_clears_snapshot (which only
+        exercises last-source-fails); round-5 code-review finding,
+        2026-07-26.
+        """
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.start_undo()
+
+        # Source 1 ("wifi") fails partway through, at "verifying".
+        page.set_push_round("wifi", 1, 2)
+        page.set_stage("backing_up")
+        page.set_stage("writing")
+        page.set_stage("verifying")
+
+        # Source 2 ("bluetooth") then runs to completion.
+        page.set_push_round("bluetooth", 2, 2)
+        page.set_stage("backing_up")
+        page.set_stage("writing")
+        page.set_stage("verifying")
+        page.set_stage("done")
+
+        page.set_undo_failure("1 restored, 1 failed")
+
+        assert not page._progress_container.isVisible()
+
     @staticmethod
     def _assert_stepper_collapsed(page: PushPage) -> None:
         """Shared assertion for the two collapses-with-nothing-active tests

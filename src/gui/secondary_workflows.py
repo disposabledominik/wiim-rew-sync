@@ -336,8 +336,13 @@ class SecondaryWorkflowManager(QObject):
             logger.error("Undo requested but backup file not found: %s", path)
             return False, "No backup available"
 
+        # Outside the try/except below on purpose: a configure()-invariant
+        # violation is a programmer error, not a runtime undo failure, so it
+        # must propagate to _bridge_wrapper's loud crash-log path instead of
+        # being caught and reported as an ordinary "Undo failed" message.
+        assert self._bridge is not None, "configure() must run before undo"
+
         try:
-            assert self._bridge is not None, "configure() must run before undo"
             safe_write = self._safe_write_factory(self._current_adapter)
             result = await safe_write.undo(
                 path, source_name, on_stage=self._bridge.stage_changed.emit
@@ -382,11 +387,15 @@ class SecondaryWorkflowManager(QObject):
             self.undo_complete.emit(False, "No backup available for undo")
             return
 
-        try:
-            assert self._bridge is not None, "configure() must run before undo"
-            assert self._roomfit_safe_write_factory is not None, "configure() must run before undo"
-            assert self._current_adapter is not None, "configure() must run before undo"
+        # Outside the try/except below on purpose: a configure()-invariant
+        # violation is a programmer error, not a runtime undo failure, so it
+        # must propagate to _bridge_wrapper's loud crash-log path instead of
+        # being caught and reported as an ordinary "Undo failed" message.
+        assert self._bridge is not None, "configure() must run before undo"
+        assert self._roomfit_safe_write_factory is not None, "configure() must run before undo"
+        assert self._current_adapter is not None, "configure() must run before undo"
 
+        try:
             self._bridge.progress_update.emit(f"Restoring '{profile_name}'...")
             roomfit_safe_write = self._roomfit_safe_write_factory(self._current_adapter)
             result = await roomfit_safe_write.undo(

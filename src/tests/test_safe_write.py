@@ -981,6 +981,43 @@ class TestPeqUndoRestoresEnabledState:
             "wifi", True, context=ANY
         )
 
+    async def test_undo_reports_done_after_trailing_enable_state_restore(
+        self, mock_adapter: AsyncMock, tmp_path: Path
+    ) -> None:
+        """The bands-restore execute() call fires its own internal "done"
+        as soon as the write verifies -- before undo()'s trailing
+        set_peq_enabled_best_effort() correction has run. undo() must
+        suppress that internal "done" and report its own, once, only after
+        the trailing restore actually completes. Round-5 code-review
+        finding, 2026-07-26."""
+        real_backup_manager = BackupManager(tmp_path)
+        sw = SafeWrite(adapter=mock_adapter, backup_manager=real_backup_manager)
+
+        original = PEQSettings(
+            source_name="wifi", enabled=False,
+            channel_mode=ChannelMode.STEREO, bands=_make_bands(freq=200.0),
+        )
+        intended = _make_settings(bands=_make_bands(freq=100.0))
+        mock_adapter.read_peq.side_effect = [original, intended]
+
+        push_result = await sw.execute("wifi", intended)
+        assert push_result.success is True
+
+        mock_adapter.read_peq.side_effect = [intended, original]
+
+        seen: list[str] = []
+
+        async def _tracking_enable(*args: object, **kwargs: object) -> None:
+            seen.append("enable_state_restored")
+
+        mock_adapter.set_peq_enabled_best_effort.side_effect = _tracking_enable
+
+        undo_result = await sw.undo(push_result.backup_path, "wifi", on_stage=seen.append)
+
+        assert undo_result.success is True
+        assert seen.count("done") == 1
+        assert seen.index("enable_state_restored") < seen.index("done")
+
 
 class TestPeqUndoOldFormatBackup:
     """A backup file written before pre_write_peq_enabled existed must
@@ -1715,6 +1752,44 @@ class TestRoomFitPushThenUndoPreservesActiveProfile:
 
         assert undo_result.success is True
         assert seen == ["writing", "done"]
+
+    async def test_undo_overwrite_reports_done_after_trailing_restore(
+        self, tmp_path: Path
+    ) -> None:
+        """The bands-restore execute() call fires its own internal "done"
+        as soon as the write verifies -- before undo()'s trailing
+        selection/enable-state restore has run. undo() must suppress that
+        internal "done" and report its own, once, only after the trailing
+        restore actually completes, so a caller's stepper doesn't show
+        completion while a real device write is still in flight. Round-5
+        code-review finding, 2026-07-26."""
+        device = _FakeRoomFitDevice(active_name="Kitchen", enabled=True)
+        device.profiles["Movie Night"] = _make_settings(bands=_make_bands(freq=50.0))
+
+        backup_manager = BackupManager(tmp_path)
+        safe_write = RoomFitSafeWrite(adapter=device, backup_manager=backup_manager)
+
+        push_result = await safe_write.execute(
+            "wifi", "Movie Night", _make_bands(freq=100.0), ChannelMode.STEREO
+        )
+        assert push_result.success is True
+
+        seen: list[str] = []
+        original_restore = device.restore_roomfit_selection_and_enable_state
+
+        async def _tracking_restore(*args: object, **kwargs: object) -> None:
+            seen.append("restore_called")
+            await original_restore(*args, **kwargs)
+
+        device.restore_roomfit_selection_and_enable_state = _tracking_restore
+
+        undo_result = await safe_write.undo(
+            push_result.backup_path, "wifi", "Movie Night", on_stage=seen.append
+        )
+
+        assert undo_result.success is True
+        assert seen.count("done") == 1
+        assert seen.index("restore_called") < seen.index("done")
 
 
 class TestRoomFitLevelUpgrade:
