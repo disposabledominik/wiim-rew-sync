@@ -29,6 +29,7 @@ wiim-rew-sync list-sources --device <ip>
 wiim-rew-sync get-filters --device <ip> --source wifi
 wiim-rew-sync dry-run-import --file my_measurement.txt
 wiim-rew-sync set-filters --file my_measurement.txt --device <ip> --source wifi
+wiim-rew-sync restore-backup --device <ip> --source wifi --file <backup path>
 wiim-rew-sync peq-toggle --device <ip> --source wifi --state on
 ```
 
