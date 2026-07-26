@@ -11,6 +11,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pr-title:
+    name: PR title check
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # PR titles feed both the GitHub Release notes (`gh release create
+      # --generate-notes` in release.yml) and scripts/tag_release.sh's tag
+      # message -- see docs/release_process.md. This is a floor, not a style
+      # check: catch an empty/placeholder title before it becomes permanent
+      # release history, nothing more.
+      #
+      # $PR_TITLE is passed via `env`, not interpolated into the script
+      # body, so an attacker-controlled title can't inject shell commands.
+      - name: Check PR title is descriptive
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          title=$(echo "$PR_TITLE" | xargs)
+          lower=$(echo "$title" | tr '[:upper:]' '[:lower:]')
+
+          if [[ -z "$title" ]]; then
+            echo "::error::PR title is empty. Write a descriptive title (see docs/release_process.md)."
+            exit 1
+          fi
+          if [[ ${#title} -lt 10 ]]; then
+            echo "::error::PR title '$title' is too short (<10 chars). Write a descriptive title (see docs/release_process.md)."
+            exit 1
+          fi
+          for placeholder in wip update updates fix fixes change changes misc stuff test testing; do
+            if [[ "$lower" == "$placeholder" ]]; then
+              echo "::error::PR title '$title' is a placeholder, not a description (see docs/release_process.md)."
+              exit 1
+            fi
+          done
+          echo "PR title OK: $title"
+
   lint-type-test:
     runs-on: ubuntu-latest
     env:

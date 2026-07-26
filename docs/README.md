@@ -30,10 +30,11 @@
 | [corrections.md](corrections.md) | Assumption corrections ledger — failed assumptions and their fixes |
 | [cli_hardware_test.md](cli_hardware_test.md) | CLI hardware validation report (Task 32 phase gate, 2026-06-14) |
 
-## Packaging
+## Release & Packaging
 
 | Document | Description |
 |----------|-------------|
+| [release_process.md](release_process.md) | Step-by-step release checklist — merge to main, tag, publish |
 | [../packaging/README.md](../packaging/README.md) | Build instructions for Windows, macOS, Linux executables |
 
 ## Contributing
