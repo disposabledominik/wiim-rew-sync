@@ -74,6 +74,34 @@ one-click manual Undo, and how it should behave if that rollback itself fails. I
 
 ---
 
+## 4. Backup Files Have No Source Identifier (Found During PR Review)
+
+**What:** `BackupManager.create_backup()` takes a `PEQSettings` (which carries `source_name`), but
+never persists that source name anywhere in the resulting `BackupRecord` — `name` is
+`backup_{device_uuid}_{timestamp}`, and the file itself is named only `{timestamp}.json` under a
+per-device-UUID directory (`backup_manager.py`). Nothing in the filename or JSON content ties a
+backup to the source it was taken from.
+
+**Why it matters:** The CLI's `restore-backup` command (smoke #241) requires `--source` as a
+separate argument precisely because the backup file can't supply it. In practice this only works
+reliably when restoring from the exact path the app just printed on a failure. Browsing the backup
+directory later — e.g. to pick the right file among several from a partial multi-source failure
+(smoke #242) — gives no way to tell which backup belongs to which source.
+
+**Why deferred:** A schema change (`BackupRecord` gaining a `source_name` field, or the filename
+being stemmed with it) needs migration handling for existing backup files on users' machines, and
+is out of scope for the PR that surfaced it. Not blocking, since the current callers (GUI Undo,
+CLI `restore-backup`) always have the source name available from elsewhere when they need it.
+
+**Status:** Not started.
+
+**To reactivate:** Add `source_name: str | None` to `BackupRecord` (optional, so old backup files
+without it still validate), have `create_backup()` populate it from `settings.source_name`, and
+consider stemming the filename with it too for at-a-glance browsing. Update `restore-backup` to
+default `--source` from the backup file when present, keeping the flag for older files.
+
+---
+
 ## Completed / Closed Items (Archive)
 
 ### CI Release Pipeline (No Published Download Path)
