@@ -58,7 +58,7 @@ After loading, the Review step shows a table of all filter bands:
 
 | Column    | Description                           |
 |-----------|---------------------------------------|
-| Band      | Filter number (1–10)                  |
+| Band      | Filter number (1 up to your device's band count) |
 | Type      | Filter type (PK, LS, HS, LP, HP)      |
 | Frequency | Center frequency in Hz                |
 | Gain      | Boost or cut in dB                    |
@@ -69,13 +69,12 @@ After loading, the Review step shows a table of all filter bands:
   indicator. The cell shows the final value that will be written; hover to
   see the original value from your file.
 - Filter types with no WiiM equivalent (e.g. Notch, Modal, All Pass, Linkwitz
-  Transform) are dropped and shown as a crossed-out, unnumbered ("N/A") row —
-  hover it to see why. Bands cut for exceeding the device's band limit are
-  shown the same way.
-- Filter types auto-converted to a different WiiM-supported type, and bare
-  LP/HP filters that had no Q specified in your file (filled in with REW's
-  documented default of 0.7071), are flagged with a small indicator on the
-  Type or Q column — hover for details. These are not dropped, just adjusted.
+  Transform, and REW's slope-based shelves) are dropped and shown as a
+  crossed-out, unnumbered ("N/A") row — hover it to see why. Bands cut for
+  exceeding the device's band limit are shown the same way.
+- Bare LP/HP filters that had no Q specified in your file (filled in with
+  REW's documented default of 0.7071) are flagged with a small indicator on
+  the Q column — hover for details. These are not dropped, just filled in.
 - For L/R mode, the table shows separate Left and Right tabs.
 
 ## Dry Run Mode
@@ -93,7 +92,7 @@ see any change on your device, check whether Dry Run is still checked.
 
 The first time you uncheck it, the app will offer to turn off this default
 for future sessions. You can also change it any time in
-**Settings > General > "Enable Dry Run by default for new sessions"**.
+**Settings > Behavior > "Enable Dry Run by default for new sessions"**.
 
 ## Pushing to Device
 

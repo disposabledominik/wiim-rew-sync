@@ -17,11 +17,12 @@ Wizard without exporting a text file.
 ### Workflow
 
 1. Click "Pull from REW" in the sidebar
-2. A measurement picker dialog shows all available measurements in REW,
+2. A measurement picker screen shows all available measurements in REW,
    with a **Stereo / L-R** toggle at the top
 3. Leave **Stereo** selected to pick one measurement, or switch to **L/R**
    to pick separate Left and Right measurements side by side
-4. Select your measurement(s) and click OK
+4. Select your measurement(s) and click "Continue" (or double-click a
+   measurement in Stereo mode). "Back" leaves without loading anything.
 5. Filters are loaded into the Review step
 
 If REW has many measurements loaded, start typing a measurement's name
@@ -29,13 +30,19 @@ while its list has focus to jump straight to it.
 
 ### Supported Filter Types
 
-The app imports standard parametric EQ filters from REW:
-- PK (Peak), LS (Low Shelf), HS (High Shelf), LP (Low Pass), HP (High Pass)
-- Shelf and pass-filter variants (12dB, 6dB, Q) are mapped to their base types
-- Unsupported types (Notch, Modal, All Pass, Linkwitz Transform) have no WiiM
-  equivalent and are skipped. Notch is skipped rather than approximated as
-  Peak because REW notches imply attenuation deeper than WiiM's -12 dB floor
-  can reproduce.
+The app imports the REW filter types that WiiM can actually reproduce:
+- PK (Peak), and the explicit-Q variants LS Q, HS Q, LP Q, HP Q — imported
+  exactly as REW specifies them.
+- A bare LP/HP (no Q) is also imported, using REW's documented default Q —
+  see the note below.
+- Unsupported types have no WiiM equivalent and are skipped:
+  - Notch / Notch Q — skipped rather than approximated as Peak, because REW
+    notches imply attenuation deeper than WiiM's -12 dB floor can reproduce.
+  - Modal, All Pass, Linkwitz Transform (L-T) — no WiiM equivalent.
+  - Bare LS/HS, LS 6dB/HS 6dB, LS 12dB/HS 12dB — REW describes these with a
+    shelf *slope* (S) value, and WiiM's EQ has only a Q parameter, with no
+    validated way to convert one into the other.
+  - LP1 / HP1 — 1st-order filters, which have no Q at all.
 - Skipped bands still show up in the Review step as a crossed-out, unnumbered
   ("N/A") row — hover it to see why it was skipped. Bands cut for exceeding
   the device's band limit are shown the same way.

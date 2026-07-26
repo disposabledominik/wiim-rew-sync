@@ -21,7 +21,7 @@ This document is about the release-gate *process*, not day-to-day bug tracking.
    scenario must resolve to either a passing automated test or a passing manual test step above.
    Any scenario with neither is a gap; log it and don't sign off until it's closed or explicitly
    waived.
-4. Fill in the [sign-off](#6-sign-off) section and commit this file.
+4. Fill in the [sign-off](#7-sign-off) section and commit this file.
 
 ---
 
@@ -77,7 +77,7 @@ worse than no count.
 - [ ] Onboarding overlay appears on first run
 - [ ] "Get Started" dismisses overlay and shows Connect page
 - [ ] Step indicator shows wizard steps (Connect, EQ Type, Source, Filters, Review, Push)
-- [ ] Sidebar shows "Home" as active navigation item
+- [ ] Sidebar shows "Resume Setup" as the active navigation item
 
 ### Test 2: Device Discovery
 - [ ] Connect page shows "Searching for WiiM devices..." spinner
@@ -97,8 +97,8 @@ worse than no count.
 - [ ] Stereo is selected by default
 - [ ] Clicking Browse opens native file dialog
 - [ ] Selecting a valid `.txt` file shows filename next to Browse
-- [ ] "Next" button appears and is enabled after file is selected
-- [ ] Clicking "Next" advances to Review page with filters loaded
+- [ ] "Continue" button appears and is enabled after file is selected
+- [ ] Clicking "Continue" advances to Review page with filters loaded
 
 > Filters page no longer offers "Pull from Device" or a RoomFit-profile dropdown inline (removed
 > per smoke issues #52/#59) — those flows live under the "Presets on Device" sidebar item only
@@ -108,8 +108,8 @@ worse than no count.
 - [ ] On Filters page, switching to L/R mode shows Browse L and Browse R buttons
 - [ ] Selecting a file for L shows its filename
 - [ ] Selecting a file for R shows its filename
-- [ ] "Import" button enabled only when both L and R files are selected
-- [ ] Clicking "Import" advances to Review page
+- [ ] "Continue" button enabled only when both L and R files are selected
+- [ ] Clicking "Continue" advances to Review page
 - [ ] Review page shows L/R tabs in filter table
 
 ### Test 5: Review Page (PEQ)
@@ -187,7 +187,7 @@ worse than no count.
 - [ ] L/R presets show "L/R" badge with per-channel band count
 
 ### Test 14: Navigation
-- [ ] Sidebar "Home" returns to current wizard step from secondary views (no visible change if
+- [ ] Sidebar "Resume Setup" returns to current wizard step from secondary views (no visible change if
   already there — this is by design, not a bug)
 - [ ] Help > User Guide opens help panel overlay; ✕ button and Escape both close it
 - [ ] Step indicator: clicking a completed step navigates back to it
@@ -304,7 +304,7 @@ These are deliberate `WONTFIX`es from `docs/smoke_test_issues.md` — do not re-
 
 - **Transparent window backgrounds under WSL2/WSLg** (#3) — a Wayland compositor artifact, resolves
   on a native Windows build. Not reproducible outside WSL2.
-- **Sidebar "Home" appears to do nothing** (#17) — working as designed: it returns to the current
+- **Sidebar "Resume Setup" (nav key `home`) appears to do nothing** (#17) — working as designed: it returns to the current
   wizard step, so there's no visible change if you're already there.
 - **Extra/inapplicable audio sources shown for some models** (#43) — the PEQ engine accepts any
   source name and there's no reliable way to probe which inputs are physically present, so showing
@@ -321,7 +321,7 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 |-------|-------|
 | Date | |
 | Tester | |
-| App version (`pyproject.toml`) | |
+| App version (Help > About, or `wiim-rew-sync --version`) | |
 | Environment (OS, Python version) | |
 | Devices tested against (model, firmware) | |
 | REW available for testing? | ☐ Yes ☐ No |

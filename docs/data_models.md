@@ -134,7 +134,7 @@ directory, an end user) correct or extend behaviour for specific WiiM models wit
   `supports_lr_filters`, `supports_profile_enumeration`, `supports_batch_write`, `max_bands`,
   `supported_filter_types`, `sources`, `source_aliases`).
 - Models absent from the file keep the fully runtime-probed generic behaviour unchanged.
-- `max_bands` acts as a **ceiling** on the probed band count (Requirement 7's 10-band default), never raising it
+- `max_bands` acts as a **ceiling** on the probed band count (10 by default), never raising it
   past what the device actually reported — e.g. an entry can lower a model's cap below 10. The bundled default
   does **not** raise any model's cap above 10, even WiiM Amp Ultra (whose API reports 12 bands on firmware
   20260409+): the WiiM Home App itself only exposes 10 of those 12 bands to the user, so the default cap matches

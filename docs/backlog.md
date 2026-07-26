@@ -17,7 +17,7 @@ and `docs/smoke_test_procedure.md` have been consolidated into one current `docs
 (manual QA & sign-off guide, automated-gate checklist, scenario traceability matrix). One
 genuinely `OPEN` issue remains in `docs/smoke_test_issues.md` (#119, an intermittent
 window-restore-from-maximized clipping bug — low severity, needs a consistent repro); the
-automated suite is at 1181+ tests.
+automated suite is at 1500+ tests across 60 files.
 
 **To reactivate:** Close out #119 and formally fill in `docs/qa_signoff.md`'s sign-off form with
 current test counts/coverage.
@@ -69,28 +69,16 @@ failure message is sufficient. Implement in `PrimaryWorkflowManager._do_push()`'
 
 ---
 
-## 4. CI Release Pipeline (No Published Download Path)
-
-**What:** There is no `.github/workflows/` (or equivalent CI) in this repo, and no published
-GitHub Release with attached binaries. `packaging/README.md` documents how to *build* a standalone
-executable per platform, but a non-technical user — this project's own stated target audience —
-cannot currently download and run it without someone building it for them first.
-
-**Why deferred:** Setting up automated cross-platform builds (Windows/macOS/Linux each require
-building on that OS per `packaging/README.md`) and a release/signing process is new infrastructure,
-not a bug fix, and the project is still in the hardware-QA-pending phase (see item 1) — shipping a
-polished download experience ahead of that isn't the current priority.
-
-**Status:** Not started.
-
-**To reactivate:** Add a GitHub Actions workflow that builds the three PyInstaller targets (see
-`packaging/README.md`'s per-platform build steps) on their respective OS runners and attaches the
-artifacts to a GitHub Release, then update `README.md`'s Getting Started section to link the
-release page directly instead of pointing at manual build instructions.
-
----
-
 ## Completed / Closed Items (Archive)
+
+### CI Release Pipeline (No Published Download Path)
+**Completed.** `.github/workflows/ci.yml` runs ruff/mypy/pip-audit/pytest on every PR and on
+pushes to `development`; `.github/workflows/release.yml` builds the three PyInstaller targets on
+their respective OS runners on a `vX.Y.Z` tag push and attaches them, plus `SHA256SUMS.txt`, to a
+draft GitHub Release. `README.md`'s Getting Started section links the published downloads directly,
+and `docs/release_process.md` documents the cut-a-release checklist. Remaining known gap: macOS
+builds are unsigned (Gatekeeper workaround documented in `packaging/README.md`), and only the
+Windows build has been hardware-verified so far.
 
 ### MainWindow God-Object — Extract Business Logic from GUI Layer (Tech Debt)
 **Completed:** 2026-07-19. `src/gui/main_window.py` shrank from ~4,739 to 3,760 lines. All
