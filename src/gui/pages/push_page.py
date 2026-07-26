@@ -257,16 +257,21 @@ class PushPage(QWidget):
 
         Args:
             message: Human-readable error description.
-            backup_path: Path to the backup file for manual recovery. When
-                partial_sources > 0, this is the encoded multi-source backup
-                string for the sources that already succeeded (see
-                encode_multi_source_backup_paths), not a single file path.
+            backup_path: Path to the backup file for THIS failing source's
+                own backup (for manual/critical recovery) -- always a single
+                file path, even when partial_sources > 0. The prior
+                sources' backups (for Undo) are not passed through this
+                parameter at all; the caller stores their separately-encoded
+                string directly on wizard state for the Undo click handler
+                to pick up (see encode_multi_source_backup_paths).
             critical: True if rollback also failed (critical state).
             partial_sources: On a multi-source PEQ push, the count of
                 sources that already succeeded before this one failed --
                 those were left written, not automatically rolled back
                 (smoke #242). 0 for every other failure, including a
-                single-source push whose own SafeWrite rollback ran.
+                single-source push whose own SafeWrite rollback ran. Can be
+                combined with critical=True (this source's own rollback also
+                failed) -- both messages are shown in that case.
         """
         self._fail_active_stage()
 
@@ -280,9 +285,25 @@ class PushPage(QWidget):
                 f"Recovery steps:\n"
                 f"1. Open the backup file below\n"
                 f"2. Run: wiim-rew-sync restore-backup --device <ip> "
-                f"--file <backup path>\n\n"
+                f"--source <source> --file <backup path>\n\n"
                 f"Backup: {backup_path}"
             )
+            if partial_sources:
+                # Both this source's own rollback AND an earlier source in
+                # the same multi-source push can fail independently -- the
+                # Undo button below (unconditional on partial_sources alone)
+                # would otherwise appear with no explanation of what it
+                # restores in this combined case, and no indication it does
+                # NOT cover the source above (that still needs the manual
+                # steps regardless of what Undo does).
+                plural = "s" if partial_sources != 1 else ""
+                detail_text += (
+                    f"\n\n{partial_sources} other source{plural} were also written "
+                    f"before this failure and were NOT automatically rolled back. "
+                    f"Click Undo to restore {'them' if partial_sources != 1 else 'it'} "
+                    f"-- this is separate from the source above, which still needs "
+                    f"the manual recovery steps regardless."
+                )
         elif partial_sources:
             self._result_icon.setText("\u26A0")  # warning triangle
             self._set_result_class("warning")
