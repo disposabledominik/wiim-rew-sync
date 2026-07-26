@@ -13,8 +13,33 @@ permissions:
   contents: write
 
 jobs:
+  dependency-audit:
+    name: Dependency security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project (package extras) + pip-audit
+        run: |
+          python -m pip install --upgrade pip setuptools
+          pip install -e ".[package]" pip-audit
+
+      # If a vulnerability has no upstream fix yet, suppress it explicitly rather than
+      # disabling this gate: pip-audit --ignore-vuln GHSA-xxxx-xxxx-xxxx (repeatable),
+      # with a comment noting the advisory and why it's accepted.
+      - name: pip-audit (fail release on known vulnerabilities)
+        run: pip-audit
+
   build:
     name: Build (${{ matrix.os }})
+    needs: dependency-audit
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,7 +66,7 @@ jobs:
 
       - name: Install project (package extras -> PyInstaller)
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools
           pip install -e ".[package]"
 
       - name: Show resolved version (sanity check)
