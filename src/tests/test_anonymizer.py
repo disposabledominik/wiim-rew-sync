@@ -78,6 +78,7 @@ class TestJsonKeyValues:
             "source_names": ["Living Room Input"],
         }
         result = anon.anonymize_json_value(data)
+        assert isinstance(result, dict)
         assert result["supports_peq"] is True
         assert result["max_filters"] == 10
         assert result["DeviceName"] != "Living Room"
@@ -89,12 +90,16 @@ class TestJsonKeyValues:
         anon = BundleAnonymizer()
         data = {"outer": {"uuid": "FF31F09E0000"}}
         result = anon.anonymize_json_value(data)
-        assert result["outer"]["uuid"] != "FF31F09E0000"
+        assert isinstance(result, dict)
+        outer = result["outer"]
+        assert isinstance(outer, dict)
+        assert outer["uuid"] != "FF31F09E0000"
 
     def test_same_value_same_token_across_text_and_dict(self) -> None:
         anon = BundleAnonymizer()
         text_result = anon.anonymize_text('"DeviceName":"Living Room"')
         dict_result = anon.anonymize_json_value({"DeviceName": "Living Room"})
+        assert isinstance(dict_result, dict)
         token_from_text = text_result.split('"DeviceName":"')[1].split('"')[0]
         assert dict_result["DeviceName"] == token_from_text
 

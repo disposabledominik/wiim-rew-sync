@@ -64,6 +64,10 @@ class ConnectPage(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [self._rescan_btn, self._retry_btn]
+
     def set_scanning(self, active: bool) -> None:
         """Toggle the scanning state.
 
@@ -261,14 +265,14 @@ class ConnectPage(QWidget):
         layout.addWidget(causes_label)
 
         # Retry button
-        retry_button = make_action_button(
+        self._retry_btn = make_action_button(
             "Retry", object_name="ConnectPageRetryButton", style_class="secondary",
             parent=widget,
         )
-        retry_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        retry_button.setMinimumWidth(120)
-        retry_button.clicked.connect(self._on_retry_clicked)
-        layout.addWidget(retry_button, alignment=Qt.AlignmentFlag.AlignHCenter)
+        self._retry_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._retry_btn.setMinimumWidth(120)
+        self._retry_btn.clicked.connect(self._on_retry_clicked)
+        layout.addWidget(self._retry_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         # Troubleshooting link
         troubleshoot_label = QLabel(

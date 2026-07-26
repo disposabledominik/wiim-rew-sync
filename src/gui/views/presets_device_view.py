@@ -109,6 +109,16 @@ class PresetsDeviceView(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [
+            self._export_btn,
+            self._save_btn,
+            self._load_btn,
+            self._copy_btn,
+            self._delete_btn,
+        ]
+
     def set_peq_presets(self, presets: list[PresetItem], active_name: str = "") -> None:
         """Populate the PEQ Presets section.
 

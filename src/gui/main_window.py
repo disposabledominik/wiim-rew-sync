@@ -2666,6 +2666,27 @@ class MainWindow(QMainWindow):
         self._bridge.operation_started.connect(self._on_bridge_operation_started)
         self._bridge.operation_finished.connect(self._on_bridge_operation_finished)
 
+        # All pages/views are created once and persist for the app's
+        # lifetime (see _create_pages/_register_pages), so their action
+        # buttons can be collected and registered a single time here rather
+        # than re-registered on every navigation.
+        action_buttons: list[QWidget] = []
+        for page_or_view in (
+            self._connect_page,
+            self._source_page,
+            self._filters_page,
+            self._review_page,
+            self._name_profile_page,
+            self._push_page,
+            self._presets_device_view,
+            self._my_presets_view,
+            self._settings_view,
+            self._rew_pull_view,
+            self._filters_page.rew_pull_view,
+        ):
+            action_buttons.extend(page_or_view.action_buttons())
+        self._feedback_manager.register_action_buttons(action_buttons)
+
     @Slot()
     def _on_bridge_operation_started(self) -> None:
         """Handle bridge operation_started — activate feedback manager."""
