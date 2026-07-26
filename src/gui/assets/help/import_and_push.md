@@ -5,10 +5,13 @@ your WiiM device.
 
 ## Selecting Sources (PEQ Only)
 
-PEQ filters are per-input. The Source step shows common audio inputs
-(Wi-Fi, Bluetooth, HDMI, Optical, Line In, etc.) as checkboxes. You can
-select one or more sources — the same filter set will be pushed to all
-selected sources in one operation.
+PEQ filters are per-input. The Source step lists the inputs your device
+actually reports as enabled (Wi-Fi, Bluetooth, HDMI, Optical, Line In, and
+so on) as checkboxes, so the list differs between models. On a WiiM Mini,
+which doesn't report its inputs, a standard list is shown instead.
+
+You can select one or more sources — the same filter set will be pushed to
+all selected sources in one operation.
 
 ### Channel Modes
 
@@ -106,13 +109,27 @@ protocol:
 
 After a successful push, you can:
 
+- Click **Show Pushed Filters** to see exactly what the device reported
+  back after the write — useful for confirming the values landed as intended
 - Click **Undo** to instantly restore your previous settings (works for all
   sources that were written to)
-- Click **Export** to save the pushed filters as a REW file
-- Click **Save Preset** to store the configuration in your local library
+- Click **Export as REW File** to save the pushed filters as a REW file
+- Click **Save to My Presets** to store the configuration in your local
+  library
 
 ### Multi-Source Push
 
-When multiple sources are selected in the Source step, all are written in
-sequence. If any source fails verification, only that source is rolled back.
-Undo restores all sources to their pre-push state.
+When multiple sources are selected in the Source step, they are written one
+after another.
+
+- **If every source succeeds**, Undo restores all of them to their pre-push
+  state, each from its own backup.
+- **If a source fails**, the push stops there. That source is rolled back to
+  its previous settings automatically, but any sources already written
+  before it keep their new filters — and because the push as a whole
+  failed, the Undo button is not offered. Each of those earlier sources
+  still has its own backup file on disk (see "Backup Files" in the
+  Troubleshooting section), so nothing is lost, but restoring them is a
+  manual step today.
+
+If that matters for your setup, push to one source at a time.

@@ -70,11 +70,21 @@ the change if needed.
 - **Dry Run mode** — Toggle the Dry Run checkbox on the Review page to
   preview the translation without writing to your device. The push button
   changes to "Preview Only."
-- **Undo** is always available after a push. Your previous settings are
-  backed up automatically.
+- **Undo** is available after a successful push. Your previous settings are
+  backed up automatically, every time.
 - Use the sidebar to access Presets on Device, My Saved Presets, Settings,
   and the User Guide at any time during the workflow.
 - **Presets on Device** in the sidebar lets you browse, export, and copy
   existing PEQ presets and RoomFit profiles directly from your WiiM device.
 - **Pull from REW** in the sidebar imports filters directly from REW's HTTP
   API if REW is running with the API enabled (no file export needed).
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `F1` | Open this User Guide |
+| `Escape` | Close the User Guide, or cancel the operation in progress |
+| `Ctrl+R` | Search for devices again |
+| `Ctrl+Enter` | Push to device (on the Review page) |
+| `Ctrl+Q` | Quit the app |

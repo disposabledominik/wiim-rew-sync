@@ -30,9 +30,9 @@ API accepts.
 
 ## Loading a Preset
 
-Open "My Saved Presets" from the sidebar. Select a preset and click "Load"
-in the toolbar. The filters are loaded into the wizard Review step. From
-there you can push to any connected device and source.
+Open "My Saved Presets" from the sidebar. Select a preset and click "Load
+into Editor" in the toolbar. The filters are loaded into the wizard Review
+step. From there you can push to any connected device and source.
 
 For L/R presets, both channels are loaded and the Review page shows separate
 Left/Right tabs.
@@ -51,9 +51,15 @@ inline.
 
 ### Duplicate
 
-Select a preset and click "Duplicate" in the toolbar to create a copy.
-Useful when you want to experiment with variations of an existing
-configuration.
+Select a preset and click "Duplicate" in the toolbar to create a copy, named
+after the original with "copy" appended. Useful when you want to experiment
+with variations of an existing configuration.
+
+### Copy to Another Device
+
+Select a preset and click "Copy to Another Device" to push it straight to
+one or more other WiiM devices on your network, without going through the
+wizard. You pick the target devices from a list.
 
 ### Delete
 
@@ -62,8 +68,8 @@ This action cannot be undone.
 
 ### Search and Filter
 
-When your library grows beyond a few presets, use the search bar at the top
-to filter by name.
+Once you have more than 10 presets, a search box appears above the list.
+Type in it to filter by name.
 
 ## Presets on Device
 
@@ -88,8 +94,8 @@ Reading a **PEQ** preset's filters (for any of the four actions above)
 briefly switches your device's current input to that preset so its bands can
 be read, then restores what was playing before you started — a confirmation
 dialog appears first so you're not surprised by a brief change in what
-you're hearing. **RoomFit** profiles have no such prompt: reading a RoomFit
-profile's filters doesn't affect what's actually applied to your audio.
+you're hearing. **RoomFit** profiles have no such prompt, because reading
+one is not expected to disturb what's currently applied to your audio.
 
 ## Tips
 
