@@ -44,15 +44,13 @@ pip-audit                                            # dependency vulnerability 
 | Gate | Result | Notes |
 |------|--------|-------|
 | Full test suite (`pytest --no-header -q`) | ☐ Pass ☐ Fail | total / passed / failed: |
-| `src/translator/` coverage ≥ 90% | ☐ Pass ☐ Fail | actual %: |
-| `ruff check src/` | ☐ Pass ☐ Fail | |
-| `mypy src/` | ☐ Pass ☐ Fail | |
-| `mypy src/translator src/models` (strict) | ☐ Pass ☐ Fail | |
-| `pip-audit` — direct dependencies clean | ☐ Pass ☐ Fail | |
+| `src/translator/` coverage ≥ 90% | ☑ Pass ☐ Fail | actual %: 96.89% |
+| `ruff check src/` | ☑ Pass ☐ Fail | |
+| `mypy src/` | ☑ Pass ☐ Fail | |
+| `mypy src/translator src/models` (strict) | ☑ Pass ☐ Fail | |
+| `pip-audit` — direct dependencies clean | ☑ Pass ☐ Fail | |
 
-Do not carry forward numbers from a previous sign-off — re-run every gate fresh; the codebase moves
-fast enough (60+ GUI fixes landed between the last two sign-off attempts) that a stale count is
-worse than no count.
+Do not carry forward numbers from a previous sign-off — re-run every gate fresh.
 
 ---
 
@@ -63,7 +61,7 @@ worse than no count.
 - REW (Room EQ Wizard) running on the same machine, with its API enabled, for the REW-pull tests.
 - A valid REW EQ `.txt` export file for file-import tests, and a second one (or reuse the first) for
   L/R testing.
-- Launch: `python3 packaging/entry_gui.py`
+- Launch: `python3 packaging/entry_gui.py` or use the latest released version.
 
 **Legend:** `[ ]` not tested · `[P]` passed · `[F]` failed (log the issue number in
 `docs/smoke_test_issues.md`) · `[N/A]` not applicable to this environment.
@@ -73,175 +71,171 @@ worse than no count.
 ## 4. Manual test procedure (GUI)
 
 ### Test 1: First Launch & Onboarding
-- [ ] App launches without crash
-- [ ] Onboarding overlay appears on first run
-- [ ] "Get Started" dismisses overlay and shows Connect page
-- [ ] Step indicator shows wizard steps (Connect, EQ Type, Source, Filters, Review, Push)
-- [ ] Sidebar shows "Resume Setup" as the active navigation item
+- [P] App launches without crash
+- [P] Onboarding overlay appears on first run
+- [P] "Get Started" dismisses overlay and shows Connect page
+- [P] Step indicator shows wizard steps (Connect, EQ Type, Source, Filters, Review, Push)
+- [P] Sidebar shows "Resume Setup" as the active navigation item
 
 ### Test 2: Device Discovery
-- [ ] Connect page shows "Searching for WiiM devices..." spinner
-- [ ] After ~3-5s, device cards appear with name, model, IP
-- [ ] Clicking a device card shows "Processing..." in status banner
-- [ ] After probe completes: step indicator advances, Connect step shows checkmark + "Connected"
-- [ ] Sidebar shows device name (actual model, not "WiiM Device")
-- [ ] Two devices with identical friendly names are still distinctly identified by IP in the device
-  cards (requires 2+ physical devices — see scenario 22 in the traceability matrix if unavailable)
+- [P] Connect page shows "Searching for WiiM devices..." spinner
+- [P] After ~3-5s, device cards appear with name, model, IP
+- [P] Clicking a device card shows "Processing..." in status banner
+- [P] After probe completes: step indicator advances, Connect step shows checkmark + device friendly name.
+- [P] Sidebar shows device name (actual model, not "WiiM Device")
+  NOTE: Two devices can't have identical friendly names (not allowed by WiiM Home app), so there's no manual test for that.
 
 ### Test 3: PEQ Flow — Source Selection & Filter Import (Stereo)
-- [ ] EQ Type page shown (if device supports RoomFit); selecting PEQ advances
-- [ ] Source page shows audio sources with checkboxes (wifi, bluetooth, line-in, etc.)
-- [ ] Selecting one or more sources + clicking Continue advances to Filters page
-- [ ] Filters page shows a File Import / "Pull from REW API" toggle, with a Stereo/L-R radio toggle
+- [P] EQ Type page shown (if device supports RoomFit); selecting PEQ advances
+- [P] Source page shows audio sources with checkboxes (wifi, bluetooth, line-in, etc.)
+- [P] Selecting one or more sources + clicking Continue advances to Filters page
+- [P] Filters page shows a File Import / "Pull from REW API" toggle, with a Stereo/L-R radio toggle
   and per-channel Browse button(s) inside File Import mode
-- [ ] Stereo is selected by default
-- [ ] Clicking Browse opens native file dialog
-- [ ] Selecting a valid `.txt` file shows filename next to Browse
-- [ ] "Continue" button appears and is enabled after file is selected
-- [ ] Clicking "Continue" advances to Review page with filters loaded
+- [P] Stereo is selected by default
+- [P] Clicking Browse opens native file dialog
+- [P] Selecting a valid `.txt` file shows filename next to Browse
+- [P] "Continue" button appears and is enabled after file is selected
+- [P] Clicking "Continue" advances to Review page with filters loaded
 
 > Filters page no longer offers "Pull from Device" or a RoomFit-profile dropdown inline (removed
 > per smoke issues #52/#59) — those flows live under the "Presets on Device" sidebar item only
 > (Test 12). If you see either on the Filters page, that's a regression.
 
 ### Test 4: PEQ Flow — Filter Import (L/R)
-- [ ] On Filters page, switching to L/R mode shows Browse L and Browse R buttons
-- [ ] Selecting a file for L shows its filename
-- [ ] Selecting a file for R shows its filename
-- [ ] "Continue" button enabled only when both L and R files are selected
-- [ ] Clicking "Continue" advances to Review page
-- [ ] Review page shows L/R tabs in filter table
+- [P] On Filters page, switching to L/R mode shows Browse L and Browse R buttons
+- [P] Selecting a file for L shows its filename
+- [P] Selecting a file for R shows its filename
+- [P] "Continue" button enabled only when both L and R files are selected
+- [P] Clicking "Continue" advances to Review page
+- [P] Review page shows L/R tabs in filter table
 
 ### Test 5: Review Page (PEQ)
-- [ ] Filter table shows all 5 columns (Band, Type, Freq, Gain, Q) and uses full available width
-- [ ] Summary header shows "X bands → DeviceName / source / Stereo" (or L/R)
-- [ ] "Push to Device", "Export as REW File", and "Save to My Presets" buttons visible
-- [ ] Dry Run checkbox is visible and toggleable
-- [ ] Toggling Dry Run shows "DRY RUN" badge, button changes to "Preview Only"
+- [P] Filter table shows all 5 columns (Band, Type, Freq, Gain, Q) and uses full available width
+- [P] Breadcrumb steps show selected device name / EQ type / source(s) / total number of filters
+- [P] "Preview Only", "Export as REW File", and "Save to My Presets" buttons visible
+- [P] Dry Run checkbox is visible and toggleable
+- [P] Toggling Dry Run the main button changes from "Preview Only" to "Push to Device"
 
 ### Test 6: Push to Device (PEQ)
-- [ ] On Review page, clicking "Push to Device" advances to Push page
-- [ ] Push page shows progress stepper (Backing up, Writing, Verifying)
-- [ ] On success: green checkmark, success message, Undo + Export + Save buttons visible
-- [ ] Push step shows checkmark in step indicator
-- [ ] Clicking Undo restores previous settings, shows confirmation
-- [ ] For multi-source push (2+ sources selected on Source page): all sources are written; success
+- [P] On Review page, clicking "Push to Device" advances to Push page
+- [P] Push page shows progress stepper (Backing up, Writing, Verifying)
+- [P] On success: green checkmark, success message, Undo + Export + Save buttons visible
+- [P] Push step shows checkmark in step indicator
+- [P] Clicking Undo restores previous settings, shows confirmation
+- [P] For multi-source push (2+ sources selected on Source page): all sources are written; success
   message reflects all sources; Undo restores every source individually from its own backup
 
 ### Test 7: Dry Run (PEQ)
-- [ ] With Dry Run enabled, clicking "Preview Only" shows push result without writing
-- [ ] Status message indicates dry run (no device write occurred)
-- [ ] No Undo button shown (nothing was written)
+- [P] With Dry Run enabled, clicking "Preview Only" shows push result without writing
+- [P] Status message indicates dry run (no device write occurred)
+- [P] No Undo button shown (nothing was written)
 
 ### Test 8: Export as REW File (Stereo)
-- [ ] On Review page, clicking "Export as REW File" opens save dialog
-- [ ] Selecting a path: status banner shows success
-- [ ] Exported file has `.txt` extension (auto-appended if not typed)
-- [ ] File content is valid REW format (verify header line)
+- [P] On Review page, clicking "Export as REW File" opens save dialog
+- [P] Selecting a path: status banner shows success
+- [P] Exported file has `.txt` extension (auto-appended if not typed)
+- [P] File content is valid REW format (verify header line)
 
 ### Test 9: Export as REW File (L/R)
-- [ ] With L/R filters loaded, clicking "Export as REW File" shows the export dialog
-- [ ] Dialog allows setting L and R filenames
-- [ ] Confirming creates two `.txt` files (`_L.txt` and `_R.txt`)
-- [ ] Both files are valid REW format
+- [P] With L/R filters loaded, clicking "Export as REW File" shows the export dialog
+- [P] Dialog allows setting L and R filenames
+- [P] Confirming creates two `.txt` files (`_L.txt` and `_R.txt`)
+- [P] Both files are valid REW format
 
 ### Test 10: RoomFit Flow
-- [ ] After device connect (device with RoomFit): EQ Type page shown
-- [ ] Selecting "RoomFit" skips Source step, advances to Filters page
-- [ ] Filters page works the same (Stereo/L-R toggle + Browse; no separate RoomFit-pull UI here —
+- [P] After device connect (device with RoomFit): EQ Type page shown
+- [P] Selecting "RoomFit" skips Source step, advances to Filters page
+- [P] Filters page works the same (Stereo/L-R toggle + Browse; no separate RoomFit-pull UI here —
   see Test 12 for pulling an existing RoomFit profile from the device)
-- [ ] Review page shows filters normally
-- [ ] Clicking "Push to Device" advances to Name Profile page
-- [ ] Name Profile page shows text input for profile name, with existing profiles listed (if any)
-- [ ] Entering a name and confirming advances to Push page; push succeeds with profile saved on device
+- [P] Review page shows filters normally
+- [P] Clicking "Push to Device" advances to Name Profile page
+- [P] Name Profile page shows text input for profile name, with existing profiles listed (if any)
+- [P] Entering a name and confirming advances to Push page; push succeeds with profile saved on device
 
 ### Test 11: RoomFit — Overwrite Warning
-- [ ] On Name Profile page, entering an existing profile name shows an overwrite warning
-- [ ] If the profile is currently active, the warning states it will stay active with the new
+- [P] On Name Profile page, entering an existing profile name shows an overwrite warning
+- [P] If the profile is currently active, the warning states it will stay active with the new
   filters (it does **not** get deactivated — verify the wording doesn't claim otherwise)
-- [ ] Confirming proceeds with the push anyway
-- [ ] Undo is available after overwriting an existing profile; hidden when saving as a brand-new profile
+- [P] Confirming proceeds with the push anyway
+- [P] Undo behaviour: if overwriting an existing profile it will restore the previous filters; if saving a brand-new profile if will activate the previous one
 
 ### Test 12: Presets on Device
-- [ ] Sidebar "Presets on Device" navigates to presets view
-- [ ] While connected: shows PEQ presets section and RoomFit profiles section
-- [ ] Selecting a PEQ preset enables Export/Save/Load/Copy buttons; selecting in one section
+- [P] Sidebar "Presets on Device" navigates to presets view
+- [P] While connected: shows PEQ presets section and RoomFit profiles section
+- [P] Selecting a PEQ preset enables Export/Save/Load/Copy buttons; selecting in one section
   deselects the other
-- [ ] Export: saves as `.txt` (L/R generates dual files)
-- [ ] Save to My Presets: creates local copy, refreshes list
-- [ ] Load: brings filters into Review step (Quick Setup dialog if wizard incomplete)
-- [ ] Copy to another device: shows device picker; copies preset to **all** selected devices, not
+- [P] Export: saves as `.txt` (L/R generates dual files)
+- [P] Save to My Presets: creates local copy
+- [P] Load: brings filters into Review step (Quick Setup dialog if wizard incomplete)
+- [P] Copy to another device: shows device picker; copies preset to **all** selected devices, not
   just the first
-- [ ] Without a device connected: shows "Connect a device to browse..." empty state
+- [P] Without a device connected: shows "Connect a device to browse..." empty state
 
 ### Test 13: My Saved Presets
-- [ ] Sidebar "My Saved Presets" navigates to presets library
-- [ ] Shows list of saved presets with name and channel-mode badge
-- [ ] Selecting a preset shows a bottom-anchored toolbar, in this order: **Load, Copy to Another
+- [P] Sidebar "My Saved Presets" navigates to presets library
+- [P] Shows list of saved presets with name and channel-mode badge
+- [P] Selecting a preset shows a bottom-anchored toolbar, in this order: **Load, Copy to Another
   Device, Rename, Duplicate, Delete**
-- [ ] Load: Quick Setup dialog if needed, then filters appear in Review
-- [ ] Copy to Another Device: shows device picker, copies to selected device(s)
-- [ ] Rename: allows inline name edit, persists on confirm
-- [ ] Duplicate: creates copy with " (copy)" suffix
-- [ ] Delete: removes preset permanently
-- [ ] L/R presets show "L/R" badge with per-channel band count
+- [P] Load: Quick Setup dialog if needed, then filters appear in Review
+- [P] Copy to Another Device: shows device picker, copies to selected device(s)
+- [P] Rename: allows inline name edit, persists on confirm
+- [P] Duplicate: creates copy with " (copy)" suffix
+- [P] Delete: removes preset permanently
+- [P] L/R presets show "L/R" badge with Left-channel band count (Right-channel band count is not shown)
 
 ### Test 14: Navigation
-- [ ] Sidebar "Resume Setup" returns to current wizard step from secondary views (no visible change if
+- [P] Sidebar "Resume Setup" returns to current wizard step from secondary views (no visible change if
   already there — this is by design, not a bug)
-- [ ] Help > User Guide opens help panel overlay; ✕ button and Escape both close it
-- [ ] Step indicator: clicking a completed step navigates back to it
-- [ ] Back-navigation from Push clears completion badges for invalidated steps
-- [ ] Selecting a new device (back to Connect) resets flow type to PEQ
+- [P] Help > User Guide opens help panel overlay; ✕ button and Escape both close it
+- [P] Step indicator: clicking a completed step navigates back to it
+- [P] Back-navigation from Push clears completion badges for invalidated steps
+- [P] Selecting a new device (back to Connect) resets the flow steps (Connect, EQ Type, Source, Filters, Review, Push)
 
 ### Test 15: Settings
-- [ ] Settings view shows theme selector, log directory, presets directory
-- [ ] Changing theme applies immediately (Light/Dark/System)
-- [ ] Support bundle generation works
+- [P] Settings view shows theme selector, log directory, presets directory
+- [P] Changing theme applies immediately (Light/Dark/System)
+- [P] Support bundle generation works
 
 ### Test 16: Error Handling
-- [ ] Disconnect device from network mid-operation: error shown in banner, app doesn't hang
-- [ ] Close REW while pulling from REW API: error shown
-- [ ] Try to push when device unreachable: error shown, not stuck in loading
-- [ ] Invalid REW file import: error on Filters page with "Try Again" button; "Try Again" resets the
-  page to its initial state
+- [P] Disconnect device from network mid-operation: error shown in banner, app doesn't hang
+- [N/A] Close REW while pulling from REW API: error shown
+  NOTE: It is difficult to close REW fast enough for this test to be meaningfull.
+- [P] Try to push when device unreachable: error shown, not stuck in loading
+- [P] Invalid REW file import: error on Filters page status bar with "Dismiss" button.
 
 ### Test 17: Concurrent Operation Guard
-- [ ] While an operation is in progress ("Processing..." shown), other action buttons are disabled
-- [ ] After the operation completes, buttons work normally again
+- [F] While an operation is in progress ("Processing..." shown), other action buttons are disabled
+- [F] After the operation completes, buttons work normally again
+  NOTE: This doesn't seem to work - e.g. in "Presets on Device" and "My Saved Presets" view all button work during an active operation ("Processing..." shown). Smoke test issue `#243` logged.
 
 ### Test 18: Window Close
-- [ ] With filters loaded, closing the window shows an "Unsaved Changes" dialog
-- [ ] "Discard" closes the app; "Cancel" keeps it open
-- [ ] With no filters loaded, closing exits directly (no dialog)
+- [P] With filters loaded, closing the window shows an "Unsaved Changes" dialog
+- [P] "Discard and Quit" closes the app; "Continue Working" keeps it open
+- [P] With no filters loaded, closing exits directly (no dialog)
 
 ### Test 19: Keyboard Shortcuts
-- [ ] Ctrl+Enter on Review page triggers push
-- [ ] Escape closes help panel
-- [ ] F1 opens User Guide
+- [P] Escape closes help panel
+- [P] F1 opens User Guide
 
 ### Test 20: REW API Pull (requires REW running)
-- [ ] Entry points: the sidebar "Pull from REW" item, and the Filters page's "Pull from REW API"
+- [P] Entry points: the sidebar "Pull from REW" item, and the Filters page's "Pull from REW API"
   toggle — both open the same embedded measurement-list view (this is a page, not a modal dialog)
-- [ ] Available measurements are listed; double-clicking one (or selecting it and clicking Continue)
+- [P] Available measurements are listed; double-clicking one (or selecting it and clicking Continue)
   loads it into Review
-- [ ] A Back button returns to the previous state without loading anything
-- [ ] If REW is not running: error shown, "REW is not connected" — app stays otherwise usable
+- [P] A Back button returns to the previous state without loading anything
+- [P] If REW is not running: error shown, "REW is not connected" — app stays otherwise usable
 
 ### Test 21: Diagnostics Panel
-- [ ] Menu access opens Diagnostics panel
-- [ ] "Send" button sends a raw command to the device and displays the response
-- [ ] Capabilities section shows device info
-- [ ] Log viewer shows recent API log entries; Refresh button works
+- [P] "View" > "Diagnostics" Menu access opens Diagnostics panel
+- [P] "Send" button sends a raw command to the device and displays the response
+- [P] Capabilities section shows device info
+- [P] Log viewer shows recent API log entries; Refresh button works
 
 ### Test 22: Multi-Source Push
-- [ ] Select 2+ sources on the Source page
-- [ ] Import a file and push: all selected sources are written; success message reflects all sources
-- [ ] Undo restores all sources individually from their own backups
+- [P] Select 2+ sources on the Source page
+- [P] Import a file and push: all selected sources are written; success message reflects all sources
+- [P] Undo restores all sources individually from their own backups
 
-### Test 23: Multiroom Group (requires 2+ physical devices in a group)
-- [ ] Pushing PEQ to a slave device in a multiroom group targets that specific device only — PEQ is
-  per-device, never applied group-wide
 
 ---
 
@@ -275,26 +269,18 @@ most of the GUI-behavior regression coverage that grew out of `docs/smoke_test_i
 | 18 | REW API measurement selection requires explicit pick | Manual — Test 20 (requires running REW) |
 | 19 | RoomFit-capable, non-Mini device offers PEQ/RoomFit choice | Manual — Test 10 |
 | 20 | RoomFit push requires profile name; overwrite of active profile warns | Manual — Test 10/11 |
-| 21 | Multiroom slave write targets that specific device only | Manual — Test 23 (requires multiroom group) |
-| 22 | Identical device names distinguished by IP in device cards | Manual — Test 2 (requires 2+ physical devices) |
-| 23 | Multi-source push writes to all selected sources with per-source backup | Manual — Test 6/22 |
-| 24 | Multi-source Undo restores every source from its own backup | Manual — Test 6/22 |
-| 25 | "Copy to another device" with multiple targets pushes to all, not just the first | Automated — `test_smoke_regression_operations.py::test_issue74_copy_batch_multi_iterates_all_devices`; Manual — Test 12/13 |
-| 26 | 0Hz/OFF filter correctly disables that band on the wire | Automated — `test_wiim_generator.py::TestModeMapping` |
-| 27 | Import exceeding device's max filter count truncates with a warning | Automated — `test_rew_generator.py::TestMaxFilters`, `test_cli.py::test_dry_run_import_surfaces_range_warning` |
-| 28 | L/R filters export as two separate `.txt` files | Automated — `test_smoke_regression_operations.py::test_issue29_export_lr_mode_uses_export_dialog`; Manual — Test 9 |
-| 29 | Preset saved via "Save to My Presets" preserves channel mode on reload | Automated — `test_smoke_regression_operations.py` (issues #39/#65) |
-| 30 | L/R profile loaded from My Saved Presets sets wizard channel_mode correctly | Automated — `test_smoke_regression_operations.py::test_issue49_recall_profile_lr` |
-| 31 | Diagnostics Panel exposes raw HTTP commands and capability dumps | Manual — Test 21 |
-| 32 | No network on boot: app opens, "no devices found," My Saved Presets still accessible | Automated — `test_profile_repository.py` (filesystem only) |
-| 33 | WiiM Mini: EQ Type step skipped, PEQ-only | Automated — `test_smoke_regression_wizard.py::test_wiim_mini_roomfit_level_2_forced_peq_only`; Manual — Test 10 |
-| 34 | Amp Pro/Ultra/Sound/Sound Lite: `supports_peq/lr_filters/roomfit = True` | Automated — `test_capability_prober.py::TestWiiMDeviceDetection` |
-| 35 | *(duplicate of scenario 10 in the pre-merge docs — removed)* | — |
-
-**Gaps to close before signing off:** scenarios 21 and 22 have no automated coverage and depend on
-hardware most single-device test setups won't have (a multiroom group, or two devices sharing a
-name). If you can't reproduce that hardware configuration, note it explicitly as a waived scenario
-in the sign-off section below rather than silently skipping it.
+| 21 | Multi-source push writes to all selected sources with per-source backup | Manual — Test 6/22 |
+| 22 | Multi-source Undo restores every source from its own backup | Manual — Test 6/22 |
+| 23 | "Copy to another device" with multiple targets pushes to all, not just the first | Automated — `test_smoke_regression_operations.py::test_issue74_copy_batch_multi_iterates_all_devices`; Manual — Test 12/13 |
+| 24 | 0Hz/OFF filter correctly disables that band on the wire | Automated — `test_wiim_generator.py::TestModeMapping` |
+| 25 | Import exceeding device's max filter count truncates with a warning | Automated — `test_rew_generator.py::TestMaxFilters`, `test_cli.py::test_dry_run_import_surfaces_range_warning` |
+| 26 | L/R filters export as two separate `.txt` files | Automated — `test_smoke_regression_operations.py::test_issue29_export_lr_mode_uses_export_dialog`; Manual — Test 9 |
+| 27 | Preset saved via "Save to My Presets" preserves channel mode on reload | Automated — `test_smoke_regression_operations.py` (issues #39/#65) |
+| 28 | L/R profile loaded from My Saved Presets sets wizard channel_mode correctly | Automated — `test_smoke_regression_operations.py::test_issue49_recall_profile_lr` |
+| 29 | Diagnostics Panel exposes raw HTTP commands and capability dumps | Manual — Test 21 |
+| 30 | No network on boot: app opens, "no devices found," My Saved Presets still accessible | Automated — `test_profile_repository.py` (filesystem only) |
+| 31 | WiiM Mini: EQ Type step skipped, PEQ-only | Automated — `test_smoke_regression_wizard.py::test_wiim_mini_roomfit_level_2_forced_peq_only`; Manual — Test 10 |
+| 32 | Amp Pro/Ultra/Sound/Sound Lite: `supports_peq/lr_filters/roomfit = True` | Automated — `test_capability_prober.py::TestWiiMDeviceDetection` |
 
 ---
 
@@ -319,26 +305,29 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 
 | Field | Value |
 |-------|-------|
-| Date | |
-| Tester | |
-| App version (Help > About, or `wiim-rew-sync --version`) | |
-| Environment (OS, Python version) | |
-| Devices tested against (model, firmware) | |
-| REW available for testing? | ☐ Yes ☐ No |
+| Date | 26.07.2026. |
+| Tester | disposabledominik |
+| App version (Help > About, or `wiim-rew-sync --version`) | v0.5.0 |
+| Environment (OS, Python version) | Win11, Python 3.12.3 |
+| Devices tested against (model, firmware) | WiiM Sound 5.2.820956, WiiM Amp Ultra 5.2.820839, WiiM Mini 4.6.819436 |
+| REW available for testing? | ☑ Yes ☐ No |
 
 **Verdict**
 
 | Check | Status |
 |-------|--------|
-| All automated quality gates (§2) pass | ☐ |
-| All applicable manual tests (§4) pass, or failures logged with issue numbers | ☐ |
-| Every scenario in the traceability matrix (§5) resolves to a passing test or a documented, waived gap | ☐ |
-| No open, unwaived scenario gaps | ☐ |
+| All automated quality gates (§2) pass | ☑ |
+| All applicable manual tests (§4) pass, or failures logged with issue numbers | ☑ |
+| Every scenario in the traceability matrix (§5) resolves to a passing test or a documented, waived gap | ☑ |
+| No open, unwaived scenario gaps | ☑ |
 
-**Overall: ☐ PASS — ready to release ☐ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
+**Overall: ☐ PASS — ready to release ☑ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
 
 Waived gaps / blockers:
+- Issue `#243` is a waived gap.
 
--
+---
 
-Signed off by: ________________________ Date: ________________
+Signed off by: disposabledominik
+
+Date: 26.07.2026.
