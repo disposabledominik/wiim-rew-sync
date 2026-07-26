@@ -1,8 +1,15 @@
 name: CI
 
 on:
+  # No 'main' in the push trigger: main only ever receives fast-forward
+  # merges from development (see CLAUDE.md), so any commit reaching main
+  # already passed this same suite on development moments earlier --
+  # re-running it here would just re-test an identical, already-green tree.
+  # release.yml's tag-triggered pip-audit + build is the real gate for
+  # main-bound code. pull_request still covers main in case a PR is ever
+  # opened against it by mistake.
   push:
-    branches: [main, development]
+    branches: [development]
   pull_request:
     branches: [main, development]
 
