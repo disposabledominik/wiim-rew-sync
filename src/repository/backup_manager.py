@@ -19,9 +19,10 @@ from src.utils.path_safety import sanitize_path_segment
 def load_backup_json(path: Path) -> dict[str, Any]:
     """Read and parse a backup JSON file.
 
-    Used by both PEQ undo (SecondaryWorkflowManager) and RoomFit undo
-    (RoomFitSafeWrite.undo()) to avoid duplicating the file-read + json.loads
-    call.
+    Used by PEQ undo (SecondaryWorkflowManager), RoomFit undo
+    (RoomFitSafeWrite.undo()), and the CLI's ``restore-backup`` command
+    (cli/main.py's ``_restore_backup()``) to avoid duplicating the
+    file-read + json.loads call.
 
     Raises:
         ValueError: if the file does not contain a JSON object.
@@ -77,10 +78,14 @@ def parse_backup_restore_metadata(
     was_new_profile, pre_write_peq_enabled). The first three are RoomFit-only
     (read by RoomFitSafeWrite.undo()); the fourth is PEQ-only (read by
     SafeWrite.undo()) -- each caller unpacks all four and uses only the
-    fields relevant to its own subsystem. Each value is None if absent --
-    true for the other subsystem's backups (which never set it) and for any
-    backup file created before these fields existed, so an old-format file
-    degrades gracefully instead of raising.
+    fields relevant to its own subsystem. The CLI's ``restore-backup``
+    command (cli/main.py's ``_restore_backup()``) also reads
+    ``was_new_profile`` alone, ahead of calling ``SafeWrite.undo()``, purely
+    to detect and reject a RoomFit backup (that field is never set on a PEQ
+    backup). Each value is None if absent -- true for the other subsystem's
+    backups (which never set it) and for any backup file created before
+    these fields existed, so an old-format file degrades gracefully instead
+    of raising.
     """
     return (
         backup_data.get("pre_write_active_profile"),
