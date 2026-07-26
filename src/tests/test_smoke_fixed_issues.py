@@ -188,9 +188,9 @@ def test_pushpage_reset_clears_dry_run_badge(qtbot):
     qtbot.addWidget(page)
     page.show()
     page.set_dry_run_result("Preview")
-    assert page._dry_run_badge.isVisible()
+    assert page._status_badge.isVisible()
     page.reset()
-    assert not page._dry_run_badge.isVisible()
+    assert not page._status_badge.isVisible()
 
 
 # Issue 151: PushPage's inline filter table didn't fit on screen alongside
@@ -408,14 +408,14 @@ def test_sidebar_back_from_secondary_view_preserves_push_dry_run_result(qtbot):
 
         window._wizard_controller.go_to_step(WizardStep.PUSH)
         window._push_page.set_dry_run_result("3 filters mapped")
-        assert window._push_page._dry_run_badge.isVisible()
+        assert window._push_page._status_badge.isVisible()
 
         # User navigates to Settings via sidebar, then clicks "Back"
         window._stacked_widget.setCurrentIndex(PAGE_INDICES["settings"])
         window._on_navigation_requested("home")
 
         assert window._stacked_widget.currentIndex() == PAGE_INDICES["push"]
-        assert window._push_page._dry_run_badge.isVisible()
+        assert window._push_page._status_badge.isVisible()
 
 
 # Fix: secondary pages (e.g. Presets on Device) could render squished on

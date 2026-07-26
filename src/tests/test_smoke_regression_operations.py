@@ -2306,7 +2306,7 @@ class TestPresets:
             patch.object(
                 window._secondary_workflows, "_restore_backup", side_effect=_restore
             ) as mock_restore,
-            patch.object(window._push_page, "mark_undo_complete") as mock_mark,
+            patch.object(window._push_page, "set_undo_success") as mock_undo_success,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
             import asyncio
@@ -2318,7 +2318,7 @@ class TestPresets:
             )
 
         mock_restore.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
-        mock_mark.assert_called_once_with(True)
+        mock_undo_success.assert_called_once_with("All 1 source(s) restored from backup")
         mock_success.assert_called_once_with("All 1 source(s) restored from backup")
 
     def test_undo_multi_source_multi_entry_all_restored_reports_success(

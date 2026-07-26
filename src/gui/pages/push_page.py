@@ -116,6 +116,7 @@ class PushPage(QWidget):
         self._success_filters: list[CanonicalFilter] | None = None
         self._success_filters_l: list[CanonicalFilter] | None = None
         self._success_filters_r: list[CanonicalFilter] | None = None
+        self._undo_mode: bool = False
         self._setup_ui()
         self.reset()
 
@@ -155,21 +156,44 @@ class PushPage(QWidget):
                 row.set_status("pending")
 
     def set_push_round(self, source_name: str, index: int, total: int) -> None:
-        """Show which source/round a multi-source push is currently on.
+        """Show which source/round a multi-source push (or undo) is on.
 
-        Hidden entirely for a single-source push (`total <= 1`), since
+        Hidden entirely for a single-source operation (`total <= 1`), since
         there's nothing to disambiguate in that case.
+
+        The AsyncBridge's push_round_changed signal is reused verbatim for
+        multi-source undo (SecondaryWorkflowManager._do_undo_multi_source),
+        so the label wording here switches on start_undo()'s mode flag
+        rather than needing a second signal/handler pair.
 
         Args:
             source_name: The source currently being written to.
             index: 1-based index of this source among the selected sources.
-            total: Total number of sources being pushed to.
+            total: Total number of sources in this operation.
         """
         if total <= 1:
             self._round_label.setVisible(False)
             return
-        self._round_label.setText(f"Pushing to {source_name} ({index} of {total})")
+        verb = "Restoring" if self._undo_mode else "Pushing to"
+        self._round_label.setText(f"{verb} {source_name} ({index} of {total})")
         self._round_label.setVisible(True)
+
+    def start_undo(self) -> None:
+        """Enter undo mode and show the progress stepper for the undo run.
+
+        Undo follows the same Safe Write Protocol as a push (SafeWrite.undo()/
+        RoomFitSafeWrite.undo() forward on_stage into their internal
+        execute() call), so the same stepper this page already has is reused
+        rather than building a second one. The "UNDO" badge stays visible
+        through both the stepper and the terminal result card so the user
+        can always tell this run is the undo, not the original push.
+        """
+        self._undo_mode = True
+        self._show_progress_state()
+        self._activate_status_badge("UNDO", "undo")
+        self._round_label.setVisible(False)
+        for row in self._stage_rows.values():
+            row.set_status("pending")
 
     def set_success(
         self,
@@ -230,12 +254,7 @@ class PushPage(QWidget):
             backup_path: Path to the backup file for manual recovery.
             critical: True if rollback also failed (critical state).
         """
-        # Mark last active stage as failed
-        for key in reversed(_STAGES):
-            row = self._stage_rows[key]
-            if row.status == "active":
-                row.set_status("failed")
-                break
+        self._fail_active_stage()
 
         self._show_result_state()
         if critical:
@@ -285,7 +304,7 @@ class PushPage(QWidget):
         """
         self._progress_container.setVisible(False)
         self._show_result_state()
-        self._dry_run_badge.setVisible(True)
+        self._activate_status_badge("DRY RUN", "dryRun")
         self._result_icon.setText("\u2139")  # info icon
         self._set_result_class("info")
         self._result_message.setText("Dry Run Complete - Nothing Was Changed")
@@ -299,35 +318,105 @@ class PushPage(QWidget):
         self._undo_button.setVisible(False)
         self._secondary_row.setVisible(False)
 
+    def set_undo_success(self, message: str) -> None:
+        """Transition to the undo-success result state.
+
+        Reuses the same result card as set_success(), but hides Undo and
+        the secondary links (Export/Save to Presets) -- there's nothing
+        sensible to undo-the-undo, export, or save-as-preset from a
+        restored-from-backup state -- and keeps the "UNDO" badge visible so
+        this card unambiguously reads as the undo's result, not the
+        original push's.
+
+        Args:
+            message: Human-readable result text (e.g. "Previous filters
+                restored"), as reported by SecondaryWorkflowManager.
+        """
+        for row in self._stage_rows.values():
+            row.set_status("complete")
+        self._progress_container.setVisible(False)
+
+        self._show_result_state()
+        self._result_icon.setText("\u2713")
+        self._set_result_class("success")
+        self._result_message.setText(message)
+        self._detail_label.setVisible(False)
+        self._backup_path_label.setVisible(False)
+        self._clear_success_filters()
+
+        self._ok_button.setVisible(True)
+        self._undo_button.setVisible(False)
+        self._secondary_row.setVisible(False)
+
+    def set_undo_failure(self, message: str) -> None:
+        """Transition to the undo-failure result state.
+
+        Keeps the Undo button visible/enabled so the user can retry --
+        mirrors the previous mark_undo_complete(False) behavior -- and
+        keeps the "UNDO" badge visible so the failure clearly reads as the
+        undo's result, not the original push's.
+
+        Args:
+            message: Human-readable error text, as reported by
+                SecondaryWorkflowManager.
+        """
+        self._fail_active_stage()
+
+        self._show_result_state()
+        self._result_icon.setText("\u26A0")  # warning triangle
+        self._set_result_class("warning")
+        self._result_message.setText("Undo failed")
+        self._detail_label.setText(message)
+        self._detail_label.setVisible(True)
+        self._backup_path_label.setVisible(False)
+        self._clear_success_filters()
+
+        self._ok_button.setVisible(True)
+        self._undo_button.setVisible(True)
+        self._secondary_row.setVisible(False)
+
     def reset(self) -> None:
         """Reset to initial state (all stages pending, no result)."""
+        self._undo_mode = False
         self._progress_container.setVisible(True)
         self._result_container.setVisible(False)
-        self._dry_run_badge.setVisible(False)
+        self._status_badge.setVisible(False)
         self._round_label.setVisible(False)
         self._backup_path_label.setVisible(False)
-        self._undo_button.setEnabled(True)
         self._clear_success_filters()
         for row in self._stage_rows.values():
             row.set_status("pending")
 
-    def mark_undo_complete(self, success: bool) -> None:
-        """Disable the Undo button after a successful undo.
-
-        Once undo has actually run, clicking it again would either be a
-        no-op or re-run the same restore against state it no longer
-        matches -- disabling it removes the ambiguity. Left enabled on
-        failure so the user can retry.
-
-        Args:
-            success: Whether the undo operation completed successfully.
-        """
-        if success:
-            self._undo_button.setEnabled(False)
-
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _fail_active_stage(self) -> None:
+        """Mark whichever stage row is currently "active" as "failed", or
+        collapse the stepper entirely if no stage was ever active.
+
+        Shared by set_failure() and set_undo_failure() -- both terminate a
+        run at whatever stage it was interrupted on. If nothing ever
+        reached "active" (e.g. the backup file was already missing), every
+        row is still "pending" -- a stepper of three untouched circles next
+        to a failure would only look like nothing was attempted, so this
+        collapses it instead, the same as a clean success.
+
+        This same fallback is also what a multi-source undo hits on a mixed
+        outcome (an earlier source fails, a later one succeeds): the later
+        source's own successful run leaves every row "complete", not
+        "active", by the time set_undo_failure() is called for the overall
+        result. Collapsing here rather than guessing is correct in that case
+        too -- a single 3-row stepper can't represent N independent
+        per-source outcomes, and the failure banner's "X restored, Y failed"
+        text already carries the real information.
+        """
+        for key in reversed(_STAGES):
+            row = self._stage_rows[key]
+            if row.status == "active":
+                row.set_status("failed")
+                return
+        self._progress_container.setVisible(False)
 
     def _clear_success_filters(self) -> None:
         """Clear stored read-back filter data and hide the "Show" button."""
@@ -358,10 +447,18 @@ class PushPage(QWidget):
             set_qss_property(widget, "class", status)
 
     def _show_progress_state(self) -> None:
-        """Ensure progress stepper is visible and result area hidden."""
+        """Ensure progress stepper is visible and result area hidden.
+
+        Clears a leftover DRY RUN badge from a previous run, but not the
+        UNDO badge -- start_undo() calls this once before showing the UNDO
+        badge, and every subsequent set_stage() call during the undo's own
+        progress must leave it alone rather than blanking it out stage by
+        stage.
+        """
         self._progress_container.setVisible(True)
         self._result_container.setVisible(False)
-        self._dry_run_badge.setVisible(False)
+        if not self._undo_mode:
+            self._status_badge.setVisible(False)
 
     def _show_result_state(self) -> None:
         """Show the result area (keeps stepper visible for context).
@@ -372,6 +469,31 @@ class PushPage(QWidget):
         """
         self._result_container.setVisible(True)
         self._round_label.setVisible(False)
+
+    @staticmethod
+    def _make_badge(text: str, object_name: str, parent: QWidget) -> QLabel:
+        """Build a small pill-shaped status badge (DRY RUN / UNDO).
+
+        Uses setRetainSizeWhenHidden so toggling a badge's visibility never
+        shifts the layout of the content below it.
+        """
+        badge = QLabel(text, parent)
+        badge.setObjectName(object_name)
+        size_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        size_policy.setRetainSizeWhenHidden(True)
+        badge.setSizePolicy(size_policy)
+        badge.setVisible(False)
+        return badge
+
+    def _activate_status_badge(self, text: str, css_class: str) -> None:
+        """Show the shared status badge as either DRY RUN or UNDO.
+
+        Shared by start_undo() and set_dry_run_result() so the
+        text/class/visibility dance only needs to be written once.
+        """
+        self._status_badge.setText(text)
+        set_qss_property(self._status_badge, "class", css_class)
+        self._status_badge.setVisible(True)
 
     def _setup_ui(self) -> None:
         """Build the page layout."""
@@ -401,16 +523,16 @@ class PushPage(QWidget):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(SPACING_MD)
 
-        # Dry Run badge (hidden by default). Reserves its layout space even
-        # while hidden so toggling it via set_dry_run_result()/reset() doesn't
-        # shift the progress/result content below it (#109).
-        self._dry_run_badge = QLabel("DRY RUN", body)
-        self._dry_run_badge.setObjectName("PushPageDryRunBadge")
-        size_policy = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        size_policy.setRetainSizeWhenHidden(True)
-        self._dry_run_badge.setSizePolicy(size_policy)
-        self._dry_run_badge.setVisible(False)
-        body_layout.addWidget(self._dry_run_badge)
+        # Status badge (DRY RUN / UNDO), hidden by default. The two states
+        # are mutually exclusive -- undo is never reachable from a dry run,
+        # and a dry run never happens mid-undo -- so one widget whose text
+        # and QSS class are set at show time (set_dry_run_result()/
+        # start_undo()) covers both, reserving only a single hidden slot
+        # instead of one per state. Reserve that slot's layout space even
+        # while hidden so toggling it doesn't shift the progress/result
+        # content below it (#109).
+        self._status_badge = self._make_badge("", "PushPageStatusBadge", body)
+        body_layout.addWidget(self._status_badge)
 
         # Multi-source round indicator (hidden for a single-source push).
         # Shows which source is currently being written and how many rounds

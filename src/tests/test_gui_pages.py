@@ -875,6 +875,78 @@ class TestPushPage:
 
         assert page._progress_container.isVisible()
 
+    def test_set_failure_collapses_stepper_when_no_stage_ever_started(self, qtbot) -> None:
+        """A failure reported before any on_stage callback ever fired (e.g.
+        the backup file was already missing) has no "active" stage to mark
+        "failed" -- the stepper must collapse instead of showing three
+        untouched pending circles next to the failure message."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure("No backup available", "/tmp/backup.json")
+
+        self._assert_stepper_collapsed(page)
+
+    def test_set_undo_failure_collapses_stepper_when_no_stage_ever_started(
+        self, qtbot
+    ) -> None:
+        """Same collapse as set_failure(), for an undo that fails before
+        start_undo()'s stepper ever advances past "pending" (e.g. the
+        backup file is missing)."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.start_undo()
+
+        page.set_undo_failure("No backup available")
+
+        self._assert_stepper_collapsed(page)
+
+    def test_set_undo_failure_collapses_after_earlier_source_fails_later_succeeds(
+        self, qtbot
+    ) -> None:
+        """Multi-source undo: an earlier source can fail partway through,
+        but if a later source then runs to completion, its "done" call
+        marks every row "complete" via set_stage()'s forward-fill --
+        overwriting the earlier failure's "active" row. By the time the
+        aggregate failure is reported, _fail_active_stage() finds no
+        "active" row and collapses the stepper rather than showing a
+        misleading all-green completion next to a failure message. Covers
+        the reverse ordering of
+        test_undo_multi_source_partial_failure_clears_snapshot (which only
+        exercises last-source-fails); round-5 code-review finding,
+        2026-07-26.
+        """
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.start_undo()
+
+        # Source 1 ("wifi") fails partway through, at "verifying".
+        page.set_push_round("wifi", 1, 2)
+        page.set_stage("backing_up")
+        page.set_stage("writing")
+        page.set_stage("verifying")
+
+        # Source 2 ("bluetooth") then runs to completion.
+        page.set_push_round("bluetooth", 2, 2)
+        page.set_stage("backing_up")
+        page.set_stage("writing")
+        page.set_stage("verifying")
+        page.set_stage("done")
+
+        page.set_undo_failure("1 restored, 1 failed")
+
+        assert not page._progress_container.isVisible()
+
+    @staticmethod
+    def _assert_stepper_collapsed(page: PushPage) -> None:
+        """Shared assertion for the two collapses-with-nothing-active tests
+        above: the progress container is hidden and every row is untouched."""
+        assert not page._progress_container.isVisible()
+        assert all(row.status == "pending" for row in page._stage_rows.values())
+
     def test_undo_signal_emitted(self, qtbot) -> None:
         """Clicking Undo button emits undo_requested."""
         page = PushPage()
@@ -887,45 +959,94 @@ class TestPushPage:
         with qtbot.waitSignal(page.undo_requested, timeout=1000):
             qtbot.mouseClick(page._undo_button, Qt.MouseButton.LeftButton)
 
-    def test_mark_undo_complete_disables_button_on_success(self, qtbot) -> None:
-        """A successful undo disables the Undo button -- clicking it again
-        would be ambiguous (nothing left to undo)."""
+    def test_start_undo_shows_badge_and_resets_stepper(self, qtbot) -> None:
+        """start_undo() re-shows the stepper (reset to pending) and the
+        "UNDO" badge, reusing set_success()'s collapsed-stepper result state
+        as the starting point (mirrors clicking Undo right after a push)."""
         page = PushPage()
         qtbot.addWidget(page)
         page.show()
-
         page.set_success()
-        assert page._undo_button.isEnabled()
 
-        page.mark_undo_complete(True)
+        page.start_undo()
 
-        assert not page._undo_button.isEnabled()
+        assert page._progress_container.isVisible()
+        assert not page._result_container.isVisible()
+        assert page._status_badge.isVisible()
+        assert page._status_badge.text() == "UNDO"
+        assert all(row.status == "pending" for row in page._stage_rows.values())
 
-    def test_mark_undo_complete_keeps_button_enabled_on_failure(self, qtbot) -> None:
-        """A failed undo leaves the button enabled so the user can retry."""
+    def test_set_push_round_uses_restoring_text_in_undo_mode(self, qtbot) -> None:
+        """The round label reuses set_push_round() for undo, but with
+        "Restoring" instead of "Pushing to" once start_undo() has run."""
         page = PushPage()
         qtbot.addWidget(page)
         page.show()
+        page.start_undo()
 
-        page.set_success()
-        page.mark_undo_complete(False)
+        page.set_push_round("optical", 2, 3)
 
-        assert page._undo_button.isEnabled()
+        assert page._round_label.isVisible()
+        assert page._round_label.text() == "Restoring optical (2 of 3)"
 
-    def test_reset_reenables_undo_button(self, qtbot) -> None:
-        """A fresh push cycle re-enables Undo, even if a prior push's undo
-        had disabled it."""
+    def test_set_undo_success_hides_undo_and_secondary_actions(self, qtbot) -> None:
+        """A successful undo shows the given message, hides Undo (nothing
+        left to undo-the-undo) and the Export/Save links, but keeps the
+        "UNDO" badge visible so the result reads as the undo's, not the
+        original push's."""
         page = PushPage()
         qtbot.addWidget(page)
         page.show()
-
         page.set_success()
-        page.mark_undo_complete(True)
-        assert not page._undo_button.isEnabled()
+        page.start_undo()
+
+        page.set_undo_success("Previous filters restored")
+
+        assert page._result_container.isVisible()
+        assert page._result_message.text() == "Previous filters restored"
+        assert page._status_badge.isVisible()
+        assert page._status_badge.text() == "UNDO"
+        assert page._ok_button.isVisible()
+        assert not page._undo_button.isVisible()
+        assert not page._secondary_row.isVisible()
+
+    def test_set_undo_failure_keeps_undo_button_for_retry(self, qtbot) -> None:
+        """A failed undo leaves the Undo button visible so the user can
+        retry, and keeps the "UNDO" badge visible on the failure card."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_success()
+        page.start_undo()
+
+        page.set_undo_failure("Backup file not found")
+
+        assert page._result_container.isVisible()
+        assert "Undo failed" in page._result_message.text()
+        assert page._detail_label.text() == "Backup file not found"
+        assert page._status_badge.isVisible()
+        assert page._status_badge.text() == "UNDO"
+        assert page._ok_button.isVisible()
+        assert page._undo_button.isVisible()
+        assert not page._secondary_row.isVisible()
+
+    def test_reset_clears_undo_mode_and_badge(self, qtbot) -> None:
+        """A fresh push cycle clears undo mode (round label reverts to
+        "Pushing to") and hides the "UNDO" badge, even after a prior push's
+        undo had turned both on."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_success()
+        page.start_undo()
+        page.set_undo_success("Previous filters restored")
+        assert page._status_badge.isVisible()
 
         page.reset()
 
-        assert page._undo_button.isEnabled()
+        assert not page._status_badge.isVisible()
+        page.set_push_round("optical", 2, 3)
+        assert page._round_label.text() == "Pushing to optical (2 of 3)"
 
     def test_dry_run_result_shows_badge(self, qtbot) -> None:
         """set_dry_run_result shows the DRY RUN badge."""
@@ -935,7 +1056,8 @@ class TestPushPage:
 
         page.set_dry_run_result("10 bands translated, no changes written")
 
-        assert page._dry_run_badge.isVisible()
+        assert page._status_badge.isVisible()
+        assert page._status_badge.text() == "DRY RUN"
         assert "Dry Run Complete" in page._result_message.text()
 
     def test_failure_detail_not_clipped_at_min_window_height(self, qtbot) -> None:

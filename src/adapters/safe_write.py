@@ -173,6 +173,27 @@ def _describe_first_mismatch(intended: PEQSettings, read_back: PEQSettings) -> s
     return "no per-band mismatch found (unexpected -- verify_bands() said it failed)"
 
 
+def _swallow_done(
+    on_stage: Callable[[str], None] | None,
+) -> Callable[[str], None] | None:
+    """Wrap on_stage so execute()'s own "done" call is suppressed.
+
+    undo() calls execute() as a sub-step but still has real device I/O left
+    to do afterward (restoring PEQ enable-state / RoomFit selection) --
+    without this, execute()'s success path would report "done" while that
+    trailing write is still in flight. The caller fires its own "done" once,
+    after that trailing step actually completes.
+    """
+    if on_stage is None:
+        return None
+
+    def _relay(stage: str) -> None:
+        if stage != "done":
+            on_stage(stage)
+
+    return _relay
+
+
 class SafeWrite:
     """Five-step safe write protocol for PEQ device writes.
 
@@ -414,7 +435,11 @@ class SafeWrite:
             backup_path: Path to the backup JSON file the original push created.
             source_name: Audio input source to restore.
             on_stage: Optional callback forwarded to the bands-restore
-                ``execute()`` call (see its own ``on_stage`` for the contract).
+                ``execute()`` call (see its own ``on_stage`` for the
+                contract), except "done" -- that call's internal "done"
+                fires before the enable-state restore above has run, so it's
+                suppressed here and re-emitted by this method itself once
+                that trailing restore actually completes.
 
         Returns:
             WriteResult from the bands-restore ``execute()`` call.
@@ -444,7 +469,7 @@ class SafeWrite:
                 bands=filters,
             )
 
-        result = await self.execute(source_name, settings, on_stage=on_stage)
+        result = await self.execute(source_name, settings, on_stage=_swallow_done(on_stage))
         if not result.success:
             return result
 
@@ -452,6 +477,9 @@ class SafeWrite:
             await self._adapter.set_peq_enabled_best_effort(
                 source_name, pre_write_peq_enabled, context="after undo"
             )
+
+        if on_stage is not None:
+            on_stage("done")
 
         return result
 
@@ -828,8 +856,15 @@ class RoomFitSafeWrite:
                 if the backup indicates a new-profile push).
             on_stage: Optional callback forwarded to the bands-restore
                 ``execute()`` call (see its own ``on_stage`` for the
-                contract); not invoked at all for a new-profile-push undo,
-                which skips the bands-restore step entirely.
+                contract), except "done" -- that call's internal "done"
+                fires before the selection/enable-state restore below has
+                run, so it's suppressed here and re-emitted by this method
+                once that trailing restore actually completes. For a
+                new-profile-push undo, which skips the bands-restore step
+                entirely, "writing" is instead invoked directly so a
+                caller's progress stepper still reflects the
+                selection/enable-state restore that runs in that case,
+                rather than sitting frozen on "pending".
 
         Returns:
             WriteResult. For a new-profile-push undo: success with no bands
@@ -842,8 +877,13 @@ class RoomFitSafeWrite:
             parse_backup_restore_metadata(backup_data)
         )
 
+        # Computed once and reused below -- was_new_profile is a tri-state
+        # (True / False / None for old-format backups), but every branch
+        # below only cares about the True-vs-not-True split.
+        is_new_profile_push = was_new_profile is True
+
         result: WriteResult | None = None
-        if was_new_profile is not True:
+        if not is_new_profile_push:
             # Covers False and None (old-format backups only ever existed
             # for the overwrite case) -- restore bands via the normal
             # execute() protocol.
@@ -855,15 +895,35 @@ class RoomFitSafeWrite:
                 channel_mode=channel_mode,
                 filters_l=filters_l,
                 filters_r=filters_r,
-                on_stage=on_stage,
+                on_stage=_swallow_done(on_stage),
             )
             if not result.success:
                 return result
+        elif on_stage is not None:
+            # New-profile-push undo skips the bands-restore execute() call
+            # entirely -- execute() is the only place that invokes on_stage,
+            # so without this a caller's progress stepper (e.g. PushPage's
+            # Backup/Write/Verify rows) would sit frozen on "pending" for
+            # the whole call even though the selection/enable-state restore
+            # below still does real device I/O.
+            # ASSUMPTION: reporting "writing" here (with no preceding
+            # "backing_up") makes a caller's stepper show "Backing up" as
+            # already complete, even though a new-profile push has no backup
+            # step to run. Treated as acceptable: there's nothing to back up
+            # for a profile that never existed before, so the row isn't
+            # factually wrong, just uninformative. A precise fix needs a
+            # distinct "not applicable" stage-row state, which would touch
+            # every push's shared on_stage contract for one narrow undo path
+            # -- see docs/corrections.md if this needs revisiting.
+            on_stage("writing")
 
         if pre_write_active_profile is not None:
             await self._adapter.restore_roomfit_selection_and_enable_state(
                 pre_write_active_profile, pre_write_roomfit_enabled, profile_name,
                 context=f"undoing push to '{profile_name}'",
             )
+
+        if on_stage is not None:
+            on_stage("done")
 
         return result if result is not None else WriteResult(success=True, backup_path=None)
