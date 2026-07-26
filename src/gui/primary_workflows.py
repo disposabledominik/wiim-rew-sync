@@ -1275,7 +1275,7 @@ class PrimaryWorkflowManager(QObject):
                     # backup_paths) succeeded and are NOT automatically
                     # rolled back here -- each already passed its own
                     # SafeWrite verification, so this is a cross-source gap,
-                    # not a per-source one (docs/backlog.md item 4). Source i
+                    # not a per-source one (docs/backlog.md item 3). Source i
                     # itself already rolled back via its own SafeWrite.execute()
                     # call, so its backup is deliberately excluded below --
                     # nothing to undo there. Surface the prior sources'

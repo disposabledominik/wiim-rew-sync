@@ -54,18 +54,23 @@ are left in their new state. CLAUDE.md's design principles ("Safety before conve
 "automatic rollback on verification failure") read as applying at the whole-push level, not just
 per-source, so this is a real gap, not just a UX rough edge.
 
-**Why deferred:** Backup paths for all sources written before the failure are still collected and
-returned, so the *user* can manually undo each succeeded source today — the data needed for a fix
-already exists, this is a missing automation, not a missing capability. Fixing it properly means
-either auto-invoking undo on sources 1..N-1 when source N fails (risk of a rollback-of-a-rollback
-failure) or pre-staging backups for all sources before writing any of them — either is a large
-enough decision to warrant its own design pass.
+**Why deferred:** Backup paths for all sources written before the failure are collected and
+surfaced (smoke #242), so the *user* can undo each succeeded source with one click today — the
+gap that remains is *automatic* rollback, not recoverability. Auto-invoking undo on sources 1..N-1
+when source N fails risks a rollback-of-a-rollback failure and is a large enough decision (does a
+failed auto-rollback also need its own critical-recovery UI?) to warrant its own design pass, so
+it's still deferred.
 
-**Status:** Not started.
+**Status:** Partially addressed (smoke #242, `c132304`). `PushPage.set_failure()` now shows an
+accurate "N source(s) not restored" message instead of the misleading "device safely restored"
+line, and offers a one-click Undo for the sources that were actually written (via
+`WriteResult.partial_backup_paths` + the existing multi-source undo path) — closing the
+"document/expose the manual-undo path" option below. Automatic cross-source rollback is still not
+implemented.
 
-**To reactivate:** Decide whether cross-source auto-rollback is wanted (and how it should behave
-if the rollback itself fails), or whether documenting the manual-undo path in the GUI's push
-failure message is sufficient. Implement in `PrimaryWorkflowManager._do_push()`'s PEQ branch.
+**To reactivate:** Decide whether automatic cross-source rollback is wanted on top of the current
+one-click manual Undo, and how it should behave if that rollback itself fails. Implement in
+`PrimaryWorkflowManager._do_push()`'s PEQ branch.
 
 ---
 

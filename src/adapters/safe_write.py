@@ -62,7 +62,7 @@ class WriteResult:
     # for the all-succeeded case, neither of which goes through that path.
     #
     # partial_sources: count of sources that already succeeded (and were
-    # NOT rolled back -- see backlog.md item 4) before this one failed.
+    # NOT rolled back -- see backlog.md item 3) before this one failed.
     partial_sources: int = 0
     # partial_backup_paths: those sources' backups, pre-encoded via
     # encode_multi_source_backup_paths() -- kept separate from backup_path
