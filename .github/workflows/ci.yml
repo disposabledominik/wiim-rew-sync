@@ -39,6 +39,9 @@ jobs:
       - name: Mypy (type check)
         run: mypy src/
 
+      # If a vulnerability has no upstream fix yet, suppress it explicitly rather than
+      # disabling this gate: pip-audit --ignore-vuln GHSA-xxxx-xxxx-xxxx (repeatable),
+      # with a comment noting the advisory and why it's accepted.
       - name: pip-audit (dependency vulnerability scan)
         run: pip-audit
 
