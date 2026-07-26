@@ -44,10 +44,19 @@ _PII_JSON_KEYS = (
 )
 # Text-log scrubbing only ever sees bare string values (log lines are prose
 # with embedded JSON snippets, not standalone documents to parse), so this
-# pattern targets the scalar-valued keys only.
+# pattern targets the scalar-valued keys only. "mac_address" is excluded too:
+# _MAC_RE above already tokenizes its value (bare or JSON-embedded) under the
+# "MAC" category, so including "mac_address" here would re-match the
+# already-substituted "MAC-xxxx" placeholder and overwrite it with a "NAME"
+# token -- the same two-tokens-for-one-value bug this pattern's sibling fix in
+# anonymize_json_value() addresses for the dict-scrubbing path.
 _PII_JSON_KEY_RE = re.compile(
     r'("(?:'
-    + "|".join(re.escape(k) for k in _PII_JSON_KEYS if k not in ("source_names", "source_aliases"))
+    + "|".join(
+        re.escape(k)
+        for k in _PII_JSON_KEYS
+        if k not in ("source_names", "source_aliases", "mac_address")
+    )
     + r')"\s*:\s*)"([^"]*)"'
 )
 

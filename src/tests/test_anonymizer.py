@@ -153,6 +153,21 @@ class TestMacAddressTokenConsistency:
         assert dict_result["mac_address"] == text_token
         assert text_token.startswith("MAC-")
 
+    def test_mac_address_json_field_embedded_in_log_text_keeps_mac_token(self) -> None:
+        """A log line dumping a raw response body (e.g. wiim_api.log's
+        RESP #n <- ... body={"mac_address": "..."} ) must scrub the MAC to
+        the same "MAC-" token as a bare occurrence -- not have _PII_JSON_KEY_RE
+        re-match the already-substituted placeholder and overwrite it with a
+        "NAME-" token."""
+        anon = BundleAnonymizer()
+        mac = "AA:BB:CC:DD:EE:FF"
+        bare_result = anon.anonymize_text(f"seen mac {mac}")
+        embedded_result = anon.anonymize_text(f'{{"mac_address":"{mac}"}}')
+        bare_token = bare_result.split("seen mac ")[1]
+        embedded_token = embedded_result.split('"mac_address":"')[1].rstrip('"}')
+        assert bare_token == embedded_token
+        assert embedded_token.startswith("MAC-")
+
 
 class TestConsistencyAndIsolation:
     def test_different_instances_produce_different_tokens(self) -> None:
