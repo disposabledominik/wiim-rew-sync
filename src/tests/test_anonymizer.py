@@ -127,6 +127,32 @@ class TestHomeDirectoryUsernames:
         assert "USER-" in result
         assert "rew-exports" in result
 
+    def test_json_escaped_windows_username_scrubbed(self) -> None:
+        """A Windows path as it actually appears in a JSON file on disk has
+        each backslash escaped as "\\\\", not a single backslash."""
+        anon = BundleAnonymizer()
+        raw_json = r'{"rew_folder": "C:\\Users\\John\\rew-exports"}'
+        result = anon.anonymize_text(raw_json)
+        assert "John" not in result
+        assert "USER-" in result
+        assert "rew-exports" in result
+
+
+class TestMacAddressTokenConsistency:
+    def test_mac_address_same_token_via_text_and_json_paths(self) -> None:
+        """A MAC address must map to the same token whether it's scrubbed via
+        anonymize_text() (raw log line) or anonymize_json_value() (a
+        capabilities dict's mac_address field) -- both use the "MAC" token
+        category, not two different categories for the same real value."""
+        anon = BundleAnonymizer()
+        mac = "AA:BB:CC:DD:EE:FF"
+        text_result = anon.anonymize_text(f"seen mac {mac}")
+        dict_result = anon.anonymize_json_value({"mac_address": mac})
+        assert isinstance(dict_result, dict)
+        text_token = text_result.split("seen mac ")[1]
+        assert dict_result["mac_address"] == text_token
+        assert text_token.startswith("MAC-")
+
 
 class TestConsistencyAndIsolation:
     def test_different_instances_produce_different_tokens(self) -> None:

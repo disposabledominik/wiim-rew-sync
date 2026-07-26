@@ -21,7 +21,12 @@ _MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
 
 # Home-directory path prefixes (Windows/Linux/macOS); the prefix is captured
 # so it can be re-emitted as-is, with only the username segment replaced.
-_HOME_USER_RE = re.compile(r"([Uu]sers\\|/home/|/Users/)([^\\/:*\"<>|]+)")
+# The Windows separator matches one OR two backslashes: settings.json (and
+# any other JSON blob) stores a Windows path with each backslash escaped as
+# "\\\\", so a real single-backslash "Users\" in the raw file text is a
+# literal double backslash on disk -- matching only a single backslash here
+# would silently fail to scrub the username on every Windows settings.json.
+_HOME_USER_RE = re.compile(r"([Uu]sers\\{1,2}|/home/|/Users/)([^\\/:*\"<>|]+)")
 
 # JSON keys (as they appear on the wire) whose values are PII: a bare string
 # for most, but a list of names for "source_names" and a dict of names for
@@ -98,10 +103,22 @@ class BundleAnonymizer:
     def anonymize_json_value(self, data: object) -> object:
         """Recursively scrub PII from a parsed JSON-like structure (dict/list/str)."""
         if isinstance(data, dict):
-            return {
-                k: self._as_name(v) if k in _PII_JSON_KEYS else self.anonymize_json_value(v)
-                for k, v in data.items()
-            }
+            result: dict[str, object] = {}
+            for k, v in data.items():
+                if k == "mac_address" and isinstance(v, str):
+                    # Same category ("MAC") as the structural regex used on
+                    # log text, so a MAC address that appears both here (a
+                    # dict field) and in a raw log line maps to the same
+                    # token throughout the bundle -- routing it through
+                    # _as_name's "NAME" category instead would give the same
+                    # real MAC two different tokens depending on which path
+                    # scrubbed it.
+                    result[k] = self._token_for("MAC", v)
+                elif k in _PII_JSON_KEYS:
+                    result[k] = self._as_name(v)
+                else:
+                    result[k] = self.anonymize_json_value(v)
+            return result
         if isinstance(data, list):
             return [self.anonymize_json_value(item) for item in data]
         if isinstance(data, str):
