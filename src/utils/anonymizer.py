@@ -19,12 +19,14 @@ import secrets
 _IPV4_RE = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
 _MAC_RE = re.compile(r"\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b")
 
-# Home-directory path prefixes; only the username segment is captured/replaced.
-_WINDOWS_USER_RE = re.compile(r"(?<=[Uu]sers\\)[^\\/:*\"<>|]+")
-_POSIX_HOME_USER_RE = re.compile(r"(?<=/home/)[^/]+")
-_MAC_HOME_USER_RE = re.compile(r"(?<=/Users/)[^/]+")
+# Home-directory path prefixes (Windows/Linux/macOS); the prefix is captured
+# so it can be re-emitted as-is, with only the username segment replaced.
+_HOME_USER_RE = re.compile(r"([Uu]sers\\|/home/|/Users/)([^\\/:*\"<>|]+)")
 
-# JSON keys (as they appear on the wire) whose string values are PII.
+# JSON keys (as they appear on the wire) whose values are PII: a bare string
+# for most, but a list of names for "source_names" and a dict of names for
+# "source_aliases" -- anonymize_json_value's _as_name() handles all three
+# shapes uniformly.
 _PII_JSON_KEYS = (
     "DeviceName",
     "Name",
@@ -32,9 +34,16 @@ _PII_JSON_KEYS = (
     "GroupName",
     "mac_address",
     "uuid",
+    "source_names",
+    "source_aliases",
 )
+# Text-log scrubbing only ever sees bare string values (log lines are prose
+# with embedded JSON snippets, not standalone documents to parse), so this
+# pattern targets the scalar-valued keys only.
 _PII_JSON_KEY_RE = re.compile(
-    r'"(' + "|".join(re.escape(k) for k in _PII_JSON_KEYS) + r')"(\s*:\s*)"([^"]*)"'
+    r'("(?:'
+    + "|".join(re.escape(k) for k in _PII_JSON_KEYS if k not in ("source_names", "source_aliases"))
+    + r')"\s*:\s*)"([^"]*)"'
 )
 
 
@@ -63,44 +72,36 @@ class BundleAnonymizer:
         """Scrub PII from free-form text (e.g. a log file's full content)."""
         text = _IPV4_RE.sub(lambda m: self._token_for("IP", m.group(0)), text)
         text = _MAC_RE.sub(lambda m: self._token_for("MAC", m.group(0)), text)
-        text = _WINDOWS_USER_RE.sub(
-            lambda m: self._token_for("USER", m.group(0)), text
-        )
-        text = _POSIX_HOME_USER_RE.sub(
-            lambda m: self._token_for("USER", m.group(0)), text
-        )
-        text = _MAC_HOME_USER_RE.sub(
-            lambda m: self._token_for("USER", m.group(0)), text
+        text = _HOME_USER_RE.sub(
+            lambda m: m.group(1) + self._token_for("USER", m.group(2)), text
         )
         text = _PII_JSON_KEY_RE.sub(
-            lambda m: f'"{m.group(1)}"{m.group(2)}"'
-            f'{self._token_for("NAME", m.group(3))}"',
-            text,
+            lambda m: f'{m.group(1)}"{self._token_for("NAME", m.group(2))}"', text
         )
         return text
+
+    def _as_name(self, value: object) -> object:
+        """Recursively token-ize every string found in *value*.
+
+        Handles all three shapes a name field appears in on the wire: a bare
+        string (``DeviceName``), a list of strings (``source_names``), or a
+        dict of strings (``source_aliases``).
+        """
+        if isinstance(value, str):
+            return self._token_for("NAME", value)
+        if isinstance(value, list):
+            return [self._as_name(item) for item in value]
+        if isinstance(value, dict):
+            return {k: self._as_name(v) for k, v in value.items()}
+        return value
 
     def anonymize_json_value(self, data: object) -> object:
         """Recursively scrub PII from a parsed JSON-like structure (dict/list/str)."""
         if isinstance(data, dict):
-            result: dict[str, object] = {}
-            for k, v in data.items():
-                if k in _PII_JSON_KEYS and isinstance(v, str):
-                    result[k] = self._token_for("NAME", v)
-                elif k == "source_names" and isinstance(v, list):
-                    result[k] = [
-                        self._token_for("NAME", item) if isinstance(item, str) else item
-                        for item in v
-                    ]
-                elif k == "source_aliases" and isinstance(v, dict):
-                    result[k] = {
-                        alias_key: self._token_for("NAME", alias_val)
-                        if isinstance(alias_val, str)
-                        else alias_val
-                        for alias_key, alias_val in v.items()
-                    }
-                else:
-                    result[k] = self.anonymize_json_value(v)
-            return result
+            return {
+                k: self._as_name(v) if k in _PII_JSON_KEYS else self.anonymize_json_value(v)
+                for k, v in data.items()
+            }
         if isinstance(data, list):
             return [self.anonymize_json_value(item) for item in data]
         if isinstance(data, str):

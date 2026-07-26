@@ -340,6 +340,28 @@ class TestAnonymization:
         tokens = {w.rstrip(",") for w in content.split() if w.startswith("IP-")}
         assert len(tokens) == 2
 
+    def test_multiline_log_scrubbed_line_by_line_with_consistent_tokens(
+        self, output_dir: Path, tmp_path: Path
+    ) -> None:
+        """Logs are streamed and scrubbed one line at a time (not loaded whole
+        into memory) -- verify that still preserves both line structure and
+        cross-line token consistency for a file with many lines."""
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        lines = [f"REQ #{i} -> GET https://192.168.1.42/httpapi.asp" for i in range(500)]
+        (logs / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = generate_support_bundle(output_dir, logs)
+
+        with ZipFile(result) as zf:
+            content = zf.read("logs/app.log").decode("utf-8")
+
+        scrubbed_lines = content.splitlines()
+        assert len(scrubbed_lines) == 500
+        tokens = {line.rsplit("https://", 1)[1].split("/")[0] for line in scrubbed_lines}
+        assert len(tokens) == 1
+        assert "192.168.1.42" not in content
+
 
 class TestFilenamePattern:
     def test_filename_matches_pattern(self, output_dir: Path, log_dir: Path) -> None:

@@ -21,6 +21,26 @@ from src.utils.anonymizer import BundleAnonymizer
 from src.utils.version import get_app_version
 
 
+def _write_anonymized_log(
+    zf: ZipFile, arcname: str, source_path: Path, anonymizer: BundleAnonymizer
+) -> None:
+    """Stream-scrub a log file into the zip one line at a time.
+
+    Log files are not truncated (a full L/R read-back line can be ~5 KB) and
+    can grow to several MB across rotations, so scrubbing via a single
+    read_text() + regex pass over the whole file materializes the entire
+    file (plus several intermediate copies) in memory at once. Each logger
+    call is one self-contained line, so processing line-by-line avoids that
+    without affecting token consistency.
+    """
+    with (
+        source_path.open(encoding="utf-8", errors="replace") as src,
+        zf.open(arcname, "w") as dest,
+    ):
+        for line in src:
+            dest.write(anonymizer.anonymize_text(line).encode("utf-8"))
+
+
 def generate_support_bundle(
     output_path: Path,
     log_dir: Path,
@@ -72,8 +92,7 @@ def generate_support_bundle(
         for log_file in log_files:
             log_path = log_dir / log_file
             if log_path.is_file():
-                text = log_path.read_text(encoding="utf-8", errors="replace")
-                zf.writestr(f"logs/{log_file}", anonymizer.anonymize_text(text))
+                _write_anonymized_log(zf, f"logs/{log_file}", log_path, anonymizer)
 
         # Add settings file if provided and exists, scrubbed of PII
         if settings_path is not None and settings_path.is_file():

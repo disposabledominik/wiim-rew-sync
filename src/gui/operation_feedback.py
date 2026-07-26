@@ -61,6 +61,12 @@ class OperationFeedbackManager(QObject):
         super().__init__(parent)
         self._status_banner = status_banner
         self._action_buttons: list[QWidget] = []
+        # Snapshot of each button's isEnabled() at start_operation(), keyed by
+        # id() -- restored on finish rather than a blanket setEnabled(True),
+        # since some registered buttons (e.g. preset Load/Rename/Delete) are
+        # normally gated on an unrelated condition like list selection and
+        # would otherwise come back enabled with nothing selected.
+        self._prior_enabled: dict[int, bool] = {}
         self._is_active = False
         self._current_message = ""
 
@@ -110,6 +116,7 @@ class OperationFeedbackManager(QObject):
         self._current_message = message
 
         # Req 13.1: Disable buttons immediately (prevent double-submit)
+        self._prior_enabled = {id(btn): btn.isEnabled() for btn in self._action_buttons}
         for btn in self._action_buttons:
             btn.setEnabled(False)
 
@@ -138,9 +145,8 @@ class OperationFeedbackManager(QObject):
         self._cancel_timer.stop()
         self._timeout_timer.stop()
 
-        # Re-enable buttons
-        for btn in self._action_buttons:
-            btn.setEnabled(True)
+        # Restore buttons to their pre-operation enabled state
+        self._restore_button_states()
 
         # Hide cancel button if visible
         self._hide_cancel_button()
@@ -157,6 +163,15 @@ class OperationFeedbackManager(QObject):
     def is_active(self) -> bool:
         """Whether an operation is currently in progress."""
         return self._is_active
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _restore_button_states(self) -> None:
+        """Restore each registered button to its pre-operation enabled state."""
+        for btn in self._action_buttons:
+            btn.setEnabled(self._prior_enabled.get(id(btn), True))
 
     # ------------------------------------------------------------------
     # Private slots
@@ -215,10 +230,9 @@ class OperationFeedbackManager(QObject):
         if self._is_active:
             logger.warning("Operation hard timeout after 30s")
             self._status_banner.show_error("Operation timed out")
-            # Force finish -- re-enable buttons, clear state
+            # Force finish -- restore buttons, clear state
             self._is_active = False
             self._long_op_timer.stop()
             self._cancel_timer.stop()
-            for btn in self._action_buttons:
-                btn.setEnabled(True)
+            self._restore_button_states()
             self._hide_cancel_button()
