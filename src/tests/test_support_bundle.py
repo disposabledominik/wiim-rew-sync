@@ -30,6 +30,8 @@ class FakeCapabilities(BaseModel):
     supports_peq: bool = True
     max_filters: int = 10
     model: str = "WiiM Pro"
+    mac_address: str = ""
+    uuid: str = ""
 
 
 @pytest.fixture()
@@ -251,6 +253,115 @@ class TestPrivacy:
 # ---------------------------------------------------------------------------
 # 4. Verify zip filename matches expected pattern
 # ---------------------------------------------------------------------------
+
+
+class TestAnonymization:
+    def test_ip_scrubbed_from_logs(self, output_dir: Path, tmp_path: Path) -> None:
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        (logs / "wiim_api.log").write_text(
+            "REQ #1 -> GET https://192.168.1.42/httpapi.asp?command=getStatusEx\n"
+            "RESP #1 <- 200 body={\"DeviceName\":\"Living Room\"}",
+            encoding="utf-8",
+        )
+
+        result = generate_support_bundle(output_dir, logs)
+
+        with ZipFile(result) as zf:
+            content = zf.read("logs/wiim_api.log").decode("utf-8")
+
+        assert "192.168.1.42" not in content
+        assert "Living Room" not in content
+
+    def test_same_value_maps_to_same_token_across_log_files(
+        self, output_dir: Path, tmp_path: Path
+    ) -> None:
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        (logs / "app.log").write_text("Device selected: 192.168.1.42", encoding="utf-8")
+        (logs / "wiim_api.log").write_text(
+            "REQ #1 -> GET https://192.168.1.42/httpapi.asp", encoding="utf-8"
+        )
+
+        result = generate_support_bundle(output_dir, logs)
+
+        with ZipFile(result) as zf:
+            app_content = zf.read("logs/app.log").decode("utf-8")
+            wiim_content = zf.read("logs/wiim_api.log").decode("utf-8")
+
+        app_token = app_content.split("Device selected: ")[1]
+        assert app_token.startswith("IP-")
+        assert app_token in wiim_content
+
+    def test_settings_username_path_scrubbed(
+        self, output_dir: Path, log_dir: Path, tmp_path: Path
+    ) -> None:
+        settings = tmp_path / "settings.json"
+        settings.write_text(
+            '{"rew_folder": "/home/dominik/rew-exports"}', encoding="utf-8"
+        )
+
+        result = generate_support_bundle(output_dir, log_dir, settings)
+
+        with ZipFile(result) as zf:
+            content = zf.read("config/settings.json").decode("utf-8")
+
+        assert "dominik" not in content
+        assert "rew-exports" in content
+
+    def test_device_info_mac_and_uuid_scrubbed(
+        self, output_dir: Path, log_dir: Path
+    ) -> None:
+        caps = FakeCapabilities(mac_address="AA:BB:CC:DD:EE:FF", uuid="FF31F09E0000")
+        result = generate_support_bundle(output_dir, log_dir, capabilities=caps)
+
+        with ZipFile(result) as zf:
+            content = json.loads(zf.read("device_info.json"))
+
+        assert content["model"] == "WiiM Pro"
+        assert content["mac_address"] != "AA:BB:CC:DD:EE:FF"
+        assert content["mac_address"].startswith("MAC-")
+        assert content["uuid"] != "FF31F09E0000"
+        assert content["uuid"].startswith("NAME-")
+
+    def test_two_different_ips_get_two_different_tokens(
+        self, output_dir: Path, tmp_path: Path
+    ) -> None:
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        (logs / "app.log").write_text(
+            "device a 192.168.1.1, device b 192.168.1.2", encoding="utf-8"
+        )
+
+        result = generate_support_bundle(output_dir, logs)
+
+        with ZipFile(result) as zf:
+            content = zf.read("logs/app.log").decode("utf-8")
+
+        tokens = {w.rstrip(",") for w in content.split() if w.startswith("IP-")}
+        assert len(tokens) == 2
+
+    def test_multiline_log_scrubbed_line_by_line_with_consistent_tokens(
+        self, output_dir: Path, tmp_path: Path
+    ) -> None:
+        """Logs are streamed and scrubbed one line at a time (not loaded whole
+        into memory) -- verify that still preserves both line structure and
+        cross-line token consistency for a file with many lines."""
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        lines = [f"REQ #{i} -> GET https://192.168.1.42/httpapi.asp" for i in range(500)]
+        (logs / "app.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        result = generate_support_bundle(output_dir, logs)
+
+        with ZipFile(result) as zf:
+            content = zf.read("logs/app.log").decode("utf-8")
+
+        scrubbed_lines = content.splitlines()
+        assert len(scrubbed_lines) == 500
+        tokens = {line.rsplit("https://", 1)[1].split("/")[0] for line in scrubbed_lines}
+        assert len(tokens) == 1
+        assert "192.168.1.42" not in content
 
 
 class TestFilenamePattern:

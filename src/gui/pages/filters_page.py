@@ -89,6 +89,15 @@ class FiltersPage(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [
+            self._next_btn,
+            self._import_lr_btn,
+            self._continue_with_warnings_btn,
+            self._retry_btn,
+        ]
+
     def set_default_import_folder(self, path: str) -> None:
         """Set the Settings-configured default folder for the REW import dialogs.
 
@@ -454,13 +463,15 @@ class FiltersPage(QWidget):
         self._warnings_label.setWordWrap(True)
         layout.addWidget(self._warnings_label)
 
-        continue_btn = make_action_button(
+        self._continue_with_warnings_btn = make_action_button(
             "Continue with adjustments",
             object_name="filters_continue_with_warnings",
             style_class="warning",
         )
-        continue_btn.clicked.connect(self._on_continue_with_warnings)
-        layout.addWidget(continue_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._continue_with_warnings_btn.clicked.connect(self._on_continue_with_warnings)
+        layout.addWidget(
+            self._continue_with_warnings_btn, alignment=Qt.AlignmentFlag.AlignLeft
+        )
 
         return widget
 
@@ -480,11 +491,11 @@ class FiltersPage(QWidget):
         self._error_label.setWordWrap(True)
         layout.addWidget(self._error_label)
 
-        retry_btn = make_action_button(
+        self._retry_btn = make_action_button(
             "Try Again", object_name="filters_retry_btn", style_class="secondary"
         )
-        retry_btn.clicked.connect(self._on_retry)
-        layout.addWidget(retry_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        self._retry_btn.clicked.connect(self._on_retry)
+        layout.addWidget(self._retry_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         return widget
 

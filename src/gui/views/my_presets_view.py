@@ -122,6 +122,16 @@ class MyPresetsView(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [
+            self._load_btn,
+            self._copy_btn,
+            self._rename_btn,
+            self._duplicate_btn,
+            self._delete_btn,
+        ]
+
     def set_presets(self, presets: list[Profile]) -> None:
         """Populate the view with preset data.
 

@@ -148,6 +148,10 @@ class NameProfilePage(QWidget):
         self._save_button.clicked.connect(self._on_save_clicked)
         layout.addWidget(self._save_button, alignment=Qt.AlignmentFlag.AlignRight)
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [self._save_button]
+
     @property
     def active_profile(self) -> str:
         """The currently-active RoomFit profile name, or "" if none/unknown."""

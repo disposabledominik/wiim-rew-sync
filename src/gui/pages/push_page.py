@@ -124,6 +124,15 @@ class PushPage(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress.
+
+        Excludes `_ok_button` (dismiss-only) and `_show_pushed_filters_button`
+        (opens a local read-only dialog, no network/device I/O) so the user
+        isn't locked out of dismissing or reviewing the current result.
+        """
+        return [self._undo_button, self._export_link, self._save_link]
+
     def set_stage(self, stage: str) -> None:
         """Advance the progress stepper to the given stage.
 
@@ -727,25 +736,25 @@ class PushPage(QWidget):
         secondary_layout.setSpacing(SPACING_MD)
         secondary_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        export_link = make_action_button(
+        self._export_link = make_action_button(
             "Export as REW File", object_name="PushPageExportLink",
             style_class="linkButton", parent=self._secondary_row,
         )
-        export_link.setFlat(True)
-        export_link.clicked.connect(self.export_requested.emit)
-        secondary_layout.addWidget(export_link)
+        self._export_link.setFlat(True)
+        self._export_link.clicked.connect(self.export_requested.emit)
+        secondary_layout.addWidget(self._export_link)
 
         separator = QLabel("|", self._secondary_row)
         separator.setObjectName("PushPageLinkSeparator")
         secondary_layout.addWidget(separator)
 
-        save_link = make_action_button(
+        self._save_link = make_action_button(
             "Save to My Presets", object_name="PushPageSavePresetLink",
             style_class="linkButton", parent=self._secondary_row,
         )
-        save_link.setFlat(True)
-        save_link.clicked.connect(self.save_preset_requested.emit)
-        secondary_layout.addWidget(save_link)
+        self._save_link.setFlat(True)
+        self._save_link.clicked.connect(self.save_preset_requested.emit)
+        secondary_layout.addWidget(self._save_link)
 
         self._secondary_row.setVisible(False)
         result_layout.addWidget(self._secondary_row)

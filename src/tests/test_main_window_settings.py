@@ -279,3 +279,43 @@ class TestDryRunDefaultPrompt:
         assert window._settings.dry_run_default is False
         mock_save.assert_called_once()
         assert window.settings_view.get_current_settings()["dry_run_default"] is False
+
+
+class TestOperationFeedbackButtonRegistration:
+    """Smoke #243: action buttons across every page/view are disabled while
+    an operation is in progress, not just left clickable behind the
+    "Processing..." banner."""
+
+    def test_action_buttons_registered_on_startup(self, make_window) -> None:
+        """Every page/view's action_buttons() end up in the feedback manager."""
+        window = make_window()
+
+        registered = window._feedback_manager._action_buttons
+
+        assert window._presets_device_view._load_btn in registered
+        assert window._my_presets_view._load_btn in registered
+        assert window._review_page._push_button in registered
+        assert window._filters_page._next_btn in registered
+        assert window._filters_page.rew_pull_view._continue_btn in registered
+        assert window._rew_pull_view._continue_btn in registered
+        assert window._settings_view._bundle_btn in registered
+
+    def test_buttons_disabled_while_operation_in_progress(self, make_window) -> None:
+        """Buttons across different views are disabled by a single
+        start_operation() call and re-enabled by finish_operation()."""
+        window = make_window()
+
+        rescan_btn = window._connect_page._rescan_btn
+        bundle_btn = window._settings_view._bundle_btn
+        assert rescan_btn.isEnabled()
+        assert bundle_btn.isEnabled()
+
+        window._feedback_manager.start_operation("Processing...")
+
+        assert not rescan_btn.isEnabled()
+        assert not bundle_btn.isEnabled()
+
+        window._feedback_manager.finish_operation()
+
+        assert rescan_btn.isEnabled()
+        assert bundle_btn.isEnabled()

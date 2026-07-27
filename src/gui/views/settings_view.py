@@ -69,6 +69,10 @@ class SettingsView(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [self._bundle_btn]
+
     def set_settings(self, settings: dict[str, Any]) -> None:
         """Populate all controls from a settings dict.
 
@@ -393,13 +397,13 @@ class SettingsView(QWidget):
         layout.setSpacing(SPACING_MD)
 
         # Generate Support Bundle button (Req 24.12)
-        bundle_btn = make_action_button(
+        self._bundle_btn = make_action_button(
             "Generate Support Bundle", object_name="SettingsSupportBundleBtn",
             style_class="secondary", parent=group,
         )
-        bundle_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        bundle_btn.clicked.connect(self._on_support_bundle_clicked)
-        layout.addWidget(bundle_btn)
+        self._bundle_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._bundle_btn.clicked.connect(self._on_support_bundle_clicked)
+        layout.addWidget(self._bundle_btn)
 
         bundle_desc = QLabel(
             "Creates a ZIP with logs and config for sharing with support. "

@@ -59,6 +59,10 @@ class SourcePage(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [self._continue_btn]
+
     def set_sources(self, sources: list[str], active_source: str = "") -> None:
         """Populate the source list with selectable items.
 
