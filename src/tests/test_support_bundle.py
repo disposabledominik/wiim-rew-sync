@@ -30,6 +30,8 @@ class FakeCapabilities(BaseModel):
     supports_peq: bool = True
     max_filters: int = 10
     model: str = "WiiM Pro"
+    mac_address: str = ""
+    uuid: str = ""
 
 
 @pytest.fixture()
@@ -310,18 +312,17 @@ class TestAnonymization:
     def test_device_info_mac_and_uuid_scrubbed(
         self, output_dir: Path, log_dir: Path
     ) -> None:
-        caps = FakeCapabilities()
-        # FakeCapabilities doesn't carry mac/uuid fields; extend via a dict-like
-        # stand-in isn't needed here since anonymize_json_value works on any
-        # dict -- verify indirectly through the known "model" field passthrough
-        # and that no exception is raised for a capabilities object lacking
-        # PII fields.
+        caps = FakeCapabilities(mac_address="AA:BB:CC:DD:EE:FF", uuid="FF31F09E0000")
         result = generate_support_bundle(output_dir, log_dir, capabilities=caps)
 
         with ZipFile(result) as zf:
             content = json.loads(zf.read("device_info.json"))
 
         assert content["model"] == "WiiM Pro"
+        assert content["mac_address"] != "AA:BB:CC:DD:EE:FF"
+        assert content["mac_address"].startswith("MAC-")
+        assert content["uuid"] != "FF31F09E0000"
+        assert content["uuid"].startswith("NAME-")
 
     def test_two_different_ips_get_two_different_tokens(
         self, output_dir: Path, tmp_path: Path

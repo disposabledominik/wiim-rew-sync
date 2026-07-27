@@ -133,10 +133,11 @@ class OperationFeedbackManager(QObject):
     def finish_operation(self) -> None:
         """Signal that the async operation has completed.
 
-        Re-enables action buttons, stops timers, hides cancel button.
-        Does NOT clear the status banner — success/error messages shown by
-        operation handlers manage their own lifecycle (smoke #32 fix).
-        Only clears the progress indicator if no result message was posted.
+        Restores each action button to its pre-operation enabled state, stops
+        timers, hides cancel button. Does NOT clear the status banner —
+        success/error messages shown by operation handlers manage their own
+        lifecycle (smoke #32 fix). Only clears the progress indicator if no
+        result message was posted.
         """
         self._is_active = False
 
