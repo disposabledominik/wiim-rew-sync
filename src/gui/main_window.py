@@ -2685,17 +2685,12 @@ class MainWindow(QMainWindow):
 
         Shortcuts:
         - Ctrl+R: Refresh devices (trigger discovery)
-        - Ctrl+Enter: Confirm/push on ReviewPage
         - Escape: Dismiss help panel if visible
         - Ctrl+O is already handled by the File > Import menu action.
         """
         # Ctrl+R — Refresh devices (Req 26.5)
         shortcut_refresh = QShortcut(QKeySequence("Ctrl+R"), self)
         shortcut_refresh.activated.connect(self._on_shortcut_refresh)
-
-        # Ctrl+Enter — Confirm/push (Req 26.5)
-        shortcut_confirm = QShortcut(QKeySequence("Ctrl+Return"), self)
-        shortcut_confirm.activated.connect(self._on_shortcut_confirm)
 
         # Escape — Dismiss help panel or cancel operation
         shortcut_escape = QShortcut(QKeySequence("Escape"), self)
@@ -2750,14 +2745,6 @@ class MainWindow(QMainWindow):
         """
         self._on_refresh_requested()
         logger.debug("Keyboard shortcut: Ctrl+R — Refresh devices")
-
-    @Slot()
-    def _on_shortcut_confirm(self) -> None:
-        """Handle Ctrl+Enter — trigger push/confirm on ReviewPage."""
-        current_index = self._stacked_widget.currentIndex()
-        if current_index == PAGE_INDICES["review"]:
-            self._review_page.push_requested.emit()
-            logger.debug("Keyboard shortcut: Ctrl+Enter — Push confirmed")
 
     @Slot()
     def _on_shortcut_escape(self) -> None:

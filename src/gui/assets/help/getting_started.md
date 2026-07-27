@@ -86,5 +86,4 @@ the change if needed.
 | `F1` | Open this User Guide |
 | `Escape` | Close the User Guide, or cancel the operation in progress |
 | `Ctrl+R` | Search for devices again |
-| `Ctrl+Enter` | Push to device (on the Review page) |
 | `Ctrl+Q` | Quit the app |
