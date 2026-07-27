@@ -168,7 +168,7 @@ class ConnectPage(QWidget):
         )
         self._rescan_btn = make_action_button(
             "⟳", object_name="ConnectPageRescanButton", style_class="ghost",
-            tooltip="Rescan for devices", parent=content_wrapper,
+            tooltip="Rescan for devices (Ctrl+R)", parent=content_wrapper,
         )
         self._rescan_btn.setFixedSize(32, 32)
         self._rescan_btn.clicked.connect(self.refresh_requested.emit)

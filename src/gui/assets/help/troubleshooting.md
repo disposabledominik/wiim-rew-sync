@@ -54,6 +54,12 @@ connection not being private — that warning is expected here; continue past
 it. A page of JSON starting with device details means the device is
 reachable and the problem is discovery, not connectivity.
 
+### Retry Discovery
+
+After fixing a network or firewall issue above, click the ⟳ button next to
+"Connect to Device" (or press `Ctrl+R` from anywhere in the app) to search
+again — the app does not automatically retry on its own.
+
 ## Parse Errors
 
 If you see a parse error when importing a REW file:

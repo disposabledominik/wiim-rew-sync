@@ -279,8 +279,8 @@ most of the GUI-behavior regression coverage that grew out of `docs/smoke_test_i
 | 28 | L/R profile loaded from My Saved Presets sets wizard channel_mode correctly | Automated — `test_smoke_regression_operations.py::test_issue49_recall_profile_lr` |
 | 29 | Diagnostics Panel exposes raw HTTP commands and capability dumps | Manual — Test 21 |
 | 30 | No network on boot: app opens, "no devices found," My Saved Presets still accessible | Automated — `test_profile_repository.py` (filesystem only) |
-| 31 | WiiM Mini: EQ Type step skipped, PEQ-only | Automated — `test_smoke_regression_wizard.py::test_wiim_mini_roomfit_level_2_forced_peq_only`; Manual — Test 10 |
-| 32 | Amp Pro/Ultra/Sound/Sound Lite: `supports_peq/lr_filters/roomfit = True` | Automated — `test_capability_prober.py::TestWiiMDeviceDetection` |
+| 31 | WiiM Mini: EQ Type step skipped, PEQ-only | Automated — `test_smoke_regression_wizard.py::TestIssue36MiniRoomfitBlocklist::test_roomfit_read_false_forces_peq_only_regardless_of_model`; Manual — Test 10 |
+| 32 | Amp Pro/Ultra/Sound/Sound Lite: `supports_peq/lr_filters/roomfit = True` | Automated — `test_capability_prober.py::TestAcousticCapabilityProbe` (model-agnostic RC-block detection; no per-SKU unit test exists for these exact models); Manual — Test 10 (this sign-off's hardware run confirmed on WiiM Sound and WiiM Amp Ultra, per §7) |
 
 ---
 

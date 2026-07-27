@@ -1,4 +1,4 @@
-"""ReviewPage — filter review with actions, toggles, and keyboard shortcuts.
+"""ReviewPage — filter review with actions and toggles.
 
 Displays imported/pulled filters in a FilterTable and offers push, export,
 save, copy, and multi-device actions. Supports Dry Run mode and comparison
@@ -9,8 +9,7 @@ Requirements referenced: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 9.7, 12.1, 19.1, 19.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import Signal, Slot
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -53,7 +52,6 @@ class ReviewPage(QWidget):
         self.setObjectName("ReviewPage")
         self._dry_run: bool = False
         self._setup_ui()
-        self._setup_shortcuts()
 
     # ------------------------------------------------------------------
     # Public API
@@ -216,13 +214,6 @@ class ReviewPage(QWidget):
 
         content_layout.addLayout(action_layout)
 
-    def _setup_shortcuts(self) -> None:
-        """Configure keyboard shortcuts."""
-        # Ctrl+Enter → emit push_requested
-        shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
-        shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-        shortcut.activated.connect(self._on_push_clicked)
-
     def _update_dry_run_ui(self) -> None:
         """Sync UI elements with current dry run state."""
         self._push_button.setText("Preview Only" if self._dry_run else "Push to Device")
@@ -236,5 +227,5 @@ class ReviewPage(QWidget):
 
     @Slot()
     def _on_push_clicked(self) -> None:
-        """Handle push button click or Ctrl+Enter shortcut."""
+        """Handle push button click."""
         self.push_requested.emit()
