@@ -3,7 +3,11 @@
 Creates a timestamped ZIP archive containing logs, config, device info,
 and version data for diagnostic/support purposes.
 
-Privacy: SHALL NOT include user filter data, profiles, or backup files.
+Privacy: SHALL NOT include user filter data, profiles, or backup files. Log,
+settings, and device-info content that IS included has IPs, MAC addresses,
+device/preset names, device UUIDs, and home-directory usernames scrubbed via
+:class:`~src.utils.anonymizer.BundleAnonymizer` before being written to the
+archive.
 """
 
 from __future__ import annotations
@@ -13,7 +17,28 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import ZipFile
 
+from src.utils.anonymizer import BundleAnonymizer
 from src.utils.version import get_app_version
+
+
+def _write_anonymized_log(
+    zf: ZipFile, arcname: str, source_path: Path, anonymizer: BundleAnonymizer
+) -> None:
+    """Stream-scrub a log file into the zip one line at a time.
+
+    Log files are not truncated (a full L/R read-back line can be ~5 KB) and
+    can grow to several MB across rotations, so scrubbing via a single
+    read_text() + regex pass over the whole file materializes the entire
+    file (plus several intermediate copies) in memory at once. Each logger
+    call is one self-contained line, so processing line-by-line avoids that
+    without affecting token consistency.
+    """
+    with (
+        source_path.open(encoding="utf-8", errors="replace") as src,
+        zf.open(arcname, "w") as dest,
+    ):
+        for line in src:
+            dest.write(anonymizer.anonymize_text(line).encode("utf-8"))
 
 
 def generate_support_bundle(
@@ -60,23 +85,29 @@ def generate_support_bundle(
         "rew_api.log.1",
     ]
 
+    anonymizer = BundleAnonymizer()
+
     with ZipFile(zip_path, "w") as zf:
-        # Add log files (skip missing ones gracefully)
+        # Add log files (skip missing ones gracefully), scrubbed of PII
         for log_file in log_files:
             log_path = log_dir / log_file
             if log_path.is_file():
-                zf.write(log_path, arcname=f"logs/{log_file}")
+                _write_anonymized_log(zf, f"logs/{log_file}", log_path, anonymizer)
 
-        # Add settings file if provided and exists
+        # Add settings file if provided and exists, scrubbed of PII
         if settings_path is not None and settings_path.is_file():
-            zf.write(settings_path, arcname=f"config/{settings_path.name}")
+            text = settings_path.read_text(encoding="utf-8", errors="replace")
+            zf.writestr(
+                f"config/{settings_path.name}", anonymizer.anonymize_text(text)
+            )
 
-        # Add device capabilities dump
+        # Add device capabilities dump, scrubbed of PII
         if capabilities is not None:
             if hasattr(capabilities, "model_dump"):
-                caps_data = capabilities.model_dump()
+                caps_data: object = capabilities.model_dump()
             else:
                 caps_data = str(capabilities)
+            caps_data = anonymizer.anonymize_json_value(caps_data)
             zf.writestr(
                 "device_info.json",
                 json.dumps(caps_data, indent=2, default=str),

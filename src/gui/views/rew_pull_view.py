@@ -111,6 +111,10 @@ class RewPullView(QWidget):
         """
         return self._showing_picker
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [self._continue_btn]
+
     def set_connecting(self) -> None:
         """Show the "Connecting to REW..." placeholder."""
         self.set_message("Connecting to REW...")

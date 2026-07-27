@@ -102,6 +102,38 @@ default `--source` from the backup file when present, keeping the flag for older
 
 ---
 
+## 5. Operation Feedback: Overlapping Operations Can Race (Found via `/code-review ultra`)
+
+**What:** `OperationFeedbackManager` (`src/gui/operation_feedback.py`) tracks exactly one
+in-flight operation via a single `_is_active` flag and one `_prior_enabled` button-state
+snapshot, both overwritten wholesale on every `start_operation()` call. If an operation is
+cancelled (`_on_cancel_clicked()` calls `finish_operation()` immediately) while its underlying
+coroutine keeps running in the background — since Cancel only resets the UI and does not
+actually stop the coroutine — and a second, unrelated operation starts before that first
+coroutine's `finally` block fires its own `operation_finished` signal, the stray late signal
+calls `finish_operation()` again and restores buttons using the *second* operation's snapshot,
+not the first's. This can re-enable or re-disable buttons out of step with what's actually
+running.
+
+**Why deferred:** Found during a `/simplify`/`/code-review ultra --fix` cleanup pass on an
+unrelated diff (smoke `docs/smoke_test_issues.md` #243/#244); fixing it properly touches two
+separate concerns — (a) giving each `start_operation()` call an identity (a token returned by
+`start_operation()` that `finish_operation(token)` must match to actually apply, so a
+stale/mismatched call is a no-op) and (b) the more fundamental gap that Cancel doesn't cancel
+the underlying coroutine at all, which a token-based fix would paper over rather than resolve.
+Both are design decisions bigger than a quality-cleanup pass's scope, and the app's current
+one-op-at-a-time model means this is a narrow race window in practice, not a routinely-hit bug.
+
+**Status:** Not started.
+
+**To reactivate:** Add an opaque operation token to `start_operation()`'s return value and
+require `finish_operation(token)` (and the hard-timeout path) to match it before restoring
+button state — a mismatched/stale token means a no-op. Separately, decide whether Cancel should
+actually cancel the in-flight coroutine (e.g. via `asyncio.Task.cancel()` plumbed through
+`AsyncBridge`) rather than only resetting the UI early.
+
+---
+
 ## Completed / Closed Items (Archive)
 
 ### CI Release Pipeline (No Published Download Path)

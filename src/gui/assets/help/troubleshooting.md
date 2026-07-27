@@ -251,12 +251,16 @@ This creates a zip file containing your app logs, your app settings, and a
 dump of the connected device's capabilities.
 
 **Check it before sharing it publicly.** The bundle deliberately leaves out
-your saved presets and backup files, but the API logs inside it record the
-actual requests and responses exchanged with your device — so they do
-contain the EQ values you pushed or read, along with your device's name,
-UUID, MAC address, and local IP address. That's exactly what makes the
-bundle useful for diagnosis, but it's worth knowing before you attach it to
-a public forum post. It's a plain `.zip` — open it and look if in doubt.
+your saved presets and backup files, and it replaces identifying details —
+your device's name, UUID, MAC address, and local IP address — with random
+placeholder values before zipping. The same real value always gets the same
+placeholder throughout the bundle, so a "same device" or "same preset" story
+across log lines is still visible; the real value isn't. The API logs still
+record the EQ values you pushed or read (that's what makes the bundle useful
+for diagnosis), and free-text fields the anonymizer doesn't recognize could
+in principle still carry something identifying, so it's worth a quick look
+before you attach it to a public forum post. It's a plain `.zip` — open it
+and check if in doubt.
 
 ### Log Files
 

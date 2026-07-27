@@ -57,6 +57,10 @@ class ReviewPage(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
+    def action_buttons(self) -> list[QWidget]:
+        """Return buttons that should be disabled while an operation is in progress."""
+        return [self._export_button, self._save_button, self._push_button]
+
     def set_filters(
         self,
         filters: list[CanonicalFilter],
@@ -187,19 +191,19 @@ class ReviewPage(QWidget):
         action_layout.setSpacing(SPACING_MD)
         action_layout.addStretch()
 
-        export_button = make_action_button(
+        self._export_button = make_action_button(
             "Export as REW File", object_name="ReviewPageExportButton",
             style_class="secondary", parent=content_wrapper,
         )
-        export_button.clicked.connect(self.export_rew_requested.emit)
-        action_layout.addWidget(export_button)
+        self._export_button.clicked.connect(self.export_rew_requested.emit)
+        action_layout.addWidget(self._export_button)
 
-        save_button = make_action_button(
+        self._save_button = make_action_button(
             "Save to My Presets", object_name="ReviewPageSaveButton",
             style_class="ghost", parent=content_wrapper,
         )
-        save_button.clicked.connect(self.save_preset_requested.emit)
-        action_layout.addWidget(save_button)
+        self._save_button.clicked.connect(self.save_preset_requested.emit)
+        action_layout.addWidget(self._save_button)
 
         self._push_button = make_action_button(
             "Push to Device", object_name="ReviewPagePushButton", style_class="primary",

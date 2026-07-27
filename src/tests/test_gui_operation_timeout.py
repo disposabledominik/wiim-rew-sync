@@ -159,3 +159,43 @@ class TestCancelButtonHiddenAfterTimeout:
 
         # Cancel button should be hidden
         assert not manager._cancel_button.isVisible()
+
+
+class TestFinishRestoresPriorButtonState:
+    """finish_operation()/timeout restore each button's pre-operation enabled
+    state instead of blanket-enabling -- a button that was already disabled
+    for an unrelated reason (e.g. no list selection) must stay disabled."""
+
+    def test_finish_restores_previously_disabled_button(self, feedback_env) -> None:
+        manager, _banner, _container = feedback_env
+
+        already_disabled = QPushButton("Delete")
+        already_disabled.setEnabled(False)
+        normally_enabled = QPushButton("Rescan")
+
+        manager.register_action_buttons([already_disabled, normally_enabled])
+
+        manager.start_operation("Working...")
+        assert not already_disabled.isEnabled()
+        assert not normally_enabled.isEnabled()
+
+        manager.finish_operation()
+
+        assert not already_disabled.isEnabled()
+        assert normally_enabled.isEnabled()
+
+    def test_timeout_restores_previously_disabled_button(self, qtbot, feedback_env) -> None:
+        manager, _banner, _container = feedback_env
+
+        already_disabled = QPushButton("Delete")
+        already_disabled.setEnabled(False)
+        normally_enabled = QPushButton("Rescan")
+
+        manager.register_action_buttons([already_disabled, normally_enabled])
+        manager._timeout_timer.setInterval(10)
+
+        manager.start_operation("Working...")
+        qtbot.waitUntil(lambda: not manager.is_active, timeout=500)
+
+        assert not already_disabled.isEnabled()
+        assert normally_enabled.isEnabled()
