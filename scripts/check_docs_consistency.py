@@ -62,23 +62,40 @@ _BANNED_APP_INTERNALS = (
 )
 
 
-def _git_fix_commit_for_issue(issue_num: str) -> str | None:
-    """Return the short hash of the commit whose message starts with `Fix #<issue_num>`, if any."""
-    try:
-        result = subprocess.run(
-            ["git", "log", "--all", "--oneline", "--grep", rf"^Fix #{issue_num}\b", "-E"],
-            cwd=_REPO_ROOT,
-            capture_output=True,
-            text=True,
-            timeout=15,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    lines = result.stdout.strip().splitlines()
-    if not lines:
-        return None
-    return lines[0].split()[0]
+_FIX_SUBJECT_RE = re.compile(r"^Fix\s+((?:#\d+[/,]?\s*)+)", re.IGNORECASE)
+
+
+def _issue_numbers_from_subject(subject: str) -> set[str]:
+    """Extract every issue number from a 'Fix #241/#242: ...'-style commit subject line."""
+    match = _FIX_SUBJECT_RE.match(subject)
+    if not match:
+        return set()
+    return set(re.findall(r"\d+", match.group(1)))
+
+
+def _fix_commits_by_issue() -> dict[str, str]:
+    """Map each issue number to the short hash of the (first, oldest) commit whose subject fixes it.
+
+    Scoped to history reachable from the current checkout (not `--all`), and matched against the
+    commit *subject* line only -- `git log --grep` otherwise matches anywhere in the full message,
+    which would also catch a later commit merely quoting/discussing an earlier "Fix #N" subject.
+    Raises on subprocess failure rather than swallowing it: a broken git environment must fail this
+    check loudly, not silently report "no violations found".
+    """
+    result = subprocess.run(
+        ["git", "log", "--format=%h%x1f%s"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=True,
+    )
+    mapping: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        commit_hash, _, subject = line.partition("\x1f")
+        for issue_num in _issue_numbers_from_subject(subject):
+            mapping.setdefault(issue_num, commit_hash)
+    return mapping
 
 
 def find_stale_pending_commits() -> list[str]:
@@ -87,19 +104,25 @@ def find_stale_pending_commits() -> list[str]:
     if not _SMOKE_TEST_ISSUES.exists():
         return violations
     text = _SMOKE_TEST_ISSUES.read_text(encoding="utf-8")
+    fix_commits = _fix_commits_by_issue()
     for lineno, line in enumerate(text.splitlines(), start=1):
         match = _ROW_RE.match(line)
         if not match:
             continue
         issue_num, rest = match.group(1), match.group(2)
-        if "(pending commit)" not in rest or "FIXED" not in rest:
+        # Columns are `Issue | Status | Test | Fix Commit | Notes | Test Reference`; `rest` starts
+        # right after the Issue column's closing pipe, so index 1 is Status and 3 is Fix Commit.
+        fields = rest.split("|")
+        status = fields[1].strip() if len(fields) > 1 else ""
+        fix_commit_cell = fields[3].strip() if len(fields) > 3 else ""
+        if status != "FIXED" or "(pending commit)" not in fix_commit_cell:
             continue
-        real_hash = _git_fix_commit_for_issue(issue_num)
+        real_hash = fix_commits.get(issue_num)
         if real_hash:
             violations.append(
                 f"docs/smoke_test_issues.md:{lineno}: row #{issue_num} is FIXED with a "
                 f"'(pending commit)' placeholder, but {real_hash} already fixes it "
-                f"(commit message starts with 'Fix #{issue_num}') -- backfill the hash."
+                f"(commit subject starts with 'Fix #{issue_num}') -- backfill the hash."
             )
     return violations
 
@@ -121,10 +144,18 @@ def find_banned_phrasing() -> list[str]:
     return violations
 
 
+_HELP_DOCS_DIR = _REPO_ROOT / "src" / "gui" / "assets" / "help"
+
+
 def find_app_internals_references() -> list[str]:
-    """No WiiM/LinkPlay app internals (decompiled names, smali, APK contents) in any doc."""
+    """No WiiM/LinkPlay app internals (decompiled names, smali, APK contents) in any doc.
+
+    Scans docs/ recursively (not just its top level) plus src/gui/assets/help/ -- the latter is
+    bundled into and shown by the packaged app, so a leak there would ship straight to end users.
+    """
     violations: list[str] = []
-    for path in sorted(_DOCS_DIR.glob("*.md")):
+    paths = sorted(_DOCS_DIR.rglob("*.md")) + sorted(_HELP_DOCS_DIR.glob("*.md"))
+    for path in paths:
         if path.name in _EXCLUDED_DOCS:
             continue
         text = path.read_text(encoding="utf-8")
