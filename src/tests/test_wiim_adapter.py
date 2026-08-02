@@ -1072,11 +1072,11 @@ class TestWriteRoomfit:
     async def test_write_roomfit_rejected_band_write_raises_before_save(
         self, mock_client: AsyncMock, roomfit_write_capabilities: DeviceCapabilities
     ) -> None:
-        """An explicit device-side rejection of the band write (the same
-        {"status": "Failed"} shape _is_write_rejection() already detects
-        for the PEQ batch path) must raise WiiMResponseError immediately,
-        before EQSourceSave is ever issued -- previously the response was
-        discarded and the write proceeded straight to save regardless."""
+        """An explicit device-side rejection of the band write (one of the
+        shapes _is_write_rejection() detects for the PEQ batch path) must
+        raise WiiMResponseError immediately, before EQSourceSave is ever
+        issued -- previously the response was discarded and the write
+        proceeded straight to save regardless."""
         from src.models.canonical import CanonicalFilter
 
         adapter = WiiMAdapter(
@@ -1664,10 +1664,26 @@ class TestEnablePeq:
     async def test_enable_peq_raises_on_device_side_rejection(
         self, adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """enable_peq raises on the device's real rejection shapes
-        (_is_write_rejection()'s "unknown"/{"status": "Failed"}), not just an
-        "error" key that this device never actually sends."""
+        """enable_peq raises on the device's confirmed rejection shapes
+        (_is_write_rejection()'s "unknown"/{"status": "Failed"})."""
         mock_client.command.return_value = {"status": "Failed"}
+
+        with pytest.raises(WiiMResponseError, match="EQChangeSourceFX"):
+            await adapter.enable_peq("wifi")
+
+    async def test_enable_peq_raises_on_error_key(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """enable_peq also raises on a dict carrying an "error" key, even
+        though no WiiM firmware has been observed sending this shape for
+        EQChangeSourceFX. This is a deliberate safety margin on
+        _is_write_rejection(): sits on SafeWrite's rollback-decision path,
+        where reading a real rejection as success (a false negative) leaves
+        PEQ half-enabled with no rollback, while over-catching an
+        unrecognized shape (a false positive) only costs an extra rollback.
+        Do not remove this without hardware evidence the shape can't occur,
+        recorded in docs/corrections.md."""
+        mock_client.command.return_value = {"error": "eq not supported"}
 
         with pytest.raises(WiiMResponseError, match="EQChangeSourceFX"):
             await adapter.enable_peq("wifi")
@@ -1720,10 +1736,20 @@ class TestDisablePeq:
     async def test_disable_peq_raises_on_device_side_rejection(
         self, adapter: WiiMAdapter, mock_client: AsyncMock
     ) -> None:
-        """disable_peq raises on the device's real rejection shapes
-        (_is_write_rejection()'s "unknown"/{"status": "Failed"}), not just an
-        "error" key that this device never actually sends."""
+        """disable_peq raises on the device's confirmed rejection shapes
+        (_is_write_rejection()'s "unknown"/{"status": "Failed"})."""
         mock_client.command.return_value = "unknown command"
+
+        with pytest.raises(WiiMResponseError, match="EQSourceOff"):
+            await adapter.disable_peq("wifi")
+
+    async def test_disable_peq_raises_on_error_key(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """disable_peq also raises on a dict carrying an "error" key -- see
+        _is_write_rejection()'s docstring for why this deliberately broad
+        catch-all is kept even without a confirmed hardware sighting."""
+        mock_client.command.return_value = {"error": "eq not supported"}
 
         with pytest.raises(WiiMResponseError, match="EQSourceOff"):
             await adapter.disable_peq("wifi")

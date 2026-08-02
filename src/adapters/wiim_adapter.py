@@ -498,12 +498,32 @@ class WiiMAdapter:
 
     @staticmethod
     def _is_write_rejection(resp: object) -> bool:
-        """True when a write response is an explicit device-side rejection
-        ("unknown command" or {"status": "Failed"}) rather than acceptance
-        ("OK" string, or a dict on some firmware)."""
+        """True when a write response is a device-side rejection rather than
+        acceptance ("OK" string, or a dict on some firmware).
+
+        Confirmed-on-hardware rejection shapes: a string containing "unknown"
+        (e.g. "unknown command"), or {"status": "Failed"}.
+
+        Also treats any dict carrying a truthy "error" key as a rejection,
+        even though no WiiM firmware has been observed sending that shape for
+        these commands. This is a deliberate safety margin, not an oversight
+        -- do not narrow it back to only the two confirmed shapes above.
+        These calls sit on SafeWrite's rollback-decision path (PEQ
+        enable/disable, batch band writes, RoomFit band writes), where a
+        false negative here (a real rejection read as success) leaves the
+        device in a half-written state with no rollback triggered, while a
+        false positive (an unrecognized dict wrongly read as a rejection)
+        only costs an extra rollback/retry. Given that asymmetry, catching
+        a theoretical error shape we've never seen is strictly cheaper than
+        missing a real one we haven't seen yet either. Narrow this only
+        after hardware evidence rules the shape out, and record that
+        evidence in docs/corrections.md when you do.
+        """
         if isinstance(resp, str) and "unknown" in resp.lower():
             return True
-        return isinstance(resp, dict) and str(resp.get("status", "")).lower() == "failed"
+        if isinstance(resp, dict) and str(resp.get("status", "")).lower() == "failed":
+            return True
+        return isinstance(resp, dict) and bool(resp.get("error"))
 
     async def _write_bands(
         self,
