@@ -42,12 +42,6 @@ _EXCLUDED_DOCS = {"qa_signoff.md"}
 
 _ROW_RE = re.compile(r"^\|\s*(\d+)\s*\|(.*)$")
 
-# Matches a "Fix #<N>" or combined "Fix #<N>/#<M>" commit-subject prefix, e.g.
-# "Fix #244: ..." or "Fix #241/#242: ...". Only the text up to the first colon
-# is treated as issue references, so mentions of numbers later in the subject
-# don't get misread as additional fixed issues.
-_FIX_PREFIX_RE = re.compile(r"^Fix ((?:#\d+[/,]?\s*)+):")
-
 # CLAUDE.md: wiim_api_notes.md "should only ever point at [corrections.md],
 # never restate it" -- these phrases are the restatement tell.
 _BANNED_NARRATIVE_PHRASES = (
@@ -81,7 +75,11 @@ def _issue_numbers_from_subject(subject: str) -> set[str]:
 
 
 def _fix_commits_by_issue() -> dict[str, str]:
-    """Map each issue number to the short hash of the (first, oldest) commit whose subject fixes it.
+    """Map each issue number to the short hash of the most recent commit whose subject fixes it.
+
+    `git log` yields commits newest-first and `dict.setdefault` keeps the first hash seen per issue
+    number, so ties (more than one "Fix #N" commit for the same issue) resolve to the newest one --
+    not the oldest, despite what an earlier version of this docstring claimed.
 
     Scoped to history reachable from the current checkout (not `--all`), and matched against the
     commit *subject* line only -- `git log --grep` otherwise matches anywhere in the full message,
