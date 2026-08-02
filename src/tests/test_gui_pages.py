@@ -163,14 +163,16 @@ class TestConnectPage:
         with qtbot.waitSignal(page.refresh_requested, timeout=1000):
             page._rescan_btn.click()
 
-    def test_rescan_button_disabled_while_scanning(self, qtbot) -> None:
-        """The rescan button is disabled during an active scan and
-        re-enabled once scanning stops."""
+    def test_rescan_button_stays_enabled_while_scanning(self, qtbot) -> None:
+        """The rescan button stays enabled through set_scanning() toggles --
+        disabling it during an in-flight operation is OperationFeedbackManager's
+        job (via action_buttons()/is_active), not ConnectPage's, so it never
+        disagrees with the Ctrl+R shortcut about whether refresh is available."""
         page = ConnectPage()
         qtbot.addWidget(page)
 
         page.set_scanning(True)
-        assert not page._rescan_btn.isEnabled()
+        assert page._rescan_btn.isEnabled()
 
         page.set_scanning(False)
         assert page._rescan_btn.isEnabled()

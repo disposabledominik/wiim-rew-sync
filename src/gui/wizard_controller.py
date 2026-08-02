@@ -276,10 +276,20 @@ class WizardController(QObject):
         The target step must be in the completed set or be the current step.
         All steps after the target in the sequence are removed from the
         completed set.  Emits ``step_changed``.
+
+        Navigating back to Connect is a special case: reconnecting may land
+        on a different device with different capabilities, so the whole
+        session (selected device, flow type, filters, everything) is reset
+        rather than just invalidated -- re-entering Connect should look like
+        a fresh app start, not a resume of the previous device's session.
         """
         sequence = self.get_steps()
 
         if step not in sequence:
+            return
+
+        if step == WizardStep.CONNECT:
+            self.reset()
             return
 
         target_idx = sequence.index(step)

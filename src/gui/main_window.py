@@ -1336,6 +1336,7 @@ class MainWindow(QMainWindow):
         self._connect_page.clear()
         self._filters_page.clear_results()
         self._push_page.reset()
+        self._sidebar_nav.set_device_info("", connected=False)
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["connect"])
 
         # Rebuild step indicator for default PEQ flow
