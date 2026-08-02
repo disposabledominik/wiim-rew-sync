@@ -50,12 +50,10 @@ def parse_wiim_band_array(
     Returns
     -------
     list[CanonicalFilter]
-        One CanonicalFilter per band in the input array.
-
-    Raises
-    ------
-    ValidationError
-        If an unknown mode value is encountered.
+        One CanonicalFilter per band in the input array. A band whose
+        ``mode`` isn't in ``_MODE_MAP`` is not dropped or raised on -- it's
+        logged and returned as a ``type="UNKNOWN"`` filter, carrying the raw
+        mode value via ``raw_mode`` for round-tripping.
     """
     filters: list[CanonicalFilter] = []
 

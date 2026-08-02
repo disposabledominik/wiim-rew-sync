@@ -791,23 +791,32 @@ class SecondaryWorkflowManager(QObject):
             len(items) - skipped, len(target_devices), succeeded, failed
         )
 
-    @Slot(str, str, list, str, list, object, object)
+    @Slot(str, str, list, str, object, object, object, object)
     def copy_local_profile_to_devices(
         self,
         profile_name: str,
         preset_type: str,
         target_devices: list[DeviceInfo],
         target_source: str,
-        filters: list[CanonicalFilter],
         channel_mode: ChannelMode,
-        peq_settings: PEQSettings,
+        filters: list[CanonicalFilter] | None,
+        filters_l: list[CanonicalFilter] | None,
+        filters_r: list[CanonicalFilter] | None,
     ) -> None:
-        """Copy a locally saved profile's already-in-hand filters to devices."""
+        """Copy a locally saved Profile's raw filter fields to devices.
+
+        Takes the Profile's fields as-is (not a pre-built PEQSettings) so the
+        build_peq_settings()/extract_filters() normalization -- and its
+        ValueError case for an incomplete L/R split -- happens here rather
+        than in MainWindow, matching how `_do_copy_presets_batch_multi`
+        handles a live-device read failure: reported through
+        copy_local_profile_complete, not a synchronous caller-side try/except.
+        """
         self._dispatch(
             "copy_local_profile_to_devices",
             self._do_copy_local_profile_to_devices(
                 profile_name, preset_type, target_devices, target_source,
-                filters, channel_mode, peq_settings,
+                channel_mode, filters, filters_l, filters_r,
             ),
         )
 
@@ -817,29 +826,53 @@ class SecondaryWorkflowManager(QObject):
         preset_type: str,
         target_devices: list[DeviceInfo],
         target_source: str,
-        filters: list[CanonicalFilter],
         channel_mode: ChannelMode,
-        peq_settings: PEQSettings,
+        filters: list[CanonicalFilter] | None,
+        filters_l: list[CanonicalFilter] | None,
+        filters_r: list[CanonicalFilter] | None,
     ) -> None:
-        """Copy a locally saved profile's already-in-hand filters to devices.
+        """Copy a locally saved profile's filters to devices.
 
         Unlike `_do_copy_presets_batch_multi`, there's no source device to
         read from -- the filters already came from a local Profile -- so
-        this is a single-entry `reads` list around the same shared
-        `_write_preset_copies_to_devices` write primitive. No widget access
-        here (moved out of MainWindow, docs/backlog.md item 2 Phase D) --
-        results reported via copy_local_profile_complete.
+        this builds/validates the PEQSettings from the Profile's raw fields
+        (the "read" step's equivalent here) before the single-entry `reads`
+        list around the same shared `_write_preset_copies_to_devices` write
+        primitive. No widget access here (moved out of MainWindow,
+        docs/backlog.md item 2 Phase D) -- results reported via
+        copy_local_profile_complete.
 
         Args:
             profile_name: Name of the local profile being copied.
             preset_type: "PEQ" or "RoomFit", chosen via PresetTypeDialog.
             target_devices: List of discovered device objects to copy to.
             target_source: Target source name on each remote device.
-            filters: Filters from the local Profile.
             channel_mode: Channel mode of the local Profile.
-            peq_settings: Full PEQSettings built from the local Profile.
+            filters: Stereo filters from the local Profile, if any.
+            filters_l: Left-channel filters from the local Profile, if any.
+            filters_r: Right-channel filters from the local Profile, if any.
         """
-        reads = [(profile_name, preset_type, filters, channel_mode, peq_settings)]
+        assert self._bridge is not None
+        try:
+            peq_settings = build_peq_settings(
+                target_source, filters or [], channel_mode,
+                filters_l=filters_l, filters_r=filters_r,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Build PEQSettings for local profile copy '%s' failed: %s",
+                profile_name, exc,
+            )
+            self._bridge.progress_update.emit(f"Copy failed: {exc}")
+            self.copy_local_profile_complete.emit(
+                profile_name, len(target_devices), 0, len(target_devices)
+            )
+            return
+        resolved_filters, resolved_channel_mode = extract_filters(peq_settings)
+
+        reads = [
+            (profile_name, preset_type, resolved_filters, resolved_channel_mode, peq_settings)
+        ]
         succeeded, failed = await self._write_preset_copies_to_devices(
             reads, target_devices, target_source
         )

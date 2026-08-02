@@ -102,7 +102,6 @@ from src.models.errors import (
     WiiMConnectionError,
     WiiMTimeoutError,
 )
-from src.models.peq import build_peq_settings, extract_filters
 from src.models.profile import build_profile
 from src.repository.backup_manager import BackupManager, is_multi_source_backup_path
 from src.repository.profile_repository import ProfileRepository
@@ -3027,27 +3026,18 @@ class MainWindow(QMainWindow):
         state = self._wizard_controller.state
         target_source = state.primary_source
 
-        try:
-            peq_settings = build_peq_settings(
-                target_source,
-                filters_value or [],
-                channel_mode_value,
-                filters_l=filters_l_value,
-                filters_r=filters_r_value,
-            )
-        except ValueError as exc:
-            self._status_banner.show_error(f"Copy failed: {exc}")
-            return
-        filters, channel_mode = extract_filters(peq_settings)
-
         logger.info(
             "Copy local preset '%s' (%s) to %d device(s)",
             name, preset_type, len(selected_devices),
         )
 
+        # Passed as raw Profile fields, not a pre-built PEQSettings --
+        # build_peq_settings()/extract_filters() and the incomplete-L/R-split
+        # ValueError case they can raise are SecondaryWorkflowManager's job,
+        # not MainWindow's (CLAUDE.md: "GUI has zero business logic").
         self._secondary_workflows.copy_local_profile_to_devices(
             name, preset_type, selected_devices, target_source,
-            filters, channel_mode, peq_settings,
+            channel_mode_value, filters_value, filters_l_value, filters_r_value,
         )
 
     @Slot(object)

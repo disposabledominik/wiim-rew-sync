@@ -1,10 +1,31 @@
-"""Tests for src.utils.paths.ensure_suffix."""
+"""Tests for src.utils.paths."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from src.utils.paths import ensure_suffix
+from src.utils.paths import ensure_suffix, is_writable_directory
+
+
+def test_is_writable_directory_true_for_existing_writable_dir(tmp_path: Path) -> None:
+    assert is_writable_directory(tmp_path) is True
+
+
+def test_is_writable_directory_false_for_nonexistent_path(tmp_path: Path) -> None:
+    assert is_writable_directory(tmp_path / "does-not-exist") is False
+
+
+def test_is_writable_directory_false_for_a_file_not_a_directory(tmp_path: Path) -> None:
+    """A path that exists but is a file, not a directory, must not pass --
+    os.access() alone (without the is_dir() check) wouldn't catch this."""
+    file_path = tmp_path / "not_a_dir.txt"
+    file_path.write_text("x", encoding="utf-8")
+
+    assert is_writable_directory(file_path) is False
+
+
+def test_is_writable_directory_accepts_str_or_path(tmp_path: Path) -> None:
+    assert is_writable_directory(str(tmp_path)) is True
 
 
 def test_ensure_suffix_appends_when_missing() -> None:

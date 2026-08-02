@@ -7,6 +7,8 @@ Requirements referenced: 15.1-15.12, 8.3-8.6, 24.1-24.15.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from PySide6.QtCore import Qt
 
 from src.adapters.rew_http_client import MeasurementSummary
@@ -796,6 +798,72 @@ class TestSettingsViewSignals:
 
         with qtbot.waitSignal(view.show_onboarding_requested, timeout=1000):
             view.show_onboarding_requested.emit()
+
+
+class TestSettingsViewBrowseWritabilityCheck:
+    """_on_browse_clicked() (Req 24.9) delegates writability validation to
+    src.utils.paths.is_writable_directory() rather than inlining os.access()
+    itself (moved out of the GUI layer, branch-quality review 2026-08-02:
+    the check has no Qt dependency and belongs in utils/). Previously
+    untested -- neither branch here had any regression coverage before this
+    change."""
+
+    def test_writable_folder_accepted(self, qtbot) -> None:
+        view = SettingsView()
+        qtbot.addWidget(view)
+        view.show()
+
+        with (
+            patch(
+                "src.gui.views.settings_view.QFileDialog.getExistingDirectory",
+                return_value="/some/folder",
+            ),
+            patch(
+                "src.gui.views.settings_view.is_writable_directory",
+                return_value=True,
+            ),
+        ):
+            view._on_browse_clicked(view._rew_folder_edit, "REW Export Folder:")
+
+        assert view._rew_folder_edit.text() != ""
+        assert view._path_validation_label.isVisible() is False
+
+    def test_unwritable_folder_rejected_shows_validation_label(self, qtbot) -> None:
+        view = SettingsView()
+        qtbot.addWidget(view)
+        view.show()
+
+        with (
+            patch(
+                "src.gui.views.settings_view.QFileDialog.getExistingDirectory",
+                return_value="/some/readonly/folder",
+            ),
+            patch(
+                "src.gui.views.settings_view.is_writable_directory",
+                return_value=False,
+            ),
+        ):
+            view._on_browse_clicked(view._rew_folder_edit, "REW Export Folder:")
+
+        assert view._path_validation_label.isVisible() is True
+        assert "not writable" in view._path_validation_label.text()
+
+    def test_dialog_cancelled_leaves_field_and_label_unchanged(self, qtbot) -> None:
+        """An empty return from the native picker (user cancelled) must not
+        touch the line edit or validation label at all."""
+        view = SettingsView()
+        qtbot.addWidget(view)
+        view.show()
+        original_text = view._rew_folder_edit.text()
+
+        with patch(
+            "src.gui.views.settings_view.QFileDialog.getExistingDirectory",
+            return_value="",
+        ):
+            view._on_browse_clicked(view._rew_folder_edit, "REW Export Folder:")
+
+        assert view._rew_folder_edit.text() == original_text
+        assert view._path_validation_label.isVisible() is False
 
 
 class TestSettingsViewGetCurrentSettings:

@@ -40,6 +40,7 @@ from src.gui.constants import (
     SPACING_SM,
 )
 from src.utils.app_dirs import to_display_path
+from src.utils.paths import is_writable_directory
 
 
 class SettingsView(QWidget):
@@ -455,8 +456,7 @@ class SettingsView(QWidget):
 
         if folder:
             # Validate directory exists and is writable (Req 24.9)
-            folder_path = Path(folder)
-            if folder_path.is_dir() and os.access(folder, os.W_OK):
+            if is_writable_directory(folder):
                 line_edit.setText(to_display_path(folder))
                 self._path_validation_label.setVisible(False)
                 self._emit_settings_changed()

@@ -207,6 +207,10 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 - [F] While an operation is in progress ("Processing..." shown), other action buttons are disabled
 - [F] After the operation completes, buttons work normally again
   NOTE: This doesn't seem to work - e.g. in "Presets on Device" and "My Saved Presets" view all button work during an active operation ("Processing..." shown). Smoke test issue `#243` logged.
+  UPDATE (2026-08-02): `#243` was fixed and merged the day after this sign-off (PR #16,
+  2026-07-27, per `docs/smoke_test_issues.md`). The `[F]` result above is left as the historical
+  record of what this sign-off actually observed on 2026-07-26; re-run at the next sign-off to
+  record a `[P]` result against the fix.
 
 ### Test 18: Window Close
 - [P] With filters loaded, closing the window shows an "Unsaved Changes" dialog
@@ -324,7 +328,8 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 **Overall: ☐ PASS — ready to release ☑ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
 
 Waived gaps / blockers:
-- Issue `#243` is a waived gap.
+- Issue `#243` was a waived gap as of this sign-off (2026-07-26); fixed and merged the following
+  day (PR #16, 2026-07-27) -- no longer an open gap as of 2026-08-02. See Test 17 above.
 
 ---
 

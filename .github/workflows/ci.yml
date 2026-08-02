@@ -54,6 +54,39 @@ jobs:
           done
           echo "PR title OK: $title"
 
+  doc-sync-nudge:
+    name: Same-commit doc-sync nudge
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Advisory only, not a hard gate: not every "Fix #N" commit is a logged
+      # GUI bug in smoke_test_issues.md, so this can't be a reliable pass/fail
+      # check -- it's a visible nudge toward CLAUDE.md's same-commit rule
+      # (the #244 drift the doc-consistency check now catches after the fact
+      # started exactly like this: a fix commit landed with no doc-row update
+      # in the same PR).
+      - name: Warn if a "Fix #N" commit doesn't touch smoke_test_issues.md
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          fix_commits=$(git log "$merge_base..$HEAD_SHA" --oneline --grep '^Fix #[0-9]' -i -E)
+          changed_files=$(git diff --name-only "$merge_base" "$HEAD_SHA")
+
+          if [[ -n "$fix_commits" ]] && ! grep -qx 'docs/smoke_test_issues.md' <<< "$changed_files"; then
+            echo "::warning::This PR has commit(s) whose message starts with 'Fix #<N>' but does not touch docs/smoke_test_issues.md. If this fixes a logged GUI bug, update its Status + Fix Commit in this same PR (CLAUDE.md's same-commit rule)."
+            echo "Commit(s):"
+            echo "$fix_commits"
+          else
+            echo "OK: no same-commit doc-sync gap detected."
+          fi
+
   lint-type-test:
     runs-on: ubuntu-latest
     env:
