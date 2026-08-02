@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+
+def is_writable_directory(path: str | Path) -> bool:
+    """Return True if *path* is an existing directory this process can write to."""
+    return Path(path).is_dir() and os.access(path, os.W_OK)
 
 
 def ensure_suffix(path: Path, suffix: str) -> Path:

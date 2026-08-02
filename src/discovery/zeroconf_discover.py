@@ -91,10 +91,20 @@ class ZeroconfDiscover:
             if found:
                 await asyncio.sleep(min(0.5, self._timeout / 4))
 
-            # Resolve each found service
+            # Resolve each found service. One service failing to resolve
+            # must not lose devices already resolved earlier in this loop.
             for service_type, name in found:
                 info = AsyncServiceInfo(service_type, name)
-                await info.async_request(azc.zeroconf, timeout=int(self._timeout * 1000))
+                try:
+                    await info.async_request(azc.zeroconf, timeout=int(self._timeout * 1000))
+                except Exception:
+                    logger.debug(
+                        "Failed to resolve mDNS service %s (%s)",
+                        name,
+                        service_type,
+                        exc_info=True,
+                    )
+                    continue
 
                 device = self._parse_service_info(info)
                 if device is not None:

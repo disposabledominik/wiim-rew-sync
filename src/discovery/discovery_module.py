@@ -159,7 +159,11 @@ class DiscoveryModule:
 
         # Check if mDNS already found devices during the grace period
         if mdns_task.done():
-            mdns_devices = mdns_task.result()
+            try:
+                mdns_devices = mdns_task.result()
+            except Exception:
+                logger.debug("mDNS task raised an exception", exc_info=True)
+                mdns_devices = []
             if mdns_devices:
                 enriched = await self._enrich_mdns_devices(mdns_devices)
                 _add_devices(enriched)

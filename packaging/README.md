@@ -94,7 +94,7 @@ pyinstaller packaging/wiim_rew_sync_macos.spec
 ### Output
 
 ```
-dist/WiiM-REW-Sync.app/   (~60-90 MB)
+dist/WiiM-REW-Sync.app/   (~70-90 MB)
 ```
 
 ### Verify
@@ -158,7 +158,7 @@ pyinstaller packaging/wiim_rew_sync_linux.spec
 ### Output
 
 ```
-dist/WiiM-REW-Sync   (~60-90 MB)
+dist/WiiM-REW-Sync   (~70-90 MB)
 ```
 
 ### Verify

@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 from check_docs_consistency import (  # type: ignore[import-not-found]
+    _git_fix_commit_for_issue,
     find_app_internals_references,
     find_banned_phrasing,
     find_stale_pending_commits,
@@ -53,3 +54,15 @@ def test_docs_have_no_app_internals_references() -> None:
         "Doc(s) reference WiiM/LinkPlay app internals, which CLAUDE.md bans "
         "outright:\n" + "\n".join(violations)
     )
+
+
+def test_fix_commit_lookup_finds_combined_issue_commits() -> None:
+    """A commit fixing several issues at once ("Fix #241/#242: ...") must be
+    found when looking up either issue number individually -- this repo's own
+    history already uses that convention, and an earlier version of the lookup
+    only matched a single anchored issue number and silently missed it."""
+    commit_for_241 = _git_fix_commit_for_issue("241")
+    commit_for_242 = _git_fix_commit_for_issue("242")
+
+    assert commit_for_241 is not None
+    assert commit_for_241 == commit_for_242

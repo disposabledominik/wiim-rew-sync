@@ -273,7 +273,7 @@ class WiiMAdapter:
         )
         # WiiM typically returns "OK" or a JSON dict on success.
         # A WiiMResponseError from the HTTP layer (non-200) is raised automatically.
-        if isinstance(response, dict) and response.get("error"):
+        if self._is_write_rejection(response):
             raise WiiMResponseError(f"{command} failed for source '{source_name}': {response}")
 
     async def enable_peq(self, source_name: str) -> None:

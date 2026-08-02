@@ -5,8 +5,8 @@ methods directly with mocked adapter factories and verifying signal
 emissions.
 
 Note: copy-preset-to-device coverage (_write_preset_to_adapter,
-_do_copy_presets_batch_multi, _do_copy_local_profile_to_devices, etc.) lives
-in test_smoke_regression_operations.py instead of here (issue26/34/58/69/74/
+_do_copy_presets_batch_multi, etc.) lives in
+test_smoke_regression_operations.py instead of here (issue26/34/58/69/74/
 78/79/153/194 and others) -- those characterization tests were written
 against MainWindow during the original Phase D extraction (docs/backlog.md
 item 2) and never relocated. This file's own convention is undo/
@@ -17,6 +17,11 @@ genuinely dead at the time -- that note is retired as of the 2026-07-17
 branch-quality review, which found it had gone stale: the copy-to-device
 methods above are very much alive and wired to real UI actions in
 main_window.py (_on_copy_to_device_requested, _on_local_preset_copy_to_device_requested).
+_do_copy_local_profile_to_devices's write path is still exercised via
+MainWindow in test_smoke_regression_operations.py, but its PEQSettings
+build/validation step moved into the manager itself (2026-08-02, GUI
+business-logic-leak fix) and is tested directly against the coroutine below
+in TestCopyLocalProfileToDevicesValidation.
 
 Requirements: 8.1-8.6
 """
@@ -29,6 +34,8 @@ import pytest
 
 from src.adapters.safe_write import WriteResult
 from src.gui.secondary_workflows import SecondaryWorkflowManager
+from src.models.canonical import CanonicalFilter
+from src.models.channel_mode import ChannelMode
 
 # ---------------------------------------------------------------------------
 # Undo with missing backup file
@@ -481,3 +488,82 @@ class TestUndoMultiSource:
         succeeded, failed, _msg = undo_signals[0]
         assert succeeded == 0
         assert failed != 0
+
+
+class TestCopyLocalProfileToDevicesValidation:
+    """SecondaryWorkflowManager._do_copy_local_profile_to_devices builds and
+    validates PEQSettings from a local Profile's raw fields itself now
+    (moved out of MainWindow, branch-quality review 2026-08-02, GUI
+    business-logic-leak fix). An incomplete L/R split (build_peq_settings()'s
+    ValueError, require_lr_filters, ca14e26) must be reported the same way a
+    live-device read failure is in _do_copy_presets_batch_multi: via
+    copy_local_profile_complete with succeeded=0/failed=n_devices, plus a
+    progress_update naming the failure -- not raised back into the caller.
+    """
+
+    @pytest.mark.asyncio
+    async def test_incomplete_lr_split_reports_failure_without_writing(self) -> None:
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+
+        complete_signals: list[tuple[str, int, int, int]] = []
+        manager.copy_local_profile_complete.connect(
+            lambda name, n, ok, fail: complete_signals.append((name, n, ok, fail))
+        )
+
+        target_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
+
+        await manager._do_copy_local_profile_to_devices(
+            "Broken LR Profile",
+            "PEQ",
+            target_devices,
+            "wifi",
+            ChannelMode.LR,
+            None,
+            [],
+            [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)],
+        )
+
+        assert complete_signals == [("Broken LR Profile", 1, 0, 1)]
+        manager._bridge.progress_update.emit.assert_called_once()
+        assert "Copy failed" in manager._bridge.progress_update.emit.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_valid_stereo_profile_proceeds_to_write(self) -> None:
+        """A valid split must still reach the write path (not short-circuit
+        the way the invalid-split case above does)."""
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+        manager._safe_write_factory = MagicMock()
+
+        write_calls: list[tuple] = []
+
+        async def _fake_write(reads, target_devices, target_source):
+            write_calls.append((reads, target_devices, target_source))
+            return len(target_devices), 0
+
+        manager._write_preset_copies_to_devices = _fake_write
+
+        complete_signals: list[tuple[str, int, int, int]] = []
+        manager.copy_local_profile_complete.connect(
+            lambda name, n, ok, fail: complete_signals.append((name, n, ok, fail))
+        )
+
+        target_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
+        stereo_filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)
+        ]
+
+        await manager._do_copy_local_profile_to_devices(
+            "Good Profile",
+            "PEQ",
+            target_devices,
+            "wifi",
+            ChannelMode.STEREO,
+            stereo_filters,
+            None,
+            None,
+        )
+
+        assert len(write_calls) == 1
+        assert complete_signals == [("Good Profile", 1, 1, 0)]

@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,12 @@ _WIIM_API_NOTES = _DOCS_DIR / "wiim_api_notes.md"
 _EXCLUDED_DOCS = {"qa_signoff.md"}
 
 _ROW_RE = re.compile(r"^\|\s*(\d+)\s*\|(.*)$")
+
+# Matches a "Fix #<N>" or combined "Fix #<N>/#<M>" commit-subject prefix, e.g.
+# "Fix #244: ..." or "Fix #241/#242: ...". Only the text up to the first colon
+# is treated as issue references, so mentions of numbers later in the subject
+# don't get misread as additional fixed issues.
+_FIX_PREFIX_RE = re.compile(r"^Fix ((?:#\d+[/,]?\s*)+):")
 
 # CLAUDE.md: wiim_api_notes.md "should only ever point at [corrections.md],
 # never restate it" -- these phrases are the restatement tell.
@@ -63,10 +70,22 @@ _BANNED_APP_INTERNALS = (
 
 
 def _git_fix_commit_for_issue(issue_num: str) -> str | None:
-    """Return the short hash of the commit whose message starts with `Fix #<issue_num>`, if any."""
+    """Return the short hash of the commit whose message starts with `Fix #<issue_num>`, if any.
+
+    Also matches commits that fix several issues together, e.g.
+    `Fix #241/#242: ...` (an established convention in this repo's history).
+    Bounded to history reachable from HEAD, not `--all` refs, so a `Fix #<N>`
+    commit sitting only on some other local/remote branch can't be mistaken
+    for one that's actually landed.
+    """
+    git = shutil.which("git")
+    if git is None:
+        return None
     try:
-        result = subprocess.run(
-            ["git", "log", "--all", "--oneline", "--grep", rf"^Fix #{issue_num}\b", "-E"],
+        # All args are static; `git` is resolved via shutil.which(), not
+        # user input.
+        result = subprocess.run(  # noqa: S603
+            [git, "log", "HEAD", "--oneline", "--grep", r"^Fix #[0-9]", "-E"],
             cwd=_REPO_ROOT,
             capture_output=True,
             text=True,
@@ -75,14 +94,21 @@ def _git_fix_commit_for_issue(issue_num: str) -> str | None:
         )
     except (OSError, subprocess.SubprocessError):
         return None
-    lines = result.stdout.strip().splitlines()
-    if not lines:
-        return None
-    return lines[0].split()[0]
+    for line in result.stdout.strip().splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        commit_hash, subject = parts
+        match = _FIX_PREFIX_RE.match(subject)
+        if not match:
+            continue
+        if issue_num in set(re.findall(r"\d+", match.group(1))):
+            return commit_hash
+    return None
 
 
 def find_stale_pending_commits() -> list[str]:
-    """Rows marked FIXED with a '(pending commit)' placeholder whose real fix commit already exists."""
+    """Rows marked FIXED with a '(pending commit)' placeholder whose real fix commit exists."""
     violations: list[str] = []
     if not _SMOKE_TEST_ISSUES.exists():
         return violations
@@ -116,7 +142,7 @@ def find_banned_phrasing() -> list[str]:
             if phrase in lower:
                 violations.append(
                     f"docs/wiim_api_notes.md:{lineno}: investigation-narrative phrasing "
-                    f"({phrase!r}) -- state the current rule and point at docs/corrections.md instead."
+                    f"({phrase!r}) -- state the current rule, point at docs/corrections.md."
                 )
     return violations
 
@@ -124,7 +150,7 @@ def find_banned_phrasing() -> list[str]:
 def find_app_internals_references() -> list[str]:
     """No WiiM/LinkPlay app internals (decompiled names, smali, APK contents) in any doc."""
     violations: list[str] = []
-    for path in sorted(_DOCS_DIR.glob("*.md")):
+    for path in sorted(_DOCS_DIR.rglob("*.md")):
         if path.name in _EXCLUDED_DOCS:
             continue
         text = path.read_text(encoding="utf-8")

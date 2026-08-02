@@ -4,6 +4,133 @@ Items moved here from active specs, or noted during code quality audits. Not pla
 current release but may be reconsidered in future versions. Backend support may already exist
 (noted per item).
 
+Items are listed highest-priority-first (safety/correctness gaps, then infra/process gaps, then
+low-priority tech debt). Each item's `## N.` number is a stable identifier, not a priority rank --
+code comments, docstrings, and `docs/smoke_test_issues.md` rows cite items by this number (e.g.
+"docs/backlog.md item 3"), so numbers are never reassigned even when an item's position in this
+list changes as priorities shift. Reordered 2026-08-02; no numbers changed, item 6 added.
+
+---
+
+## 3. Multi-Source Push: No Automatic Rollback on Partial Failure (Known Limitation)
+
+**What:** `PrimaryWorkflowManager._do_push()`'s PEQ flow writes to each of
+`state.selected_sources` in sequence and aborts on the first failure. Each individual source's
+write still goes through the full `SafeWrite` 5-step protocol — but if source N fails after
+sources 1..N-1 already succeeded, there is no cross-source rollback: the already-written sources
+are left in their new state. CLAUDE.md's design principles ("Safety before convenience" /
+"automatic rollback on verification failure") read as applying at the whole-push level, not just
+per-source, so this is a real gap, not just a UX rough edge.
+
+**Why deferred:** Backup paths for all sources written before the failure are collected and
+surfaced (smoke #242), so the *user* can undo each succeeded source with one click today — the
+gap that remains is *automatic* rollback, not recoverability. Auto-invoking undo on sources 1..N-1
+when source N fails risks a rollback-of-a-rollback failure and is a large enough decision (does a
+failed auto-rollback also need its own critical-recovery UI?) to warrant its own design pass, so
+it's still deferred.
+
+**Status:** Partially addressed (smoke #242, `c132304`). `PushPage.set_failure()` now shows an
+accurate "N source(s) not restored" message instead of the misleading "device safely restored"
+line, and offers a one-click Undo for the sources that were actually written (via
+`WriteResult.partial_backup_paths` + the existing multi-source undo path) — closing the
+"document/expose the manual-undo path" option below. Automatic cross-source rollback is still not
+implemented.
+
+**To reactivate:** Decide whether automatic cross-source rollback is wanted on top of the current
+one-click manual Undo, and how it should behave if that rollback itself fails. Implement in
+`PrimaryWorkflowManager._do_push()`'s PEQ branch.
+
+---
+
+## 5. Operation Feedback: Overlapping Operations Can Race (Found via `/code-review ultra`)
+
+**What:** `OperationFeedbackManager` (`src/gui/operation_feedback.py`) tracks exactly one
+in-flight operation via a single `_is_active` flag and one `_prior_enabled` button-state
+snapshot, both overwritten wholesale on every `start_operation()` call. If an operation is
+cancelled (`_on_cancel_clicked()` calls `finish_operation()` immediately) while its underlying
+coroutine keeps running in the background — since Cancel only resets the UI and does not
+actually stop the coroutine — and a second, unrelated operation starts before that first
+coroutine's `finally` block fires its own `operation_finished` signal, the stray late signal
+calls `finish_operation()` again and restores buttons using the *second* operation's snapshot,
+not the first's. This can re-enable or re-disable buttons out of step with what's actually
+running.
+
+**Why deferred:** Found during a `/simplify`/`/code-review ultra --fix` cleanup pass on an
+unrelated diff (smoke `docs/smoke_test_issues.md` #243/#244); fixing it properly touches two
+separate concerns — (a) giving each `start_operation()` call an identity (a token returned by
+`start_operation()` that `finish_operation(token)` must match to actually apply, so a
+stale/mismatched call is a no-op) and (b) the more fundamental gap that Cancel doesn't cancel
+the underlying coroutine at all, which a token-based fix would paper over rather than resolve.
+Both are design decisions bigger than a quality-cleanup pass's scope, and the app's current
+one-op-at-a-time model means this is a narrow race window in practice, not a routinely-hit bug.
+Independently re-confirmed (still unfixed) during a 2026-08-02 codebase review.
+
+**Status:** Not started.
+
+**To reactivate:** Add an opaque operation token to `start_operation()`'s return value and
+require `finish_operation(token)` (and the hard-timeout path) to match it before restoring
+button state — a mismatched/stale token means a no-op. Separately, decide whether Cancel should
+actually cancel the in-flight coroutine (e.g. via `asyncio.Task.cancel()` plumbed through
+`AsyncBridge`) rather than only resetting the UI early.
+
+---
+
+## 6. CI Test Matrix: Single OS/Python Version Tests a 3-Platform Release (Found During Codebase Review)
+
+**What:** `.github/workflows/ci.yml`'s `lint-type-test` job runs on `ubuntu-latest` with Python
+3.12 only — no `strategy.matrix`. `.github/workflows/release.yml` builds and ships PyInstaller
+binaries for Windows, macOS, and Linux from a `vX.Y.Z` tag, and `pyproject.toml` sets no upper
+Python bound. So two of the three shipped platforms (Windows, macOS), and any Python version
+above 3.12 a user's environment might resolve to, get zero automated test coverage before a
+release build is cut — only the Linux/3.12 combination is verified by CI.
+
+**Why it matters:** Platform-specific bugs (path separators, `QFileDialog` behavior, subprocess
+calls like `settings_view.py`'s `/usr/bin/open` vs `/usr/bin/xdg-open` branch) can only be caught
+by hardware/manual QA today, and `docs/backlog.md` item 1 already notes only the Windows build has
+been hardware-verified so far — macOS and Linux builds currently ship on test coverage from a
+different OS entirely.
+
+**Why deferred:** Each additional matrix entry adds real CI minutes and maintenance (GUI tests
+need `QT_QPA_PLATFORM=offscreen` plus platform-specific Qt runtime libs, as `ci.yml` already
+installs for Ubuntu); a full 3-OS x N-Python matrix is likely overkill for a solo/small-team
+project's PR-gate CI. Not a bug fix — a deliberate infra-investment tradeoff to make once, not
+something to bolt on reactively per PR.
+
+**Status:** Not started.
+
+**To reactivate:** Add at least one non-Linux `strategy.matrix` entry (e.g. `windows-latest`,
+mirroring the Qt-offscreen/library-install steps `release.yml` already uses for that OS) to
+`lint-type-test`, rather than a full matrix — enough to catch a platform-specific regression
+before a tag build, without multiplying CI cost per entry added.
+
+---
+
+## 4. Backup Files Have No Source Identifier (Found During PR Review)
+
+**What:** `BackupManager.create_backup()` takes a `PEQSettings` (which carries `source_name`), but
+never persists that source name anywhere in the resulting `BackupRecord` — `name` is
+`backup_{device_uuid}_{timestamp}`, and the file itself is named only `{timestamp}.json` under a
+per-device-UUID directory (`backup_manager.py`). Nothing in the filename or JSON content ties a
+backup to the source it was taken from.
+
+**Why it matters:** The CLI's `restore-backup` command (smoke #241) requires `--source` as a
+separate argument precisely because the backup file can't supply it. In practice this only works
+reliably when restoring from the exact path the app just printed on a failure. Browsing the backup
+directory later — e.g. to pick the right file among several from a partial multi-source failure
+(smoke #242) — gives no way to tell which backup belongs to which source.
+
+**Why deferred:** A schema change (`BackupRecord` gaining a `source_name` field, or the filename
+being stemmed with it) needs migration handling for existing backup files on users' machines, and
+is out of scope for the PR that surfaced it. Not blocking, since the current callers (GUI Undo,
+CLI `restore-backup`) always have the source name available from elsewhere when they need it.
+
+**Status:** Not started.
+
+**To reactivate:** Add `source_name: str | None` to `BackupRecord` (optional, so old backup files
+without it still validate), have `create_backup()` populate it from `settings.source_name`, and
+consider stemming the filename with it too for at-a-glance browsing. Update `restore-backup` to
+default `--source` from the backup file when present, keeping the flag for older files.
+
 ---
 
 ## 1. Hardware QA Sign-off
@@ -44,96 +171,6 @@ migrate `DevicePickerDialog`/`QuickSetupDialog` onto it at the same time.
 
 ---
 
-## 3. Multi-Source Push: No Automatic Rollback on Partial Failure (Known Limitation)
-
-**What:** `PrimaryWorkflowManager._do_push()`'s PEQ flow writes to each of
-`state.selected_sources` in sequence and aborts on the first failure. Each individual source's
-write still goes through the full `SafeWrite` 5-step protocol — but if source N fails after
-sources 1..N-1 already succeeded, there is no cross-source rollback: the already-written sources
-are left in their new state. CLAUDE.md's design principles ("Safety before convenience" /
-"automatic rollback on verification failure") read as applying at the whole-push level, not just
-per-source, so this is a real gap, not just a UX rough edge.
-
-**Why deferred:** Backup paths for all sources written before the failure are collected and
-surfaced (smoke #242), so the *user* can undo each succeeded source with one click today — the
-gap that remains is *automatic* rollback, not recoverability. Auto-invoking undo on sources 1..N-1
-when source N fails risks a rollback-of-a-rollback failure and is a large enough decision (does a
-failed auto-rollback also need its own critical-recovery UI?) to warrant its own design pass, so
-it's still deferred.
-
-**Status:** Partially addressed (smoke #242, `c132304`). `PushPage.set_failure()` now shows an
-accurate "N source(s) not restored" message instead of the misleading "device safely restored"
-line, and offers a one-click Undo for the sources that were actually written (via
-`WriteResult.partial_backup_paths` + the existing multi-source undo path) — closing the
-"document/expose the manual-undo path" option below. Automatic cross-source rollback is still not
-implemented.
-
-**To reactivate:** Decide whether automatic cross-source rollback is wanted on top of the current
-one-click manual Undo, and how it should behave if that rollback itself fails. Implement in
-`PrimaryWorkflowManager._do_push()`'s PEQ branch.
-
----
-
-## 4. Backup Files Have No Source Identifier (Found During PR Review)
-
-**What:** `BackupManager.create_backup()` takes a `PEQSettings` (which carries `source_name`), but
-never persists that source name anywhere in the resulting `BackupRecord` — `name` is
-`backup_{device_uuid}_{timestamp}`, and the file itself is named only `{timestamp}.json` under a
-per-device-UUID directory (`backup_manager.py`). Nothing in the filename or JSON content ties a
-backup to the source it was taken from.
-
-**Why it matters:** The CLI's `restore-backup` command (smoke #241) requires `--source` as a
-separate argument precisely because the backup file can't supply it. In practice this only works
-reliably when restoring from the exact path the app just printed on a failure. Browsing the backup
-directory later — e.g. to pick the right file among several from a partial multi-source failure
-(smoke #242) — gives no way to tell which backup belongs to which source.
-
-**Why deferred:** A schema change (`BackupRecord` gaining a `source_name` field, or the filename
-being stemmed with it) needs migration handling for existing backup files on users' machines, and
-is out of scope for the PR that surfaced it. Not blocking, since the current callers (GUI Undo,
-CLI `restore-backup`) always have the source name available from elsewhere when they need it.
-
-**Status:** Not started.
-
-**To reactivate:** Add `source_name: str | None` to `BackupRecord` (optional, so old backup files
-without it still validate), have `create_backup()` populate it from `settings.source_name`, and
-consider stemming the filename with it too for at-a-glance browsing. Update `restore-backup` to
-default `--source` from the backup file when present, keeping the flag for older files.
-
----
-
-## 5. Operation Feedback: Overlapping Operations Can Race (Found via `/code-review ultra`)
-
-**What:** `OperationFeedbackManager` (`src/gui/operation_feedback.py`) tracks exactly one
-in-flight operation via a single `_is_active` flag and one `_prior_enabled` button-state
-snapshot, both overwritten wholesale on every `start_operation()` call. If an operation is
-cancelled (`_on_cancel_clicked()` calls `finish_operation()` immediately) while its underlying
-coroutine keeps running in the background — since Cancel only resets the UI and does not
-actually stop the coroutine — and a second, unrelated operation starts before that first
-coroutine's `finally` block fires its own `operation_finished` signal, the stray late signal
-calls `finish_operation()` again and restores buttons using the *second* operation's snapshot,
-not the first's. This can re-enable or re-disable buttons out of step with what's actually
-running.
-
-**Why deferred:** Found during a `/simplify`/`/code-review ultra --fix` cleanup pass on an
-unrelated diff (smoke `docs/smoke_test_issues.md` #243/#244); fixing it properly touches two
-separate concerns — (a) giving each `start_operation()` call an identity (a token returned by
-`start_operation()` that `finish_operation(token)` must match to actually apply, so a
-stale/mismatched call is a no-op) and (b) the more fundamental gap that Cancel doesn't cancel
-the underlying coroutine at all, which a token-based fix would paper over rather than resolve.
-Both are design decisions bigger than a quality-cleanup pass's scope, and the app's current
-one-op-at-a-time model means this is a narrow race window in practice, not a routinely-hit bug.
-
-**Status:** Not started.
-
-**To reactivate:** Add an opaque operation token to `start_operation()`'s return value and
-require `finish_operation(token)` (and the hard-timeout path) to match it before restoring
-button state — a mismatched/stale token means a no-op. Separately, decide whether Cancel should
-actually cancel the in-flight coroutine (e.g. via `asyncio.Task.cancel()` plumbed through
-`AsyncBridge`) rather than only resetting the UI early.
-
----
-
 ## Completed / Closed Items (Archive)
 
 ### CI Release Pipeline (No Published Download Path)
@@ -166,6 +203,10 @@ conflated), plus DI-surface, dead-code, and duplication cleanups
 `ProfileRepository.rename()`'s case-sensitivity fix, `encode_multi_source_backup_paths()`, and
 others). No further extraction phases are planned; `docs/corrections.md` has the hardware-relevant
 findings from this effort (e.g. the removed "mini"-substring RoomFit fallback, 2026-07-18 row).
+A 2026-08-02 codebase review found and fixed one further leak (`main_window.py`'s
+`_on_local_preset_copy_to_device_requested()` calling `build_peq_settings()`/`extract_filters()`
+directly instead of delegating to `SecondaryWorkflowManager` -- that validation logic now lives in
+`_do_copy_local_profile_to_devices()` instead).
 
 ### Adapters Instantiated Directly in `main_window.py` (Tech Debt)
 **Completed:** 2026-07-17. 4 sites in `main_window.py` called

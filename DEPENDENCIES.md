@@ -92,11 +92,16 @@ source .venv/bin/activate
 # Install in editable mode with dev dependencies
 pip3 install -e ".[dev]"
 
-# Verify setup
-python3 -m pytest src/tests/ -v
+# Verify setup -- targeted run shown here; the full suite (below) takes
+# 10-20 minutes on WSL and will look hung, see the note underneath.
+python3 -m pytest src/tests/test_wiim_parser.py -v --no-cov
 python3 -m ruff check src/
 python3 -m mypy src/
 ```
+
+The full suite (`python3 -m pytest src/tests/ -v`) takes 10-20 minutes on WSL2 and will look hung
+for most of that time — see [CONTRIBUTING.md](CONTRIBUTING.md)'s note on this before running it,
+and prefer targeted test files during normal development.
 
 ---
 

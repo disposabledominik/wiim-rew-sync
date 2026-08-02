@@ -1521,16 +1521,20 @@ class TestPresets:
         assert "Movie Night" in warning[1]
         mock_run.assert_not_called()
 
-    def test_local_preset_copy_lr_empty_channel_shows_error_not_crash(
+    def test_local_preset_copy_dispatches_raw_profile_fields_to_manager(
         self, window
     ) -> None:
-        """build_peq_settings() raises ValueError for an L/R profile with one
-        empty channel (require_lr_filters, ca14e26);
-        _on_local_preset_copy_to_device_requested must show an error banner
-        for that, not let it escape uncaught out of the Qt slot -- reachable
-        for a duck-typed `profile` object even though a real, freshly-loaded
-        Profile can no longer hold an empty channel itself (branch-quality
-        review, 2026-07-18)."""
+        """_on_local_preset_copy_to_device_requested passes the Profile's raw
+        channel_mode/filters/filters_l/filters_r straight through to
+        SecondaryWorkflowManager.copy_local_profile_to_devices rather than
+        building/validating a PEQSettings itself. Validating an incomplete
+        L/R split (build_peq_settings()'s ValueError, require_lr_filters,
+        ca14e26) is the manager's job now -- covered directly against
+        _do_copy_local_profile_to_devices in
+        test_gui_integration_secondary.py, not here -- so MainWindow always
+        dispatches regardless of whether the split is valid (branch-quality
+        review, 2026-08-02: this used to validate synchronously in the Qt
+        slot, which put business logic in main_window.py)."""
         _setup_device(window)
         window._primary_workflows._discovered_devices = [
             MagicMock(ip="192.168.1.200", name="Other Device")
@@ -1552,14 +1556,20 @@ class TestPresets:
                 "src.gui.main_window.DevicePickerDialog.get_devices",
                 return_value=[MagicMock(ip="192.168.1.200", name="Other Device")],
             ),
-            patch.object(window._bridge, "run_async") as mock_run,
+            patch.object(
+                window._secondary_workflows, "copy_local_profile_to_devices"
+            ) as mock_copy,
             patch.object(window._status_banner, "show_error") as mock_error,
         ):
             window._on_local_preset_copy_to_device_requested(profile)
 
-        mock_run.assert_not_called()
-        mock_error.assert_called_once()
-        assert "Copy failed" in mock_error.call_args[0][0]
+        mock_copy.assert_called_once()
+        args = mock_copy.call_args[0]
+        assert args[4] == ChannelMode.LR  # channel_mode
+        assert args[5] is None  # filters
+        assert args[6] == []  # filters_l
+        assert args[7] == [_make_filter(100)]  # filters_r
+        mock_error.assert_not_called()
 
     # --- #191: Copy-to-Device RoomFit target-activation warning ---
 

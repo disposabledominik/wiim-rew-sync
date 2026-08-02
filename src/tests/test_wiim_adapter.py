@@ -1661,6 +1661,17 @@ class TestEnablePeq:
         with pytest.raises(WiiMResponseError):
             await adapter.enable_peq("wifi")
 
+    async def test_enable_peq_raises_on_device_side_rejection(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """enable_peq raises on the device's real rejection shapes
+        (_is_write_rejection()'s "unknown"/{"status": "Failed"}), not just an
+        "error" key that this device never actually sends."""
+        mock_client.command.return_value = {"status": "Failed"}
+
+        with pytest.raises(WiiMResponseError, match="EQChangeSourceFX"):
+            await adapter.enable_peq("wifi")
+
 
 class TestDisablePeq:
     """Test disable_peq — disabling PEQ on a source via EQSourceOff."""
@@ -1704,6 +1715,17 @@ class TestDisablePeq:
         mock_client.command.side_effect = WiiMResponseError("HTTP 500")
 
         with pytest.raises(WiiMResponseError):
+            await adapter.disable_peq("wifi")
+
+    async def test_disable_peq_raises_on_device_side_rejection(
+        self, adapter: WiiMAdapter, mock_client: AsyncMock
+    ) -> None:
+        """disable_peq raises on the device's real rejection shapes
+        (_is_write_rejection()'s "unknown"/{"status": "Failed"}), not just an
+        "error" key that this device never actually sends."""
+        mock_client.command.return_value = "unknown command"
+
+        with pytest.raises(WiiMResponseError, match="EQSourceOff"):
             await adapter.disable_peq("wifi")
 
 
