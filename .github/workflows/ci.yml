@@ -76,7 +76,7 @@ jobs:
         run: |
           set -euo pipefail
           merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
-          fix_commits=$(git log "$merge_base..$HEAD_SHA" --oneline --grep '^Fix #[0-9]' -iE)
+          fix_commits=$(git log "$merge_base..$HEAD_SHA" --oneline --grep '^Fix #[0-9]' -i -E)
           changed_files=$(git diff --name-only "$merge_base" "$HEAD_SHA")
 
           if [[ -n "$fix_commits" ]] && ! grep -qx 'docs/smoke_test_issues.md' <<< "$changed_files"; then

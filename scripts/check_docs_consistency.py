@@ -121,7 +121,11 @@ def find_stale_pending_commits() -> list[str]:
         issue_num, rest = match.group(1), match.group(2)
         # Columns are `Issue | Status | Test | Fix Commit | Notes | Test Reference`; `rest` starts
         # right after the Issue column's closing pipe, so index 1 is Status and 3 is Fix Commit.
-        fields = rest.split("|")
+        # Split on unescaped pipes only -- a cell may contain a literal "|" written as the
+        # markdown-table escape `\|` (e.g. an inline `Foo \| None` type union, already present
+        # in this file), and a naive split("|") would treat that as a column boundary too,
+        # shifting every field index after it and silently hiding the row from this check.
+        fields = re.split(r"(?<!\\)\|", rest)
         status = fields[1].strip() if len(fields) > 1 else ""
         fix_commit_cell = fields[3].strip() if len(fields) > 3 else ""
         if status != "FIXED" or "(pending commit)" not in fix_commit_cell:
