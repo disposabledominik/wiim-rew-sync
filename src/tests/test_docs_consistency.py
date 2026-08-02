@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
 from check_docs_consistency import (  # type: ignore[import-not-found]
-    _git_fix_commit_for_issue,
+    _fix_commits_by_issue,
     find_app_internals_references,
     find_banned_phrasing,
     find_stale_pending_commits,
@@ -61,8 +61,7 @@ def test_fix_commit_lookup_finds_combined_issue_commits() -> None:
     found when looking up either issue number individually -- this repo's own
     history already uses that convention, and an earlier version of the lookup
     only matched a single anchored issue number and silently missed it."""
-    commit_for_241 = _git_fix_commit_for_issue("241")
-    commit_for_242 = _git_fix_commit_for_issue("242")
+    fix_commits = _fix_commits_by_issue()
 
-    assert commit_for_241 is not None
-    assert commit_for_241 == commit_for_242
+    assert fix_commits.get("241") is not None
+    assert fix_commits.get("241") == fix_commits.get("242")

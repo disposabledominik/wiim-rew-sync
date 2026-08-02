@@ -75,8 +75,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          fix_commits=$(git log "$BASE_SHA..$HEAD_SHA" --oneline --grep '^Fix #[0-9]' -E || true)
-          changed_files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          merge_base=$(git merge-base "$BASE_SHA" "$HEAD_SHA")
+          fix_commits=$(git log "$merge_base..$HEAD_SHA" --oneline --grep '^Fix #[0-9]' -iE)
+          changed_files=$(git diff --name-only "$merge_base" "$HEAD_SHA")
 
           if [[ -n "$fix_commits" ]] && ! grep -qx 'docs/smoke_test_issues.md' <<< "$changed_files"; then
             echo "::warning::This PR has commit(s) whose message starts with 'Fix #<N>' but does not touch docs/smoke_test_issues.md. If this fixes a logged GUI bug, update its Status + Fix Commit in this same PR (CLAUDE.md's same-commit rule)."
