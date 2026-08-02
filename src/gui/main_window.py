@@ -2589,11 +2589,9 @@ class MainWindow(QMainWindow):
         self._settings.first_run_complete = True
         self._settings.save()
         # Route through the controller (not a direct setCurrentIndex) so
-        # Connect's re-entry invalidates completed_steps for Connect and
-        # every step after it in the sequence -- otherwise later steps stay
-        # checked with stale context while Connect alone shows uncompleted,
-        # breaking the "no checked step may follow an unchecked one"
-        # invariant (docs/smoke_test_issues.md).
+        # Connect's re-entry fully resets the wizard session (device, flow
+        # type, filters, completed_steps -- everything) rather than leaving
+        # stale context behind, per docs/smoke_test_issues.md #246.
         self._wizard_controller.go_to_step(WizardStep.CONNECT)
 
     @Slot()
