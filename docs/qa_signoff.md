@@ -44,12 +44,20 @@ pip-audit                                            # dependency vulnerability 
 | Gate | Result | Notes |
 |------|--------|-------|
 | Full test suite (`pytest --no-header -q`) | ☑ Pass ☐ Fail | total / passed / failed: 1662 / 1662 / 0 |
-| Test coverage ≥ 90% | ☑ Pass ☐ Fail | actual %: 96.89% |
+| `src/translator/` coverage ≥ 90% | ☑ Pass ☐ Fail | actual %: 96.89% |
 | `ruff check src/` | ☑ Pass ☐ Fail | |
 | `mypy src/` | ☑ Pass ☐ Fail | |
+| `mypy src/translator src/models` (strict) | ☑ Pass ☐ Fail | |
 | `pip-audit` — direct dependencies clean | ☑ Pass ☐ Fail | |
 
 Do not carry forward numbers from a previous sign-off — re-run every gate fresh.
+
+**Note:** the gate results above were recorded against commit `7cce614` (2026-08-02). PR #19's
+subsequent commits (`0d58373`, `ed0bcd7`) added ~8 new test cases and behavior changes on top of
+that; those were verified via the targeted + broader regression suite documented in the PR
+(`test_wizard_controller.py`, `test_smoke_regression_wizard.py`, and 8 other files — 375 passed),
+`ruff check`, and `mypy`, not by re-running the full 1662-test suite fresh. Re-run this table's
+gates fully before the next sign-off rather than carrying these numbers forward.
 
 ---
 
@@ -96,6 +104,9 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 - [P] "Continue" button appears and is enabled after file is selected
 - [P] Clicking "Continue" advances to Review page with filters loaded
 
+> Filters page no longer offers "Pull from Device" or a RoomFit-profile dropdown inline (removed
+> per smoke issues #52/#59) — those flows live under the "Presets on Device" sidebar item only
+> (Test 12). If you see either on the Filters page, that's a regression.
 
 ### Test 4: PEQ Flow — Filter Import (L/R)
 - [P] On Filters page, switching to L/R mode shows Browse L and Browse R buttons

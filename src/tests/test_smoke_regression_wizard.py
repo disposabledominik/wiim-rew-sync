@@ -478,6 +478,23 @@ class TestIssue41DeviceSelectResetsFlow:
         assert state.filters_r == []
         assert state.filters == []
 
+    def test_device_switch_resets_filters_page_channel_mode_radio(self, window) -> None:
+        """PR #19 review follow-up: FiltersPage keeps its own Stereo/L-R radio
+        selection independent of state.channel_mode (it's the source of truth
+        for a fresh import, not a mirror of it). Without also resetting the
+        radio, switching devices while L/R was selected would leave the page
+        showing L/R controls even though clear_device_scoped_state() just
+        reset state.channel_mode to STEREO -- most visible in the RoomFit
+        flow, which has no SOURCE step to force a resync."""
+        window._on_device_selected("192.168.1.100")
+        window._filters_page.set_channel_mode("lr")
+        assert window._filters_page._channel_mode == "lr"
+
+        window._on_device_selected("192.168.1.200")
+
+        assert window._filters_page._channel_mode == "stereo"
+        assert window._filters_page._stereo_radio.isChecked()
+
     def test_device_switch_in_roomfit_clears_name_profile_completed(self, window) -> None:
         """docs/smoke_test_issues.md #246 follow-up, bug 1c: switching devices
         while NAME_PROFILE is completed (RoomFit-only step) must invalidate

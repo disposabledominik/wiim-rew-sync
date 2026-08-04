@@ -855,6 +855,15 @@ class MainWindow(QMainWindow):
             state.clear_device_scoped_state()
             self._wizard_controller.set_flow_type(FlowType.PEQ)
             state.selected_device = device_ip
+            # FiltersPage keeps its own Stereo/L-R radio selection independent
+            # of state.channel_mode (it's the source of truth for a fresh
+            # import, not a mirror of it) -- without this, switching devices
+            # while L/R was selected leaves the radio on L/R even though
+            # clear_device_scoped_state() just reset state.channel_mode to
+            # STEREO, so the page's controls would misrepresent state until
+            # the user's next import self-corrects it. Only matters for the
+            # RoomFit flow, which has no SOURCE step to force a resync.
+            self._filters_page.set_channel_mode("stereo")
             # A stale "RoomFit is active" flag from the previous device must
             # not linger either, even though nothing currently reads it (see
             # the __init__ comment) -- reset defensively so device B's state
