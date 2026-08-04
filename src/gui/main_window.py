@@ -826,38 +826,41 @@ class MainWindow(QMainWindow):
         Creates WiiMHttpClient and CapabilityProber for the selected device,
         then launches an async probe via the bridge.
 
-        Resets flow type and clears source/step state so previous context
-        doesn't leak (smoke #87 — re-connect should re-ask source).
+        Re-selecting the already-connected device is a no-op past the busy
+        check -- nothing about the session is invalid, so prior context
+        (filters, source, completed steps) is left untouched and the probe
+        still runs (capabilities can change server-side, and the probe is
+        cheap and generation-guarded regardless).
+
+        Selecting a *different* device resets flow type and clears
+        source/filter/step state so the previous device's context doesn't
+        leak (smoke #87 — re-connect should re-ask source; #246 follow-up
+        bugs 1b/1c — the field list and step-invalidation are centralized in
+        ``WizardState.clear_device_scoped_state()``/``invalidate_from()`` so
+        this call site can't drift from them the way the old hand-rolled
+        versions did).
         """
         if self._is_busy():
             return
 
-        # Reset flow type and clear prior step state
-        self._wizard_controller.set_flow_type(FlowType.PEQ)
         state = self._wizard_controller.state
-        state.selected_device = device_ip
-        state.selected_source = ""
-        state.current_filters = []
-        state.last_pushed_filters = []
-        # A stale "what current_filters came from" string from the previous
-        # device must not linger into this one (#162d).
-        state.filters_origin = ""
-        # A stale "RoomFit is active" flag from the previous device must not
-        # linger either, even though nothing currently reads it (see the
-        # __init__ comment) -- reset defensively so device B's state is
-        # never contaminated by device A's, until populate_name_profiles()
-        # re-fetches device B's real status.
-        self._roomfit_enabled = False
-        # Clear completed steps beyond CONNECT
-        for step in (
-            WizardStep.EQ_TYPE,
-            WizardStep.SOURCE,
-            WizardStep.FILTERS,
-            WizardStep.REVIEW,
-            WizardStep.PUSH,
-        ):
-            state.completed_steps.pop(step, None)
-            state.completed_step_tooltips.pop(step, None)
+        if device_ip != state.selected_device:
+            # Invalidate using the *old* (pre-switch) flow's sequence, before
+            # resetting flow_type below -- a step that only exists in the
+            # old flow (e.g. NAME_PROFILE, RoomFit-only) would otherwise be
+            # invisible to get_steps() once flow_type has already changed.
+            sequence = self._wizard_controller.get_steps()
+            if len(sequence) > 1:
+                self._wizard_controller.invalidate_from(sequence[1])
+            state.clear_device_scoped_state()
+            self._wizard_controller.set_flow_type(FlowType.PEQ)
+            state.selected_device = device_ip
+            # A stale "RoomFit is active" flag from the previous device must
+            # not linger either, even though nothing currently reads it (see
+            # the __init__ comment) -- reset defensively so device B's state
+            # is never contaminated by device A's, until
+            # populate_name_profiles() re-fetches device B's real status.
+            self._roomfit_enabled = False
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
         self._wiim_http_client = self._wiim_http_client_factory(device_ip)
@@ -2589,9 +2592,11 @@ class MainWindow(QMainWindow):
         self._settings.first_run_complete = True
         self._settings.save()
         # Route through the controller (not a direct setCurrentIndex) so
-        # Connect's re-entry fully resets the wizard session (device, flow
-        # type, filters, completed_steps -- everything) rather than leaving
-        # stale context behind, per docs/smoke_test_issues.md #246.
+        # Connect's re-entry invalidates completed_steps for Connect and
+        # every step after it in the sequence -- otherwise later steps stay
+        # checked with stale context while Connect alone shows uncompleted,
+        # breaking the "no checked step may follow an unchecked one"
+        # invariant (docs/smoke_test_issues.md).
         self._wizard_controller.go_to_step(WizardStep.CONNECT)
 
     @Slot()

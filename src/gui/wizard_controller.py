@@ -132,6 +132,38 @@ class WizardState:
     def selected_source(self, value: str) -> None:
         self.selected_sources = parse_source_list(value)
 
+    def clear_device_scoped_state(self) -> None:
+        """Clear every field whose value is derived from a specific connected
+        device's capabilities or data, without touching navigation state
+        (``current_step``, ``completed_steps``/``completed_step_tooltips``,
+        ``selected_device`` itself, ``flow_type``, ``dry_run``).
+
+        The single place that knows which fields are device-scoped, so a
+        device switch and a full app reset can't independently drift on the
+        field list (docs/smoke_test_issues.md #246 follow-up, bug 1b: the
+        previous hand-rolled clear in ``MainWindow._on_device_selected``
+        missed ``filters_l``/``filters_r``, letting a stale L/R filter set
+        from device A stay readable as ``state.filters`` after switching to
+        device B in L/R mode).
+        """
+        self.selected_sources = []
+        self.channel_mode = ChannelMode.STEREO
+        self.current_filters = []
+        self.last_pushed_filters = []
+        self.device_filters = []
+        self.filters_l = []
+        self.filters_r = []
+        self.pending_rows = []
+        self.pending_rows_l = []
+        self.pending_rows_r = []
+        self.pending_conversion_notes = {}
+        self.pending_conversion_notes_l = {}
+        self.pending_conversion_notes_r = {}
+        self.warnings = []
+        self.roomfit_profile_name = ""
+        self.last_backup_path = ""
+        self.filters_origin = ""
+
     @property
     def primary_source(self) -> str:
         """The single source that scopes a single-source device operation.
@@ -270,34 +302,37 @@ class WizardController(QObject):
         self._state.current_step = next_step
         self.step_changed.emit(next_step)
 
+    def invalidate_from(self, step: WizardStep) -> None:
+        """Remove ``step`` and every step after it in the *current* flow
+        sequence from ``completed_steps`` and ``completed_step_tooltips``.
+
+        Driven by ``get_steps()`` rather than a hardcoded step list, so a
+        step that only exists in one flow variant (e.g. ``NAME_PROFILE``,
+        RoomFit-only) can't be silently missed the way a hand-maintained
+        tuple can (docs/smoke_test_issues.md #246 follow-up, bug 1c).  Does
+        nothing if ``step`` isn't in the current flow's sequence.
+        """
+        sequence = self.get_steps()
+        if step not in sequence:
+            return
+        idx = sequence.index(step)
+        for s in sequence[idx:]:
+            self._state.completed_steps.pop(s, None)
+            self._state.completed_step_tooltips.pop(s, None)
+
     def go_to_step(self, step: WizardStep) -> None:
         """Navigate to a previously completed step, invalidating subsequent steps.
 
         The target step must be in the completed set or be the current step.
         All steps after the target in the sequence are removed from the
         completed set.  Emits ``step_changed``.
-
-        Navigating back to Connect is a special case: reconnecting may land
-        on a different device with different capabilities, so the whole
-        session (selected device, flow type, filters, everything) is reset
-        rather than just invalidated -- re-entering Connect should look like
-        a fresh app start, not a resume of the previous device's session.
         """
         sequence = self.get_steps()
 
         if step not in sequence:
             return
 
-        if step == WizardStep.CONNECT:
-            self.reset()
-            return
-
-        target_idx = sequence.index(step)
-
-        # Invalidate all steps after the target
-        for s in sequence[target_idx:]:
-            self._state.completed_steps.pop(s, None)
-
+        self.invalidate_from(step)
         self._state.current_step = step
         self.step_changed.emit(step)
 

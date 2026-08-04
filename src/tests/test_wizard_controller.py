@@ -8,6 +8,8 @@ Requirements referenced: 1.2-1.12, 11.1-11.8.
 
 from __future__ import annotations
 
+import pytest
+
 from src.gui.wizard_controller import (
     FlowType,
     WizardController,
@@ -194,6 +196,60 @@ class TestWizardControllerNavigation:
         # Should not emit and step should remain unchanged
         assert signals_received == []
         assert ctrl.current_step == WizardStep.CONNECT
+
+    def test_go_to_step_connect_retains_device_and_filter_state(self, qtbot) -> None:
+        """go_to_step(CONNECT) only invalidates completed_steps for CONNECT and
+        later -- unlike reset(), it must NOT clear selected_device, filters,
+        or flow_type. Navigating back to look at Connect is not the same as
+        switching devices (docs/smoke_test_issues.md #246 follow-up: an
+        earlier version of this fix conflated the two)."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl._state.selected_device = "WiiM Pro Plus"
+        ctrl._state.current_filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)
+        ]
+        ctrl.advance("Connected")
+
+        ctrl.go_to_step(WizardStep.CONNECT)
+
+        assert ctrl.current_step == WizardStep.CONNECT
+        assert ctrl.flow_type == FlowType.ROOMFIT
+        assert ctrl._state.selected_device == "WiiM Pro Plus"
+        assert ctrl._state.current_filters != []
+
+    def test_invalidate_from_pops_tooltips_too(self, qtbot) -> None:
+        """invalidate_from() (and go_to_step(), which delegates to it) must
+        pop completed_step_tooltips alongside completed_steps -- the old
+        go_to_step() only popped the summary dict, leaving a stale tooltip
+        behind (currently benign since set_step_summary() always overwrites
+        on re-completion, but latent drift worth covering directly)."""
+        ctrl = WizardController()
+        ctrl.advance("Connected", tooltip="192.168.1.100")
+
+        ctrl.go_to_step(WizardStep.CONNECT)
+
+        assert WizardStep.CONNECT not in ctrl.completed_steps
+        assert WizardStep.CONNECT not in ctrl._state.completed_step_tooltips
+
+    @pytest.mark.parametrize("flow_type", [FlowType.PEQ, FlowType.ROOMFIT, FlowType.PEQ_ONLY])
+    def test_invalidate_from_first_step_clears_whole_sequence(
+        self, qtbot, flow_type: FlowType
+    ) -> None:
+        """invalidate_from() is sequence-driven per flow_type, so it can't
+        silently miss a flow-specific step (e.g. NAME_PROFILE, RoomFit-only)
+        the way a hardcoded step tuple can (#246 follow-up, bug 1c)."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(flow_type)
+        sequence = ctrl.get_steps()
+        for step in sequence:
+            ctrl.set_step_summary(step, "done")
+
+        ctrl.invalidate_from(sequence[0])
+
+        for step in sequence:
+            assert step not in ctrl.completed_steps
+            assert step not in ctrl._state.completed_step_tooltips
 
     def test_reset_clears_state(self, qtbot) -> None:
         """reset() restores initial state (CONNECT step, PEQ flow, no completed)."""

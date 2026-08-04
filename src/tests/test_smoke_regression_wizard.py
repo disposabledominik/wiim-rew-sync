@@ -452,6 +452,71 @@ class TestIssue41DeviceSelectResetsFlow:
         # Flow should be reset to PEQ
         assert window._wizard_controller.flow_type == FlowType.PEQ
 
+    def test_device_switch_clears_lr_filters(self, window) -> None:
+        """docs/smoke_test_issues.md #246 follow-up, bug 1b: switching devices
+        while in L/R mode must clear filters_l/filters_r too, not just
+        current_filters -- otherwise device A's L/R filters stay readable via
+        state.filters (which prefers filters_l/filters_r whenever channel_mode
+        is L/R and either list is non-empty)."""
+        from src.models.canonical import CanonicalFilter
+        from src.models.channel_mode import ChannelMode
+
+        state = window._wizard_controller.state
+        window._on_device_selected("192.168.1.100")
+        state.channel_mode = ChannelMode.LR
+        state.filters_l = [
+            CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)
+        ]
+        state.filters_r = [
+            CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=-2.0, q=1.0)
+        ]
+        assert state.filters != []
+
+        window._on_device_selected("192.168.1.200")
+
+        assert state.filters_l == []
+        assert state.filters_r == []
+        assert state.filters == []
+
+    def test_device_switch_in_roomfit_clears_name_profile_completed(self, window) -> None:
+        """docs/smoke_test_issues.md #246 follow-up, bug 1c: switching devices
+        while NAME_PROFILE is completed (RoomFit-only step) must invalidate
+        it too -- a hardcoded PEQ-flow step tuple silently leaves it
+        completed forever, violating the "no checked step may follow an
+        unchecked one" invariant (#124) the moment the user switches back to
+        RoomFit."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        wc.set_flow_type(FlowType.ROOMFIT)
+        wc.set_step_summary(WizardStep.NAME_PROFILE, "My Profile")
+        assert WizardStep.NAME_PROFILE in wc.completed_steps
+
+        window._on_device_selected("192.168.1.200")
+
+        assert WizardStep.NAME_PROFILE not in wc.completed_steps
+        assert WizardStep.NAME_PROFILE not in wc.state.completed_step_tooltips
+
+    def test_reselecting_same_device_preserves_filters(self, window) -> None:
+        """Re-selecting the already-connected device is a no-op past the busy
+        check -- nothing is invalid, so loaded filters/sources/completed
+        steps must survive (the probe still re-runs; capabilities can change
+        server-side)."""
+        from src.models.canonical import CanonicalFilter
+
+        window._on_device_selected("192.168.1.100")
+        state = window._wizard_controller.state
+        state.current_filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)
+        ]
+        state.selected_source = "wifi"
+        window._wizard_controller.set_step_summary(WizardStep.EQ_TYPE, "PEQ")
+
+        window._on_device_selected("192.168.1.100")
+
+        assert state.current_filters != []
+        assert state.selected_source == "wifi"
+        assert WizardStep.EQ_TYPE in window._wizard_controller.completed_steps
+
 
 # ---------------------------------------------------------------------------
 # Issue #57: Back navigation clears step completion badges for invalidated steps
