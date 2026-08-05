@@ -826,38 +826,50 @@ class MainWindow(QMainWindow):
         Creates WiiMHttpClient and CapabilityProber for the selected device,
         then launches an async probe via the bridge.
 
-        Resets flow type and clears source/step state so previous context
-        doesn't leak (smoke #87 — re-connect should re-ask source).
+        Re-selecting the already-connected device is a no-op past the busy
+        check -- nothing about the session is invalid, so prior context
+        (filters, source, completed steps) is left untouched and the probe
+        still runs (capabilities can change server-side, and the probe is
+        cheap and generation-guarded regardless).
+
+        Selecting a *different* device resets flow type and clears
+        source/filter/step state so the previous device's context doesn't
+        leak (smoke #87 — re-connect should re-ask source; #246 follow-up
+        bugs 1b/1c — the field list and step-invalidation are centralized in
+        ``WizardState.clear_device_scoped_state()``/``invalidate_from()`` so
+        this call site can't drift from them the way the old hand-rolled
+        versions did).
         """
         if self._is_busy():
             return
 
-        # Reset flow type and clear prior step state
-        self._wizard_controller.set_flow_type(FlowType.PEQ)
         state = self._wizard_controller.state
-        state.selected_device = device_ip
-        state.selected_source = ""
-        state.current_filters = []
-        state.last_pushed_filters = []
-        # A stale "what current_filters came from" string from the previous
-        # device must not linger into this one (#162d).
-        state.filters_origin = ""
-        # A stale "RoomFit is active" flag from the previous device must not
-        # linger either, even though nothing currently reads it (see the
-        # __init__ comment) -- reset defensively so device B's state is
-        # never contaminated by device A's, until populate_name_profiles()
-        # re-fetches device B's real status.
-        self._roomfit_enabled = False
-        # Clear completed steps beyond CONNECT
-        for step in (
-            WizardStep.EQ_TYPE,
-            WizardStep.SOURCE,
-            WizardStep.FILTERS,
-            WizardStep.REVIEW,
-            WizardStep.PUSH,
-        ):
-            state.completed_steps.pop(step, None)
-            state.completed_step_tooltips.pop(step, None)
+        if device_ip != state.selected_device:
+            # Invalidate using the *old* (pre-switch) flow's sequence, before
+            # resetting flow_type below -- a step that only exists in the
+            # old flow (e.g. NAME_PROFILE, RoomFit-only) would otherwise be
+            # invisible to get_steps() once flow_type has already changed.
+            sequence = self._wizard_controller.get_steps()
+            if len(sequence) > 1:
+                self._wizard_controller.invalidate_from(sequence[1])
+            state.clear_device_scoped_state()
+            self._wizard_controller.set_flow_type(FlowType.PEQ)
+            state.selected_device = device_ip
+            # FiltersPage keeps its own Stereo/L-R radio selection independent
+            # of state.channel_mode (it's the source of truth for a fresh
+            # import, not a mirror of it) -- without this, switching devices
+            # while L/R was selected leaves the radio on L/R even though
+            # clear_device_scoped_state() just reset state.channel_mode to
+            # STEREO, so the page's controls would misrepresent state until
+            # the user's next import self-corrects it. Only matters for the
+            # RoomFit flow, which has no SOURCE step to force a resync.
+            self._filters_page.set_channel_mode("stereo")
+            # A stale "RoomFit is active" flag from the previous device must
+            # not linger either, even though nothing currently reads it (see
+            # the __init__ comment) -- reset defensively so device B's state
+            # is never contaminated by device A's, until
+            # populate_name_profiles() re-fetches device B's real status.
+            self._roomfit_enabled = False
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
         self._wiim_http_client = self._wiim_http_client_factory(device_ip)
@@ -1336,6 +1348,7 @@ class MainWindow(QMainWindow):
         self._connect_page.clear()
         self._filters_page.clear_results()
         self._push_page.reset()
+        self._sidebar_nav.set_device_info("", connected=False)
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["connect"])
 
         # Rebuild step indicator for default PEQ flow

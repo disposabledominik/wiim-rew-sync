@@ -75,9 +75,13 @@ class ConnectPage(QWidget):
             active: If True, show the scanning animation and message.
                 If False, hide the scanning state (devices or empty state
                 should be shown via set_devices).
+
+        Does not disable the rescan button — that's handled by the shared
+        OperationFeedbackManager (registered via ``action_buttons()``), the
+        same gate the Ctrl+R shortcut respects, so the button and shortcut
+        never disagree on whether refresh is available.
         """
         self._scanning_widget.setVisible(active)
-        self._rescan_btn.setEnabled(not active)
         if active:
             self._devices_scroll.setVisible(False)
             self._empty_widget.setVisible(False)

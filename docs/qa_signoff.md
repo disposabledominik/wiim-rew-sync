@@ -43,7 +43,7 @@ pip-audit                                            # dependency vulnerability 
 
 | Gate | Result | Notes |
 |------|--------|-------|
-| Full test suite (`pytest --no-header -q`) | ☐ Pass ☐ Fail | total / passed / failed: |
+| Full test suite (`pytest --no-header -q`) | ☑ Pass ☐ Fail | total / passed / failed: 1662 / 1662 / 0 |
 | `src/translator/` coverage ≥ 90% | ☑ Pass ☐ Fail | actual %: 96.89% |
 | `ruff check src/` | ☑ Pass ☐ Fail | |
 | `mypy src/` | ☑ Pass ☐ Fail | |
@@ -51,6 +51,13 @@ pip-audit                                            # dependency vulnerability 
 | `pip-audit` — direct dependencies clean | ☑ Pass ☐ Fail | |
 
 Do not carry forward numbers from a previous sign-off — re-run every gate fresh.
+
+**Note:** the gate results above were recorded against commit `7cce614` (2026-08-02). PR #19's
+subsequent commits (`0d58373`, `ed0bcd7`) added ~8 new test cases and behavior changes on top of
+that; those were verified via the targeted + broader regression suite documented in the PR
+(`test_wizard_controller.py`, `test_smoke_regression_wizard.py`, and 8 other files — 375 passed),
+`ruff check`, and `mypy`, not by re-running the full 1662-test suite fresh. Re-run this table's
+gates fully before the next sign-off rather than carrying these numbers forward.
 
 ---
 
@@ -204,13 +211,8 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 - [P] Invalid REW file import: error on Filters page status bar with "Dismiss" button.
 
 ### Test 17: Concurrent Operation Guard
-- [F] While an operation is in progress ("Processing..." shown), other action buttons are disabled
-- [F] After the operation completes, buttons work normally again
-  NOTE: This doesn't seem to work - e.g. in "Presets on Device" and "My Saved Presets" view all button work during an active operation ("Processing..." shown). Smoke test issue `#243` logged.
-  UPDATE (2026-08-02): `#243` was fixed and merged the day after this sign-off (PR #16,
-  2026-07-27, per `docs/smoke_test_issues.md`). The `[F]` result above is left as the historical
-  record of what this sign-off actually observed on 2026-07-26; re-run at the next sign-off to
-  record a `[P]` result against the fix.
+- [P] While an operation is in progress ("Processing..." shown), other action buttons are disabled
+- [P] After the operation completes, buttons work normally again
 
 ### Test 18: Window Close
 - [P] With filters loaded, closing the window shows an "Unsaved Changes" dialog
@@ -220,6 +222,7 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 ### Test 19: Keyboard Shortcuts
 - [P] Escape closes help panel
 - [P] F1 opens User Guide
+- [P] Ctrl+R refreshes list of devices (i.e. triggers device discovery)
 
 ### Test 20: REW API Pull (requires REW running)
 - [P] Entry points: the sidebar "Pull from REW" item, and the Filters page's "Pull from REW API"
@@ -309,9 +312,9 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 
 | Field | Value |
 |-------|-------|
-| Date | 26.07.2026. |
+| Date | 02.08.2026. |
 | Tester | disposabledominik |
-| App version (Help > About, or `wiim-rew-sync --version`) | v0.5.0 |
+| App version (Help > About, or `wiim-rew-sync --version`) | v0.6.0 |
 | Environment (OS, Python version) | Win11, Python 3.12.3 |
 | Devices tested against (model, firmware) | WiiM Sound 5.2.820956, WiiM Amp Ultra 5.2.820839, WiiM Mini 4.6.819436 |
 | REW available for testing? | ☑ Yes ☐ No |
@@ -325,14 +328,13 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 | Every scenario in the traceability matrix (§5) resolves to a passing test or a documented, waived gap | ☑ |
 | No open, unwaived scenario gaps | ☑ |
 
-**Overall: ☐ PASS — ready to release ☑ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
+**Overall: ☑ PASS — ready to release ☐ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
 
 Waived gaps / blockers:
-- Issue `#243` was a waived gap as of this sign-off (2026-07-26); fixed and merged the following
-  day (PR #16, 2026-07-27) -- no longer an open gap as of 2026-08-02. See Test 17 above.
+
 
 ---
 
 Signed off by: disposabledominik
 
-Date: 26.07.2026.
+Date: 02.08.2026.
