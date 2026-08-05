@@ -191,12 +191,23 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] L/R presets show "L/R" badge with Left-channel band count (Right-channel band count is not shown)
 
 ### Test 14: Navigation
-- [P] Sidebar "Resume Setup" returns to current wizard step from secondary views (no visible change if
-  already there — this is by design, not a bug)
+- [P] Sidebar "Resume Setup" returns to the wizard from secondary views; if you had browsed back to
+  an earlier completed step it jumps to the frontier (first incomplete) step, otherwise there is no
+  visible change — this is by design, not a bug
 - [P] Help > User Guide opens help panel overlay; ✕ button and Escape both close it
 - [P] Step indicator: clicking a completed step navigates back to it
-- [P] Back-navigation from Push clears completion badges for invalidated steps
+- [ ] Browsing back to a completed step is non-destructive: checkmarks, summaries, and loaded
+  filters all survive; the browsed step's pill shows the outlined "viewing" style while the
+  frontier step's pill stays filled/active and is clickable to jump forward again
+- [ ] Changing an answer invalidates only downstream steps: picking a different EQ type clears the
+  checkmarks *and* the loaded filters of every step after it; changing the source selection or
+  channel mode clears downstream checkmarks; re-picking the same answer clears nothing
 - [P] Selecting a new device (back to Connect) resets the flow steps (Connect, EQ Type, Source, Filters, Review, Push)
+- [ ] Selecting a different device while unpushed filter work is loaded (including work that exists
+  only in the L/R per-channel lists) shows a confirmation prompt first; declining keeps the current
+  device and state untouched
+- [ ] Clicking the device name in the sidebar opens a read-only device-info dialog (name, model,
+  IP, capability warning if any) — it does not navigate to the Connect step
 
 ### Test 15: Settings
 - [P] Settings view shows theme selector, log directory, presets directory
@@ -297,8 +308,9 @@ These are deliberate `WONTFIX`es from `docs/smoke_test_issues.md` — do not re-
 
 - **Transparent window backgrounds under WSL2/WSLg** (#3) — a Wayland compositor artifact, resolves
   on a native Windows build. Not reproducible outside WSL2.
-- **Sidebar "Resume Setup" (nav key `home`) appears to do nothing** (#17) — working as designed: it returns to the current
-  wizard step, so there's no visible change if you're already there.
+- **Sidebar "Resume Setup" (nav key `home`) appears to do nothing** (#17) — working as designed: it
+  returns to the wizard's frontier (first incomplete) step, so there's no visible change unless you
+  were on a secondary view or had browsed back to an earlier completed step.
 - **Extra/inapplicable audio sources shown for some models** (#43) — the PEQ engine accepts any
   source name and there's no reliable way to probe which inputs are physically present, so showing
   a superset is harmless.

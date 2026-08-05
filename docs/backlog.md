@@ -8,7 +8,8 @@ Items are listed highest-priority-first (safety/correctness gaps, then infra/pro
 low-priority tech debt). Each item's `## N.` number is a stable identifier, not a priority rank --
 code comments, docstrings, and `docs/smoke_test_issues.md` rows cite items by this number (e.g.
 "docs/backlog.md item 3"), so numbers are never reassigned even when an item's position in this
-list changes as priorities shift. Reordered 2026-08-02; no numbers changed, item 6 added.
+list changes as priorities shift. Reordered 2026-08-02; no numbers changed, item 6 added. Item 7
+added 2026-08-05.
 
 ---
 
@@ -168,6 +169,30 @@ behavior).
 **To reactivate:** If a third dialog needs an embedded optional warning, extract a shared
 `__init__`-level mixin/base covering the `warning` param, docstring, and width-bump logic, and
 migrate `DevicePickerDialog`/`QuickSetupDialog` onto it at the same time.
+
+---
+
+## 7. No Confirmation Prompt Before Change-Time Checkmark Invalidation (UX Decision)
+
+**What:** Since the `#246` Stage 2 lazy-invalidation redesign (PR #20), changing an earlier answer
+(picking a different EQ type, or a different source set / channel mode) silently invalidates the
+downstream steps' checkmarks -- and, for an EQ-type switch, also clears the loaded filter payload --
+with no confirmation prompt. Only a *device* switch with unpushed filter work prompts
+(`_confirm_device_switch`, smoke `#248`/`#249`), because that is the one change that destroys real
+payload plus device-scoped state rather than mostly checkmarks.
+
+**Why deferred:** Deliberately scoped out of PR #20 (its review's decision R7): the EQ-type/source
+handlers destroy little of value (re-checking a step is cheap; filters survive a source change),
+and prompting on every changed answer would make ordinary corrections feel heavyweight. Whether the
+EQ-type switch specifically deserves a prompt (it *does* clear loaded filters) is a UX judgment
+call best made after real-world use.
+
+**Status:** Not started. Low priority.
+
+**To reactivate:** If users report losing loaded filters to an accidental EQ-type switch, add a
+confirmation prompt to `_on_eq_type_selected` gated on the same "unsaved work" predicate as the
+device-switch prompt (`_has_unsaved_changes`), reusing the existing `QMessageBox.question`
+pattern. Source/channel changes should stay prompt-free (nothing but checkmarks is lost).
 
 ---
 
