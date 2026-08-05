@@ -1614,9 +1614,15 @@ class MainWindow(QMainWindow):
             capability_warning=self._capability_warning_text(),
         )
 
-        # Populate SourcePage with available sources
+        # Populate SourcePage with available sources. set_sources()
+        # legitimately changes Continue's enabled state (a default source
+        # gets pre-checked) while this probe operation may still be
+        # in flight -- tell the feedback manager so finish_operation()
+        # restores *this* state rather than the stale pre-probe snapshot
+        # (smoke #250).
         active_source = getattr(caps, "active_source", "")
         self._source_page.set_sources(source_names, active_source)
+        self._feedback_manager.note_button_state_changed(self._source_page.action_buttons()[0])
 
         # Gate L/R channel mode by device capability (post capability-file
         # merge — see device_capability_file.py) so the option is never

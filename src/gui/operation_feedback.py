@@ -61,11 +61,17 @@ class OperationFeedbackManager(QObject):
         super().__init__(parent)
         self._status_banner = status_banner
         self._action_buttons: list[QWidget] = []
-        # Snapshot of each button's isEnabled() at start_operation(), keyed by
+        # Restore-on-finish snapshot of each button's enabled state, keyed by
         # id() -- restored on finish rather than a blanket setEnabled(True),
         # since some registered buttons (e.g. preset Load/Rename/Delete) are
         # normally gated on an unrelated condition like list selection and
-        # would otherwise come back enabled with nothing selected.
+        # would otherwise come back enabled with nothing selected. A handler
+        # that legitimately changes a registered button's enabled state
+        # while an operation may still be in flight must call
+        # note_button_state_changed() so this snapshot -- not just the live
+        # widget -- reflects that change; otherwise finish_operation() would
+        # revert it back to the stale value captured at start_operation()
+        # (smoke #250).
         self._prior_enabled: dict[int, bool] = {}
         self._is_active = False
         self._current_message = ""
@@ -102,6 +108,32 @@ class OperationFeedbackManager(QObject):
             buttons: List of QPushButton or similar widgets to manage.
         """
         self._action_buttons = list(buttons)
+
+    def note_button_state_changed(self, btn: QWidget) -> None:
+        """Record a legitimate, in-flight change to a registered button's
+        enabled state so finish_operation() restores *this* value instead
+        of the stale pre-operation snapshot.
+
+        Call this immediately after business logic changes a registered
+        button's enabled state for its own reasons (not merely because
+        start_operation() force-disabled it) while an operation may still
+        be active -- e.g. a capability-probe result handler enabling or
+        disabling SourcePage's Continue button once the device's actual
+        source list is known. Without this, finish_operation()/the hard
+        timeout would blindly revert the button to whatever it was before
+        the operation started, regardless of which direction the change
+        went (smoke #250).
+
+        A no-op if btn isn't currently tracked (no operation active, or
+        btn isn't a registered action button) -- there is no snapshot to
+        update in that case.
+
+        Args:
+            btn: A registered action button whose enabled state just
+                changed for a business reason.
+        """
+        if id(btn) in self._prior_enabled:
+            self._prior_enabled[id(btn)] = btn.isEnabled()
 
     def start_operation(self, message: str = "Working...") -> None:
         """Signal that an async operation has started.
@@ -170,22 +202,15 @@ class OperationFeedbackManager(QObject):
     # ------------------------------------------------------------------
 
     def _restore_button_states(self) -> None:
-        """Restore each registered button to its pre-operation enabled state.
+        """Restore each registered button to its snapshot enabled state.
 
-        Skips any button that is already enabled again by the time this
-        runs. start_operation() force-disables every registered button, so a
-        button still disabled here was never touched and gets its snapshot
-        restored -- but an operation's own success handler can legitimately
-        re-enable a button while the operation is still in flight (e.g. a
-        capability probe populating SourcePage's checkboxes and enabling
-        Continue, via a bridge signal queued ahead of operation_finished).
-        Overwriting that with the stale pre-operation snapshot would revert
-        a correct enable back to disabled with no user action able to
-        explain why (smoke #250).
+        The snapshot is whatever start_operation() captured, updated in
+        place by any note_button_state_changed() call made while the
+        operation was in flight -- so this always restores the last known
+        *legitimate* state, not necessarily the pre-operation one.
         """
         for btn in self._action_buttons:
-            if not btn.isEnabled():
-                btn.setEnabled(self._prior_enabled.get(id(btn), True))
+            btn.setEnabled(self._prior_enabled.get(id(btn), True))
 
     # ------------------------------------------------------------------
     # Private slots
