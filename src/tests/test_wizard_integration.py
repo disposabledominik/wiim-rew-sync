@@ -248,10 +248,13 @@ class TestRoomFitFlow:
 
 
 class TestBackNavigation:
-    """Integration test: step indicator backward navigation with invalidation."""
+    """Integration test: step indicator back-navigation is non-destructive
+    browsing (lazy invalidation, #246 Stage 2), and Resume Setup returns to
+    the frontier with everything intact."""
 
-    def test_back_navigation_invalidates_subsequent_steps(self, make_window) -> None:
-        """Going back via step indicator invalidates steps after target."""
+    def test_back_navigation_preserves_steps_and_shows_viewing(self, make_window) -> None:
+        """Browsing back via a step pill keeps every checkmark; the browsed
+        pill renders VIEWING with its checkmark, the frontier stays ACTIVE."""
         window = make_window()
 
         # Advance to REVIEW step (PEQ_ONLY flow)
@@ -265,13 +268,7 @@ class TestBackNavigation:
         # Now at REVIEW
         assert window.wizard_controller.current_step == WizardStep.REVIEW
 
-        # Verify completed steps exist before back-nav
-        completed = window.wizard_controller.completed_steps
-        assert WizardStep.CONNECT in completed
-        assert WizardStep.SOURCE in completed
-        assert WizardStep.FILTERS in completed
-
-        # Navigate back to SOURCE via step indicator click
+        # Browse back to SOURCE via step indicator click
         # In PEQ_ONLY flow: [CONNECT(0), SOURCE(1), FILTERS(2), REVIEW(3), PUSH(4)]
         window._on_step_indicator_clicked(1)  # SOURCE is index 1
 
@@ -279,22 +276,23 @@ class TestBackNavigation:
         assert window.wizard_controller.current_step == WizardStep.SOURCE
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["source"]
 
-        # Steps after SOURCE should be invalidated
+        # Nothing invalidated -- looking is not changing
         completed = window.wizard_controller.completed_steps
-        assert WizardStep.CONNECT in completed  # Before target: preserved
-        assert WizardStep.SOURCE not in completed  # Target: cleared
-        assert WizardStep.FILTERS not in completed  # After target: cleared
-        assert WizardStep.REVIEW not in completed  # After target: cleared
+        assert WizardStep.CONNECT in completed
+        assert WizardStep.SOURCE in completed
+        assert WizardStep.FILTERS in completed
 
-        # Regression: SOURCE was COMPLETED before this back-nav (the user
-        # had already passed through it once); the step indicator must show
-        # it as ACTIVE now, not a stale COMPLETED checkmark.
+        # The browsed pill shows VIEWING (checkmark kept); the frontier
+        # (REVIEW, first incomplete step) stays ACTIVE.
         from src.gui.components.step_indicator import _StepState
 
-        assert window._step_indicator._steps[1].state == _StepState.ACTIVE
+        assert window._step_indicator._steps[1].state == _StepState.VIEWING
+        assert window._step_indicator._steps[1]._circle.text() == "\u2713"
+        assert window._step_indicator._steps[3].state == _StepState.ACTIVE
 
-    def test_back_navigation_to_connect_clears_all(self, make_window) -> None:
-        """Going back to CONNECT invalidates all subsequent steps."""
+    def test_resume_setup_returns_to_frontier_with_state_intact(self, make_window) -> None:
+        """Browse back to CONNECT, then Resume Setup: back at the frontier
+        with all checkmarks, filters, and device state preserved."""
         window = make_window()
 
         # Advance to FILTERS
@@ -306,13 +304,20 @@ class TestBackNavigation:
 
         # Now at FILTERS
         assert window.wizard_controller.current_step == WizardStep.FILTERS
+        completed_before = dict(window.wizard_controller.completed_steps)
 
-        # Back to CONNECT (index 0 in any flow)
+        # Browse back to CONNECT (index 0 in any flow) -- non-destructive
         window._on_step_indicator_clicked(0)
-
         assert window.wizard_controller.current_step == WizardStep.CONNECT
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["connect"]
-        assert len(window.wizard_controller.completed_steps) == 0
+        assert dict(window.wizard_controller.completed_steps) == completed_before
+        assert window.wizard_controller.state.selected_device == "192.168.1.100"
+
+        # Resume Setup jumps back to the frontier (FILTERS)
+        window._on_navigation_requested("home")
+        assert window.wizard_controller.current_step == WizardStep.FILTERS
+        assert window.stacked_widget.currentIndex() == PAGE_INDICES["filters"]
+        assert dict(window.wizard_controller.completed_steps) == completed_before
 
 
 # ---------------------------------------------------------------------------

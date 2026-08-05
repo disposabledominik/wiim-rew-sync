@@ -153,8 +153,11 @@ class TestWizardControllerNavigation:
         assert WizardStep.CONNECT in ctrl.completed_steps
         assert ctrl.completed_steps[WizardStep.CONNECT] == "WiiM Pro Plus"
 
-    def test_go_to_step_invalidates_subsequent(self, qtbot) -> None:
-        """go_to_step invalidates all steps after the target in completed_steps."""
+    def test_go_to_step_preserves_completed_steps(self, qtbot) -> None:
+        """go_to_step is purely navigational (lazy invalidation, #246):
+        browsing back to a completed step keeps every checkmark -- looking
+        is not changing. Invalidation happens only at change-time via
+        invalidate_from()."""
         ctrl = WizardController()
 
         # Advance through several steps
@@ -162,15 +165,14 @@ class TestWizardControllerNavigation:
         ctrl.advance("PEQ")  # EQ_TYPE → SOURCE
         ctrl.advance("WiFi")  # SOURCE → FILTERS
 
-        # Now go back to EQ_TYPE
+        # Now browse back to EQ_TYPE
         ctrl.go_to_step(WizardStep.EQ_TYPE)
 
         assert ctrl.current_step == WizardStep.EQ_TYPE
-        # CONNECT should remain completed
+        # Everything stays completed -- browsing destroys nothing
         assert WizardStep.CONNECT in ctrl.completed_steps
-        # EQ_TYPE and beyond should be invalidated
-        assert WizardStep.EQ_TYPE not in ctrl.completed_steps
-        assert WizardStep.SOURCE not in ctrl.completed_steps
+        assert WizardStep.EQ_TYPE in ctrl.completed_steps
+        assert WizardStep.SOURCE in ctrl.completed_steps
 
     def test_go_to_step_emits_step_changed(self, qtbot) -> None:
         """go_to_step emits step_changed with the target step."""
@@ -219,15 +221,15 @@ class TestWizardControllerNavigation:
         assert ctrl._state.current_filters != []
 
     def test_invalidate_from_pops_tooltips_too(self, qtbot) -> None:
-        """invalidate_from() (and go_to_step(), which delegates to it) must
-        pop completed_step_tooltips alongside completed_steps -- the old
-        go_to_step() only popped the summary dict, leaving a stale tooltip
-        behind (currently benign since set_step_summary() always overwrites
-        on re-completion, but latent drift worth covering directly)."""
+        """invalidate_from() must pop completed_step_tooltips alongside
+        completed_steps -- an earlier version only popped the summary dict,
+        leaving a stale tooltip behind (benign while set_step_summary()
+        always overwrites on re-completion, but latent drift worth covering
+        directly)."""
         ctrl = WizardController()
         ctrl.advance("Connected", tooltip="192.168.1.100")
 
-        ctrl.go_to_step(WizardStep.CONNECT)
+        ctrl.invalidate_from(WizardStep.CONNECT)
 
         assert WizardStep.CONNECT not in ctrl.completed_steps
         assert WizardStep.CONNECT not in ctrl._state.completed_step_tooltips
@@ -250,6 +252,58 @@ class TestWizardControllerNavigation:
         for step in sequence:
             assert step not in ctrl.completed_steps
             assert step not in ctrl._state.completed_step_tooltips
+
+    def test_frontier_is_first_incomplete_step(self, qtbot) -> None:
+        """frontier_step derives the first step not in completed_steps, and
+        browsing (go_to_step) never moves it."""
+        ctrl = WizardController()
+        assert ctrl.frontier_step == WizardStep.CONNECT
+
+        ctrl.advance("Connected")  # CONNECT done
+        ctrl.advance("PEQ")  # EQ_TYPE done
+        assert ctrl.frontier_step == WizardStep.SOURCE
+
+        ctrl.go_to_step(WizardStep.CONNECT)
+        assert ctrl.current_step == WizardStep.CONNECT
+        assert ctrl.frontier_step == WizardStep.SOURCE
+
+    def test_frontier_clamps_to_last_step_when_all_complete(self, qtbot) -> None:
+        """With every step completed, frontier_step clamps to the sequence's
+        last step instead of walking off the end."""
+        ctrl = WizardController()
+        for step in ctrl.get_steps():
+            ctrl.set_step_summary(step, "done")
+
+        assert ctrl.frontier_step == WizardStep.PUSH
+
+    def test_frontier_ignores_stale_off_sequence_entries(self, qtbot) -> None:
+        """Completed entries for steps not in the current flow's sequence
+        (transient leftovers across a flow-type switch, e.g. EQ_TYPE under
+        PEQ_ONLY) don't disturb the derivation -- it only walks the current
+        sequence."""
+        ctrl = WizardController()
+        ctrl.advance("Connected")  # CONNECT done
+        ctrl.advance("PEQ")  # EQ_TYPE done (PEQ flow)
+        ctrl.set_flow_type(FlowType.PEQ_ONLY)  # sequence loses EQ_TYPE
+
+        # CONNECT completed, SOURCE not -- EQ_TYPE's stale entry is invisible
+        assert ctrl.frontier_step == WizardStep.SOURCE
+
+    def test_invalidate_from_emits_steps_invalidated(self, qtbot) -> None:
+        """invalidate_from() emits steps_invalidated when it actually pops
+        something, and stays silent when there was nothing to pop -- views
+        resync off this signal, so a spurious emission means wasted repaints
+        and a missing one means a stale indicator."""
+        ctrl = WizardController()
+        ctrl.advance("Connected")
+
+        with qtbot.waitSignal(ctrl.steps_invalidated, timeout=1000):
+            ctrl.invalidate_from(WizardStep.CONNECT)
+
+        emissions: list[bool] = []
+        ctrl.steps_invalidated.connect(lambda: emissions.append(True))
+        ctrl.invalidate_from(WizardStep.CONNECT)  # already empty
+        assert emissions == []
 
     def test_reset_clears_state(self, qtbot) -> None:
         """reset() restores initial state (CONNECT step, PEQ flow, no completed)."""
@@ -415,21 +469,21 @@ class TestWizardControllerSummaries:
 
         assert ctrl.completed_steps[WizardStep.CONNECT] == ""
 
-    def test_go_to_step_clears_summaries(self, qtbot) -> None:
-        """go_to_step removes summaries for invalidated steps."""
+    def test_go_to_step_keeps_summaries(self, qtbot) -> None:
+        """go_to_step keeps every completed step's summary -- browsing is
+        purely navigational under lazy invalidation (#246)."""
         ctrl = WizardController()
 
         ctrl.advance("Connected")
         ctrl.advance("PEQ")
         ctrl.advance("WiFi")
 
-        # Go back to CONNECT
+        # Browse back to CONNECT
         ctrl.go_to_step(WizardStep.CONNECT)
 
-        # All summaries after CONNECT should be cleared
-        assert WizardStep.CONNECT not in ctrl.completed_steps
-        assert WizardStep.EQ_TYPE not in ctrl.completed_steps
-        assert WizardStep.SOURCE not in ctrl.completed_steps
+        assert ctrl.completed_steps[WizardStep.CONNECT] == "Connected"
+        assert ctrl.completed_steps[WizardStep.EQ_TYPE] == "PEQ"
+        assert ctrl.completed_steps[WizardStep.SOURCE] == "WiFi"
 
 
 class TestWizardStateSourceSelection:

@@ -1222,6 +1222,23 @@ QWidget[class="stepWidgetActiveDimmed"] {
     border-radius: 10px;
 }
 
+/* "You are here, browsing" -- the page on screen when it is not the
+   frontier (lazy-invalidation model). Outlined instead of filled so the
+   two "you" markers can't be confused: filled accent pill = the frontier
+   ("resume here"), outlined pill + checkmark = a completed step being
+   viewed ("just looking"). */
+QWidget[class="stepWidgetViewing"] {
+    background-color: transparent;
+    border: 1px solid #00B4D8;
+    border-radius: 10px;
+}
+
+QWidget[class="stepWidgetViewingDimmed"] {
+    background-color: transparent;
+    border: 1px solid #6E6E6E;
+    border-radius: 10px;
+}
+
 QLabel[class="stepCircleCompleted"] {
     background-color: #00B4D8;
     border-radius: 10px;

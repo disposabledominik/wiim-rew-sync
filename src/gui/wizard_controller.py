@@ -228,6 +228,7 @@ class WizardController(QObject):
     flow_type_changed = Signal(object)  # FlowType
     wizard_reset = Signal()
     step_summary_updated = Signal(object, str, str)  # (WizardStep, summary_text, tooltip)
+    steps_invalidated = Signal()  # completed_steps shrank; views must re-render
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -256,6 +257,27 @@ class WizardController(QObject):
     def completed_steps(self) -> dict[WizardStep, str]:
         """Return the dictionary of completed steps and their summaries."""
         return self._state.completed_steps
+
+    @property
+    def frontier_step(self) -> WizardStep:
+        """Return the step where the user left off: the first step in the
+        current sequence not yet in ``completed_steps``, clamped to the last
+        step when every step is complete.
+
+        Derived on demand rather than stored, so it cannot drift. Browsing
+        (``go_to_step``) only moves ``current_step`` and can never move the
+        frontier; only completing a step (``advance``/``set_step_summary``)
+        or invalidating (``invalidate_from``) does. Completed entries that
+        aren't in the current flow's sequence (transient leftovers across a
+        flow-type switch, e.g. a stale ``EQ_TYPE`` under ``PEQ_ONLY``) are
+        ignored by construction because the derivation only walks the
+        current sequence.
+        """
+        sequence = self.get_steps()
+        for step in sequence:
+            if step not in self._state.completed_steps:
+                return step
+        return sequence[-1]
 
     # ------------------------------------------------------------------
     # Step sequencing
@@ -316,23 +338,29 @@ class WizardController(QObject):
         if step not in sequence:
             return
         idx = sequence.index(step)
+        popped = False
         for s in sequence[idx:]:
-            self._state.completed_steps.pop(s, None)
+            if self._state.completed_steps.pop(s, None) is not None:
+                popped = True
             self._state.completed_step_tooltips.pop(s, None)
+        if popped:
+            self.steps_invalidated.emit()
 
     def go_to_step(self, step: WizardStep) -> None:
-        """Navigate to a previously completed step, invalidating subsequent steps.
+        """Navigate to a step in the current sequence. Purely navigational.
 
-        The target step must be in the completed set or be the current step.
-        All steps after the target in the sequence are removed from the
-        completed set.  Emits ``step_changed``.
+        Looking is not changing: browsing back to a completed step keeps
+        every completed step's checkmark, summary, and all wizard data
+        intact. Invalidation happens only at change-time — when a step's
+        selection actually changes (device switch, EQ-type switch, source
+        change), the responsible handler calls ``invalidate_from``. Emits
+        ``step_changed``.
         """
         sequence = self.get_steps()
 
         if step not in sequence:
             return
 
-        self.invalidate_from(step)
         self._state.current_step = step
         self.step_changed.emit(step)
 

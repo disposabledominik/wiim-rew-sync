@@ -139,18 +139,20 @@ class TestCapabilityFallbackSidebarWarning:
     rather than pure live device probing."""
 
     def test_no_fallback_shows_no_warning(self, window) -> None:
-        """Fully live-probed capabilities -- no warning glyph or tooltip."""
+        """Fully live-probed capabilities -- no warning glyph, and no
+        warning in the device-info popover text."""
         window._on_device_selected("192.168.1.100")
 
         caps = _make_caps(model="WiiM Pro Plus", roomfit_level=2)
         window._on_capabilities_ready(caps)
 
         assert window._sidebar_nav._device_label.text() == "WiiM Pro Plus"
-        assert window._sidebar_nav._device_label.toolTip() == "Go to Connect step"
+        assert window._capability_warning_text() == ""
 
     def test_generic_capabilities_shows_warning(self, window) -> None:
         """used_generic_capabilities=True -- sidebar shows the warning glyph
-        and an explanatory tooltip."""
+        and the device-info popover carries the explanation (PR #19 review
+        D2: the warning lives in the popover, not a hijacked tooltip)."""
         window._on_device_selected("192.168.1.100")
 
         caps = _make_caps(model="WiiM Pro Plus", roomfit_level=2)
@@ -158,11 +160,14 @@ class TestCapabilityFallbackSidebarWarning:
         window._on_capabilities_ready(caps)
 
         assert window._sidebar_nav._device_label.text() == "WiiM Pro Plus  ⚠"
-        assert "generic defaults" in window._sidebar_nav._device_label.toolTip()
+        assert "generic defaults" in window._capability_warning_text()
+        with patch("PySide6.QtWidgets.QMessageBox.information") as info:
+            window._show_device_info()
+        assert "generic defaults" in info.call_args.args[2]
 
     def test_capability_file_override_shows_warning(self, window) -> None:
         """capability_file_override=True -- sidebar shows the warning glyph
-        and an explanatory tooltip."""
+        and the popover carries the explanation."""
         window._on_device_selected("192.168.1.100")
 
         caps = _make_caps(model="WiiM Pro Plus", roomfit_level=2)
@@ -170,7 +175,7 @@ class TestCapabilityFallbackSidebarWarning:
         window._on_capabilities_ready(caps)
 
         assert window._sidebar_nav._device_label.text() == "WiiM Pro Plus  ⚠"
-        assert "capability-file override" in window._sidebar_nav._device_label.toolTip()
+        assert "capability-file override" in window._capability_warning_text()
 
 
 # ---------------------------------------------------------------------------
@@ -541,35 +546,77 @@ class TestIssue41DeviceSelectResetsFlow:
 
 
 class TestIssue57BackNavClearsCompletedSteps:
-    """Smoke #57: Going back clears completion for invalidated future steps."""
+    """Smoke #57, superseded by #246 Stage 2 (lazy invalidation): browsing
+    back keeps every checkmark; only an actual selection *change* on the
+    revisited step invalidates downstream. Both halves covered here so the
+    old eager-clear can't silently return in either direction."""
 
-    def test_go_to_source_clears_review_and_filters(self, window) -> None:
-        """Advance to REVIEW, go_to_step(SOURCE) removes REVIEW/FILTERS from completed."""
+    def test_go_to_source_preserves_checkmarks_until_change(self, window) -> None:
+        """Browse back to SOURCE: nothing clears. Re-pick the same source:
+        still nothing. Pick a different source: downstream checkmarks clear."""
         wc = window._wizard_controller
 
         # Set up PEQ_ONLY flow to avoid EQ_TYPE step
         wc.set_flow_type(FlowType.PEQ_ONLY)
         # Sequence: CONNECT → SOURCE → FILTERS → REVIEW → PUSH
 
-        # Advance through all steps
+        wc.state.selected_source = "wifi"
         wc.advance(summary="Connected")  # CONNECT done, now at SOURCE
         wc.advance(summary="wifi")  # SOURCE done, now at FILTERS
         wc.advance(summary="Filters loaded")  # FILTERS done, now at REVIEW
         wc.advance(summary="Reviewed")  # REVIEW done, now at PUSH
 
-        # Verify we're at PUSH with prior steps completed
-        assert wc.current_step == WizardStep.PUSH
+        # Browse back to SOURCE -- looking is not changing
+        wc.go_to_step(WizardStep.SOURCE)
+        assert WizardStep.REVIEW in wc.completed_steps
+        assert WizardStep.FILTERS in wc.completed_steps
+        assert WizardStep.SOURCE in wc.completed_steps
+
+        # Re-confirm the same source/mode -- still no invalidation
+        window._on_source_selected("wifi", "Stereo")
         assert WizardStep.REVIEW in wc.completed_steps
         assert WizardStep.FILTERS in wc.completed_steps
 
-        # Navigate back to SOURCE
+        # Actually change the source -- downstream checkmarks clear
         wc.go_to_step(WizardStep.SOURCE)
-
-        # REVIEW and FILTERS should be cleared from completed_steps
+        window._on_source_selected("optical", "Stereo")
         assert WizardStep.REVIEW not in wc.completed_steps
         assert WizardStep.FILTERS not in wc.completed_steps
-        assert WizardStep.SOURCE not in wc.completed_steps
-        # CONNECT should still be completed
+        # SOURCE itself was just re-completed by the advance()
+        assert WizardStep.SOURCE in wc.completed_steps
+        assert WizardStep.CONNECT in wc.completed_steps
+
+    def test_eq_type_change_invalidates_downstream_same_type_does_not(
+        self, window
+    ) -> None:
+        """EQ-type change detection: re-picking the current type keeps
+        downstream checkmarks; switching types clears them -- including a
+        step that only exists in the flow being left (NAME_PROFILE,
+        RoomFit-only, the #248 class of bug)."""
+        wc = window._wizard_controller
+
+        # RoomFit flow, advanced through NAME_PROFILE
+        wc.advance(summary="Connected")  # CONNECT done, at EQ_TYPE
+        window._on_eq_type_selected("roomfit")  # EQ_TYPE done, at FILTERS
+        wc.advance(summary="Profile A")  # FILTERS done, at REVIEW
+        wc.advance(summary="Reviewed")  # REVIEW done, at NAME_PROFILE
+        wc.advance(summary="MyProfile")  # NAME_PROFILE done, at PUSH
+
+        # Browse back and re-confirm RoomFit -- nothing clears
+        wc.go_to_step(WizardStep.EQ_TYPE)
+        window._on_eq_type_selected("roomfit")
+        assert WizardStep.NAME_PROFILE in wc.completed_steps
+        assert WizardStep.REVIEW in wc.completed_steps
+
+        # Browse back and switch to PEQ -- everything after EQ_TYPE clears,
+        # including RoomFit-only NAME_PROFILE (checked via the old sequence)
+        wc.go_to_step(WizardStep.EQ_TYPE)
+        window._on_eq_type_selected("peq")
+        assert WizardStep.NAME_PROFILE not in wc.completed_steps
+        assert WizardStep.REVIEW not in wc.completed_steps
+        assert WizardStep.FILTERS not in wc.completed_steps
+        # EQ_TYPE re-completed by the advance(); CONNECT untouched
+        assert WizardStep.EQ_TYPE in wc.completed_steps
         assert WizardStep.CONNECT in wc.completed_steps
 
 
@@ -874,3 +921,131 @@ class TestIssue162ConsistentStepSummaries:
         sidebar_summary = state.completed_steps[WizardStep.FILTERS]
 
         assert normal_summary == sidebar_summary == "3 filters"
+
+
+# ---------------------------------------------------------------------------
+# Issue #246 Stage 2: lazy invalidation -- entry side effects, push cycle,
+# and the device-switch confirmation
+# ---------------------------------------------------------------------------
+
+
+class TestLazyInvalidationEntrySideEffects:
+    """Entry side effects (Push page reset, Name Profile repopulate) run only
+    when a step is entered fresh at the frontier -- browsing back to a
+    completed step must not re-run them (#246 Stage 2)."""
+
+    def _complete_through_push(self, window) -> None:
+        """Drive the PEQ_ONLY flow to PUSH with every prior step completed.
+
+        Shows the window first: these tests assert on isVisible(), which is
+        always False while every ancestor is hidden.
+        """
+        window.show()
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))
+        window._on_source_selected("wifi", "Stereo")
+        window._wizard_controller.state.current_filters = [MagicMock()]
+        window._on_filters_accepted()  # -> REVIEW
+        window._wizard_controller.advance("Ready")  # REVIEW done -> PUSH
+
+    def test_browsing_back_to_completed_push_keeps_result_view(self, window) -> None:
+        """After a completed push, browsing away and back to PUSH must not
+        reset the page -- the result view stays on screen."""
+        self._complete_through_push(window)
+        wc = window._wizard_controller
+        wc.set_step_summary(WizardStep.PUSH, "Done")
+        window._push_page.set_dry_run_result("3 filters mapped")
+        assert window._push_page._status_badge.isVisible()
+
+        wc.go_to_step(WizardStep.FILTERS)  # browse away
+        wc.go_to_step(WizardStep.PUSH)  # browse back
+
+        assert window._push_page._status_badge.isVisible()
+
+    def test_entering_fresh_push_frontier_resets_page(self, window) -> None:
+        """Entering PUSH while it is NOT completed (the frontier) still runs
+        the reset entry side effect, clearing stale dry-run results."""
+        self._complete_through_push(window)
+        wc = window._wizard_controller
+        window._push_page.set_dry_run_result("stale dry run")
+        assert window._push_page._status_badge.isVisible()
+
+        wc.go_to_step(WizardStep.FILTERS)  # browse away
+        wc.go_to_step(WizardStep.PUSH)  # PUSH not completed -> fresh entry
+
+        assert not window._push_page._status_badge.isVisible()
+
+    def test_done_acknowledged_invalidates_review_and_push_only(self, window) -> None:
+        """OK after a push returns to FILTERS keeping its checkmark; REVIEW
+        and PUSH are invalidated so the next cycle re-enters PUSH fresh."""
+        self._complete_through_push(window)
+        wc = window._wizard_controller
+        wc.set_step_summary(WizardStep.PUSH, "Done")
+
+        window._on_done_acknowledged()
+
+        assert wc.current_step == WizardStep.FILTERS
+        assert WizardStep.FILTERS in wc.completed_steps
+        assert WizardStep.REVIEW not in wc.completed_steps
+        assert WizardStep.PUSH not in wc.completed_steps
+        assert wc.frontier_step == WizardStep.REVIEW
+
+
+class TestDeviceSwitchConfirmation:
+    """Switching devices with unpushed filter work prompts first -- the one
+    change-time invalidation that destroys real payload, not just
+    checkmarks (#246 Stage 2)."""
+
+    def test_decline_aborts_switch_entirely(self, window, monkeypatch) -> None:
+        """Declining the confirmation leaves device, filters, and checkmarks
+        untouched and skips the probe."""
+        # The forced-True patch below can still be active when qtbot closes
+        # the window at teardown; without this closeEvent would block on the
+        # (unmocked, custom) UnsavedChangesDialog (see CLAUDE.md).
+        window._skip_unsaved_prompt = True
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))
+        window._wizard_controller.state.current_filters = [MagicMock()]
+
+        monkeypatch.setattr(MainWindow, "_has_unsaved_changes", lambda self: True)
+        completed_before = dict(window._wizard_controller.completed_steps)
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=False,
+        ):
+            window._on_device_selected("192.168.1.200")
+
+        state = window._wizard_controller.state
+        assert state.selected_device == "192.168.1.100"
+        assert state.current_filters != []
+        assert dict(window._wizard_controller.completed_steps) == completed_before
+
+    def test_accept_proceeds_with_switch(self, window, monkeypatch) -> None:
+        """Accepting the confirmation performs the normal switch-clearing."""
+        window._skip_unsaved_prompt = True  # see test above
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))
+        window._wizard_controller.state.current_filters = [MagicMock()]
+
+        monkeypatch.setattr(MainWindow, "_has_unsaved_changes", lambda self: True)
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=True,
+        ):
+            window._on_device_selected("192.168.1.200")
+
+        state = window._wizard_controller.state
+        assert state.selected_device == "192.168.1.200"
+        assert state.current_filters == []
+
+    def test_no_unsaved_changes_switches_without_prompt(self, window) -> None:
+        """No unsaved filter work -- the switch proceeds silently (the
+        autouse fixture forces _has_unsaved_changes to False)."""
+        window._on_device_selected("192.168.1.100")
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+        ) as confirm:
+            window._on_device_selected("192.168.1.200")
+
+        confirm.assert_not_called()
+        assert window._wizard_controller.state.selected_device == "192.168.1.200"

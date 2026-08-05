@@ -178,15 +178,16 @@ class TestOnboardingSignalWiring:
             assert window._settings.first_run_complete is True
             mock_save.assert_called()
 
-    def test_get_started_invalidates_all_completed_steps(self, make_window) -> None:
-        """Re-entering onboarding via Get Started must not leave a later step
-        checked while Connect (which precedes it in every flow) is not.
+    def test_get_started_navigates_to_connect_preserving_steps(self, make_window) -> None:
+        """Re-entering onboarding via Get Started lands on Connect without
+        destroying session progress.
 
-        Reproduces the "Show onboarding again" -> "Get Started" bug: with
-        every step completed from a prior run, Get Started must invalidate
-        Connect *and everything after it* so no checked step ever follows an
-        unchecked one (#reported: Connect loses its checkmark/context while
-        later steps stay checked with stale data).
+        The original bug here was Connect losing its checkmark while later
+        steps stayed checked (a "no checked step may follow an unchecked
+        one" violation, patched at the time by invalidating everything).
+        Under lazy invalidation (#246 Stage 2) the violation can't occur in
+        the first place: Get Started is pure navigation, so every checkmark
+        survives intact and there's nothing to invalidate.
         """
         from src.gui.wizard_controller import WizardStep
 
@@ -201,7 +202,7 @@ class TestOnboardingSignalWiring:
         with patch.object(window._settings, "save"):
             window._onboarding_overlay.get_started_clicked.emit()
 
-        assert controller.completed_steps == {}
+        assert set(controller.completed_steps) == set(sequence)
         assert controller.current_step == WizardStep.CONNECT
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["connect"]
 

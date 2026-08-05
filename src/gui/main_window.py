@@ -364,10 +364,7 @@ class MainWindow(QMainWindow):
         self._setup_primary_workflows()
 
         # --- Initialize step indicator with default flow ---
-        sequence = self._wizard_controller.get_steps()
-        labels = [step.value.replace("_", " ").title() for step in sequence]
-        self._step_indicator.set_steps(labels)
-        self._step_indicator.set_current(0)
+        self._rebuild_step_indicator()
 
         # --- Warm up secondary pages' layouts (see _warm_up_stacked_pages) ---
         QTimer.singleShot(0, self._warm_up_stacked_pages)
@@ -466,7 +463,10 @@ class MainWindow(QMainWindow):
         self._step_indicator.set_dimmed(False)
         sequence = self._wizard_controller.get_steps()
         if step in sequence:
-            self._step_indicator.set_current(sequence.index(step))
+            frontier = self._wizard_controller.frontier_step
+            self._step_indicator.set_view(
+                sequence.index(step), sequence.index(frontier)
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -788,6 +788,9 @@ class MainWindow(QMainWindow):
         self._wizard_controller.step_summary_updated.connect(
             self._on_step_summary_updated
         )
+        self._wizard_controller.steps_invalidated.connect(
+            self._on_steps_invalidated
+        )
 
         # --- 3. AsyncBridge → handlers ---
         self._bridge.discovery_complete.connect(self._on_discovery_complete)
@@ -845,6 +848,20 @@ class MainWindow(QMainWindow):
 
         state = self._wizard_controller.state
         if device_ip != state.selected_device:
+            # Switching devices is the one change-time invalidation that
+            # destroys real payload (loaded/imported filters), not just
+            # step checkmarks -- so it alone warrants a confirmation when
+            # unpushed filter work would be lost. Declining aborts the
+            # switch entirely (no state change, no adapter swap, no probe).
+            if state.selected_device is not None and self._has_unsaved_changes():
+                if not self._confirm_action(
+                    "Switch device?",
+                    "Switching devices clears the filters you have loaded "
+                    "and your progress after the Connect step.\n\n"
+                    "Push them to the current device first if you want to "
+                    "keep them. Switch anyway?",
+                ):
+                    return
             # Invalidate using the *old* (pre-switch) flow's sequence, before
             # resetting flow_type below -- a step that only exists in the
             # old flow (e.g. NAME_PROFILE, RoomFit-only) would otherwise be
@@ -927,6 +944,46 @@ class MainWindow(QMainWindow):
         selected_ip = self._wizard_controller.state.selected_device
         return self._lookup_device_name(selected_ip, getattr(caps, "model", "") or "WiiM Device")
 
+    def _capability_warning_text(self) -> str:
+        """Warning text when displayed capabilities aren't purely from live
+        device probing (capability-file override and/or generic fallback
+        defaults), empty otherwise -- shared by the sidebar glyph and the
+        device-info popover so the two can't drift."""
+        caps = self._device_caps
+        if getattr(caps, "capability_file_override", False) or getattr(
+            caps, "used_generic_capabilities", False
+        ):
+            return (
+                "Some capabilities are from a capability-file override or "
+                "generic defaults, not the device itself — see Diagnostics "
+                "for details."
+            )
+        return ""
+
+    def _show_device_info(self) -> None:
+        """Show the read-only device-details popover for the sidebar header.
+
+        Replaces the header's old go-to-Connect behavior (PR #19 review,
+        D2): a details dialog gives the capability warning a real home
+        instead of hijacking the header tooltip, and the Connect pill
+        already covers navigation.
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        selected_ip = self._wizard_controller.state.selected_device
+        if not selected_ip:
+            return
+
+        lines = [f"Device: {self._resolve_connect_summary()}", f"IP address: {selected_ip}"]
+        model = getattr(self._device_caps, "model", "")
+        if model:
+            lines.append(f"Model: {model}")
+        warning = self._capability_warning_text()
+        if warning:
+            lines.append("")
+            lines.append(f"⚠ {warning}")
+        QMessageBox.information(self, "Connected Device", "\n".join(lines))
+
     def _compute_source_summary(self, source_name: str) -> tuple[str, str]:
         """(summary, tooltip) for the Sources step -- same on every entry point.
 
@@ -970,22 +1027,42 @@ class MainWindow(QMainWindow):
     def _on_eq_type_selected(self, eq_type: str) -> None:
         """Handle EQ type selection — set flow type and advance.
 
+        Change detection (lazy invalidation, #246): re-confirming the EQ
+        type the wizard already has just advances, keeping every downstream
+        checkmark. Only an actual switch invalidates the steps after
+        EQ_TYPE — using the *old* flow's sequence, before ``set_flow_type``
+        runs, so a step that only exists in the flow being left (e.g.
+        NAME_PROFILE, RoomFit-only) is still visible to ``get_steps()`` at
+        invalidation time (same ordering rule as ``_on_device_selected``).
+
         Args:
             eq_type: Either "peq" or "roomfit".
         """
-        if eq_type == "peq":
-            self._wizard_controller.set_flow_type(FlowType.PEQ)
-            self._filters_page.set_roomfit_mode(False)
-        elif eq_type == "roomfit":
-            self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
-            self._filters_page.set_roomfit_mode(True)
+        new_flow = FlowType.ROOMFIT if eq_type == "roomfit" else FlowType.PEQ
+
+        if new_flow != self._wizard_controller.flow_type:
+            old_sequence = self._wizard_controller.get_steps()
+            idx = (
+                old_sequence.index(WizardStep.EQ_TYPE)
+                if WizardStep.EQ_TYPE in old_sequence
+                else 0
+            )
+            if idx + 1 < len(old_sequence):
+                self._wizard_controller.invalidate_from(old_sequence[idx + 1])
+            # A stale "what current_filters came from" string from before
+            # this EQ type switch must not linger into the new flow
+            # (#162d/#173) -- mirrors the same clearing _on_device_selected
+            # does on device switch.
+            self._wizard_controller.state.filters_origin = ""
+
+        self._wizard_controller.set_flow_type(new_flow)
+        # Page side effects are idempotent -- safe to re-apply on a
+        # same-type re-confirmation.
+        self._filters_page.set_roomfit_mode(new_flow == FlowType.ROOMFIT)
+        if new_flow == FlowType.ROOMFIT:
             # Populate RoomFit profile dropdown from device
             self._primary_workflows.refresh_roomfit_dropdown()
 
-        # A stale "what current_filters came from" string from before this EQ
-        # type switch must not linger into the new flow (#162d/#173) -- mirrors
-        # the same clearing _on_device_selected already does on device switch.
-        self._wizard_controller.state.filters_origin = ""
         self._wizard_controller.advance(
             summary=_EQ_TYPE_SUMMARY.get(eq_type, eq_type.upper())
         )
@@ -994,13 +1071,29 @@ class MainWindow(QMainWindow):
     def _on_source_selected(self, source_name: str, channel_mode: str) -> None:
         """Handle source selection — store in state and advance.
 
+        Change detection (lazy invalidation, #246): re-confirming the
+        already-selected sources and channel mode just advances, keeping
+        downstream checkmarks. An actual change invalidates the steps after
+        SOURCE (filter data itself survives — filters aren't source-scoped
+        until push).
+
         Args:
             source_name: Comma-separated audio source name(s).
             channel_mode: Channel mode ("Stereo", "Left", "Right").
         """
         state = self._wizard_controller.state
+        new_sources = parse_source_list(source_name)
+        new_mode = ChannelMode.from_any(channel_mode)
+
+        if new_sources != state.selected_sources or new_mode != state.channel_mode:
+            sequence = self._wizard_controller.get_steps()
+            if WizardStep.SOURCE in sequence:
+                idx = sequence.index(WizardStep.SOURCE)
+                if idx + 1 < len(sequence):
+                    self._wizard_controller.invalidate_from(sequence[idx + 1])
+
         state.selected_source = source_name
-        state.channel_mode = ChannelMode.from_any(channel_mode)
+        state.channel_mode = new_mode
 
         summary, tooltip = self._compute_source_summary(source_name)
         self._wizard_controller.advance(summary=summary, tooltip=tooltip)
@@ -1268,7 +1361,16 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_done_acknowledged(self) -> None:
-        """Handle OK click after push — return to Filters step for next action."""
+        """Handle OK click after push — return to Filters step for next action.
+
+        "OK" is a deliberate end-of-cycle action, not browsing, so REVIEW
+        and PUSH are explicitly invalidated (go_to_step itself is purely
+        navigational under lazy invalidation). FILTERS keeps its checkmark
+        (the loaded filters are still valid); the frontier becomes REVIEW,
+        and the next advance chain re-enters PUSH fresh so its stale
+        result view gets reset on the way in.
+        """
+        self._wizard_controller.invalidate_from(WizardStep.REVIEW)
         self._wizard_controller.go_to_step(WizardStep.FILTERS)
 
     # ------------------------------------------------------------------
@@ -1277,10 +1379,8 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_step_changed(self, step: object) -> None:
-        """Handle step change — update StepIndicator and switch QStackedWidget page.
-
-        Also clears completion badges for steps that are no longer in the
-        wizard's completed_steps dict (back-navigation invalidation).
+        """Handle step change — switch QStackedWidget page and run entry
+        side effects for freshly entered (not-yet-completed) steps.
 
         Args:
             step: The new WizardStep enum value.
@@ -1290,30 +1390,31 @@ class MainWindow(QMainWindow):
 
         # Switching the stacked widget's page fires currentChanged, which
         # _sync_navigation_chrome handles centrally (undimming the step
-        # pill, setting its current index, and resetting the sidebar
-        # highlight to "home") — no need to duplicate any of that here.
+        # pill, setting its view/frontier indices, and resetting the
+        # sidebar highlight to "home") — no need to duplicate any of that
+        # here.
         page_key = _STEP_TO_PAGE_KEY.get(step)
         if page_key and page_key in PAGE_INDICES:
             self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
 
-        # Reset Push page when entering the PUSH step (clear stale dry run results)
-        if step == WizardStep.PUSH:
-            self._push_page.reset()
+        # Entry side effects run only when the step is entered fresh (not
+        # in completed_steps — the completed set is a prefix of the
+        # sequence, so "not completed" means this is the frontier).
+        # Browsing back to a completed step must not re-run them: a
+        # completed PUSH keeps its result view on screen, and a completed
+        # NAME_PROFILE must not have the name that was actually pushed
+        # overwritten by a repopulate. Known trade-off: browsing away
+        # mid-PUSH and returning re-clears an un-pushed dry-run result;
+        # acceptable, dry-run is cheap to re-run.
+        if step not in self._wizard_controller.completed_steps:
+            # Reset Push page when entering the PUSH step (clear stale dry
+            # run results)
+            if step == WizardStep.PUSH:
+                self._push_page.reset()
 
-        # Populate NameProfilePage when entering that step (RoomFit flow)
-        if step == WizardStep.NAME_PROFILE:
-            self._populate_name_profile_page()
-
-        # Clear completion badges for steps no longer in completed_steps
-        # (back-navigation invalidation) — independent of chrome sync above.
-        sequence = self._wizard_controller.get_steps()
-        completed = self._wizard_controller.completed_steps
-
-        if step in sequence:
-            step_index = sequence.index(step)
-            for i, s in enumerate(sequence):
-                if s not in completed and i != step_index:
-                    self._step_indicator.clear_completed(i)
+            # Populate NameProfilePage when entering that step (RoomFit flow)
+            if step == WizardStep.NAME_PROFILE:
+                self._populate_name_profile_page()
 
     @Slot(object)
     def _on_flow_type_changed(self, flow_type: object) -> None:
@@ -1325,22 +1426,8 @@ class MainWindow(QMainWindow):
         if not isinstance(flow_type, FlowType):
             return
 
-        # Rebuild step labels in the indicator
-        sequence = self._wizard_controller.get_steps()
-        labels = [step.value.replace("_", " ").title() for step in sequence]
-        self._step_indicator.set_steps(labels)
-
-        # Replay completed step summaries + tooltips (rebuilding wiped them)
-        tooltips = self._wizard_controller.state.completed_step_tooltips
-        for step, summary in self._wizard_controller.completed_steps.items():
-            if step in sequence:
-                index = sequence.index(step)
-                self._step_indicator.set_completed(index, summary, tooltips.get(step, ""))
-
-        # Re-apply current step highlighting
-        current = self._wizard_controller.current_step
-        if current in sequence:
-            self._step_indicator.set_current(sequence.index(current))
+        # Rebuild labels + replay completed summaries and view/frontier
+        self._rebuild_step_indicator()
 
     @Slot()
     def _on_wizard_reset(self) -> None:
@@ -1352,10 +1439,54 @@ class MainWindow(QMainWindow):
         self._stacked_widget.setCurrentIndex(PAGE_INDICES["connect"])
 
         # Rebuild step indicator for default PEQ flow
+        self._rebuild_step_indicator()
+
+    @Slot()
+    def _on_steps_invalidated(self) -> None:
+        """Re-render the step indicator after a change-time invalidation.
+
+        ``WizardController.invalidate_from()`` mutates completed_steps
+        without a per-step signal, so views resync in full here.
+        """
+        self._render_step_indicator()
+
+    def _rebuild_step_indicator(self) -> None:
+        """Rebuild the StepIndicator's labels for the current flow's
+        sequence, then resync all state (completed flags, view, frontier).
+
+        Shared by startup, wizard reset, and flow-type switches — the
+        three places the step *labels* can change.
+        """
         sequence = self._wizard_controller.get_steps()
         labels = [step.value.replace("_", " ").title() for step in sequence]
         self._step_indicator.set_steps(labels)
-        self._step_indicator.set_current(0)
+        self._render_step_indicator()
+
+    def _render_step_indicator(self) -> None:
+        """Fully resync the StepIndicator from the controller's state.
+
+        Pushes every step's completed flag + summary/tooltip, then the
+        view (current step) and frontier indices. Used wherever the
+        completed set may have changed wholesale (flow-type switch,
+        change-time invalidation) rather than through the incremental
+        ``step_summary_updated`` path.
+        """
+        sequence = self._wizard_controller.get_steps()
+        completed = self._wizard_controller.completed_steps
+        tooltips = self._wizard_controller.state.completed_step_tooltips
+
+        for i, step in enumerate(sequence):
+            if step in completed:
+                self._step_indicator.set_completed(
+                    i, completed[step], tooltips.get(step, "")
+                )
+            else:
+                self._step_indicator.clear_completed(i)
+
+        current = self._wizard_controller.current_step
+        view = sequence.index(current) if current in sequence else 0
+        frontier = sequence.index(self._wizard_controller.frontier_step)
+        self._step_indicator.set_view(view, frontier)
 
     @Slot(object, str, str)
     def _on_step_summary_updated(self, step: object, summary: str, tooltip: str = "") -> None:
@@ -1477,17 +1608,10 @@ class MainWindow(QMainWindow):
         # Update sidebar with device info, warning if displayed capabilities
         # aren't purely from live device probing (capability-file override
         # and/or generic/conservative fallback defaults)
-        capability_warning = ""
-        if getattr(caps, "capability_file_override", False) or getattr(
-            caps, "used_generic_capabilities", False
-        ):
-            capability_warning = (
-                "Some capabilities are from a capability-file override or "
-                "generic defaults, not the device itself — see Diagnostics "
-                "for details."
-            )
         self._sidebar_nav.set_device_info(
-            device_name, connected=True, capability_warning=capability_warning
+            device_name,
+            connected=True,
+            capability_warning=self._capability_warning_text(),
         )
 
         # Populate SourcePage with available sources
@@ -2268,7 +2392,9 @@ class MainWindow(QMainWindow):
 
     @Slot(int)
     def _on_step_indicator_clicked(self, index: int) -> None:
-        """Handle step indicator backward navigation click.
+        """Handle a step-pill navigation click (a completed step, or the
+        frontier pill while browsing elsewhere). Pure browsing -- destroys
+        nothing (lazy invalidation, #246).
 
         Args:
             index: Zero-based index of the clicked step in the current sequence.
@@ -2303,9 +2429,9 @@ class MainWindow(QMainWindow):
     def _on_navigation_requested(self, view_key: str) -> None:
         """Handle sidebar navigation request — switch QStackedWidget page.
 
-        When 'home' is selected, returns to the current wizard step page.
-        When 'connect' is selected, navigates directly to the Connect step.
-        Otherwise navigates to the corresponding secondary view.
+        When 'home' is selected, returns to the wizard frontier ("Resume
+        Setup"). 'device_info' shows the read-only device popover. Otherwise
+        navigates to the corresponding secondary view.
 
         Args:
             view_key: Navigation target key from SidebarNav.
@@ -2315,21 +2441,29 @@ class MainWindow(QMainWindow):
         # _sync_navigation_chrome (wired to currentChanged) — this handler
         # only needs to decide which page to switch to.
         if view_key == "home":
-            # Return to current wizard step's page. Unlike _on_step_changed
-            # (the real step-transition handler), this must not re-run entry
-            # side effects such as resetting the Push page's dry-run/result
-            # state or repopulating Name Profile — the user is just coming
-            # back from a secondary view (e.g. Settings), not re-entering
-            # the step.
-            step = self._wizard_controller.current_step
-            page_key = _STEP_TO_PAGE_KEY.get(step)
+            # "Resume Setup" returns to the frontier -- where the user left
+            # off. Two distinct cases:
+            # - The user was already at the frontier and just visited a
+            #   secondary view (e.g. Settings): restore the stacked page
+            #   only, WITHOUT re-running entry side effects (Push page
+            #   dry-run/result reset, Name Profile repopulate) -- returning
+            #   from Settings is not re-entering the step.
+            # - The user browsed back to an earlier step first: a real jump
+            #   through go_to_step(frontier), so the indicator and entry
+            #   side effects stay correct.
+            frontier = self._wizard_controller.frontier_step
+            if self._wizard_controller.current_step != frontier:
+                self._wizard_controller.go_to_step(frontier)
+                return
+            page_key = _STEP_TO_PAGE_KEY.get(frontier)
             if page_key and page_key in PAGE_INDICES:
                 self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
             return
 
-        if view_key == "connect":
-            # Navigate to Connect step via wizard controller (same as step indicator click)
-            self._wizard_controller.go_to_step(WizardStep.CONNECT)
+        if view_key == "device_info":
+            # Sidebar device header: read-only details popover (PR #19
+            # review, D2) -- the Connect pill covers navigation.
+            self._show_device_info()
             return
 
         if view_key == "rew_api":
@@ -2601,11 +2735,10 @@ class MainWindow(QMainWindow):
         self._settings.first_run_complete = True
         self._settings.save()
         # Route through the controller (not a direct setCurrentIndex) so
-        # Connect's re-entry invalidates completed_steps for Connect and
-        # every step after it in the sequence -- otherwise later steps stay
-        # checked with stale context while Connect alone shows uncompleted,
-        # breaking the "no checked step may follow an unchecked one"
-        # invariant (docs/smoke_test_issues.md).
+        # the step indicator and sidebar chrome stay in sync. On first run
+        # nothing is completed yet, so this is a plain navigation to the
+        # frontier (go_to_step is purely navigational under lazy
+        # invalidation, #246).
         self._wizard_controller.go_to_step(WizardStep.CONNECT)
 
     @Slot()
@@ -3734,27 +3867,26 @@ class MainWindow(QMainWindow):
         handles centrally (step pill highlight + undim, sidebar reset to
         "home") -- no manual sync needed here.
 
-        Routes through ``go_to_step()`` rather than assigning
-        ``state.current_step``/``setCurrentIndex`` directly, so REVIEW and
-        anything after it in the sequence (NAME_PROFILE, PUSH) is properly
-        invalidated in ``completed_steps`` and its StepIndicator badge
-        cleared -- otherwise a stale PUSH/NAME_PROFILE completion left over
-        from a previous, unrelated push stays checked while REVIEW itself is
-        freshly (re-)entered, violating "no checked step may follow an
-        unchecked one" (docs/smoke_test_issues.md #238). This transiently
-        clears CONNECT/EQ_TYPE/SOURCE/FILTERS badges too, since they aren't
-        back in ``completed_steps`` yet at that point -- but nothing repaints
-        before ``_mark_prior_steps_completed`` and the replay loop below
-        restore them, same reasoning as the FILTERS-recompute note above.
+        Explicitly invalidates REVIEW and everything after it (NAME_PROFILE,
+        PUSH) first: loading new filters IS a change, so a stale
+        PUSH/NAME_PROFILE completion left over from a previous, unrelated
+        push must not stay checked while REVIEW is freshly (re-)entered --
+        that would violate "no checked step may follow an unchecked one"
+        (docs/smoke_test_issues.md #238). ``go_to_step()`` itself is purely
+        navigational under lazy invalidation (#246) and runs last, after
+        ``_mark_prior_steps_completed`` and the replay loop, so the
+        indicator renders once against final data (no transient badge
+        clearing).
         """
         state = self._wizard_controller.state
-        self._wizard_controller.go_to_step(WizardStep.REVIEW)
+        self._wizard_controller.invalidate_from(WizardStep.REVIEW)
         self._mark_prior_steps_completed(state)
         tooltips = state.completed_step_tooltips
         for step, summary in state.completed_steps.items():
             self._wizard_controller.step_summary_updated.emit(
                 step, summary, tooltips.get(step, "")
             )
+        self._wizard_controller.go_to_step(WizardStep.REVIEW)
 
     # ------------------------------------------------------------------
     # Close Event
