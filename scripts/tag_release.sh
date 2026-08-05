@@ -7,8 +7,18 @@
 # `gh release create --generate-notes` already uses for the GitHub Release
 # body (PR titles since the last tag) -- the tag message is a shorter,
 # git-log-skimmable summary of the same information, not a separate
-# changelog. A merge commit that isn't "Merge pull request #N from ..."
-# (e.g. a manual merge) falls back to its own subject line as the theme.
+# changelog. Recognizes PRs merged either way GitHub can land them:
+#   - A real merge commit ("Merge pull request #N from ...") -- theme is
+#     the PR title from the commit body. A merge commit that doesn't match
+#     this subject (e.g. a manual merge) falls back to its own subject line.
+#   - A squash-merge commit -- GitHub's default squash title is
+#     "<PR title> (#N)"; theme is the subject with that trailing "(#N)"
+#     stripped. This is the repo's actual convention as of PR #18 onward;
+#     don't remove this branch even if merge commits look unused for a
+#     while -- the two conventions can and do alternate across a repo's
+#     history depending on what a given PR's merge button was set to.
+# Any other first-parent commit in range (a direct push, not a PR) is
+# skipped -- it contributes no theme.
 #
 # Usage:
 #   scripts/tag_release.sh vX.Y.Z [--from=<tag-or-ref>] [--to=<ref>]
@@ -74,24 +84,28 @@ if [[ -z "$MESSAGE" ]]; then
   # mapfile first, rather than piping straight into a `while read` loop --
   # git commands run inside the loop body would otherwise share the loop's
   # stdin (the process-substitution pipe) and can silently eat lines meant
-  # for `read`, truncating the walk after the first merge commit.
+  # for `read`, truncating the walk after the first commit.
   # --reverse for chronological (oldest-first) order, so the message reads
-  # as "did X, then Y" rather than newest-merge-first.
-  mapfile -t merge_hashes < <(git log "${FROM_REF}..${TO_REF}" --merges --first-parent --reverse --pretty=format:%H)
+  # as "did X, then Y" rather than newest-first. --first-parent walks every
+  # commit landed directly on this branch, merge or squash alike, without
+  # pulling in a merge commit's now-squashed-elsewhere second-parent side.
+  mapfile -t commit_hashes < <(git log "${FROM_REF}..${TO_REF}" --first-parent --reverse --pretty=format:%H)
 
   themes=()
-  for hash in "${merge_hashes[@]}"; do
+  for hash in "${commit_hashes[@]}"; do
     subject=$(git log -1 --pretty=format:%s "$hash")
     if [[ "$subject" =~ ^Merge\ pull\ request\ \#[0-9]+\ from ]]; then
       title=$(git log -1 --pretty=format:%b "$hash" | sed '/^$/d' | head -n1)
       themes+=("${title:-$subject}")
-    else
-      themes+=("$subject")
+    elif [[ "$subject" =~ ^(.*)\ \(#[0-9]+\)$ ]]; then
+      # GitHub's default squash-merge commit title: "<PR title> (#N)".
+      themes+=("${BASH_REMATCH[1]}")
     fi
+    # Any other commit (a direct push, not a PR merge) contributes no theme.
   done
 
   if [[ ${#themes[@]} -eq 0 ]]; then
-    echo "ERROR: no merge commits found between $FROM_REF and $TO_REF -- pass --message explicitly." >&2
+    echo "ERROR: no merge or squash-merge commits found between $FROM_REF and $TO_REF -- pass --message explicitly." >&2
     exit 1
   fi
 
