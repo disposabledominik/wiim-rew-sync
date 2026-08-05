@@ -114,11 +114,11 @@ def _suppress_blocking_message_boxes(monkeypatch):
     unittest.mock layers correctly over this fixture's default within that
     test's own `with`/decorator scope.
 
-    This does NOT cover custom QDialog subclasses (QuickSetupDialog,
-    DevicePickerDialog, etc.) -- those must still be mocked individually at
-    their own static factory method (e.g. `QuickSetupDialog.get_setup`),
-    since there's no single shared base to intercept generically the way
-    QMessageBox's static methods allow.
+    This does NOT cover custom QDialog subclasses (DevicePickerDialog, etc.)
+    -- those must still be mocked individually at their own static factory
+    method (e.g. `DevicePickerDialog.get_devices`), since there's no single
+    shared base to intercept generically the way QMessageBox's static
+    methods allow.
     """
     from PySide6.QtWidgets import QMessageBox
 

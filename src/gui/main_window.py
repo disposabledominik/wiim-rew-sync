@@ -94,7 +94,7 @@ from src.models.channel_mode import (
     is_lr_mode,
     require_lr_filters,
 )
-from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE, DEFAULT_SOURCE_NAMES
+from src.models.constants import DEFAULT_MAX_BANDS, DEFAULT_SOURCE
 from src.models.errors import (
     ParseError,
     REWNotConnectedError,
@@ -124,7 +124,6 @@ PAGE_INDICES: dict[str, int] = {
     "presets_device": 7,
     "my_presets": 8,
     "settings": 9,
-    "rew_api": 10,
 }
 
 # Maps WizardStep -> PAGE_INDICES key, used to switch the QStackedWidget
@@ -150,12 +149,11 @@ _PAGE_KEY_TO_STEP: dict[str, WizardStep] = {v: k for k, v in _STEP_TO_PAGE_KEY.i
 # "home", which returns to wherever the wizard currently is, and "help",
 # which opens a separate window and never touches the stacked widget).
 _SIDEBAR_DESTINATION_KEYS: frozenset[str] = frozenset(
-    {"presets_device", "my_presets", "settings", "rew_api"}
+    {"presets_device", "my_presets", "settings"}
 )
 
 # Canonical EQ_TYPE step summary wording, used by every entry point that
-# completes this step (normal flow, sidebar jump, QuickSetupDialog) so they
-# never drift independently again (#162).
+# completes this step so they never drift independently again (#162).
 _EQ_TYPE_SUMMARY: dict[str, str] = {"peq": "PEQ", "roomfit": "RoomFit"}
 
 
@@ -650,13 +648,12 @@ class MainWindow(QMainWindow):
         self._my_presets_view = MyPresetsView()
         self._settings_view = SettingsView()
         self._help_view = HelpView()
-        self._rew_pull_view = RewPullView()
 
-        # Tracks which RewPullView instance (sidebar vs. embedded in
-        # FiltersPage) is currently driving an in-flight REW pull, so
-        # listing results/errors get routed back to the right one.
+        # Tracks whether FiltersPage's embedded RewPullView is currently
+        # driving an in-flight REW pull, so late listing results/errors
+        # arriving after the user has moved on are ignored rather than
+        # resurrecting a stale picker.
         self._active_rew_pull_view: RewPullView | None = None
-        self._active_rew_pull_page_index: int = PAGE_INDICES["rew_api"]
 
     def _register_pages(self) -> None:
         """Add all pages/views to the QStackedWidget in PAGE_INDICES order."""
@@ -672,7 +669,6 @@ class MainWindow(QMainWindow):
             self._presets_device_view,  # 7: presets_device
             self._my_presets_view,     # 8: my_presets
             self._settings_view,      # 9: settings
-            self._rew_pull_view,      # 10: rew_api
         ]
         for page in pages:
             self._stacked_widget.addWidget(page)
@@ -770,7 +766,14 @@ class MainWindow(QMainWindow):
         self._filters_page.file_import_lr_requested.connect(self._on_file_import_lr_requested)
         self._filters_page.device_pull_requested.connect(self._on_device_pull_requested)
         self._filters_page.rew_api_pull_requested.connect(self._on_rew_api_pull_requested)
-        self._filters_page.roomfit_profile_selected.connect(self._on_roomfit_profile_selected)
+        self._filters_page.device_presets_requested.connect(
+            self._on_device_presets_requested
+        )
+        self._filters_page.local_profiles_requested.connect(
+            self._on_local_profiles_requested
+        )
+        self._filters_page.device_item_selected.connect(self._on_device_item_selected)
+        self._filters_page.local_profile_selected.connect(self._on_local_profile_selected)
         self._review_page.push_requested.connect(self._on_push_requested)
         self._review_page.export_rew_requested.connect(self._on_export_requested)
         self._review_page.save_preset_requested.connect(self._on_review_save_preset)
@@ -909,8 +912,8 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     # Step-summary helpers -- shared by every entry point that completes a
-    # wizard step (normal flow, sidebar jump, QuickSetupDialog), so the same
-    # step always shows the same wording regardless of path (#162).
+    # wizard step, so the same step always shows the same wording regardless
+    # of path (#162).
     # ------------------------------------------------------------------
 
     def _lookup_device_name(self, ip: str | None, default: str) -> str:
@@ -997,18 +1000,6 @@ class MainWindow(QMainWindow):
             return "All sources", ", ".join(sources)
         return f"{len(sources)} sources", ", ".join(sources)
 
-    def _apply_source_summary(self, state: WizardState, source_name: str) -> None:
-        """Set completed_steps[SOURCE] + its tooltip together, out of the
-        normal advance() flow -- used by the two out-of-sequence completion
-        paths (sidebar jump, QuickSetupDialog) where SOURCE isn't
-        necessarily the step currently being transitioned through. Dict
-        writes only, no signal emission -- both callers already replay-emit
-        every completed step's summary+tooltip once they're done.
-        """
-        summary, tooltip = self._compute_source_summary(source_name)
-        state.completed_steps[WizardStep.SOURCE] = summary
-        state.completed_step_tooltips[WizardStep.SOURCE] = tooltip
-
     def _resolve_filters_summary(self, n_filters: int) -> str:
         """Standardize on the most informative existing wording everywhere.
 
@@ -1048,13 +1039,6 @@ class MainWindow(QMainWindow):
             self._wizard_controller.state.clear_filter_payload()
 
         self._wizard_controller.set_flow_type(new_flow)
-        # Page side effects are idempotent -- safe to re-apply on a
-        # same-type re-confirmation.
-        self._filters_page.set_roomfit_mode(new_flow == FlowType.ROOMFIT)
-        if new_flow == FlowType.ROOMFIT:
-            # Populate RoomFit profile dropdown from device
-            self._primary_workflows.refresh_roomfit_dropdown()
-
         self._wizard_controller.advance(
             summary=_EQ_TYPE_SUMMARY.get(eq_type, eq_type.upper())
         )
@@ -1147,44 +1131,97 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_rew_api_pull_requested(self) -> None:
-        """Handle FiltersPage's source toggle switching to "Pull from REW API".
+        """Handle FiltersPage's source dropdown switching to "Pull from REW API".
 
         Populates FiltersPage's embedded RewPullView (already showing its
-        "Connecting..." state — see FiltersPage._on_source_toggled) rather
-        than the sidebar's standalone instance. Unlike the sidebar shortcut,
-        a successful selection advances the wizard normally instead of
-        jumping straight to Review (_sidebar_load_in_progress stays False).
+        "Connecting..." state — see FiltersPage._on_source_index_changed).
+        A successful selection advances the wizard normally.
         """
         if self._is_busy():
             return
 
         self._active_rew_pull_view = self._filters_page.rew_pull_view
-        self._active_rew_pull_page_index = PAGE_INDICES["filters"]
         self._status_banner.show_progress("Connecting to REW...")
         self._primary_workflows.list_rew_measurements()
         logger.info("REW API pull requested")
 
-    @Slot(str)
-    def _on_roomfit_profile_selected(self, profile_name: str) -> None:
-        """Handle RoomFit profile selection from FiltersPage dropdown.
+    @Slot()
+    def _on_device_presets_requested(self) -> None:
+        """Handle FiltersPage switching to the Device source panel.
 
-        Reads the selected profile's filters from the device and advances
-        to the Review page.
+        Triggers the same PEQ-preset/RoomFit-profile fetch "Presets on
+        Device" uses (_load_device_presets) -- both consume the broadcast
+        peq_presets_ready/roomfit_profiles_ready signals, forwarded to both
+        views by _on_peq_presets_ready/_on_roomfit_profiles_ready.
+        """
+        if self._wiim_adapter is None:
+            return
+        self._primary_workflows.list_presets()
+
+    @Slot()
+    def _on_local_profiles_requested(self) -> None:
+        """Handle FiltersPage switching to the Local Library source panel."""
+        self._filters_page.set_local_profiles(self._profile_repository.list_all())
+
+    @Slot(object)
+    def _on_device_item_selected(self, item: object) -> None:
+        """Handle a Device-panel merged-list selection from FiltersPage.
+
+        Branches on the selected PresetItem's own preset_type -- not the
+        wizard's current flow_type -- since the merged list intentionally
+        offers both PEQ presets and RoomFit profiles regardless of which
+        flow is active (a saved preset's origin doesn't have to match the
+        flow pushing it; the Canonical Filter Model doesn't care which
+        device API wrote it).
 
         Args:
-            profile_name: Name of the RoomFit profile chosen by the user.
+            item: PresetItem selected from the merged Device list.
         """
         if self._is_busy():
+            return
+
+        name = getattr(item, "name", "")
+        preset_type = getattr(item, "preset_type", "PEQ")
+        if not name:
             return
 
         if self._wiim_adapter is None:
             self._status_banner.show_error("No device connected")
             return
 
-        self._wizard_controller.state.roomfit_profile_name = profile_name
-        self._status_banner.show_progress(f"Loading RoomFit profile '{profile_name}'...")
-        self._primary_workflows.pull_roomfit(profile_name)
-        logger.info("RoomFit profile selected: %s", profile_name)
+        if not self._confirm_preset_preview([item]):
+            return
+
+        # No Stereo/L-R toggle for this source: channel mode is already
+        # known from the selected preset/profile itself.
+        self._wizard_controller.state.channel_mode = coerce_channel_mode(
+            getattr(item, "channel_mode", ChannelMode.STEREO)
+        )
+        self._status_banner.show_progress(f"Loading preset '{name}'...")
+        if preset_type == "RoomFit":
+            self._wizard_controller.state.roomfit_profile_name = name
+            self._primary_workflows.pull_roomfit(name, operation_name="load_preset")
+        else:
+            self._primary_workflows.load_peq_preset(name)
+        logger.info("Device preset selected: %s (type=%s)", name, preset_type)
+
+    @Slot(object)
+    def _on_local_profile_selected(self, profile: object) -> None:
+        """Handle a Local Library selection from FiltersPage.
+
+        Args:
+            profile: Profile object selected from the Local Library list.
+        """
+        if self._is_busy():
+            return
+
+        logger.info("Local profile selected: %s", getattr(profile, "name", "unknown"))
+        # No Stereo/L-R toggle for this source: channel mode is already
+        # known from the selected profile itself.
+        self._wizard_controller.state.channel_mode = coerce_channel_mode(
+            getattr(profile, "channel_mode", ChannelMode.STEREO)
+        )
+        self._secondary_workflows.recall_profile(profile)
 
     @Slot(bool)
     def _on_dry_run_toggled(self, enabled: bool) -> None:
@@ -1763,12 +1800,6 @@ class MainWindow(QMainWindow):
             # later unrelated flow.
             self._clear_pending_lr_rows()
             self._clear_pending_stereo_rows()
-            # Also clear the sidebar-load one-shot flag here -- the else
-            # branch below is the only other place that resets it, so a
-            # sidebar load that resolves to zero filters would otherwise
-            # leave it stuck True and incorrectly jump a later, unrelated
-            # peq_ready straight to Review instead of advancing normally.
-            self._sidebar_load_in_progress = False
             QTimer.singleShot(
                 150, lambda: self._status_banner.show_info(
                     "Device has no active filters. Try importing from a REW file instead.",
@@ -1781,16 +1812,10 @@ class MainWindow(QMainWindow):
                 return
             all_warnings, validated_count = result
 
-            # Advance wizard to REVIEW step
-            if getattr(self, "_sidebar_load_in_progress", False):
-                # Sidebar load: navigate directly to Review (smoke #87)
-                self._sidebar_load_in_progress = False
-                self._jump_to_review()
-            else:
-                self._wizard_controller.advance(
-                    summary=self._resolve_filters_summary(validated_count),
-                    tooltip=state.filters_origin,
-                )
+            self._wizard_controller.advance(
+                summary=self._resolve_filters_summary(validated_count),
+                tooltip=state.filters_origin,
+            )
 
             # Show warnings or success in status banner
             if all_warnings:
@@ -1896,7 +1921,6 @@ class MainWindow(QMainWindow):
         logger.error("Operation error [%s]: %s", error_type, message)
 
         if self._active_rew_pull_view is not None:
-            self._sidebar_load_in_progress = False
             self._show_rew_pull_message(message, icon=ICON_NO_CONNECTION)
 
     @Slot(str)
@@ -1920,7 +1944,6 @@ class MainWindow(QMainWindow):
         # never auto-dismisses and has no close button, so it looks stuck.
         if message.startswith("__info__"):
             info_text = message[len("__info__"):]
-            self._sidebar_load_in_progress = False
             self._status_banner.show_info(info_text)
             self._show_rew_pull_message(info_text, icon=ICON_NO_DATA)
             return
@@ -1950,16 +1973,14 @@ class MainWindow(QMainWindow):
 
     @Slot(list)
     def _on_measurements_listed(self, measurements: list[Any]) -> None:
-        """Handle REW measurements listed — populate whichever RewPullView is active.
+        """Handle REW measurements listed — populate the embedded RewPullView.
 
-        The sidebar's "Pull from REW" entry and FiltersPage's "Pull from
-        REW API" source toggle each set _active_rew_pull_view /
-        _active_rew_pull_page_index before kicking off the listing request
-        (see _on_rew_pull_requested / _on_rew_api_pull_requested), so this
-        handler doesn't need to know which one triggered it. Navigates back
-        to the relevant page if the user wandered off while REW was being
-        queried. Stereo returns one MeasurementSummary, L/R returns a
-        (left, right) tuple — see _dispatch_measurement_selection.
+        _on_rew_api_pull_requested sets _active_rew_pull_view before kicking
+        off the listing request, so a late result arriving after the user
+        has navigated away is ignored (view is None). Navigates back to the
+        Filters page if the user wandered off while REW was being queried.
+        Stereo returns one MeasurementSummary, L/R returns a (left, right)
+        tuple — see _dispatch_measurement_selection.
 
         Requirements: 5.2, 5.7.
 
@@ -1969,7 +1990,7 @@ class MainWindow(QMainWindow):
         view = self._active_rew_pull_view
         if view is None:
             return
-        self._stacked_widget.setCurrentIndex(self._active_rew_pull_page_index)
+        self._stacked_widget.setCurrentIndex(PAGE_INDICES["filters"])
         view.set_measurements(measurements)
 
     def _show_rew_pull_message(self, message: str, icon: str = "") -> None:
@@ -1988,7 +2009,7 @@ class MainWindow(QMainWindow):
         view = self._active_rew_pull_view
         if view is None:
             return
-        self._stacked_widget.setCurrentIndex(self._active_rew_pull_page_index)
+        self._stacked_widget.setCurrentIndex(PAGE_INDICES["filters"])
         view.set_message(message, icon=icon)
         self._active_rew_pull_view = None
 
@@ -2002,15 +2023,8 @@ class MainWindow(QMainWindow):
             result: A single MeasurementSummary (Stereo) or a (left, right)
                 tuple (L/R) — RewPullView only emits measurement_selected
                 once a valid selection is made; cancellation goes through
-                back_requested instead (see _on_rew_pull_back_requested /
-                _on_filters_rew_pull_back_requested).
+                back_requested instead (see _on_filters_rew_pull_back_requested).
         """
-        # Only now check wizard-state completeness (device/EQ type/source) —
-        # showing QuickSetupDialog here, after a concrete selection, rather
-        # than before browsing REW's measurement list.
-        if not self._ensure_wizard_state_for_load():
-            return
-
         # The picker's job is done — any later error fetching filters shows
         # in the status banner only, same as a failed file import.
         self._active_rew_pull_view = None
@@ -2277,9 +2291,8 @@ class MainWindow(QMainWindow):
     # (src/gui/primary_workflows.py) — docs/backlog.md item 2, Phases 1-2.
     # Dispatch from _on_refresh_requested/_on_device_selected/
     # _on_file_import_requested/_on_file_import_lr_requested/
-    # _on_device_pull_requested/_on_roomfit_profile_selected/
-    # _on_preset_load_into_editor/_export_filters_as_rew now calls the
-    # manager directly.
+    # _on_device_pull_requested/_on_device_item_selected/
+    # _export_filters_as_rew now calls the manager directly.
 
     # _read_preset_to_copy, _write_preset_to_adapter,
     # _write_preset_copies_to_devices, _do_copy_presets_batch_multi,
@@ -2305,8 +2318,8 @@ class MainWindow(QMainWindow):
     # PrimaryWorkflowManager (src/gui/primary_workflows.py) —
     # docs/backlog.md item 2, Phase 3. Dispatch from
     # _on_preset_export_requested/_on_preset_save_requested/
-    # _on_rew_api_pull_requested/_on_rew_pull_requested/
-    # _dispatch_measurement_selection now calls the manager directly.
+    # _on_rew_api_pull_requested/_dispatch_measurement_selection now calls
+    # the manager directly.
 
     def _load_device_presets(self) -> None:
         """Fetch and display device presets in the PresetsDeviceView.
@@ -2338,13 +2351,11 @@ class MainWindow(QMainWindow):
 
         self._primary_workflows.populate_name_profiles()
 
-    # _do_populate_name_profiles, _do_list_roomfit_profiles moved to
-    # PrimaryWorkflowManager (src/gui/primary_workflows.py) —
-    # docs/backlog.md item 2, Phase 4. Dispatch from
-    # _populate_name_profile_page/_on_eq_type_selected now calls the
-    # manager directly; results arrive via name_profiles_ready/
-    # filters_roomfit_profiles_ready, see _on_name_profiles_ready/
-    # _on_filters_roomfit_profiles_ready.
+    # _do_populate_name_profiles moved to PrimaryWorkflowManager
+    # (src/gui/primary_workflows.py) — docs/backlog.md item 2, Phase 4.
+    # Dispatch from _populate_name_profile_page now calls the manager
+    # directly; results arrive via name_profiles_ready, see
+    # _on_name_profiles_ready.
 
     # _read_active_name_or_default, _do_list_presets, _peq_name_for_highlight,
     # _roomfit_name_for_highlight moved to PrimaryWorkflowManager
@@ -2356,8 +2367,9 @@ class MainWindow(QMainWindow):
 
     @Slot(list, str)
     def _on_peq_presets_ready(self, items: list[Any], active_name: str) -> None:
-        """Forward PrimaryWorkflowManager.peq_presets_ready into the view."""
+        """Forward PrimaryWorkflowManager.peq_presets_ready into both consuming views."""
         self._presets_device_view.set_peq_presets(items, active_name)
+        self._filters_page.set_peq_presets(items, active_name)
 
     @Slot()
     def _on_peq_presets_unavailable(self) -> None:
@@ -2366,8 +2378,9 @@ class MainWindow(QMainWindow):
 
     @Slot(list, str)
     def _on_roomfit_profiles_ready(self, items: list[Any], active_name: str) -> None:
-        """Forward PrimaryWorkflowManager.roomfit_profiles_ready into the view."""
+        """Forward PrimaryWorkflowManager.roomfit_profiles_ready into both consuming views."""
         self._presets_device_view.set_roomfit_profiles(items, active_name)
+        self._filters_page.set_roomfit_profiles(items, active_name)
 
     @Slot()
     def _on_roomfit_profiles_hidden(self) -> None:
@@ -2381,11 +2394,6 @@ class MainWindow(QMainWindow):
         """Forward PrimaryWorkflowManager.name_profiles_ready into NameProfilePage."""
         self._name_profile_page.set_existing_profiles(profile_names, active_profile)
         self._roomfit_enabled = roomfit_enabled
-
-    @Slot(list)
-    def _on_filters_roomfit_profiles_ready(self, profile_names: list[str]) -> None:
-        """Forward PrimaryWorkflowManager.filters_roomfit_profiles_ready into FiltersPage."""
-        self._filters_page.set_roomfit_profiles(profile_names)
 
     @Slot(int, int)
     def _on_presets_delete_complete(self, succeeded: int, failed: int) -> None:
@@ -2438,8 +2446,8 @@ class MainWindow(QMainWindow):
     def _on_navigation_requested(self, view_key: str) -> None:
         """Handle sidebar navigation request — switch QStackedWidget page.
 
-        When 'home' is selected, returns to the wizard frontier ("Resume
-        Setup"). 'device_info' shows the read-only device popover. Otherwise
+        When 'home' is selected, returns to the wizard frontier ("Setup
+        Wizard"). 'device_info' shows the read-only device popover. Otherwise
         navigates to the corresponding secondary view.
 
         Args:
@@ -2450,7 +2458,7 @@ class MainWindow(QMainWindow):
         # _sync_navigation_chrome (wired to currentChanged) — this handler
         # only needs to decide which page to switch to.
         if view_key == "home":
-            # "Resume Setup" returns to the frontier -- where the user left
+            # "Setup Wizard" returns to the frontier -- where the user left
             # off. Two distinct cases:
             # - The user was already at the frontier and just visited a
             #   secondary view (e.g. Settings): restore the stacked page
@@ -2475,11 +2483,6 @@ class MainWindow(QMainWindow):
             self._show_device_info()
             return
 
-        if view_key == "rew_api":
-            # REW API pull — trigger measurement listing workflow
-            self._on_rew_pull_requested()
-            return
-
         if view_key == "help":
             # Open Help as a separate window (smoke #112). Doesn't replace
             # the current page, so the step indicator isn't dimmed.
@@ -2496,30 +2499,6 @@ class MainWindow(QMainWindow):
             # Refresh local presets from repository (smoke #31)
             self._refresh_presets_view()
 
-    def _on_rew_pull_requested(self) -> None:
-        """Handle sidebar 'Pull from REW' click — start the listing workflow.
-
-        Navigates to the embedded RewPullView, then connects to REW and
-        lists measurements; the Stereo/L-R choice is made on that page once
-        the list arrives (see _on_measurements_listed). Wizard-state
-        completeness (device/EQ type/source) is only checked once the user
-        has actually picked a measurement — see _dispatch_measurement_selection
-        — so browsing REW's measurement list never triggers QuickSetupDialog
-        up front, matching Presets on Device / My Saved Presets.
-        """
-        if self._is_busy():
-            return
-
-        self._stacked_widget.setCurrentIndex(PAGE_INDICES["rew_api"])
-        self._rew_pull_view.set_connecting()
-        self._active_rew_pull_view = self._rew_pull_view
-        self._active_rew_pull_page_index = PAGE_INDICES["rew_api"]
-
-        # Set flag so _on_peq_ready navigates directly to Review
-        self._sidebar_load_in_progress = True
-        self._status_banner.show_progress("Connecting to REW...")
-        self._primary_workflows.list_rew_measurements()
-
     @Slot(object)
     def _on_rew_pull_measurement_selected(
         self, result: MeasurementSummary | tuple[MeasurementSummary, MeasurementSummary]
@@ -2531,21 +2510,6 @@ class MainWindow(QMainWindow):
                 tuple (L/R) from RewPullView.measurement_selected.
         """
         self._dispatch_measurement_selection(result)
-
-    @Slot()
-    def _on_rew_pull_back_requested(self) -> None:
-        """Handle Back/Cancel from the sidebar's embedded RewPullView."""
-        self._sidebar_load_in_progress = False
-        self._active_rew_pull_view = None
-        # Only announce a cancellation if the user backed out of an actual
-        # selection — the placeholder state already shows its own message
-        # (connecting, no measurements found, connection error).
-        if self._rew_pull_view.showing_picker:
-            self._status_banner.show_info("Selection cancelled", auto_dismiss=3000)
-        step = self._wizard_controller.current_step
-        page_key = _STEP_TO_PAGE_KEY.get(step)
-        if page_key and page_key in PAGE_INDICES:
-            self._stacked_widget.setCurrentIndex(PAGE_INDICES[page_key])
 
     @Slot()
     def _on_filters_rew_pull_back_requested(self) -> None:
@@ -2835,7 +2799,6 @@ class MainWindow(QMainWindow):
             self._presets_device_view,
             self._my_presets_view,
             self._settings_view,
-            self._rew_pull_view,
             self._filters_page.rew_pull_view,
         ):
             action_buttons.extend(page_or_view.action_buttons())
@@ -2960,9 +2923,6 @@ class MainWindow(QMainWindow):
         self._primary_workflows.name_profiles_ready.connect(
             self._on_name_profiles_ready
         )
-        self._primary_workflows.filters_roomfit_profiles_ready.connect(
-            self._on_filters_roomfit_profiles_ready
-        )
         self._primary_workflows.presets_delete_complete.connect(
             self._on_presets_delete_complete
         )
@@ -2979,7 +2939,7 @@ class MainWindow(QMainWindow):
           MainWindow's own _do_copy_presets_batch_multi, which calls the
           read/write primitives on SecondaryWorkflowManager
           (_read_preset_to_copy / _write_preset_to_adapter).
-        - MyPresetsView "Load" → profile recall → populate ReviewPage
+        - FiltersPage Local Library selection → profile recall → populate ReviewPage
         - PushPage "Undo" → undo_last_push flow
         - SecondaryWorkflowManager completion signals → UI updates
 
@@ -2999,14 +2959,8 @@ class MainWindow(QMainWindow):
         self._presets_device_view.save_to_my_presets.connect(
             self._on_preset_save_requested
         )
-        self._presets_device_view.load_into_editor.connect(
-            self._on_preset_load_into_editor
-        )
         self._presets_device_view.delete_requested.connect(
             self._on_preset_delete_requested
-        )
-        self._my_presets_view.load_requested.connect(
-            self._on_profile_load_requested
         )
         self._my_presets_view.rename_requested.connect(
             self._on_profile_rename_requested
@@ -3019,12 +2973,6 @@ class MainWindow(QMainWindow):
         )
         self._my_presets_view.copy_to_device_requested.connect(
             self._on_local_preset_copy_to_device_requested
-        )
-        self._rew_pull_view.measurement_selected.connect(
-            self._on_rew_pull_measurement_selected
-        )
-        self._rew_pull_view.back_requested.connect(
-            self._on_rew_pull_back_requested
         )
         self._filters_page.rew_pull_view.measurement_selected.connect(
             self._on_rew_pull_measurement_selected
@@ -3195,32 +3143,6 @@ class MainWindow(QMainWindow):
             channel_mode_value, filters_value, filters_l_value, filters_r_value,
         )
 
-    @Slot(object)
-    def _on_profile_load_requested(self, profile: object) -> None:
-        """Handle MyPresetsView "Load" action — recall profile into ReviewPage.
-
-        Loads the profile's filters and navigates to the Review step.
-        If wizard state is incomplete (no EQ type/source), shows QuickSetupDialog
-        to collect missing info before loading (smoke #87).
-
-        Requirement 17.2: Profile Recall & Push flow.
-
-        Args:
-            profile: Profile object from the local preset library.
-        """
-        logger.info("Profile load requested: %s", getattr(profile, "name", "unknown"))
-
-        # Check if wizard state is complete enough to load
-        if not self._ensure_wizard_state_for_load():
-            return
-
-        # Set channel_mode in wizard state from profile BEFORE recall emits
-        channel_mode = coerce_channel_mode(
-            getattr(profile, "channel_mode", ChannelMode.STEREO)
-        )
-        self._wizard_controller.state.channel_mode = channel_mode
-        self._secondary_workflows.recall_profile(profile)
-
     @Slot()
     def _on_review_save_preset(self) -> None:
         """Handle ReviewPage 'Save to My Presets' — save current filters locally.
@@ -3365,45 +3287,6 @@ class MainWindow(QMainWindow):
         self._primary_workflows.save_preset(preset_name, preset_type, saved_name)
         logger.info("Preset save requested: %s", [i.name for i in items])
 
-    @Slot(object)
-    def _on_preset_load_into_editor(self, item: object) -> None:
-        """Handle PresetsDeviceView "Load into Editor" for a single preset.
-
-        Reads the preset's filters from the device and loads them into
-        the wizard Review page. Shows QuickSetupDialog if wizard state
-        is incomplete (smoke #87).
-
-        Args:
-            item: PresetItem object to load.
-        """
-        name = getattr(item, "name", "")
-        preset_type = getattr(item, "preset_type", "PEQ")
-
-        if not name:
-            return
-
-        if self._wiim_adapter is None:
-            self._status_banner.show_error("No device connected")
-            return
-
-        # Check if wizard state is complete enough to load. The read-preview
-        # warning is passed through so it's folded into QuickSetupDialog when
-        # that dialog is about to show, instead of confirmed as a separate
-        # step beforehand (only shown standalone when nothing else is
-        # missing, matching today's single-dialog behavior for that case).
-        if not self._ensure_wizard_state_for_load(preview_items=[item]):
-            return
-
-        # Set flag so _on_peq_ready navigates directly to Review (smoke #87)
-        self._sidebar_load_in_progress = True
-        self._status_banner.show_progress(f"Loading preset '{name}'...")
-        if preset_type == "RoomFit":
-            self._primary_workflows.pull_roomfit(name, operation_name="load_preset")
-        else:
-            # PEQ preset: load it via EQv2SourceLoad then read
-            self._primary_workflows.load_peq_preset(name)
-        logger.info("Preset load into editor: %s (type=%s)", name, preset_type)
-
     def _format_preset_names(self, items: list[Any]) -> str:
         """Bullet-list "Name (Type)" for each item, shared by every preset
         confirmation dialog (delete, preview-activation)."""
@@ -3429,9 +3312,8 @@ class MainWindow(QMainWindow):
         """Shared Yes/No confirmation dialog, default button No.
 
         Uses the same styled yellow warning-box treatment as
-        DevicePickerDialog/QuickSetupDialog, rather than a plain
-        QMessageBox, so every "this will change state" confirmation in the
-        app reads consistently.
+        DevicePickerDialog, rather than a plain QMessageBox, so every
+        "this will change state" confirmation in the app reads consistently.
 
         Args:
             title: Warning box header text.
@@ -3471,11 +3353,11 @@ class MainWindow(QMainWindow):
         on, has not been independently re-verified on real hardware and
         shares the same risk pattern as #190's confirmed-wrong assumption
         (`# ASSUMPTION:`). Shared by every read-only preset action (copy,
-        export, save-to-My-Presets, load-into-editor) -- only about the
-        *source* device's brief read, not any device being written to (see
-        `_copy_activation_warning_html()` for Copy-to-Device's separate,
-        write-side concern, folded directly into `DevicePickerDialog`
-        rather than shown as its own standalone confirm).
+        export, save-to-My-Presets, Filters-step Device selection) -- only
+        about the *source* device's brief read, not any device being written
+        to (see `_copy_activation_warning_html()` for Copy-to-Device's
+        separate, write-side concern, folded directly into
+        `DevicePickerDialog` rather than shown as its own standalone confirm).
         """
         body = self._preset_preview_warning_html(items)
         if body is None:
@@ -3557,11 +3439,14 @@ class MainWindow(QMainWindow):
     def _on_profile_recalled(
         self, filters: list[CanonicalFilter], profile_name: str = ""
     ) -> None:
-        """Handle profile recall — populate ReviewPage and navigate.
+        """Handle profile recall — populate ReviewPage and advance.
 
         Loads the recalled filters into the wizard state and ReviewPage,
-        then navigates to the Review step. Uses L/R display when channel_mode
-        was set by _on_profile_load_requested.
+        then advances to the Review step (only reachable from the Filters
+        step's Local Library selection, so a plain advance() is correct
+        here -- same normal-advance path every other filters producer uses).
+        Uses L/R display when channel_mode was set by
+        _on_local_profile_selected.
 
         Requirement 17.2: Profile Recall loads into Review step.
 
@@ -3596,9 +3481,10 @@ class MainWindow(QMainWindow):
 
         active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
 
-        # Navigate to Review step — update both wizard state and stacked widget
-        # so that subsequent navigation/step_changed doesn't override (smoke #87)
-        self._jump_to_review()
+        self._wizard_controller.advance(
+            summary=self._resolve_filters_summary(len(filters)),
+            tooltip=state.filters_origin,
+        )
 
         self._status_banner.show_success(
             f"Profile loaded: {active_bands} bands ready for review"
@@ -3681,218 +3567,6 @@ class MainWindow(QMainWindow):
             self._status_banner.show_error(
                 f"Copied to {succeeded} of {n_devices} device(s) ({failed} failed)"
             )
-
-    # ------------------------------------------------------------------
-    # Quick Setup helper (smoke #87)
-    # ------------------------------------------------------------------
-
-    def _ensure_wizard_state_for_load(
-        self, preview_items: list[Any] | None = None
-    ) -> bool:
-        """Check wizard state is complete for loading filters; show dialog if not.
-
-        If no device is connected, shows error and returns False.
-        If EQ type or source is missing, shows QuickSetupDialog.
-        On cancel, returns False. On confirm, updates wizard state (flow
-        type, source selection) and returns True.
-
-        Deliberately does NOT mark any step completed: the load this call
-        gates is asynchronous and can still fail, and pre-marking steps
-        would leave ``completed_steps`` (and the derived frontier) claiming
-        progress that never happened. Steps are marked only on success, by
-        ``_jump_to_review`` -> ``_mark_prior_steps_completed``.
-
-        Args:
-            preview_items: Optional preset items to show the read-preview
-                warning for (see `_confirm_preset_preview`). When
-                QuickSetupDialog is about to be shown, the warning is folded
-                into it instead of shown as a separate step beforehand; when
-                nothing is missing, it's shown standalone exactly as before
-                (only `_on_preset_load_into_editor` passes this -- the other
-                two callers have no source-read to warn about).
-
-        Returns:
-            True if state is ready for loading, False if cancelled or blocked.
-        """
-        from src.gui.dialogs.quick_setup_dialog import QuickSetupDialog
-
-        state = self._wizard_controller.state
-
-        # Must have a device
-        if state.selected_device is None:
-            self._status_banner.show_error("Connect to a device first")
-            return False
-
-        # If user is already at FILTERS step or beyond, all context is set
-        current_step = self._wizard_controller.current_step
-        sequence = self._wizard_controller.get_steps()
-        if current_step in sequence:
-            current_idx = sequence.index(current_step)
-            filters_idx = (
-                sequence.index(WizardStep.FILTERS)
-                if WizardStep.FILTERS in sequence
-                else -1
-            )
-            if filters_idx >= 0 and current_idx >= filters_idx:
-                # Already at or past Filters -- all state is populated
-                if preview_items is not None and not self._confirm_preset_preview(
-                    preview_items
-                ):
-                    return False
-                return True
-
-        # Determine what's missing
-        flow_type = self._wizard_controller.flow_type
-
-        # EQ_TYPE is only needed if the device supports both PEQ and RoomFit
-        # (PEQ_ONLY flow has no EQ_TYPE step, so it's never "needed")
-        need_eq_type = (
-            WizardStep.EQ_TYPE not in state.completed_steps
-            and flow_type == FlowType.PEQ  # Only PEQ flow has EQ_TYPE step
-        )
-
-        # For PEQ/PEQ_ONLY flow, need source if SOURCE step not completed
-        need_source = (
-            WizardStep.SOURCE not in state.completed_steps
-            and flow_type != FlowType.ROOMFIT
-        )
-        # If EQ_TYPE is already completed as RoomFit, no source needed
-        if not need_eq_type and flow_type == FlowType.ROOMFIT:
-            need_source = False
-
-        # Nothing missing — proceed
-        if not need_eq_type and not need_source:
-            if preview_items is not None and not self._confirm_preset_preview(
-                preview_items
-            ):
-                return False
-            return True
-
-        # Show dialog — source list and RoomFit support come from the
-        # connected device's (capability-file-merged) capabilities; fall back
-        # to the shared generic list (#167b) only when no device/capabilities
-        # are available yet (e.g. loading a My Presets profile before ever
-        # connecting) -- not a third, independently-drifting UI-widget scrape.
-        device_caps = self._device_caps
-        available_sources = list(
-            getattr(device_caps, "source_names", []) or DEFAULT_SOURCE_NAMES
-        )
-        supports_roomfit = bool(getattr(device_caps, "supports_roomfit", True))
-
-        current_eq_type = "roomfit" if flow_type == FlowType.ROOMFIT else "peq"
-        current_sources = state.selected_sources or None
-
-        warning = None
-        if preview_items is not None:
-            body = self._preset_preview_warning_html(preview_items)
-            if body is not None:
-                warning = ("Preset Will Briefly Activate on Device", body)
-
-        result = QuickSetupDialog.get_setup(
-            self,
-            need_eq_type=need_eq_type,
-            need_source=need_source,
-            available_sources=available_sources,
-            current_eq_type=current_eq_type,
-            current_sources=current_sources,
-            supports_roomfit=supports_roomfit,
-            warning=warning,
-        )
-
-        if result is None:
-            return False
-
-        eq_type, sources = result
-
-        # Apply EQ type to wizard state
-        if need_eq_type:
-            self._wizard_controller.set_flow_type(
-                FlowType.ROOMFIT if eq_type == "roomfit" else FlowType.PEQ
-            )
-
-        # Apply source to wizard state (PEQ only)
-        if self._wizard_controller.flow_type != FlowType.ROOMFIT and sources:
-            state.selected_sources = list(sources)
-
-        # The dialog's answers live in wizard *state* only for now --
-        # completed_steps is marked from that state on load success
-        # (_jump_to_review), never before the async load resolves.
-        return True
-
-    def _mark_prior_steps_completed(self, state: object) -> None:
-        """Mark CONNECT, EQ_TYPE, SOURCE, FILTERS steps as completed if not already.
-
-        Runs only from ``_jump_to_review`` -- i.e. only once a sidebar load
-        has actually succeeded, never before the async load resolves, so a
-        failed load can't leave phantom checkmarks (or a phantom frontier).
-
-        The guard ("only set if not already completed") is right for
-        CONNECT/EQ_TYPE/SOURCE, which represent sticky prior decisions that
-        genuinely shouldn't change just because this function runs again --
-        but wrong for FILTERS, which represents "what's loaded right now"
-        and must always reflect current reality: without recomputing FILTERS
-        unconditionally, a repeat "Load into Editor" after the first would
-        keep showing the count from whatever was loaded the first time
-        (#162d).
-        """
-        assert isinstance(state, WizardState)
-        flow_type = self._wizard_controller.flow_type
-
-        # CONNECT step — always mark if device is selected
-        if WizardStep.CONNECT not in state.completed_steps and state.selected_device:
-            state.completed_steps[WizardStep.CONNECT] = self._resolve_connect_summary()
-
-        # EQ_TYPE step — only exists in PEQ and ROOMFIT flows (not PEQ_ONLY)
-        if flow_type == FlowType.PEQ and WizardStep.EQ_TYPE not in state.completed_steps:
-            state.completed_steps[WizardStep.EQ_TYPE] = _EQ_TYPE_SUMMARY["peq"]
-        elif flow_type == FlowType.ROOMFIT and WizardStep.EQ_TYPE not in state.completed_steps:
-            state.completed_steps[WizardStep.EQ_TYPE] = _EQ_TYPE_SUMMARY["roomfit"]
-
-        # SOURCE step — only needed for PEQ/PEQ_ONLY flows (not ROOMFIT)
-        if flow_type != FlowType.ROOMFIT and WizardStep.SOURCE not in state.completed_steps:
-            source = state.selected_source or DEFAULT_SOURCE
-            state.selected_source = source
-            self._apply_source_summary(state, source)
-
-        # FILTERS step — always recompute, see docstring above.
-        n_filters = len(state.current_filters)
-        state.completed_steps[WizardStep.FILTERS] = self._resolve_filters_summary(n_filters)
-        state.completed_step_tooltips[WizardStep.FILTERS] = state.filters_origin
-
-    def _jump_to_review(self) -> None:
-        """Navigate straight to the Review step with indicators filled in.
-
-        Shared by the sidebar-load path (_on_peq_ready) and the profile-load
-        completion handler (_on_profile_recalled) -- both need to mark prior
-        steps completed, jump the wizard state and stacked widget straight to
-        Review, and replay every completed step's summary/tooltip through the
-        step indicator (smoke #87), rather than reimplementing that sequence
-        at each call site.
-
-        Switching the page fires currentChanged, which _sync_navigation_chrome
-        handles centrally (step pill highlight + undim, sidebar reset to
-        "home") -- no manual sync needed here.
-
-        Explicitly invalidates REVIEW and everything after it (NAME_PROFILE,
-        PUSH) first: loading new filters IS a change, so a stale
-        PUSH/NAME_PROFILE completion left over from a previous, unrelated
-        push must not stay checked while REVIEW is freshly (re-)entered --
-        that would violate "no checked step may follow an unchecked one"
-        (docs/smoke_test_issues.md #238). ``go_to_step()`` itself is purely
-        navigational under lazy invalidation (#246) and runs last, after
-        ``_mark_prior_steps_completed`` and the replay loop, so the
-        indicator renders once against final data (no transient badge
-        clearing).
-        """
-        state = self._wizard_controller.state
-        self._wizard_controller.invalidate_from(WizardStep.REVIEW)
-        self._mark_prior_steps_completed(state)
-        tooltips = state.completed_step_tooltips
-        for step, summary in state.completed_steps.items():
-            self._wizard_controller.step_summary_updated.emit(
-                step, summary, tooltips.get(step, "")
-            )
-        self._wizard_controller.go_to_step(WizardStep.REVIEW)
 
     # ------------------------------------------------------------------
     # Close Event

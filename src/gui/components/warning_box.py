@@ -71,7 +71,7 @@ def add_optional_warning_box(
 ) -> None:
     """Append a `make_warning_box()` frame to `layout` if `warning` is given.
 
-    Shared by dialogs (e.g. ``DevicePickerDialog``, ``QuickSetupDialog``)
+    Shared by dialogs (e.g. ``DevicePickerDialog``, ``DeviceInfoDialog``)
     that let a caller fold a preceding standalone confirmation into this
     dialog by passing an optional ``(header, body_html)`` tuple, instead of
     each dialog repeating the same "if warning is not None: unpack, build,

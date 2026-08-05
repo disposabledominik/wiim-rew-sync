@@ -8,11 +8,10 @@ import pytest
 from PySide6.QtWidgets import QDialog
 
 from src.adapters import wiim_adapter
-from src.gui import main_window
 from src.gui.components.sidebar_nav import SidebarNav
 from src.gui.pages.push_page import PushPage
 from src.gui.primary_workflows import PrimaryWorkflowManager
-from src.gui.wizard_controller import FlowType, WizardState, WizardStep
+from src.gui.wizard_controller import WizardState, WizardStep
 from src.logging.setup import configure_logging, install_crash_handler
 from src.models import constants as model_constants
 from src.models.canonical import CanonicalFilter
@@ -80,49 +79,6 @@ def test_install_crash_handler_writes_log(tmp_path, monkeypatch):
     assert log_file.exists()
     text = log_file.read_text(encoding="utf-8")
     assert "Unhandled exception" in text
-
-
-# Issue 94: _mark_prior_steps_completed must mark CONNECT/EQ_TYPE/SOURCE/FILTERS when appropriate
-def test_mark_prior_steps_completed_marks_connect_and_sources():
-    """#162: CONNECT's summary is now the resolved device name
-    (_resolve_connect_summary(), same wording used by every entry point)
-    instead of the literal "Connected" -- bind the real shared-summary
-    helper methods onto the SimpleNamespace stand-in so this test exercises
-    the actual current behavior rather than a stale hardcoded literal."""
-    func = main_window.MainWindow._mark_prior_steps_completed
-
-    state = WizardState()
-    state.selected_device = "device-1"
-
-    dummy_self = SimpleNamespace()
-    dummy_self._wizard_controller = SimpleNamespace(flow_type=FlowType.PEQ, state=state)
-    dummy_self._device_caps = None
-    dummy_self._primary_workflows = SimpleNamespace(discovered_devices=[])
-    dummy_self._lookup_device_name = (
-        main_window.MainWindow._lookup_device_name.__get__(dummy_self)
-    )
-    dummy_self._resolve_connect_summary = (
-        main_window.MainWindow._resolve_connect_summary.__get__(dummy_self)
-    )
-    dummy_self._compute_source_summary = (
-        main_window.MainWindow._compute_source_summary.__get__(dummy_self)
-    )
-    dummy_self._apply_source_summary = (
-        main_window.MainWindow._apply_source_summary.__get__(dummy_self)
-    )
-    dummy_self._resolve_filters_summary = (
-        main_window.MainWindow._resolve_filters_summary.__get__(dummy_self)
-    )
-
-    func(dummy_self, state)
-
-    assert WizardStep.CONNECT in state.completed_steps
-    # No discovered-device match and no caps -> _resolve_connect_summary()'s
-    # generic fallback name, not the device IP or the old "Connected" literal.
-    assert state.completed_steps[WizardStep.CONNECT] == "WiiM Device"
-    assert WizardStep.EQ_TYPE in state.completed_steps
-    assert WizardStep.SOURCE in state.completed_steps
-    assert WizardStep.FILTERS in state.completed_steps
 
 
 # Issue 101: _flat_array_to_band_params supports start_band offset for sequential writes
@@ -422,7 +378,7 @@ def test_sidebar_back_from_secondary_view_preserves_push_dry_run_result(qtbot):
         window.show()
 
         # Reach PUSH the way a real session does: every prior step is
-        # completed, so PUSH is the frontier -- "Resume Setup" must then
+        # completed, so PUSH is the frontier -- "Setup Wizard" must then
         # redisplay it rather than jumping (and resetting) anything.
         ctrl = window._wizard_controller
         for step in ctrl.get_steps()[:-1]:
@@ -521,13 +477,15 @@ def test_resync_current_page_geometry_ignores_invalid_index(qtbot):
         window._resync_current_page_geometry(-1)
 
 
-# Fix: jumping directly to Review from a sidebar load (e.g. "Load into
-# Editor" from Presets on Device / My Presets) originally bypassed
-# wizard_controller.advance()/go_to_step(), so step_changed never fired and
-# the StepIndicator's highlighted pill (now synced via set_view() in
-# _sync_navigation_chrome) was never updated -- Review rendered with no step
-# highlighted.
-def test_sidebar_load_into_review_highlights_review_step(qtbot):
+# Fix: "My Saved Presets"-style Load (now the Filters step's Local Library
+# selection) goes through a *different* handler (_on_profile_recalled, via
+# SecondaryWorkflowManager.recall_profile) than a device-side Filters
+# selection (_on_peq_ready) — #144 only patched the latter, so loading a
+# local profile still landed on Review with no step-indicator pill
+# highlighted, and (additionally) never reset the sidebar highlight back to
+# "home", leaving a secondary-view sidebar item highlighted even though
+# Review was now on screen.
+def test_profile_recalled_highlights_review_and_resets_sidebar(qtbot):
     from src.gui.main_window import PAGE_INDICES, MainWindow
     from src.models.canonical import CanonicalFilter
 
@@ -540,66 +498,11 @@ def test_sidebar_load_into_review_highlights_review_step(qtbot):
         state = window._wizard_controller.state
         state.selected_device = "device-1"
         state.selected_source = "wifi"
-        state.current_filters = [
-            CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=1.0, q=1.0)
-        ]
+        # _on_profile_recalled now advances FILTERS->REVIEW, only reachable
+        # via the Filters step's Local Library selection.
+        state.current_step = WizardStep.FILTERS
 
-        window._sidebar_load_in_progress = True
-        window._on_peq_ready(SimpleNamespace())
-
-        assert window._stacked_widget.currentIndex() == PAGE_INDICES["review"]
-
-        sequence = window._wizard_controller.get_steps()
-        review_index = sequence.index(WizardStep.REVIEW)
-        assert window._step_indicator._view_index == review_index
-        assert window._step_indicator._steps[review_index]._dimmed is False
-
-
-# Fix: a sidebar load that resolves to zero filters (count == 0 in
-# _on_peq_ready) never reset _sidebar_load_in_progress -- only the count > 0
-# branch did. Left stuck True, the flag would corrupt the *next*, unrelated
-# peq_ready by jumping straight to Review instead of advancing normally.
-def test_sidebar_load_empty_filters_resets_sidebar_load_flag(qtbot):
-    from src.gui.main_window import MainWindow
-
-    with patch.object(MainWindow, "_apply_settings", lambda self: None):
-        mock_bridge = MagicMock()
-        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
-        window = MainWindow(async_bridge=mock_bridge)
-        qtbot.addWidget(window)
-
-        state = window._wizard_controller.state
-        state.selected_device = "device-1"
-        state.current_filters = []
-
-        window._sidebar_load_in_progress = True
-        window._on_peq_ready(SimpleNamespace())
-
-        assert window._sidebar_load_in_progress is False
-
-
-# Fix: "My Saved Presets" Load goes through a *different* handler
-# (_on_profile_recalled, via SecondaryWorkflowManager.recall_profile) than
-# Presets-on-Device / sidebar-"Pull from REW" Load (_on_peq_ready) — #144
-# only patched the latter, so loading from My Saved Presets still landed on
-# Review with no step-indicator pill highlighted, and (additionally) never
-# reset the sidebar highlight back to "home", leaving "My Saved Presets"
-# highlighted even though Review was now on screen.
-def test_profile_recalled_from_my_presets_highlights_review_and_resets_sidebar(qtbot):
-    from src.gui.main_window import PAGE_INDICES, MainWindow
-    from src.models.canonical import CanonicalFilter
-
-    with patch.object(MainWindow, "_apply_settings", lambda self: None):
-        mock_bridge = MagicMock()
-        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
-        window = MainWindow(async_bridge=mock_bridge)
-        qtbot.addWidget(window)
-
-        state = window._wizard_controller.state
-        state.selected_device = "device-1"
-        state.selected_source = "wifi"
-
-        # Simulate having been on "My Saved Presets" (sidebar highlighted there)
+        # Simulate having been on a secondary view (sidebar highlighted there)
         window._sidebar_nav.set_active_key("my_presets")
 
         window._on_profile_recalled(
@@ -617,7 +520,7 @@ def test_profile_recalled_from_my_presets_highlights_review_and_resets_sidebar(q
 
 # Fix: clicking a step-indicator pill (a finished/completed step) while
 # viewing a sidebar destination (Presets on Device, My Saved Presets,
-# Settings, sidebar Pull from REW) left *both* the sidebar item and the
+# Settings) left *both* the sidebar item and the
 # step pill highlighted at once — _on_step_indicator_clicked routes through
 # wizard_controller.go_to_step(), which only ever touched the step
 # indicator, never the sidebar highlight. This was the same root cause as

@@ -15,7 +15,8 @@ all selected sources in one operation.
 
 ### Channel Modes
 
-On the Filters page, choose your channel mode before importing:
+When importing from **File Import** or **Pull from REW API** on the Filters
+page, choose your channel mode:
 
 - **Stereo** — The same filters are applied to both left and right channels.
   Import a single REW .txt file.
@@ -23,11 +24,14 @@ On the Filters page, choose your channel mode before importing:
   separate files for Left and Right. Use this when your REW measurements
   differ significantly between channels.
 
+(**Device** and **Local Library** sources don't need this choice — the
+channel mode is already part of the preset/profile you select.)
+
 ## Loading Filters
 
-At the top of the Filters page, an "Import source" toggle switches between
-**File Import** and **Pull from REW API** — the rest of the page's content
-changes to match whichever is selected.
+At the top of the Filters page, an "Import source" dropdown offers four
+options — **File Import**, **Pull from REW API**, **Device**, and
+**Local Library** — each showing its own panel below the dropdown.
 
 ### Import from REW File
 
@@ -42,18 +46,30 @@ then click "Browse..." to open a file dialog.
 The files must be REW EQ text exports (.txt). If the file is invalid, an
 error message appears with a "Try Again" button to reset and start over.
 
-### Pull from Device
-
-Access existing device configurations via "Presets on Device" in the
-sidebar. From there you can load a PEQ preset or RoomFit profile into the
-review step for editing or re-pushing.
-
 ### Pull from REW API
 
-Select **Pull from REW API** in the Filters page's Import source toggle (or
-use the sidebar's "Pull from REW" entry, which shows the same measurement
-picker as its own step). If REW is running with its HTTP API enabled, the
-page connects automatically and lists available measurements to choose from.
+Select **Pull from REW API** from the dropdown. If REW is running with its
+HTTP API enabled, the panel connects automatically and lists available
+measurements to choose from.
+
+### Device
+
+Select **Device** from the dropdown for two ways to get filters straight
+from the connected device: click "Current configuration on device" to read
+whatever PEQ bands are currently live on your selected source(s), or pick a
+row from the list below it — a single merged list of PEQ presets and
+RoomFit profiles saved on the device, regardless of whether you chose PEQ or
+RoomFit on the EQ Type step (a saved RoomFit profile can be loaded into a
+PEQ push and vice versa). Select a row and click "Load Preset." No separate
+Stereo/L-R choice is needed here — the channel mode comes from the selected
+configuration itself.
+
+### Local Library
+
+Select **Local Library** from the dropdown to browse presets saved locally
+on this computer (the same presets shown in "My Saved Presets" in the
+sidebar). Select one and click "Load Preset" — again, no separate channel
+mode choice is needed.
 
 ## Reviewing Filters
 

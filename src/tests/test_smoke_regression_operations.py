@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.adapters.rew_http_client import MeasurementSummary
 from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
@@ -1069,12 +1068,6 @@ class TestImportExport:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        # Set up wizard state as if we're past EQ_TYPE and SOURCE
-        state.completed_steps = {
-            WizardStep.CONNECT: "Connected",
-            WizardStep.EQ_TYPE: "PEQ",
-            WizardStep.SOURCE: "wifi",
-        }
         window._wizard_controller._flow_type = FlowType.PEQ
 
         profile = MagicMock()
@@ -1085,7 +1078,7 @@ class TestImportExport:
         profile.filters = None
 
         with patch.object(window._secondary_workflows, "recall_profile"):
-            window._on_profile_load_requested(profile)
+            window._on_local_profile_selected(profile)
 
         assert state.channel_mode == ChannelMode.LR
 
@@ -1094,11 +1087,6 @@ class TestImportExport:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.completed_steps = {
-            WizardStep.CONNECT: "Connected",
-            WizardStep.EQ_TYPE: "PEQ",
-            WizardStep.SOURCE: "wifi",
-        }
         window._wizard_controller._flow_type = FlowType.PEQ
 
         profile = MagicMock()
@@ -1107,7 +1095,7 @@ class TestImportExport:
         profile.filters = [_make_filter()]
 
         with patch.object(window._secondary_workflows, "recall_profile"):
-            window._on_profile_load_requested(profile)
+            window._on_local_profile_selected(profile)
 
         assert state.channel_mode == ChannelMode.STEREO
 
@@ -1232,32 +1220,6 @@ class TestPresets:
         assert len(mock_set_roomfit.call_args[0][0]) == 1
         assert mock_set_roomfit.call_args[0][1] == ""
 
-    # --- Issue #23: _on_eq_type_selected("roomfit") triggers async fetch ---
-
-    def test_issue23_eq_type_roomfit_triggers_profile_fetch(self, window) -> None:
-        """#23: Selecting 'roomfit' enables RoomFit mode and fetches profiles."""
-        import asyncio
-
-        mock_adapter = _setup_device(window)
-        mock_adapter.capabilities.roomfit_level = 2
-        mock_adapter.list_roomfit_profiles = AsyncMock(
-            return_value=[{"Name": "Living Room"}, {"Name": "Office"}]
-        )
-
-        def _run_now(coro: object) -> None:
-            asyncio.run(coro)
-
-        with (
-            patch.object(window._bridge, "run_async", side_effect=_run_now) as mock_run,
-            patch.object(window._filters_page, "set_roomfit_profiles") as mock_set_profiles,
-        ):
-            window._on_eq_type_selected("roomfit")
-
-        assert window._wizard_controller.flow_type == FlowType.ROOMFIT
-        assert window._filters_page._roomfit_mode is True
-        mock_run.assert_called_once()
-        mock_set_profiles.assert_called_once_with(["Living Room", "Office"])
-
     # --- Issue #24: PresetsDeviceView signals connected in MainWindow ---
 
     def test_issue24_presets_device_export_connected(self, window) -> None:
@@ -1367,8 +1329,13 @@ class TestPresets:
         saved_profile = mock_save.call_args[0][0]
         assert saved_profile.name == "WiiM - Movie Night"
 
-    def test_issue24_presets_device_load_connected(self, window) -> None:
-        """#24: Load signal triggers preset-load workflow."""
+    def test_issue24_filters_device_panel_load_connected(self, window) -> None:
+        """#24 (superseded): device_item_selected triggers preset-load workflow.
+
+        The old PresetsDeviceView "Load into Editor" signal this test used
+        to target is gone -- loading a device preset now happens via the
+        Filters step's merged Device panel, which emits device_item_selected
+        instead."""
         _setup_device(window)
         item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
 
@@ -1377,7 +1344,6 @@ class TestPresets:
                 "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
                 return_value=True,
             ),
-            patch.object(window, "_ensure_wizard_state_for_load", return_value=True),
             patch.object(
                 window._primary_workflows, "_do_load_peq_preset", return_value=object()
             ) as mock_load_workflow,
@@ -1386,7 +1352,7 @@ class TestPresets:
                 window._bridge, "run_async", side_effect=close_coroutine_tree
             ) as mock_run,
         ):
-            window._presets_device_view.load_into_editor.emit(item)
+            window._filters_page.device_item_selected.emit(item)
 
         mock_progress.assert_called_once_with("Loading preset 'Movie Night'...")
         mock_load_workflow.assert_called_once_with("Movie Night")
@@ -1783,21 +1749,26 @@ class TestPresets:
     # --- Issue #27: RoomFit profile selection triggers read and advances ---
 
     def test_issue27_roomfit_profile_selected_triggers_pull(self, window) -> None:
-        """#27: Selecting a RoomFit profile stores state and schedules pull."""
+        """#27: Selecting a RoomFit profile from the Device panel's merged
+        list stores state and schedules a pull. Reached via
+        device_item_selected now (the old dedicated roomfit-dropdown signal
+        this test used to target was removed with the merged Device panel)."""
         _setup_device(window)
         scheduled: list[object] = []
 
         def _capture(coro: object) -> None:
             scheduled.append(coro)
 
+        item = PresetItem(name="My Profile", channel_mode="Stereo", preset_type="RoomFit")
+
         with (
             patch.object(window._bridge, "run_async", side_effect=_capture) as mock_run,
             patch.object(window._status_banner, "show_progress") as mock_progress,
         ):
-            window._on_roomfit_profile_selected("My Profile")
+            window._on_device_item_selected(item)
 
         assert window._wizard_controller.state.roomfit_profile_name == "My Profile"
-        mock_progress.assert_called_once_with("Loading RoomFit profile 'My Profile'...")
+        mock_progress.assert_called_once_with("Loading preset 'My Profile'...")
         mock_run.assert_called_once()
         assert len(scheduled) == 1
         close_coroutine_tree(scheduled[0])
@@ -2509,28 +2480,6 @@ class TestSettingsUIState:
         assert window._status_banner._message_label.isHidden() is False
 
 
-    # --- Issue #10: Measurement picker cancel shows info banner ---
-
-    def test_issue10_picker_cancel_shows_info(self, window) -> None:
-        """#10: Cancelling the REW picker shows 'Selection cancelled' info.
-
-        The picker is now the embedded RewPullView rather than a modal
-        dialog — cancellation happens via its back_requested signal once a
-        selection screen (not just the connecting placeholder) was shown.
-        """
-        measurements = [MeasurementSummary(uuid="uuid-1", name="M1", index=0)]
-        window._active_rew_pull_view = window._rew_pull_view
-        window._rew_pull_view.set_measurements(measurements)
-
-        with (
-            patch.object(window._status_banner, "show_info") as mock_info,
-            patch.object(window._bridge, "run_async") as mock_run_async,
-        ):
-            window._rew_pull_view.back_requested.emit()
-
-        mock_info.assert_called_once_with("Selection cancelled", auto_dismiss=3000)
-        mock_run_async.assert_not_called()
-
     # --- Issue #11: FiltersPage retry shows option cards ---
 
     def test_issue11_filters_page_has_retry_mechanism(self, window) -> None:
@@ -2977,7 +2926,6 @@ class TestSettingsUIState:
         view.set_presets([profile])
 
         assert view._toolbar.isVisible() is True
-        assert view._load_btn.isEnabled() is False
         assert view._rename_btn.isEnabled() is False
         assert view._duplicate_btn.isEnabled() is False
         assert view._delete_btn.isEnabled() is False
@@ -2985,20 +2933,16 @@ class TestSettingsUIState:
         view._list_widget.setCurrentRow(0)
         qtbot.wait(10)
 
-        assert view._load_btn.isEnabled() is True
         assert view._rename_btn.isEnabled() is True
         assert view._duplicate_btn.isEnabled() is True
         assert view._delete_btn.isEnabled() is True
 
-        load_calls: list[object] = []
         duplicate_calls: list[str] = []
         delete_calls: list[str] = []
 
-        view.load_requested.connect(lambda selected: load_calls.append(selected))
         view.duplicate_requested.connect(lambda name: duplicate_calls.append(name))
         view.delete_requested.connect(lambda name: delete_calls.append(name))
 
-        view._load_btn.click()
         view._duplicate_btn.click()
         with patch(
             "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
@@ -3006,7 +2950,6 @@ class TestSettingsUIState:
         ):
             view._delete_btn.click()
 
-        assert load_calls == [profile]
         assert duplicate_calls == ["Jazz Night"]
         assert delete_calls == ["Jazz Night"]
 

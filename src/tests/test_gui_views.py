@@ -273,7 +273,6 @@ class TestPresetsDeviceViewSelection:
         view._peq_list.clearSelection()
         assert not view._export_btn.isEnabled()
         assert not view._save_btn.isEnabled()
-        assert not view._load_btn.isEnabled()
         assert not view._copy_btn.isEnabled()
         assert not view._delete_btn.isEnabled()
 
@@ -290,19 +289,6 @@ class TestPresetsDeviceViewSelection:
         assert view._save_btn.isEnabled()
         assert view._copy_btn.isEnabled()
         assert view._delete_btn.isEnabled()
-        # Load into Editor requires single selection
-        assert not view._load_btn.isEnabled()
-
-    def test_single_select_enables_load_button(self, qtbot) -> None:
-        """Selecting a single item enables the Load into Editor button."""
-        view = PresetsDeviceView()
-        qtbot.addWidget(view)
-        view.show()
-
-        view.set_peq_presets(_make_peq_presets(3))
-        view._peq_list.setCurrentRow(0)
-
-        assert view._load_btn.isEnabled()
 
 
 class TestPresetsDeviceViewSignals:
@@ -335,21 +321,6 @@ class TestPresetsDeviceViewSignals:
             view._save_btn.click()
 
         assert len(blocker.args[0]) == 1
-
-    def test_load_into_editor_signal(self, qtbot) -> None:
-        """Clicking Load emits load_into_editor with the single selected item."""
-        view = PresetsDeviceView()
-        qtbot.addWidget(view)
-        view.show()
-
-        presets = _make_peq_presets(3)
-        view.set_peq_presets(presets)
-        view._peq_list.setCurrentRow(1)
-
-        with qtbot.waitSignal(view.load_into_editor, timeout=1000) as blocker:
-            view._load_btn.click()
-
-        assert blocker.args[0].name == "PEQ Preset 2"
 
     def test_copy_to_device_requested_signal(self, qtbot) -> None:
         """Clicking Copy emits copy_to_device_requested with selected items."""
@@ -538,24 +509,6 @@ class TestMyPresetsViewRename:
 class TestMyPresetsViewContextMenu:
     """Tests for context menu actions and signal emission."""
 
-    def test_load_requested_signal(self, qtbot) -> None:
-        """load_requested signal emits with the Profile object."""
-        view = MyPresetsView()
-        qtbot.addWidget(view)
-        view.show()
-
-        profile = _make_profile("My EQ")
-        view.set_presets([profile])
-
-        view._list_widget.setCurrentRow(0)
-        item = view._list_widget.item(0)
-        stored_profile = item.data(Qt.ItemDataRole.UserRole)
-
-        with qtbot.waitSignal(view.load_requested, timeout=1000) as blocker:
-            view.load_requested.emit(stored_profile)
-
-        assert blocker.args[0].name == "My EQ"
-
     def test_delete_requested_signal(self, qtbot) -> None:
         """delete_requested signal emits with the correct preset name."""
         view = MyPresetsView()
@@ -640,11 +593,10 @@ class TestMyPresetsViewToolbarLayout:
         assert view._toolbar.y() > y_at_500
 
     def test_toolbar_button_order(self, qtbot) -> None:
-        """Toolbar buttons are ordered Load, Copy to Another Device, Rename,
-        Duplicate, Delete -- grouping the two "send this preset somewhere"
-        actions (Load into Editor, Copy to Another Device) together right
-        after each other, ahead of the local Rename/Duplicate edits, with
-        the destructive Delete last."""
+        """Toolbar buttons are ordered Copy to Another Device (the primary
+        "send this preset somewhere" action -- loading now happens via the
+        Filters step's Local Library option instead of a toolbar button
+        here), Rename, Duplicate, with the destructive Delete last."""
         view = MyPresetsView()
         qtbot.addWidget(view)
 
@@ -655,7 +607,6 @@ class TestMyPresetsViewToolbarLayout:
         buttons = [w for w in buttons if w is not None]
 
         assert buttons == [
-            view._load_btn,
             view._copy_btn,
             view._rename_btn,
             view._duplicate_btn,
@@ -663,10 +614,10 @@ class TestMyPresetsViewToolbarLayout:
         ]
 
     def test_context_menu_action_order_matches_toolbar(self, qtbot) -> None:
-        """Context menu action order matches the toolbar's: Load, Copy to
-        Another Device, Rename, Duplicate, Delete. Built via
-        _build_context_menu() directly (not _show_context_menu()) since
-        QMenu.exec()'s real modal popup isn't safely mockable headlessly."""
+        """Context menu action order matches the toolbar's: Copy to Another
+        Device, Rename, Duplicate, Delete. Built via _build_context_menu()
+        directly (not _show_context_menu()) since QMenu.exec()'s real modal
+        popup isn't safely mockable headlessly."""
         view = MyPresetsView()
         qtbot.addWidget(view)
 
@@ -677,7 +628,6 @@ class TestMyPresetsViewToolbarLayout:
 
         action_texts = [a.text() for a in menu.actions() if not a.isSeparator()]
         assert action_texts == [
-            "Load",
             "Copy to Another Device",
             "Rename",
             "Duplicate",

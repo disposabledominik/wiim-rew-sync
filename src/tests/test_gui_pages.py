@@ -20,7 +20,16 @@ from src.gui.pages.name_profile_page import NameProfilePage
 from src.gui.pages.push_page import PushPage
 from src.gui.pages.review_page import ReviewPage
 from src.gui.pages.source_page import SourcePage
+from src.gui.views.presets_device_view import PresetItem
 from src.models.canonical import CanonicalFilter
+from src.models.profile import Profile
+
+# FiltersPage's Import source combo index order (REW_FILE, REW_API, DEVICE,
+# LOCAL_LIBRARY) -- matches src.gui.pages.filters_page._SOURCE_ORDER.
+_REW_FILE_INDEX = 0
+_REW_API_INDEX = 1
+_DEVICE_INDEX = 2
+_LOCAL_LIBRARY_INDEX = 3
 
 # ---------------------------------------------------------------------------
 # TestConnectPage
@@ -389,11 +398,10 @@ class TestFiltersPage:
         assert "Failed to parse" in page._error_label.text()
 
     def test_source_toggle_hides_stale_warnings(self, qtbot) -> None:
-        """Smoke #236: _on_source_toggled() must hide _warnings_section when
-        switching between File Import and Pull from REW API -- previously
-        only the file-import/REW-pull sections themselves were toggled, so
-        a stale warning box from a File Import stayed visible after
-        switching to Pull from REW API."""
+        """Smoke #236: _on_source_index_changed() must hide _warnings_section
+        when switching sources -- previously only the file-import/REW-pull
+        sections themselves were toggled, so a stale warning box from a File
+        Import stayed visible after switching to Pull from REW API."""
         page = FiltersPage()
         qtbot.addWidget(page)
         page.show()
@@ -401,14 +409,15 @@ class TestFiltersPage:
         page.show_warnings(["Gain clamped to +6 dB"])
         assert page._warnings_section.isVisible()
 
-        page._rew_api_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_API_INDEX)
 
         assert not page._warnings_section.isVisible()
 
     def test_source_toggle_hides_stale_error(self, qtbot) -> None:
-        """Smoke #236: _on_source_toggled() must hide _error_section when
-        switching source modes -- previously a stale parse-error box from a
-        File Import stayed visible after switching to Pull from REW API."""
+        """Smoke #236: _on_source_index_changed() must hide _error_section
+        when switching source modes -- previously a stale parse-error box
+        from a File Import stayed visible after switching to Pull from REW
+        API."""
         page = FiltersPage()
         qtbot.addWidget(page)
         page.show()
@@ -416,44 +425,44 @@ class TestFiltersPage:
         page.show_error("Failed to parse REW file: invalid format")
         assert page._error_section.isVisible()
 
-        page._rew_api_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_API_INDEX)
 
         assert not page._error_section.isVisible()
 
     def test_file_import_is_default_source(self, qtbot) -> None:
-        """File Import section is visible and RewPullView hidden by default."""
+        """File Import panel is visible and RewPullView hidden by default."""
         page = FiltersPage()
         qtbot.addWidget(page)
         page.show()
 
-        assert page._file_import_section.isVisible()
+        assert page._source_combo.currentIndex() == _REW_FILE_INDEX
+        assert page._rew_file_panel.isVisible()
         assert not page.rew_pull_view.isVisible()
         assert not page.rew_pull_view._title.isVisible()
 
     def test_toggle_to_rew_api_shows_picker_and_emits_signal(self, qtbot) -> None:
-        """Switching source to "Pull from REW API" swaps sections and emits."""
+        """Switching source to "Pull from REW API" swaps panels and emits."""
         page = FiltersPage()
         qtbot.addWidget(page)
         page.show()
 
         with qtbot.waitSignal(page.rew_api_pull_requested, timeout=1000):
-            page._rew_api_source_radio.setChecked(True)
+            page._source_combo.setCurrentIndex(_REW_API_INDEX)
 
-        assert not page._file_import_section.isVisible()
-        assert not page._file_import_actions.isVisible()
+        assert not page._rew_file_panel.isVisible()
         assert page.rew_pull_view.isVisible()
 
     def test_rew_pull_back_reverts_to_file_import(self, qtbot) -> None:
-        """RewPullView's back_requested flips the source toggle back."""
+        """RewPullView's back_requested flips the source dropdown back."""
         page = FiltersPage()
         qtbot.addWidget(page)
         page.show()
-        page._rew_api_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_API_INDEX)
 
         page.rew_pull_view.back_requested.emit()
 
-        assert page._file_source_radio.isChecked()
-        assert page._file_import_section.isVisible()
+        assert page._source_combo.currentIndex() == _REW_FILE_INDEX
+        assert page._rew_file_panel.isVisible()
         assert page._file_import_actions.isVisible()
         assert not page.rew_pull_view.isVisible()
 
@@ -472,13 +481,13 @@ class TestFiltersPage:
         style_class_before = page._subtitle.property("class")
         text_before = page._subtitle.text()
 
-        page._rew_api_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_API_INDEX)
 
         assert page._subtitle is subtitle_before
         assert page._subtitle.property("class") == style_class_before
         assert page._subtitle.text() != text_before
 
-        page._file_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_FILE_INDEX)
 
         assert page._subtitle is subtitle_before
         assert page._subtitle.property("class") == style_class_before
@@ -504,7 +513,7 @@ class TestFiltersPage:
         two file rows instead of one), the Continue button stays visible
         and within the page's bounds even at a minimal window height,
         instead of being pushed off below the visible window with no way
-        to reach it (smoke #232). `_file_import_section` shrinks/scrolls
+        to reach it (smoke #232). `_rew_file_panel` shrinks/scrolls
         first (it has the layout's stretch factor); the action row, header,
         and toggles never do.
 
@@ -554,7 +563,7 @@ class TestFiltersPage:
             page, page._next_btn.rect().bottomLeft()
         ).y()
 
-        page._rew_api_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_API_INDEX)
         page.rew_pull_view.set_measurements(
             [MeasurementSummary(uuid="u0", name="Speaker", index=0)]
         )
@@ -580,7 +589,7 @@ class TestFiltersPage:
         page.show()
         qtbot.wait(20)
 
-        page._rew_api_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_API_INDEX)
         page.rew_pull_view.set_measurements(
             [MeasurementSummary(uuid="u0", name="Speaker", index=0)]
         )
@@ -593,36 +602,145 @@ class TestFiltersPage:
             page, page.rew_pull_view._stereo_radio.rect().topLeft()
         ).y()
 
-        # Same single-spacing gap the file-import section gets below the
+        # Same single-spacing gap the File Import panel gets below the
         # subtitle (mode_section is its first visible child).
         expected_gap = (
-            page._file_import_section.mapTo(
-                page, page._file_import_section.rect().topLeft()
+            page._rew_file_panel.mapTo(
+                page, page._rew_file_panel.rect().topLeft()
             ).y()
             - subtitle_bottom
         )
         assert toggle_top - subtitle_bottom == expected_gap
 
     def test_set_rew_api_available_false_disables_and_falls_back(self, qtbot) -> None:
-        """set_rew_api_available(False) disables the radio and reverts selection."""
+        """set_rew_api_available(False) disables the option and reverts selection."""
+        from src.gui.wizard_controller import FiltersSource
+
         page = FiltersPage()
         qtbot.addWidget(page)
-        page._rew_api_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_API_INDEX)
 
         page.set_rew_api_available(False)
 
-        assert not page._rew_api_source_radio.isEnabled()
-        assert page._file_source_radio.isChecked()
+        assert not page._source_items[FiltersSource.REW_API].isEnabled()
+        assert page._source_combo.currentIndex() == _REW_FILE_INDEX
 
     def test_clear_results_reverts_to_file_import(self, qtbot) -> None:
-        """clear_results() resets the source toggle back to File Import."""
+        """clear_results() resets the source dropdown back to File Import."""
         page = FiltersPage()
         qtbot.addWidget(page)
-        page._rew_api_source_radio.setChecked(True)
+        page._source_combo.setCurrentIndex(_REW_API_INDEX)
 
         page.clear_results()
 
-        assert page._file_source_radio.isChecked()
+        assert page._source_combo.currentIndex() == _REW_FILE_INDEX
+
+    # ------------------------------------------------------------------
+    # Device panel (merged PEQ/RoomFit list)
+    # ------------------------------------------------------------------
+
+    def test_switching_to_device_shows_panel_and_requests_presets(self, qtbot) -> None:
+        """Selecting "Device" shows its panel and asks MainWindow to fetch presets."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        with qtbot.waitSignal(page.device_presets_requested, timeout=1000):
+            page._source_combo.setCurrentIndex(_DEVICE_INDEX)
+
+        assert page._device_panel.isVisible()
+
+    def test_device_list_merges_peq_and_roomfit_regardless_of_flow(self, qtbot) -> None:
+        """The Device list combines PEQ presets and RoomFit profiles together,
+        so a preset can be loaded regardless of the wizard's current EQ_TYPE."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+
+        page.set_peq_presets(
+            [PresetItem(name="Living Room PEQ", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="",
+        )
+        page.set_roomfit_profiles(
+            [PresetItem(name="Living Room RF", channel_mode="Stereo", preset_type="RoomFit")],
+            active_name="Living Room RF",
+        )
+
+        assert page._device_list.count() == 2
+        labels = {page._device_list.item(i).text() for i in range(2)}
+        assert any("Living Room PEQ" in label and "PEQ" in label for label in labels)
+        assert any(
+            "Living Room RF" in label and "RoomFit" in label and "active" in label
+            for label in labels
+        )
+
+    def test_device_load_button_enabled_only_with_selection(self, qtbot) -> None:
+        """The Device panel's Load Preset button is disabled until a row is selected."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.set_peq_presets(
+            [PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ")]
+        )
+
+        assert not page._device_load_btn.isEnabled()
+
+        page._device_list.setCurrentRow(0)
+
+        assert page._device_load_btn.isEnabled()
+
+    def test_device_load_emits_selected_preset_item(self, qtbot) -> None:
+        """Clicking Load Preset emits device_item_selected with the chosen PresetItem."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        item = PresetItem(name="Preset A", channel_mode="L/R", preset_type="RoomFit")
+        page.set_roomfit_profiles([item])
+        page._device_list.setCurrentRow(0)
+
+        with qtbot.waitSignal(page.device_item_selected, timeout=1000) as blocker:
+            page._device_load_btn.click()
+
+        assert blocker.args == [item]
+
+    # ------------------------------------------------------------------
+    # Local Library panel
+    # ------------------------------------------------------------------
+
+    def test_switching_to_local_library_shows_panel_and_requests_profiles(
+        self, qtbot
+    ) -> None:
+        """Selecting "Local Library" shows its panel and asks MainWindow to fetch profiles."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        with qtbot.waitSignal(page.local_profiles_requested, timeout=1000):
+            page._source_combo.setCurrentIndex(_LOCAL_LIBRARY_INDEX)
+
+        assert page._local_library_panel.isVisible()
+
+    def test_local_load_emits_selected_profile(self, qtbot) -> None:
+        """Clicking Load Preset emits local_profile_selected with the chosen Profile."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        profile = Profile(name="My Local Preset", channel_mode="Stereo", filters=[])
+        page.set_local_profiles([profile])
+        page._local_list.setCurrentRow(0)
+
+        with qtbot.waitSignal(page.local_profile_selected, timeout=1000) as blocker:
+            page._local_load_btn.click()
+
+        assert blocker.args == [profile]
+
+    def test_local_library_empty_state(self, qtbot) -> None:
+        """No saved profiles shows the empty-state label instead of the list."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.show()
+        page._source_combo.setCurrentIndex(_LOCAL_LIBRARY_INDEX)
+
+        page.set_local_profiles([])
+
+        assert page._local_empty_label.isVisible()
+        assert not page._local_list.isVisible()
 
 
 # ---------------------------------------------------------------------------

@@ -433,26 +433,6 @@ class TestREWPullHappyPath:
         assert window._status_banner._close_button.isVisible()
 
     @pytest.mark.asyncio
-    async def test_rew_list_empty_resets_sidebar_load_flag(self, window) -> None:
-        """The empty-measurement early return must clear _sidebar_load_in_progress
-        once the info message reaches _on_progress_update (the reset itself
-        now lives there, not in the manager, since the manager has no access
-        to MainWindow's plain attributes), otherwise the flag stays stuck
-        True and corrupts the step indicator on the next sidebar-triggered
-        load.
-        """
-        mock_client = AsyncMock()
-        mock_client.list_measurements = AsyncMock(return_value=[])
-        window._primary_workflows._rew_client = mock_client
-        window._sidebar_load_in_progress = True
-
-        await window._primary_workflows._do_rew_list_measurements()
-        msg = window._bridge.progress_update.emit.call_args[0][0]
-        window._on_progress_update(msg)
-
-        assert window._sidebar_load_in_progress is False
-
-    @pytest.mark.asyncio
     async def test_rew_not_connected_error(self, window) -> None:
         """Verify operation_error emitted when REW is not running.
 

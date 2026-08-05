@@ -293,12 +293,14 @@ class TestOperationFeedbackButtonRegistration:
 
         registered = window._feedback_manager._action_buttons
 
-        assert window._presets_device_view._load_btn in registered
-        assert window._my_presets_view._load_btn in registered
+        assert window._presets_device_view._copy_btn in registered
+        assert window._my_presets_view._copy_btn in registered
         assert window._review_page._push_button in registered
         assert window._filters_page._next_btn in registered
         assert window._filters_page.rew_pull_view._continue_btn in registered
-        assert window._rew_pull_view._continue_btn in registered
+        assert window._filters_page._device_current_btn in registered
+        assert window._filters_page._device_load_btn in registered
+        assert window._filters_page._local_load_btn in registered
         assert window._settings_view._bundle_btn in registered
 
     def test_buttons_disabled_while_operation_in_progress(self, make_window) -> None:

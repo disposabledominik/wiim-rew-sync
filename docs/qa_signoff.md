@@ -82,7 +82,7 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] Onboarding overlay appears on first run
 - [P] "Get Started" dismisses overlay and shows Connect page
 - [P] Step indicator shows wizard steps (Connect, EQ Type, Source, Filters, Review, Push)
-- [P] Sidebar shows "Resume Setup" as the active navigation item
+- [P] Sidebar shows "Setup Wizard" as the active navigation item
 
 ### Test 2: Device Discovery
 - [P] Connect page shows "Searching for WiiM devices..." spinner
@@ -96,17 +96,19 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] EQ Type page shown (if device supports RoomFit); selecting PEQ advances
 - [P] Source page shows audio sources with checkboxes (wifi, bluetooth, line-in, etc.)
 - [P] Selecting one or more sources + clicking Continue advances to Filters page
-- [P] Filters page shows a File Import / "Pull from REW API" toggle, with a Stereo/L-R radio toggle
-  and per-channel Browse button(s) inside File Import mode
+- [P] Filters page shows an "Import source" dropdown: File Import, Pull from REW API, Device,
+  Local Library
+- [P] File Import is selected by default, showing a Stereo/L-R radio toggle and per-channel Browse
+  button(s)
 - [P] Stereo is selected by default
 - [P] Clicking Browse opens native file dialog
 - [P] Selecting a valid `.txt` file shows filename next to Browse
 - [P] "Continue" button appears and is enabled after file is selected
 - [P] Clicking "Continue" advances to Review page with filters loaded
-
-> Filters page no longer offers "Pull from Device" or a RoomFit-profile dropdown inline (removed
-> per smoke issues #52/#59) — those flows live under the "Presets on Device" sidebar item only
-> (Test 12). If you see either on the Filters page, that's a regression.
+- [P] Switching the dropdown to "Device" shows a "Current configuration on device" action plus a
+  single merged list of PEQ presets and RoomFit profiles (regardless of the PEQ/RoomFit choice made
+  on the EQ Type page) — see Test 12a
+- [P] Switching the dropdown to "Local Library" shows a list of locally saved presets — see Test 13a
 
 ### Test 4: PEQ Flow — Filter Import (L/R)
 - [P] On Filters page, switching to L/R mode shows Browse L and Browse R buttons
@@ -152,8 +154,8 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 ### Test 10: RoomFit Flow
 - [P] After device connect (device with RoomFit): EQ Type page shown
 - [P] Selecting "RoomFit" skips Source step, advances to Filters page
-- [P] Filters page works the same (Stereo/L-R toggle + Browse; no separate RoomFit-pull UI here —
-  see Test 12 for pulling an existing RoomFit profile from the device)
+- [P] Filters page's dropdown works the same; picking "Device" shows the same merged PEQ/RoomFit
+  list as the PEQ flow — selecting a RoomFit profile here loads it directly (see Test 12a)
 - [P] Review page shows filters normally
 - [P] Clicking "Push to Device" advances to Name Profile page
 - [P] Name Profile page shows text input for profile name, with existing profiles listed (if any)
@@ -169,29 +171,49 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 ### Test 12: Presets on Device
 - [P] Sidebar "Presets on Device" navigates to presets view
 - [P] While connected: shows PEQ presets section and RoomFit profiles section
-- [P] Selecting a PEQ preset enables Export/Save/Load/Copy buttons; selecting in one section
+- [P] Selecting a PEQ preset enables Export/Save/Copy buttons; selecting in one section
   deselects the other
 - [P] Export: saves as `.txt` (L/R generates dual files)
 - [P] Save to My Presets: creates local copy
-- [P] Load: brings filters into Review step (Quick Setup dialog if wizard incomplete)
 - [P] Copy to another device: shows device picker; copies preset to **all** selected devices, not
   just the first
 - [P] Without a device connected: shows "Connect a device to browse..." empty state
+- [P] There is no "Load" action here — loading a preset into the wizard happens via the Filters
+  step's Device option (Test 12a)
+
+### Test 12a: Filters Step — Device Source
+- [P] On the Filters step, selecting "Device" from the dropdown shows a "Current configuration on
+  device" button plus one merged list combining PEQ presets and RoomFit profiles (both types
+  together, type-tagged, regardless of the EQ Type step's PEQ/RoomFit choice)
+- [P] The active preset/profile (if any) is marked "(active)" in the list
+- [P] Selecting a row enables "Load Preset"; clicking it loads that preset's filters and advances
+  to Review with the correct channel mode (no separate Stereo/L-R choice needed — it comes from the
+  preset itself)
+- [P] Clicking "Current configuration on device" loads the live PEQ bands for the currently
+  selected source(s) and advances to Review
 
 ### Test 13: My Saved Presets
 - [P] Sidebar "My Saved Presets" navigates to presets library
 - [P] Shows list of saved presets with name and channel-mode badge
-- [P] Selecting a preset shows a bottom-anchored toolbar, in this order: **Load, Copy to Another
+- [P] Selecting a preset shows a bottom-anchored toolbar, in this order: **Copy to Another
   Device, Rename, Duplicate, Delete**
-- [P] Load: Quick Setup dialog if needed, then filters appear in Review
 - [P] Copy to Another Device: shows device picker, copies to selected device(s)
 - [P] Rename: allows inline name edit, persists on confirm
 - [P] Duplicate: creates copy with " (copy)" suffix
 - [P] Delete: removes preset permanently
 - [P] L/R presets show "L/R" badge with Left-channel band count (Right-channel band count is not shown)
+- [P] There is no "Load" action here — loading a preset into the wizard happens via the Filters
+  step's Local Library option (Test 13a)
+
+### Test 13a: Filters Step — Local Library Source
+- [P] On the Filters step, selecting "Local Library" from the dropdown shows the list of locally
+  saved presets (same data as My Saved Presets)
+- [P] Selecting a row enables "Load Preset"; clicking it loads that preset's filters and advances
+  to Review with the correct channel mode (no separate Stereo/L-R choice needed)
+- [P] No saved presets shows an empty-state message instead of an empty list
 
 ### Test 14: Navigation
-- [P] Sidebar "Resume Setup" returns to the wizard from secondary views; if you had browsed back to
+- [P] Sidebar "Setup Wizard" returns to the wizard from secondary views; if you had browsed back to
   an earlier completed step it jumps to the frontier (first incomplete) step, otherwise there is no
   visible change — this is by design, not a bug
 - [P] Help > User Guide opens help panel overlay; ✕ button and Escape both close it
@@ -236,8 +258,9 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] Ctrl+R refreshes list of devices (i.e. triggers device discovery)
 
 ### Test 20: REW API Pull (requires REW running)
-- [P] Entry points: the sidebar "Pull from REW" item, and the Filters page's "Pull from REW API"
-  toggle — both open the same embedded measurement-list view (this is a page, not a modal dialog)
+- [P] Entry point: the Filters page's dropdown "Pull from REW API" option opens the embedded
+  measurement-list view (this is a panel, not a modal dialog) — there is no separate sidebar entry
+  point for this anymore
 - [P] Available measurements are listed; double-clicking one (or selecting it and clicking Continue)
   loads it into Review
 - [P] A Back button returns to the previous state without loading anything
@@ -308,9 +331,10 @@ These are deliberate `WONTFIX`es from `docs/smoke_test_issues.md` — do not re-
 
 - **Transparent window backgrounds under WSL2/WSLg** (#3) — a Wayland compositor artifact, resolves
   on a native Windows build. Not reproducible outside WSL2.
-- **Sidebar "Resume Setup" (nav key `home`) appears to do nothing** (#17) — working as designed: it
-  returns to the wizard's frontier (first incomplete) step, so there's no visible change unless you
-  were on a secondary view or had browsed back to an earlier completed step.
+- **Sidebar "Setup Wizard" (nav key `home`, labeled "Resume Setup" when #17 was originally filed)
+  appears to do nothing** (#17) — working as designed: it returns to the wizard's frontier (first
+  incomplete) step, so there's no visible change unless you were on a secondary view or had browsed
+  back to an earlier completed step.
 - **Extra/inapplicable audio sources shown for some models** (#43) — the PEQ engine accepts any
   source name and there's no reliable way to probe which inputs are physically present, so showing
   a superset is harmless.

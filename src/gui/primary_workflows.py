@@ -73,9 +73,9 @@ class EmptyPresetFiltersError(Exception):
 def _extract_profile_names(profiles: list[dict[str, Any]]) -> list[str]:
     """Extract non-empty "Name" values from a list_roomfit_profiles() result.
 
-    Shared by _do_populate_name_profiles/_do_list_roomfit_profiles -- both
-    need the same "Name" key with the same empty-string skip, just for two
-    different downstream signals (round-4 review finding #9, 2026-07-19).
+    Used by _do_populate_name_profiles, which needs the "Name" key with an
+    empty-string skip for its downstream signal (round-4 review finding #9,
+    2026-07-19).
     """
     return [p.get("Name", "") for p in profiles if p.get("Name")]
 
@@ -95,15 +95,17 @@ class PrimaryWorkflowManager(QObject):
     progress_update) — this manager declares no new signals of its own for
     those workflows, so MainWindow's existing `_on_*` slot connections need
     no rewiring. list_presets()/refresh_presets() is the exception: it
-    declares four signals of its own (see below), one per PresetsDeviceView
-    setter it used to call directly.
+    declares four signals of its own (see below), each forwarded by
+    MainWindow to both PresetsDeviceView and FiltersPage's merged Device
+    panel, which share the same PresetItem-shaped data.
 
     Signals:
         peq_presets_ready(list, str): PEQ PresetItem list + active preset
-            name, mirrors PresetsDeviceView.set_peq_presets().
+            name, mirrors PresetsDeviceView.set_peq_presets() and
+            FiltersPage.set_peq_presets().
         peq_presets_unavailable(): mirrors set_peq_unavailable().
         roomfit_profiles_ready(list, str): RoomFit PresetItem list + active
-            profile name, mirrors set_roomfit_profiles().
+            profile name, mirrors set_roomfit_profiles() on both views.
         roomfit_profiles_hidden(): mirrors set_roomfit_hidden().
 
         Four signals rather than one combined result: the PEQ and RoomFit
@@ -117,11 +119,9 @@ class PrimaryWorkflowManager(QObject):
             NameProfilePage.set_existing_profiles() plus MainWindow's
             _roomfit_enabled attribute. Distinct from roomfit_profiles_ready
             above despite the similar name — that one already feeds
-            PresetsDeviceView with a different payload shape (PresetItem
-            objects, no enabled flag); reusing it here would misroute data.
-        filters_roomfit_profiles_ready(list): RoomFit profile-name list,
-            mirrors FiltersPage.set_roomfit_profiles() (no active name or
-            enabled flag — that page's dropdown doesn't need either).
+            PresetsDeviceView/FiltersPage with a different payload shape
+            (PresetItem objects, no enabled flag); reusing it here would
+            misroute data.
         presets_delete_complete(int, int): succeeded/failed counts from a
             delete_presets() batch. delete_presets() is otherwise a normal
             _dispatch()-based entry point, but its two completion paths
@@ -136,7 +136,6 @@ class PrimaryWorkflowManager(QObject):
     roomfit_profiles_ready = Signal(list, str)
     roomfit_profiles_hidden = Signal()
     name_profiles_ready = Signal(list, str, bool)
-    filters_roomfit_profiles_ready = Signal(list)
     presets_delete_complete = Signal(int, int)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -469,10 +468,10 @@ class PrimaryWorkflowManager(QObject):
     def list_presets(self) -> None:
         """Trigger a fire-and-forget presets refresh; results arrive via signals.
 
-        Used by MainWindow's bridge-wrapped dispatch point
-        (_load_device_presets). _do_delete_presets, which needs to await
-        the refresh inline as part of its own coroutine, calls
-        refresh_presets() directly instead — see that method's docstring.
+        Used by MainWindow's bridge-wrapped dispatch points
+        (_load_device_presets, _on_device_presets_requested). _do_delete_presets,
+        which needs to await the refresh inline as part of its own coroutine,
+        calls refresh_presets() directly instead — see that method's docstring.
         """
         self._dispatch("list_presets", self.refresh_presets())
 
@@ -600,11 +599,7 @@ class PrimaryWorkflowManager(QObject):
 
         Args:
             profile_name: Name of the RoomFit profile to read.
-            operation_name: Log-context label for _bridge_wrapper — this
-                coroutine has two real callers today (selecting a RoomFit
-                profile in the Filters step vs. loading a preset from a
-                presets list), which want distinct labels in the failure
-                log even though the underlying read is identical.
+            operation_name: Log-context label for _bridge_wrapper.
         """
         self._dispatch(operation_name, self._do_roomfit_pull(profile_name))
 
@@ -646,7 +641,7 @@ class PrimaryWorkflowManager(QObject):
 
         Loads the preset via EQv2SourceLoad then reads the resulting bands,
         then restores the source's original active preset (#166) -- the
-        confirmation dialog in _on_preset_load_into_editor already warned the
+        confirmation dialog in _on_device_item_selected already warned the
         user this briefly changes what's playing. Sets channel_mode in wizard
         state from the device response to avoid stale L/R state from a
         previous load (smoke #111).
@@ -1069,29 +1064,6 @@ class PrimaryWorkflowManager(QObject):
         except Exception:
             logger.warning("Failed to list RoomFit profiles for naming", exc_info=True)
             self.name_profiles_ready.emit([], "", False)
-
-    def refresh_roomfit_dropdown(self) -> None:
-        """Trigger a FiltersPage RoomFit-dropdown refresh; result arrives via signal."""
-        self._dispatch("list_roomfit", self._do_list_roomfit_profiles())
-
-    async def _do_list_roomfit_profiles(self) -> None:
-        """Fetch RoomFit profile names and emit filters_roomfit_profiles_ready
-        for FiltersPage."""
-        assert self._bridge is not None
-        wiim_adapter = self._require_adapter()
-        state = self._require_wizard_state()
-        source_name = state.primary_source
-
-        try:
-            if wiim_adapter.capabilities.supports_roomfit:
-                profiles = await wiim_adapter.list_roomfit_profiles(source_name)
-                profile_names = _extract_profile_names(profiles)
-                self.filters_roomfit_profiles_ready.emit(profile_names)
-            else:
-                self.filters_roomfit_profiles_ready.emit([])
-        except Exception:
-            logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
-            self.filters_roomfit_profiles_ready.emit([])
 
     # ------------------------------------------------------------------
     # Workflow: Delete Presets (Phase 5)

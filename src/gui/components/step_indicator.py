@@ -368,10 +368,9 @@ class StepIndicator(QWidget):
 
         Args:
             dimmed: True while the user is on a non-wizard page (Presets on
-                Device, My Saved Presets, Settings, sidebar Pull from REW)
-                so the "you are here" pill doesn't visually disagree with
-                the sidebar's own highlight. False once they're back in
-                the wizard flow.
+                Device, My Saved Presets, Settings) so the "you are here"
+                pill doesn't visually disagree with the sidebar's own
+                highlight. False once they're back in the wizard flow.
         """
         self._dimmed = dimmed
         self._refresh()

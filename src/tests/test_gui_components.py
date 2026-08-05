@@ -565,13 +565,13 @@ class TestSidebarNav:
         nav = SidebarNav()
         qtbot.addWidget(nav)
 
-        qtbot.mouseClick(nav._nav_buttons["rew_api"], Qt.MouseButton.LeftButton)
-        assert nav._nav_buttons["rew_api"]._active
+        qtbot.mouseClick(nav._nav_buttons["presets_device"], Qt.MouseButton.LeftButton)
+        assert nav._nav_buttons["presets_device"]._active
 
         nav.set_active_key("home")
 
         assert nav._nav_buttons["home"]._active
-        assert not nav._nav_buttons["rew_api"]._active
+        assert not nav._nav_buttons["presets_device"]._active
         assert nav.active_key == "home"
 
     def test_device_info_updates_header(self, qtbot) -> None:

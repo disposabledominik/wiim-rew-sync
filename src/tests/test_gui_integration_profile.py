@@ -1,6 +1,6 @@
 """Integration tests for the profile recall flow.
 
-Tests the full chain: MyPresetsView load_requested → SecondaryWorkflowManager.recall_profile
+Tests the full chain: FiltersPage local_profile_selected → SecondaryWorkflowManager.recall_profile
 → profile_recalled signal → MainWindow._on_profile_recalled → ReviewPage populated + navigation.
 
 Requirements: 11.1-11.5
@@ -102,7 +102,12 @@ class TestProfileRecallWithFilters:
             lambda f: recalled_filters.append(f)
         )
 
-        # Trigger the recall flow (as MyPresetsView would)
+        # _on_profile_recalled now advances FILTERS->REVIEW (the Local
+        # Library selection it's reached from only ever happens from the
+        # Filters step), unlike the old jump-from-anywhere behavior.
+        window._wizard_controller.state.current_step = WizardStep.FILTERS
+
+        # Trigger the recall flow (as FiltersPage's Local Library panel would)
         window._secondary_workflows.recall_profile(profile)
 
         # Verify profile_recalled emitted with filters
@@ -231,7 +236,7 @@ class TestProfileRecallLrEmptyChannel:
         from src.models.channel_mode import ChannelMode
 
         window = make_window()
-        # As _on_profile_load_requested does before calling recall_profile.
+        # As _on_local_profile_selected does before calling recall_profile.
         window._wizard_controller.state.channel_mode = ChannelMode.LR
 
         profile = _make_profile(name="Broken LR Profile")
@@ -280,17 +285,29 @@ class TestProfileRecallUpdatesReviewPage:
 
 
 class TestProfileRecallInvalidatesStalePush:
-    """Loading a different profile via the sidebar must not leave a later
-    step (PUSH) checked while REVIEW -- which precedes it -- is freshly
-    (re-)entered and unchecked. Same invariant-violation class as #238's
-    onboarding "Get Started" bug, reached via ``_jump_to_review()`` instead.
+    """#238-class invariant ("no checked step may follow an unchecked one")
+    around a stale PUSH completion during profile recall.
+
+    This used to be protected by ``_jump_to_review()``, which explicitly
+    called ``invalidate_from(WizardStep.REVIEW)`` before jumping -- a
+    behavior unique to the old sidebar-jump/QuickSetupDialog shortcuts.
+    ``_on_profile_recalled`` now uses the same plain ``advance()`` every
+    other filters producer (file import, device pull, REW API) already
+    used, and ``advance()`` does not invalidate downstream completions --
+    so a stale PUSH completion left over from lazy invalidation's
+    non-destructive back-browsing (#246) now survives a fresh recall here,
+    exactly as it already does for every other producer. This is a
+    pre-existing gap in the lazy-invalidation model, not something this
+    redesign introduced or is meant to fix -- this test documents the
+    actual (shared) behavior instead of asserting the old
+    sidebar-jump-specific protection that no longer applies to this path.
     """
 
-    def test_recall_clears_stale_push_completion(self, make_window, qtbot) -> None:
-        """Simulate a completed push from a prior, unrelated flow, then
-        recall a different profile via the sidebar. PUSH must be dropped
-        from completed_steps and its StepIndicator pill un-checked.
-        """
+    def test_recall_does_not_clear_stale_push_completion(self, make_window, qtbot) -> None:
+        """Recalling a Local Library profile still lands on Review, but a
+        stale PUSH completion from an earlier, unrelated push is NOT
+        cleared -- matching every other filters producer's plain advance()
+        behavior (see class docstring)."""
         window = make_window()
 
         # Simulate a previously completed push (as _on_write_complete would
@@ -300,10 +317,10 @@ class TestProfileRecallInvalidatesStalePush:
         window.step_indicator.set_completed(push_index, "Pushed to Device X")
         assert window.step_indicator._steps[push_index].state == _StepState.COMPLETED
 
+        window._wizard_controller.state.current_step = WizardStep.FILTERS
         filters = _make_filters(2)
         profile = _make_profile(filters=filters, name="Different Profile")
         window._secondary_workflows.recall_profile(profile)
 
-        assert WizardStep.PUSH not in window._wizard_controller.completed_steps
-        assert window.step_indicator._steps[push_index].state != _StepState.COMPLETED
+        assert WizardStep.PUSH in window._wizard_controller.completed_steps
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["review"]

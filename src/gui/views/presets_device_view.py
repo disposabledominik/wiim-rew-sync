@@ -2,8 +2,8 @@
 
 Displays two sections (PEQ Presets, RoomFit Profiles) fetched from the
 connected device. Supports multi-select for batch operations: export,
-save to local library, load into editor, and copy to another device.
-Shows an empty state when no device is connected.
+save to local library, and copy to another device. Shows an empty state
+when no device is connected.
 
 Requirements referenced: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8,
 15.9, 15.10, 15.11, 15.12, 8.5, 8.6, 10.9.
@@ -78,7 +78,6 @@ class PresetsDeviceView(QWidget):
     Signals:
         export_requested(list): User wants to export selected items as REW files.
         save_to_my_presets(list): Save selected items to local preset library.
-        load_into_editor(object): Load a single item into the wizard editor.
         copy_to_device_requested(list): Copy selected items to another device.
         apply_to_sources_requested(str, list): Apply a PEQ preset to sources.
         delete_requested(list): User wants to permanently delete selected
@@ -87,7 +86,6 @@ class PresetsDeviceView(QWidget):
 
     export_requested = Signal(list)
     save_to_my_presets = Signal(list)
-    load_into_editor = Signal(object)
     copy_to_device_requested = Signal(list)
     apply_to_sources_requested = Signal(str, list)
     delete_requested = Signal(list)
@@ -114,7 +112,6 @@ class PresetsDeviceView(QWidget):
         return [
             self._export_btn,
             self._save_btn,
-            self._load_btn,
             self._copy_btn,
             self._delete_btn,
         ]
@@ -344,13 +341,6 @@ class PresetsDeviceView(QWidget):
         self._save_btn.clicked.connect(self._on_save_clicked)
         layout.addWidget(self._save_btn)
 
-        # Load into Editor
-        self._load_btn = make_action_button(
-            "Load into Editor", object_name="btn_load_editor", style_class="secondary"
-        )
-        self._load_btn.clicked.connect(self._on_load_clicked)
-        layout.addWidget(self._load_btn)
-
         # Copy to Another Device
         self._copy_btn = make_action_button(
             "Copy to Another Device", object_name="btn_copy_device", style_class="secondary"
@@ -473,11 +463,9 @@ class PresetsDeviceView(QWidget):
         """Enable/disable action buttons based on current selection."""
         selected = self._get_all_selected_items()
         has_selection = len(selected) > 0
-        single_selected = len(selected) == 1
 
         self._export_btn.setEnabled(has_selection)
         self._save_btn.setEnabled(has_selection)
-        self._load_btn.setEnabled(single_selected)
         self._copy_btn.setEnabled(has_selection)
         self._delete_btn.setEnabled(has_selection)
 
@@ -526,13 +514,6 @@ class PresetsDeviceView(QWidget):
         selected = self._get_all_selected_items()
         if selected:
             self.save_to_my_presets.emit(selected)
-
-    @Slot()
-    def _on_load_clicked(self) -> None:
-        """Emit load_into_editor with the single selected item."""
-        selected = self._get_all_selected_items()
-        if len(selected) == 1:
-            self.load_into_editor.emit(selected[0])
 
     @Slot()
     def _on_copy_clicked(self) -> None:

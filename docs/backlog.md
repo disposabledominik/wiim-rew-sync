@@ -154,11 +154,14 @@ current test counts/coverage.
 
 ## 2. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)
 
-**What:** `DevicePickerDialog` and `QuickSetupDialog` each independently carry an optional
-`warning: tuple[str, str] | None` constructor param. The shared "build a warning box" logic is
-already extracted (`src/gui/components/warning_box.py`, `add_optional_warning_box()`), but the
-`warning` param itself, its docstring, and the `setMinimumWidth(420 if warning else ...)`
-width-bump convention are still hand-duplicated in each dialog's `__init__`/static factory.
+**What:** `DevicePickerDialog` and `DeviceInfoDialog` each independently carry an optional
+warning constructor param (`warning: tuple[str, str] | None` and `warning_text: str`
+respectively). The shared "build a warning box" logic is already extracted
+(`src/gui/components/warning_box.py`, `add_optional_warning_box()`), but the param itself, its
+docstring, and the `setMinimumWidth(420 if warning else ...)` width-bump convention are still
+hand-duplicated in each dialog's `__init__`/static factory. (`QuickSetupDialog`, a third former
+consumer of this same pattern, was removed as part of the Filters-step source-dropdown redesign
+that eliminated its only remaining callers — back down to the original two dialogs.)
 
 **Why deferred:** Only two dialogs need this pattern; a third would justify extracting a shared
 base (`WarningDialogBase`/`OptionalWarningMixin`) with real confidence about the right shape.
@@ -167,8 +170,8 @@ base (`WarningDialogBase`/`OptionalWarningMixin`) with real confidence about the
 behavior).
 
 **To reactivate:** If a third dialog needs an embedded optional warning, extract a shared
-`__init__`-level mixin/base covering the `warning` param, docstring, and width-bump logic, and
-migrate `DevicePickerDialog`/`QuickSetupDialog` onto it at the same time.
+`__init__`-level mixin/base covering the warning param, docstring, and width-bump logic, and
+migrate `DevicePickerDialog`/`DeviceInfoDialog` onto it at the same time.
 
 ---
 

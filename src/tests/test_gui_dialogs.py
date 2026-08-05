@@ -1,7 +1,7 @@
 """Unit tests for GUI dialogs.
 
 Tests CrashDialog, OnboardingOverlay, UnsavedChangesDialog,
-QuickSetupDialog, and WarningConfirmDialog.
+and WarningConfirmDialog.
 
 Requirements referenced: 6.1, 12.2, 12.3, 12.6.
 """
@@ -470,131 +470,6 @@ class TestUnsavedChangesDialog:
         with _patch.object(UnsavedChangesDialog, "exec", return_value=QDialog.DialogCode.Rejected):
             result = UnsavedChangesDialog.confirm_discard(None)
         assert result == "cancel"
-
-
-from src.gui.dialogs.quick_setup_dialog import QuickSetupDialog  # noqa: E402
-
-
-class TestQuickSetupDialog:
-    """Tests for the single-layout QuickSetupDialog (both sections always present)."""
-
-    def test_both_sections_always_present(self, qtbot) -> None:
-        """EQ Type and Source sections both exist regardless of need_* flags."""
-        dialog = QuickSetupDialog(None, need_eq_type=False, need_source=False)
-        qtbot.addWidget(dialog)
-
-        assert hasattr(dialog, "_peq_radio")
-        assert hasattr(dialog, "_roomfit_radio")
-        assert hasattr(dialog, "_source_section")
-
-    def test_size_unchanged_between_eq_type_selections(self, qtbot) -> None:
-        """Selecting RoomFit greys the source section out, not hides it (no reflow)."""
-        dialog = QuickSetupDialog(
-            None, need_eq_type=True, need_source=True,
-            available_sources=["wifi", "bluetooth"],
-        )
-        qtbot.addWidget(dialog)
-        dialog.show()
-
-        size_before = dialog.sizeHint()
-        dialog._roomfit_radio.setChecked(True)
-        size_after = dialog.sizeHint()
-
-        assert dialog._source_section.isVisible()
-        assert size_before == size_after
-
-    def test_roomfit_selected_disables_source_section(self, qtbot) -> None:
-        """Source section is disabled (greyed), not hidden, when RoomFit is chosen."""
-        dialog = QuickSetupDialog(None, need_eq_type=True, need_source=True)
-        qtbot.addWidget(dialog)
-        dialog.show()
-
-        dialog._roomfit_radio.setChecked(True)
-
-        assert dialog._source_section.isVisible()
-        assert not dialog._source_section.isEnabled()
-
-    def test_locked_eq_type_section_disabled_but_shown(self, qtbot) -> None:
-        """need_eq_type=False shows the fixed value, disabled."""
-        dialog = QuickSetupDialog(
-            None, need_eq_type=False, need_source=True, current_eq_type="roomfit",
-        )
-        qtbot.addWidget(dialog)
-
-        assert dialog._roomfit_radio.isChecked()
-        assert not dialog._eq_section.isEnabled()
-
-    def test_locked_source_section_disabled_but_shown(self, qtbot) -> None:
-        """need_source=False shows the fixed sources, disabled."""
-        dialog = QuickSetupDialog(
-            None, need_eq_type=True, need_source=False,
-            available_sources=["wifi", "HDMI"], current_sources=["HDMI"],
-        )
-        qtbot.addWidget(dialog)
-        dialog.show()
-
-        assert dialog._source_section.isVisible()
-        assert not dialog._source_section.isEnabled()
-        assert dialog._source_checkboxes["HDMI"].isChecked()
-
-    def test_roomfit_disabled_when_device_does_not_support_it(self, qtbot) -> None:
-        """supports_roomfit=False disables the RoomFit radio with a tooltip."""
-        dialog = QuickSetupDialog(
-            None, need_eq_type=True, need_source=True, supports_roomfit=False,
-        )
-        qtbot.addWidget(dialog)
-
-        assert not dialog._roomfit_radio.isEnabled()
-        assert dialog._roomfit_radio.toolTip() != ""
-
-    def test_accept_returns_selected_sources(self, qtbot) -> None:
-        """Accepting with PEQ and a checked source returns that source list."""
-        dialog = QuickSetupDialog(
-            None, need_eq_type=True, need_source=True,
-            available_sources=["wifi", "optical"],
-        )
-        qtbot.addWidget(dialog)
-
-        dialog._source_checkboxes["optical"].setChecked(True)
-        dialog._on_accept()
-
-        assert dialog.eq_type == "peq"
-        assert "optical" in dialog.selected_sources
-
-    def test_ok_disabled_until_source_checked_when_needed(self, qtbot) -> None:
-        """OK stays disabled while need_source=True and PEQ has no source checked."""
-        dialog = QuickSetupDialog(
-            None, need_eq_type=False, need_source=True,
-            available_sources=["wifi"], current_sources=[],
-        )
-        qtbot.addWidget(dialog)
-
-        for cb in dialog._source_checkboxes.values():
-            cb.setChecked(False)
-        dialog._update_ok_enabled()
-
-        ok_btn = dialog._button_box.button(QDialogButtonBox.StandardButton.Ok)
-        assert not ok_btn.isEnabled()
-
-    def test_no_warning_arg_shows_no_warning_box(self, qtbot) -> None:
-        """Without a `warning` arg, no warning box is rendered."""
-        dialog = QuickSetupDialog(None, need_eq_type=True, need_source=True)
-        qtbot.addWidget(dialog)
-
-        assert dialog.findChild(QWidget, "quick_setup_warning_frame") is None
-
-    def test_warning_arg_renders_warning_box(self, qtbot) -> None:
-        """A `warning` arg renders a warning box under the instruction label."""
-        dialog = QuickSetupDialog(
-            None, need_eq_type=True, need_source=True,
-            warning=("Heads Up", "This preset will briefly activate."),
-        )
-        qtbot.addWidget(dialog)
-
-        assert dialog.findChild(QWidget, "quick_setup_warning_frame") is not None
-        body_label = dialog.findChild(QLabel, "quick_setup_warning_body")
-        assert body_label is not None
-        assert "This preset will briefly activate." in body_label.text()
 
 
 from src.gui.dialogs.warning_confirm_dialog import WarningConfirmDialog  # noqa: E402

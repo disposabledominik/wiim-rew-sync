@@ -105,7 +105,6 @@ _ACTION_BUTTON_LABELS = _scan_action_button_labels()
 # (help markdown filename, make_action_button object_name it describes).
 # Not exhaustive -- just the button references this guide currently makes.
 _BUTTON_LABEL_REFERENCES = [
-    ("managing_presets.md", "btn_load_into_editor"),
     ("managing_presets.md", "btn_copy_device_local"),
     ("managing_presets.md", "btn_duplicate_preset"),
     ("managing_presets.md", "btn_rename_preset"),

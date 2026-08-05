@@ -167,9 +167,9 @@ code, actively guard against both:
   right above it) — you don't need to mock these yourself unless a test cares about a specific
   answer (the No/decline branch, or asserting the dialog was/wasn't shown), in which case patch
   `PySide6.QtWidgets.QMessageBox.<method>` locally; it layers correctly over the fixture's default.
-  **Custom `QDialog` subclasses are not covered by that fixture** (`QuickSetupDialog`,
-  `DevicePickerDialog`, pickers, etc.) — each must still be mocked
-  individually at its own static factory method (e.g. `QuickSetupDialog.get_setup`) in any test
+  **Custom `QDialog` subclasses are not covered by that fixture** (`DevicePickerDialog`,
+  pickers, etc.) — each must still be mocked
+  individually at its own static factory method (e.g. `DevicePickerDialog.get_devices`) in any test
   whose code path reaches it. If you add a new modal dialog and a test starts hanging (or a real
   window pops up during `pytest`), this is almost always the cause — extend the autouse fixture for
   a new `QMessageBox` method, or add the per-test static-method mock for a new custom dialog; don't

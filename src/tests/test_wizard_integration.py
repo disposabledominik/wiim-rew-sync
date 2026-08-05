@@ -249,7 +249,7 @@ class TestRoomFitFlow:
 
 class TestBackNavigation:
     """Integration test: step indicator back-navigation is non-destructive
-    browsing (lazy invalidation, #246 Stage 2), and Resume Setup returns to
+    browsing (lazy invalidation, #246 Stage 2), and Setup Wizard returns to
     the frontier with everything intact."""
 
     def test_back_navigation_preserves_steps_and_shows_viewing(self, make_window) -> None:
@@ -290,8 +290,8 @@ class TestBackNavigation:
         assert window._step_indicator._steps[1]._circle.text() == "\u2713"
         assert window._step_indicator._steps[3].state == _StepState.ACTIVE
 
-    def test_resume_setup_returns_to_frontier_with_state_intact(self, make_window) -> None:
-        """Browse back to CONNECT, then Resume Setup: back at the frontier
+    def test_setup_wizard_returns_to_frontier_with_state_intact(self, make_window) -> None:
+        """Browse back to CONNECT, then Setup Wizard: back at the frontier
         with all checkmarks, filters, and device state preserved."""
         window = make_window()
 
@@ -313,7 +313,7 @@ class TestBackNavigation:
         assert dict(window.wizard_controller.completed_steps) == completed_before
         assert window.wizard_controller.state.selected_device == "192.168.1.100"
 
-        # Resume Setup jumps back to the frontier (FILTERS)
+        # Setup Wizard jumps back to the frontier (FILTERS)
         window._on_navigation_requested("home")
         assert window.wizard_controller.current_step == WizardStep.FILTERS
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["filters"]

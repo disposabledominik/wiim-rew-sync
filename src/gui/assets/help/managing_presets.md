@@ -30,16 +30,16 @@ API accepts.
 
 ## Loading a Preset
 
-Open "My Saved Presets" from the sidebar. Select a preset and click "Load
-into Editor" in the toolbar. The filters are loaded into the wizard Review
-step. From there you can push to any connected device and source.
+Loading a saved preset into the wizard happens from the **Filters** step, not
+from the "My Saved Presets" sidebar page. On the Filters step, choose
+**Local Library** from the "Import source" dropdown, select your preset from
+the list, and click "Load Preset." The filters are loaded and you're
+advanced to the Review step, ready to push to whichever device and source
+you already picked earlier in the wizard.
 
 For L/R presets, both channels are loaded and the Review page shows separate
-Left/Right tabs.
-
-If the wizard isn't fully set up (no device connected or no source selected),
-a Quick Setup dialog appears to help you choose a device, source, and channel
-mode before loading.
+Left/Right tabs — you don't need to choose Stereo or L/R yourself, since the
+preset already carries its own channel mode.
 
 ## Organizing Your Library
 
@@ -79,23 +79,26 @@ profiles stored directly on your WiiM device. From here you can:
 - **Export** — Download as a REW-compatible .txt file (separate L/R files
   for per-channel presets)
 - **Save locally** — Copy a device preset into your My Saved Presets library
-- **Load** — Bring a device preset into the wizard Review step for
-  modification or re-pushing
 - **Copy to another device** — Push the preset to one or more other WiiM
   devices on your network
+
+To bring a device preset into the wizard instead, use the Filters step's
+**Device** dropdown option — see "Loading a Preset" above; the same merged
+PEQ/RoomFit list appears there, selectable from within the wizard itself.
 
 PEQ presets and RoomFit profiles appear in separate sections. Selecting an
 item in one section deselects any selection in the other. If a PEQ preset or
 RoomFit profile is currently active on the device, its entry is shown in
 bold accent text with an "(active)" label, so you can see at a glance what's
-actually playing before you export, load, or overwrite anything.
+actually playing before you export or overwrite anything.
 
-Reading a **PEQ** preset's filters (for any of the four actions above)
-briefly switches your device's current input to that preset so its bands can
-be read, then restores what was playing before you started — a confirmation
-dialog appears first so you're not surprised by a brief change in what
-you're hearing. **RoomFit** profiles have no such prompt, because reading
-one is not expected to disturb what's currently applied to your audio.
+Reading a **PEQ** preset's filters (for any of the three actions above, or
+when loading one via the Filters step's Device option) briefly switches your
+device's current input to that preset so its bands can be read, then
+restores what was playing before you started — a confirmation dialog
+appears first so you're not surprised by a brief change in what you're
+hearing. **RoomFit** profiles have no such prompt, because reading one is
+not expected to disturb what's currently applied to your audio.
 
 ## Tips
 
