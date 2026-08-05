@@ -105,6 +105,9 @@ code, actively guard against both:
 - **After a non-trivial change, run `/code-review` or `/simplify` on the diff before calling the
   task done.** This is the concrete checkpoint for catching duplication, dead code, and
   over-engineered abstractions before they land.
+- **If a change alters a cross-cutting convention** (merge strategy, the wizard's invalidation
+  model, a data contract, a naming pattern), `grep`/search `docs/`, `scripts/`, CI workflows, and
+  tests for anything assuming the old behavior, and fix it in the same change — not a follow-up.
 
 ## Domain rules (non-negotiable)
 
