@@ -170,9 +170,22 @@ class OperationFeedbackManager(QObject):
     # ------------------------------------------------------------------
 
     def _restore_button_states(self) -> None:
-        """Restore each registered button to its pre-operation enabled state."""
+        """Restore each registered button to its pre-operation enabled state.
+
+        Skips any button that is already enabled again by the time this
+        runs. start_operation() force-disables every registered button, so a
+        button still disabled here was never touched and gets its snapshot
+        restored -- but an operation's own success handler can legitimately
+        re-enable a button while the operation is still in flight (e.g. a
+        capability probe populating SourcePage's checkboxes and enabling
+        Continue, via a bridge signal queued ahead of operation_finished).
+        Overwriting that with the stale pre-operation snapshot would revert
+        a correct enable back to disabled with no user action able to
+        explain why (smoke #250).
+        """
         for btn in self._action_buttons:
-            btn.setEnabled(self._prior_enabled.get(id(btn), True))
+            if not btn.isEnabled():
+                btn.setEnabled(self._prior_enabled.get(id(btn), True))
 
     # ------------------------------------------------------------------
     # Private slots

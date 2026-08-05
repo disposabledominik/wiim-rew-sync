@@ -199,3 +199,33 @@ class TestFinishRestoresPriorButtonState:
 
         assert not already_disabled.isEnabled()
         assert normally_enabled.isEnabled()
+
+    def test_finish_does_not_revert_a_button_re_enabled_mid_operation(
+        self, feedback_env
+    ) -> None:
+        """Smoke #250: a button disabled at start_operation() time (e.g.
+        SourcePage's Continue, before any source is selected) that a bridge
+        signal handler legitimately re-enables *while the operation is still
+        in flight* -- exactly what happens when a capability-probe result
+        signal populates SourcePage and enables Continue before the queued
+        operation_finished signal calls finish_operation() -- must not be
+        reverted back to disabled just because it was disabled at snapshot
+        time."""
+        manager, _banner, _container = feedback_env
+
+        continue_btn = QPushButton("Continue")
+        continue_btn.setEnabled(False)
+
+        manager.register_action_buttons([continue_btn])
+
+        manager.start_operation("Probing device...")
+        assert not continue_btn.isEnabled()
+
+        # Simulates a result-signal handler (e.g. _on_capabilities_ready ->
+        # SourcePage.set_sources()) legitimately enabling the button before
+        # operation_finished/finish_operation() runs.
+        continue_btn.setEnabled(True)
+
+        manager.finish_operation()
+
+        assert continue_btn.isEnabled()
