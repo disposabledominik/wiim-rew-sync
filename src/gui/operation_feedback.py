@@ -124,9 +124,14 @@ class OperationFeedbackManager(QObject):
         the operation started, regardless of which direction the change
         went (smoke #250).
 
-        A no-op if btn isn't currently tracked (no operation active, or
-        btn isn't a registered action button) -- there is no snapshot to
-        update in that case.
+        A no-op if btn has no snapshot entry -- i.e. no operation has been
+        started since the button was registered, or btn isn't a registered
+        action button. Note this is a *weaker* check than "an operation is
+        currently active": the snapshot dict isn't cleared by
+        finish_operation(), so a call after an operation has already
+        finished will still update the stale entry (harmless, since the
+        next start_operation() overwrites it from the live widget anyway,
+        but not a true no-op against operation state).
 
         Args:
             btn: A registered action button whose enabled state just
