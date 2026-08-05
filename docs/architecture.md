@@ -180,7 +180,7 @@ The main window uses a wizard-based flow with a persistent sidebar for navigatio
 
 | View | Purpose |
 |------|---------|
-| Resume Setup | Returns to the current wizard step (nav key `home`); no visible change if already there |
+| Resume Setup | Returns to the wizard (nav key `home`) — jumps to the frontier (first incomplete) step if the user had browsed back to a completed one; no visible change if already viewing the frontier |
 | Presets on Device | Browse PEQ presets and RoomFit profiles on connected device; Export/Save/Load/Copy actions |
 | My Saved Presets | Local preset library with toolbar (Load/Copy to Another Device/Rename/Duplicate/Delete) |
 | Pull from REW | Embedded measurement picker (`RewPullView`) for a running REW session; also embedded in FiltersPage's "Pull from REW API" mode |

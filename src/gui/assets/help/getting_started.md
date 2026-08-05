@@ -72,6 +72,14 @@ the change if needed.
   changes to "Preview Only."
 - **Undo** is available after a successful push. Your previous settings are
   backed up automatically, every time.
+- **Looking back is free** — click any completed step in the step indicator to
+  review it. Nothing is lost by looking: your checkmarks and loaded filters
+  stay intact. The step you left off at stays highlighted; click it (or
+  "Resume Setup" in the sidebar) to jump back to where you were. Progress only
+  resets when you actually *change* an earlier answer, such as picking a
+  different device or EQ type.
+- **Click the device name in the sidebar** to see the connected device's
+  details (name, model, IP address, and any capability notes) at any time.
 - Use the sidebar to access Presets on Device, My Saved Presets, Settings,
   and the User Guide at any time during the workflow.
 - **Presets on Device** in the sidebar lets you browse, export, and copy
