@@ -105,6 +105,19 @@ code, actively guard against both:
 - **After a non-trivial change, run `/code-review` or `/simplify` on the diff before calling the
   task done.** This is the concrete checkpoint for catching duplication, dead code, and
   over-engineered abstractions before they land.
+- **Before calling a change done, ask whether it altered a cross-cutting convention** — not just
+  "did I finish the diff," but "does anything *outside* this diff assume the way things worked
+  before this change." Examples of a cross-cutting convention: which git merge strategy PRs use
+  (merge commit vs. squash), the wizard's step-invalidation model, a data contract between two
+  layers, a directory-naming pattern. If the answer is yes, `grep`/search the repo for anything
+  else relying on the old behavior — `docs/`, `scripts/`, CI workflows, tests — and fix or update
+  it in the same change, rather than leaving it to break the next time someone (human or agent)
+  depends on it. This codebase's repeated real cost hasn't been the first bug in each case, it's
+  been a *second*, unrelated-looking failure much later (a stale doc contradicting current
+  behavior, a release script silently producing an empty changelog) that traces back to the same
+  original change never having been checked against everything else that assumed the old
+  convention. Treat "what else assumes the old behavior" as part of the change's actual scope, not
+  an optional follow-up.
 
 ## Domain rules (non-negotiable)
 
