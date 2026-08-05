@@ -9,6 +9,7 @@ signals externally (in MainWindow or integration setup).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -18,6 +19,8 @@ from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
 from src.models.constants import DEFAULT_SOURCE
 from src.translator._warnings import FilterRow
+
+logger = logging.getLogger(__name__)
 
 
 def parse_source_list(value: str) -> list[str]:
@@ -132,25 +135,20 @@ class WizardState:
     def selected_source(self, value: str) -> None:
         self.selected_sources = parse_source_list(value)
 
-    def clear_device_scoped_state(self) -> None:
-        """Clear every field whose value is derived from a specific connected
-        device's capabilities or data, without touching navigation state
-        (``current_step``, ``completed_steps``/``completed_step_tooltips``,
-        ``selected_device`` itself, ``flow_type``, ``dry_run``).
+    def clear_filter_payload(self) -> None:
+        """Clear the loaded filter payload and its per-load companions
+        (display rows, conversion notes, warnings, origin), without touching
+        device identity, source selection, or navigation state.
 
-        The single place that knows which fields are device-scoped, so a
-        device switch and a full app reset can't independently drift on the
-        field list (docs/smoke_test_issues.md #246 follow-up, bug 1b: the
-        previous hand-rolled clear in ``MainWindow._on_device_selected``
-        missed ``filters_l``/``filters_r``, letting a stale L/R filter set
-        from device A stay readable as ``state.filters`` after switching to
-        device B in L/R mode).
+        The single place that knows which fields make up "what's loaded in
+        the editor right now" -- shared by the device switch (via
+        ``clear_device_scoped_state``) and the EQ-type switch, which changes
+        pipeline (PEQ vs RoomFit) and must not carry the old pipeline's
+        payload into the new flow. Hand-picking individual fields at call
+        sites is the drift-prone pattern this exists to prevent
+        (docs/smoke_test_issues.md #246 follow-up, bug 1b).
         """
-        self.selected_sources = []
-        self.channel_mode = ChannelMode.STEREO
         self.current_filters = []
-        self.last_pushed_filters = []
-        self.device_filters = []
         self.filters_l = []
         self.filters_r = []
         self.pending_rows = []
@@ -160,9 +158,30 @@ class WizardState:
         self.pending_conversion_notes_l = {}
         self.pending_conversion_notes_r = {}
         self.warnings = []
+        self.filters_origin = ""
+
+    def clear_device_scoped_state(self) -> None:
+        """Clear every field whose value is derived from a specific connected
+        device's capabilities or data, without touching navigation state
+        (``current_step``, ``completed_steps``/``completed_step_tooltips``,
+        ``selected_device`` itself, ``flow_type``, ``dry_run``).
+
+        Together with ``clear_filter_payload`` (which this calls), the
+        single place that knows which fields are device-scoped, so a device
+        switch and a full app reset can't independently drift on the field
+        list (docs/smoke_test_issues.md #246 follow-up, bug 1b: the
+        previous hand-rolled clear in ``MainWindow._on_device_selected``
+        missed ``filters_l``/``filters_r``, letting a stale L/R filter set
+        from device A stay readable as ``state.filters`` after switching to
+        device B in L/R mode).
+        """
+        self.clear_filter_payload()
+        self.selected_sources = []
+        self.channel_mode = ChannelMode.STEREO
+        self.last_pushed_filters = []
+        self.device_filters = []
         self.roomfit_profile_name = ""
         self.last_backup_path = ""
-        self.filters_origin = ""
 
     @property
     def primary_source(self) -> str:
@@ -345,6 +364,29 @@ class WizardController(QObject):
             self._state.completed_step_tooltips.pop(s, None)
         if popped:
             self.steps_invalidated.emit()
+
+    def invalidate_after(self, step: WizardStep) -> None:
+        """Invalidate every step strictly *after* ``step`` in the current
+        flow sequence, leaving ``step`` itself completed.
+
+        The single owner of the "find the step after X and invalidate from
+        there" idiom used by every change-time handler (device switch,
+        EQ-type switch, source change) -- so no call site hand-rolls index
+        math or hardcodes a position. If ``step`` isn't in the current
+        sequence, nothing is invalidated and a warning is logged: guessing
+        a fallback index would silently clear the wrong steps.
+        """
+        sequence = self.get_steps()
+        if step not in sequence:
+            logger.warning(
+                "invalidate_after(%s) ignored: step not in the current %s sequence",
+                step,
+                self._state.flow_type,
+            )
+            return
+        idx = sequence.index(step) + 1
+        if idx < len(sequence):
+            self.invalidate_from(sequence[idx])
 
     def go_to_step(self, step: WizardStep) -> None:
         """Navigate to a step in the current sequence. Purely navigational.

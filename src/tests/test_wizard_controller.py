@@ -289,6 +289,84 @@ class TestWizardControllerNavigation:
         # CONNECT completed, SOURCE not -- EQ_TYPE's stale entry is invisible
         assert ctrl.frontier_step == WizardStep.SOURCE
 
+    @pytest.mark.parametrize("flow_type", [FlowType.PEQ, FlowType.ROOMFIT, FlowType.PEQ_ONLY])
+    def test_invalidate_after_pops_only_later_steps(
+        self, qtbot, flow_type: FlowType
+    ) -> None:
+        """invalidate_after(step) clears everything strictly after `step` in
+        the current sequence, leaving `step` itself completed -- the single
+        owner of the index math every change-time handler used to hand-roll
+        (one of them hardcoding sequence[1])."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(flow_type)
+        sequence = ctrl.get_steps()
+        for step in sequence:
+            ctrl.set_step_summary(step, "done")
+
+        ctrl.invalidate_after(sequence[0])
+
+        assert sequence[0] in ctrl.completed_steps
+        for step in sequence[1:]:
+            assert step not in ctrl.completed_steps
+
+    def test_invalidate_after_missing_step_is_a_noop(self, qtbot) -> None:
+        """invalidate_after with a step not in the current sequence must not
+        guess a fallback index -- nothing is invalidated (the old inline
+        `else 0` fallback would have cleared an arbitrary range)."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ_ONLY)  # sequence has no EQ_TYPE
+        for step in ctrl.get_steps():
+            ctrl.set_step_summary(step, "done")
+
+        ctrl.invalidate_after(WizardStep.EQ_TYPE)
+
+        for step in ctrl.get_steps():
+            assert step in ctrl.completed_steps
+
+    def test_invalidate_after_last_step_pops_nothing(self, qtbot) -> None:
+        """invalidate_after on the sequence's last step has nothing after it
+        to clear."""
+        ctrl = WizardController()
+        sequence = ctrl.get_steps()
+        for step in sequence:
+            ctrl.set_step_summary(step, "done")
+
+        ctrl.invalidate_after(sequence[-1])
+
+        for step in sequence:
+            assert step in ctrl.completed_steps
+
+    def test_clear_filter_payload_spares_device_and_sources(self, qtbot) -> None:
+        """clear_filter_payload() clears the loaded payload (filters, rows,
+        notes, warnings, origin) but keeps device identity, source
+        selection, and push/backup context -- the EQ-type switch needs
+        exactly this subset, and hand-picking fields at the call site is the
+        drift pattern that produced #246 bug 1b."""
+        ctrl = WizardController()
+        state = ctrl.state
+        state.selected_device = "192.168.1.100"
+        state.selected_sources = ["wifi"]
+        state.current_filters = [
+            CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)
+        ]
+        state.filters_l = list(state.current_filters)
+        state.filters_r = list(state.current_filters)
+        state.last_pushed_filters = list(state.current_filters)
+        state.warnings = ["clamped"]
+        state.filters_origin = "REW file"
+
+        state.clear_filter_payload()
+
+        assert state.current_filters == []
+        assert state.filters_l == []
+        assert state.filters_r == []
+        assert state.warnings == []
+        assert state.filters_origin == ""
+        # Device identity, source selection, and push context survive
+        assert state.selected_device == "192.168.1.100"
+        assert state.selected_sources == ["wifi"]
+        assert state.last_pushed_filters != []
+
     def test_invalidate_from_emits_steps_invalidated(self, qtbot) -> None:
         """invalidate_from() emits steps_invalidated when it actually pops
         something, and stays silent when there was nothing to pop -- views

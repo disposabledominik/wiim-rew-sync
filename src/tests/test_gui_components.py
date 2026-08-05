@@ -450,6 +450,33 @@ class TestStepIndicator:
         assert indicator._connectors[1].property("class") == "stepConnector"
         assert indicator._steps[2].state == _StepState.UPCOMING
 
+    def test_sync_bulk_resyncs_in_one_call(self, qtbot) -> None:
+        """sync() replays every step's completed data plus view/frontier in
+        a single call -- the full-resync entry point MainWindow uses so a
+        flow switch or invalidation doesn't restyle every widget once per
+        step."""
+        from src.gui.components.step_indicator import _StepState
+
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source", "Review"])
+        for i in range(4):
+            indicator.set_completed(i, "done")
+
+        # Resync: only step 0 completed now, viewing step 0, frontier at 1
+        indicator.sync([("Living Room", "192.168.1.5"), None, None, None], 0, 1)
+
+        assert indicator._steps[0].state == _StepState.VIEWING
+        assert indicator._steps[0]._summary.text() == "Living Room"
+        assert indicator._steps[0]._summary.toolTip() == "192.168.1.5"
+        assert indicator._steps[1].state == _StepState.ACTIVE
+        assert indicator._steps[2].state == _StepState.UPCOMING
+        assert indicator._steps[2]._summary.text() == ""
+        assert indicator._steps[3].state == _StepState.UPCOMING
+        assert indicator._connectors[0].property("class") == "stepConnectorActive"
+        assert indicator._connectors[1].property("class") == "stepConnector"
+
 
 # ---------------------------------------------------------------------------
 # TestSidebarNav

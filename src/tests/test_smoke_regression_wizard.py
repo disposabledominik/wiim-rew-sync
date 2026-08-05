@@ -161,9 +161,11 @@ class TestCapabilityFallbackSidebarWarning:
 
         assert window._sidebar_nav._device_label.text() == "WiiM Pro Plus  ⚠"
         assert "generic defaults" in window._capability_warning_text()
-        with patch("PySide6.QtWidgets.QMessageBox.information") as info:
+        with patch(
+            "src.gui.dialogs.device_info_dialog.DeviceInfoDialog.show_info"
+        ) as info:
             window._show_device_info()
-        assert "generic defaults" in info.call_args.args[2]
+        assert "generic defaults" in info.call_args.args[4]
 
     def test_capability_file_override_shows_warning(self, window) -> None:
         """capability_file_override=True -- sidebar shows the warning glyph
@@ -586,6 +588,22 @@ class TestIssue57BackNavClearsCompletedSteps:
         assert WizardStep.SOURCE in wc.completed_steps
         assert WizardStep.CONNECT in wc.completed_steps
 
+    def test_source_reorder_is_not_a_change(self, window) -> None:
+        """The selection is a set of sources: the same sources arriving in a
+        different order must not count as a change (and must not invalidate
+        downstream checkmarks)."""
+        wc = window._wizard_controller
+        wc.set_flow_type(FlowType.PEQ_ONLY)
+        wc.state.selected_source = "wifi,optical"
+        wc.advance(summary="Connected")  # CONNECT done, at SOURCE
+        wc.advance(summary="2 sources")  # SOURCE done, at FILTERS
+        wc.advance(summary="Filters loaded")  # FILTERS done, at REVIEW
+
+        wc.go_to_step(WizardStep.SOURCE)
+        window._on_source_selected("optical,wifi", "Stereo")  # same set
+
+        assert WizardStep.FILTERS in wc.completed_steps
+
     def test_eq_type_change_invalidates_downstream_same_type_does_not(
         self, window
     ) -> None:
@@ -608,6 +626,13 @@ class TestIssue57BackNavClearsCompletedSteps:
         assert WizardStep.NAME_PROFILE in wc.completed_steps
         assert WizardStep.REVIEW in wc.completed_steps
 
+        # Re-confirming the same type also keeps the loaded payload
+        wc.state.current_filters = [MagicMock()]
+        wc.state.filters_origin = "RoomFit profile"
+        wc.go_to_step(WizardStep.EQ_TYPE)
+        window._on_eq_type_selected("roomfit")
+        assert wc.state.current_filters != []
+
         # Browse back and switch to PEQ -- everything after EQ_TYPE clears,
         # including RoomFit-only NAME_PROFILE (checked via the old sequence)
         wc.go_to_step(WizardStep.EQ_TYPE)
@@ -618,6 +643,11 @@ class TestIssue57BackNavClearsCompletedSteps:
         # EQ_TYPE re-completed by the advance(); CONNECT untouched
         assert WizardStep.EQ_TYPE in wc.completed_steps
         assert WizardStep.CONNECT in wc.completed_steps
+        # PEQ and RoomFit are different pipelines: the old pipeline's loaded
+        # payload must not carry into the new flow (review fix on top of
+        # #246 Stage 2 -- same clear the device switch uses).
+        assert wc.state.current_filters == []
+        assert wc.state.filters_origin == ""
 
 
 # ---------------------------------------------------------------------------
@@ -720,8 +750,13 @@ class TestIssue87SidebarPresetLoadChecks:
 
         # Should succeed since QuickSetupDialog returned values
         assert result is True
-        # EQ_TYPE and SOURCE should now be in completed_steps
-        assert WizardStep.SOURCE in state.completed_steps
+        # The dialog's answers land in wizard *state* only -- steps are
+        # marked completed on load success (_jump_to_review), never before
+        # the async load resolves, so a failed load can't leave phantom
+        # checkmarks or move the frontier.
+        assert state.selected_sources == ["wifi"]
+        assert WizardStep.SOURCE not in state.completed_steps
+        assert WizardStep.FILTERS not in state.completed_steps
 
     def test_load_with_all_steps_completed_skips_dialog(self, window) -> None:
         """With all prior steps completed, no dialog shown — returns True directly."""
@@ -741,6 +776,22 @@ class TestIssue87SidebarPresetLoadChecks:
         # No need to patch QuickSetupDialog — it shouldn't be called
         result = window._ensure_wizard_state_for_load()
         assert result is True
+
+    def test_load_gate_never_marks_steps_before_load_resolves(self, window) -> None:
+        """The load gate must not pre-mark steps completed: the load it
+        gates is async and can fail, and pre-marking would leave
+        completed_steps (and the derived frontier) claiming progress that
+        never happened -- e.g. "Resume Setup" jumping to Review after a
+        failed preset load. Steps are marked on success by _jump_to_review."""
+        window._on_device_selected("192.168.1.100")
+        state = window._wizard_controller.state
+        state.completed_steps = {WizardStep.CONNECT: "Connected"}
+        state.current_step = WizardStep.FILTERS  # at-FILTERS early return
+
+        assert window._ensure_wizard_state_for_load() is True
+
+        assert set(state.completed_steps) == {WizardStep.CONNECT}
+        assert window._wizard_controller.frontier_step == WizardStep.EQ_TYPE
 
     def test_preview_items_merged_into_quick_setup_warning(self, window) -> None:
         """When QuickSetupDialog is about to show, a preview-warning body is

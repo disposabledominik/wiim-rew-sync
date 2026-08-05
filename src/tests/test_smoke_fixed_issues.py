@@ -388,17 +388,20 @@ def test_navigation_device_info_shows_popover():
         window = MainWindow(async_bridge=mock_bridge)
 
         window._wizard_controller.state.selected_device = "192.168.1.50"
-        with patch("PySide6.QtWidgets.QMessageBox.information") as info:
+        with patch(
+            "src.gui.dialogs.device_info_dialog.DeviceInfoDialog.show_info"
+        ) as info:
             window._on_navigation_requested("device_info")
 
         assert info.call_count == 1
-        text = info.call_args.args[2]
-        assert "192.168.1.50" in text
+        assert "192.168.1.50" in info.call_args.args
 
         # No device connected -> header is disabled anyway, but the handler
         # must stay a silent no-op if reached.
         window._wizard_controller.state.selected_device = None
-        with patch("PySide6.QtWidgets.QMessageBox.information") as info:
+        with patch(
+            "src.gui.dialogs.device_info_dialog.DeviceInfoDialog.show_info"
+        ) as info:
             window._on_navigation_requested("device_info")
         assert info.call_count == 0
 
@@ -519,11 +522,11 @@ def test_resync_current_page_geometry_ignores_invalid_index(qtbot):
 
 
 # Fix: jumping directly to Review from a sidebar load (e.g. "Load into
-# Editor" from Presets on Device / My Presets) bypasses
-# wizard_controller.advance()/go_to_step(), so step_changed never fires and
-# _on_step_changed's set_current() call — the only place that normally syncs
-# the StepIndicator's highlighted pill — is skipped. Without an explicit
-# set_current() call in this branch, Review renders with no step highlighted.
+# Editor" from Presets on Device / My Presets) originally bypassed
+# wizard_controller.advance()/go_to_step(), so step_changed never fired and
+# the StepIndicator's highlighted pill (now synced via set_view() in
+# _sync_navigation_chrome) was never updated -- Review rendered with no step
+# highlighted.
 def test_sidebar_load_into_review_highlights_review_step(qtbot):
     from src.gui.main_window import PAGE_INDICES, MainWindow
     from src.models.canonical import CanonicalFilter

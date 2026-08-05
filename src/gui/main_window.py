@@ -141,7 +141,7 @@ _STEP_TO_PAGE_KEY: dict[WizardStep, str] = {
 
 # Reverse lookups used by _sync_navigation_chrome (see its docstring for why
 # this single, signal-driven hook replaced a dozen hand-maintained
-# sidebar_nav.set_active_key()/step_indicator.set_dimmed()/set_current()
+# sidebar_nav.set_active_key()/step_indicator.set_dimmed()/set_view()
 # call sites scattered across every navigation handler in this class).
 _PAGE_INDEX_TO_KEY: dict[int, str] = {v: k for k, v in PAGE_INDICES.items()}
 _PAGE_KEY_TO_STEP: dict[str, WizardStep] = {v: k for k, v in _STEP_TO_PAGE_KEY.items()}
@@ -437,7 +437,7 @@ class MainWindow(QMainWindow):
         QStackedWidget.setCurrentIndex(). Before this hook existed, every
         one of those handlers had to remember to separately call
         sidebar_nav.set_active_key(), step_indicator.set_dimmed(), and
-        step_indicator.set_current() in the right combination, and several
+        step_indicator.set_view() in the right combination, and several
         of them didn't (hence #138, #142, #144, #147, and the step-pill
         case reported after those: clicking a finished step pill while
         viewing a sidebar destination left both highlighted at once).
@@ -866,9 +866,7 @@ class MainWindow(QMainWindow):
             # resetting flow_type below -- a step that only exists in the
             # old flow (e.g. NAME_PROFILE, RoomFit-only) would otherwise be
             # invisible to get_steps() once flow_type has already changed.
-            sequence = self._wizard_controller.get_steps()
-            if len(sequence) > 1:
-                self._wizard_controller.invalidate_from(sequence[1])
+            self._wizard_controller.invalidate_after(WizardStep.CONNECT)
             state.clear_device_scoped_state()
             self._wizard_controller.set_flow_type(FlowType.PEQ)
             state.selected_device = device_ip
@@ -968,21 +966,19 @@ class MainWindow(QMainWindow):
         instead of hijacking the header tooltip, and the Connect pill
         already covers navigation.
         """
-        from PySide6.QtWidgets import QMessageBox
+        from src.gui.dialogs.device_info_dialog import DeviceInfoDialog
 
         selected_ip = self._wizard_controller.state.selected_device
         if not selected_ip:
             return
 
-        lines = [f"Device: {self._resolve_connect_summary()}", f"IP address: {selected_ip}"]
-        model = getattr(self._device_caps, "model", "")
-        if model:
-            lines.append(f"Model: {model}")
-        warning = self._capability_warning_text()
-        if warning:
-            lines.append("")
-            lines.append(f"⚠ {warning}")
-        QMessageBox.information(self, "Connected Device", "\n".join(lines))
+        DeviceInfoDialog.show_info(
+            self,
+            self._resolve_connect_summary(),
+            getattr(self._device_caps, "model", ""),
+            selected_ip,
+            self._capability_warning_text(),
+        )
 
     def _compute_source_summary(self, source_name: str) -> tuple[str, str]:
         """(summary, tooltip) for the Sources step -- same on every entry point.
@@ -1041,19 +1037,15 @@ class MainWindow(QMainWindow):
         new_flow = FlowType.ROOMFIT if eq_type == "roomfit" else FlowType.PEQ
 
         if new_flow != self._wizard_controller.flow_type:
-            old_sequence = self._wizard_controller.get_steps()
-            idx = (
-                old_sequence.index(WizardStep.EQ_TYPE)
-                if WizardStep.EQ_TYPE in old_sequence
-                else 0
-            )
-            if idx + 1 < len(old_sequence):
-                self._wizard_controller.invalidate_from(old_sequence[idx + 1])
-            # A stale "what current_filters came from" string from before
-            # this EQ type switch must not linger into the new flow
-            # (#162d/#173) -- mirrors the same clearing _on_device_selected
-            # does on device switch.
-            self._wizard_controller.state.filters_origin = ""
+            # invalidate_after runs before set_flow_type below, so it sees
+            # the *old* flow's sequence (the ordering rule documented above).
+            self._wizard_controller.invalidate_after(WizardStep.EQ_TYPE)
+            # PEQ and RoomFit are different pipelines: the loaded filter
+            # payload (and its origin/rows/notes) from the flow being left
+            # must not carry into the new one (#162d/#173) -- same
+            # centralized clear the device switch uses, not a hand-picked
+            # field subset that can drift (#246 bug-1b class).
+            self._wizard_controller.state.clear_filter_payload()
 
         self._wizard_controller.set_flow_type(new_flow)
         # Page side effects are idempotent -- safe to re-apply on a
@@ -1085,12 +1077,11 @@ class MainWindow(QMainWindow):
         new_sources = parse_source_list(source_name)
         new_mode = ChannelMode.from_any(channel_mode)
 
-        if new_sources != state.selected_sources or new_mode != state.channel_mode:
-            sequence = self._wizard_controller.get_steps()
-            if WizardStep.SOURCE in sequence:
-                idx = sequence.index(WizardStep.SOURCE)
-                if idx + 1 < len(sequence):
-                    self._wizard_controller.invalidate_from(sequence[idx + 1])
+        # Compare as sets: the selection is a set of sources, so the same
+        # sources arriving in a different order is not a change and must not
+        # invalidate downstream checkmarks.
+        if set(new_sources) != set(state.selected_sources) or new_mode != state.channel_mode:
+            self._wizard_controller.invalidate_after(WizardStep.SOURCE)
 
         state.selected_source = source_name
         state.channel_mode = new_mode
@@ -1475,18 +1466,27 @@ class MainWindow(QMainWindow):
         completed = self._wizard_controller.completed_steps
         tooltips = self._wizard_controller.state.completed_step_tooltips
 
-        for i, step in enumerate(sequence):
-            if step in completed:
-                self._step_indicator.set_completed(
-                    i, completed[step], tooltips.get(step, "")
-                )
-            else:
-                self._step_indicator.clear_completed(i)
+        entries: list[tuple[str, str] | None] = [
+            (completed[step], tooltips.get(step, "")) if step in completed else None
+            for step in sequence
+        ]
 
-        current = self._wizard_controller.current_step
-        view = sequence.index(current) if current in sequence else 0
         frontier = sequence.index(self._wizard_controller.frontier_step)
-        self._step_indicator.set_view(view, frontier)
+        current = self._wizard_controller.current_step
+        if current in sequence:
+            view = sequence.index(current)
+        else:
+            # Transient only: current_step belongs to a flow being switched
+            # away from. Render the frontier as the view rather than
+            # guessing an arbitrary index -- and log it, since a repeat
+            # points at a caller invalidating without finishing navigation.
+            logger.warning(
+                "Step %s not in the current %s sequence; rendering frontier",
+                current,
+                self._wizard_controller.flow_type,
+            )
+            view = frontier
+        self._step_indicator.sync(entries, view, frontier)
 
     @Slot(object, str, str)
     def _on_step_summary_updated(self, step: object, summary: str, tooltip: str = "") -> None:
@@ -3684,8 +3684,14 @@ class MainWindow(QMainWindow):
 
         If no device is connected, shows error and returns False.
         If EQ type or source is missing, shows QuickSetupDialog.
-        On cancel, returns False. On confirm, updates wizard state, marks
-        EQ_TYPE/SOURCE/FILTERS steps completed, and returns True.
+        On cancel, returns False. On confirm, updates wizard state (flow
+        type, source selection) and returns True.
+
+        Deliberately does NOT mark any step completed: the load this call
+        gates is asynchronous and can still fail, and pre-marking steps
+        would leave ``completed_steps`` (and the derived frontier) claiming
+        progress that never happened. Steps are marked only on success, by
+        ``_jump_to_review`` -> ``_mark_prior_steps_completed``.
 
         Args:
             preview_items: Optional preset items to show the read-preview
@@ -3724,7 +3730,6 @@ class MainWindow(QMainWindow):
                     preview_items
                 ):
                     return False
-                self._mark_prior_steps_completed(state)
                 return True
 
         # Determine what's missing
@@ -3752,8 +3757,6 @@ class MainWindow(QMainWindow):
                 preview_items
             ):
                 return False
-            # All prior steps should be marked completed
-            self._mark_prior_steps_completed(state)
             return True
 
         # Show dialog — source list and RoomFit support come from the
@@ -3802,32 +3805,26 @@ class MainWindow(QMainWindow):
         if self._wizard_controller.flow_type != FlowType.ROOMFIT and sources:
             state.selected_sources = list(sources)
 
-        # Delegate to the single shared function that marks CONNECT/EQ_TYPE/
-        # SOURCE/FILTERS completed consistently, instead of reimplementing
-        # that logic a third time with its own literals (#162) -- EQ_TYPE and
-        # SOURCE are genuinely missing from completed_steps at this point
-        # (that's why the dialog was shown), so this sets them for the first
-        # time rather than skipping them via the "already completed" guard.
-        self._mark_prior_steps_completed(state)
-
+        # The dialog's answers live in wizard *state* only for now --
+        # completed_steps is marked from that state on load success
+        # (_jump_to_review), never before the async load resolves.
         return True
 
     def _mark_prior_steps_completed(self, state: object) -> None:
         """Mark CONNECT, EQ_TYPE, SOURCE, FILTERS steps as completed if not already.
 
-        Called when all info is already present so the step indicator shows
-        proper checkmarks when navigating to Review from sidebar.
+        Runs only from ``_jump_to_review`` -- i.e. only once a sidebar load
+        has actually succeeded, never before the async load resolves, so a
+        failed load can't leave phantom checkmarks (or a phantom frontier).
 
         The guard ("only set if not already completed") is right for
         CONNECT/EQ_TYPE/SOURCE, which represent sticky prior decisions that
         genuinely shouldn't change just because this function runs again --
         but wrong for FILTERS, which represents "what's loaded right now"
-        and must always reflect current reality. Without recomputing FILTERS
+        and must always reflect current reality: without recomputing FILTERS
         unconditionally, a repeat "Load into Editor" after the first would
         keep showing the count from whatever was loaded the first time
-        (#162d) -- this function runs once before a sidebar load dispatches
-        (stale data) and once after it completes (correct data); nothing
-        repaints between those two calls, so recomputing both times is safe.
+        (#162d).
         """
         assert isinstance(state, WizardState)
         flow_type = self._wizard_controller.flow_type
