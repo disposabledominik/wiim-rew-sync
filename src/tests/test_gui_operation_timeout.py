@@ -199,3 +199,84 @@ class TestFinishRestoresPriorButtonState:
 
         assert not already_disabled.isEnabled()
         assert normally_enabled.isEnabled()
+
+    def test_finish_does_not_stomp_a_noted_button_re_enabled_mid_operation(
+        self, feedback_env
+    ) -> None:
+        """Smoke #250: a button disabled at start_operation() time (e.g.
+        SourcePage's Continue, before any source is selected) that a bridge
+        signal handler legitimately re-enables *while the operation is still
+        in flight* -- exactly what happens when a capability-probe result
+        signal populates SourcePage and enables Continue before the queued
+        operation_finished signal calls finish_operation() -- must not be
+        reverted back to disabled, provided the handler calls
+        note_button_state_changed() as production code does."""
+        manager, _banner, _container = feedback_env
+
+        continue_btn = QPushButton("Continue")
+        continue_btn.setEnabled(False)
+
+        manager.register_action_buttons([continue_btn])
+
+        manager.start_operation("Probing device...")
+        assert not continue_btn.isEnabled()
+
+        # Simulates a result-signal handler (e.g. _on_capabilities_ready ->
+        # SourcePage.set_sources()) legitimately enabling the button before
+        # operation_finished/finish_operation() runs, and telling the
+        # manager about it as MainWindow does.
+        continue_btn.setEnabled(True)
+        manager.note_button_state_changed(continue_btn)
+
+        manager.finish_operation()
+
+        assert continue_btn.isEnabled()
+
+    def test_finish_still_reverts_an_un_noted_mid_operation_enable(
+        self, feedback_env
+    ) -> None:
+        """The opposite of the case above: a registered button re-enabled
+        mid-operation by code that does NOT call note_button_state_changed()
+        (e.g. a preset list's selection-changed handler, which doesn't know
+        or care whether an unrelated operation is in flight) must still be
+        forced back to its pre-operation snapshot at finish -- preserving
+        the double-submit protection Req 13.1 requires for every button
+        that hasn't explicitly opted into a different restore value."""
+        manager, _banner, _container = feedback_env
+
+        load_btn = QPushButton("Load")
+        load_btn.setEnabled(False)
+
+        manager.register_action_buttons([load_btn])
+
+        manager.start_operation("Working...")
+        assert not load_btn.isEnabled()
+
+        # A selection-changed handler enables it mid-operation without
+        # telling the manager -- e.g. the user clicks a preset row while an
+        # unrelated operation is still running.
+        load_btn.setEnabled(True)
+
+        manager.finish_operation()
+
+        assert not load_btn.isEnabled()
+
+    def test_note_button_state_changed_is_a_noop_when_no_operation_active(
+        self, feedback_env
+    ) -> None:
+        """Calling note_button_state_changed() outside start_operation()/
+        finish_operation() (no snapshot exists yet) must not raise or create
+        a stale entry that would affect the next operation."""
+        manager, _banner, _container = feedback_env
+
+        btn = QPushButton("Continue")
+        manager.register_action_buttons([btn])
+
+        manager.note_button_state_changed(btn)  # no snapshot exists -- no-op
+
+        manager.start_operation("Working...")
+        assert not btn.isEnabled()
+        manager.finish_operation()
+        # Restored to the button's actual pre-operation state (True), not
+        # anything the earlier no-op call could have poisoned.
+        assert btn.isEnabled()

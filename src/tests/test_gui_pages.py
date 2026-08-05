@@ -274,6 +274,20 @@ class TestSourcePage:
         assert "wifi" in page._source_checkboxes
         assert "HDMI" in page._source_checkboxes
 
+    def test_continue_button_accessor_matches_action_buttons_entry(self, qtbot) -> None:
+        """continue_button() returns the same widget action_buttons() lists.
+
+        Guards the smoke #250 follow-up fragility (/code-review ultra):
+        callers that need to target Continue specifically (e.g.
+        OperationFeedbackManager.note_button_state_changed()) must use this
+        named accessor rather than an index into action_buttons(), which
+        exists purely for bulk disable/enable registration.
+        """
+        page = SourcePage()
+        qtbot.addWidget(page)
+
+        assert page.continue_button() is page.action_buttons()[0]
+
     def test_active_source_pre_selected(self, qtbot) -> None:
         """The active source checkbox is pre-checked."""
         page = SourcePage()

@@ -63,6 +63,17 @@ class SourcePage(QWidget):
         """Return buttons that should be disabled while an operation is in progress."""
         return [self._continue_btn]
 
+    def continue_button(self) -> QWidget:
+        """Return the Continue button.
+
+        A stable, named reference for callers (e.g.
+        OperationFeedbackManager.note_button_state_changed()) that need to
+        target this specific button -- as opposed to action_buttons(),
+        whose list is for bulk disable/enable registration and isn't a
+        promise about ordering or which entry is which.
+        """
+        return self._continue_btn
+
     def set_sources(self, sources: list[str], active_source: str = "") -> None:
         """Populate the source list with selectable items.
 
