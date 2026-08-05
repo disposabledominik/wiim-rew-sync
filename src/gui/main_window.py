@@ -1622,7 +1622,7 @@ class MainWindow(QMainWindow):
         # (smoke #250).
         active_source = getattr(caps, "active_source", "")
         self._source_page.set_sources(source_names, active_source)
-        self._feedback_manager.note_button_state_changed(self._source_page.action_buttons()[0])
+        self._feedback_manager.note_button_state_changed(self._source_page.continue_button())
 
         # Gate L/R channel mode by device capability (post capability-file
         # merge — see device_capability_file.py) so the option is never
