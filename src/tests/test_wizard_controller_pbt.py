@@ -237,20 +237,24 @@ def test_forward_advancement_preserves_sequence_order(
 
 
 # ---------------------------------------------------------------------------
-# Property 4: Back-navigation invalidates subsequent steps
+# Property 4: Back-navigation never mutates completed steps (lazy
+# invalidation, docs/smoke_test_issues.md #246) -- and the frontier is
+# always derived as the first incomplete step, unmoved by browsing.
 # **Validates: Requirements 1.6**
 # ---------------------------------------------------------------------------
 
 
 @given(scenario=st_back_nav_scenario())
 @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_back_navigation_invalidates_subsequent_steps(
+def test_back_navigation_preserves_completed_steps(
     scenario: tuple[FlowType, int, int], _ensure_qapp
 ) -> None:
     """**Validates: Requirements 1.6**
 
-    Navigating backward removes all steps after target from completed set.
-    Preserves steps before target (exclusive of target); current step becomes target.
+    go_to_step is purely navigational: for any flow, any progress depth,
+    and any back-navigation target, the completed set and every summary are
+    identical before and after, current_step becomes the target, and the
+    derived frontier (first step not in completed_steps) does not move.
     """
     flow_type, advance_count, back_target_idx = scenario
     sequence = steps_for_flow(flow_type)
@@ -263,25 +267,19 @@ def test_back_navigation_invalidates_subsequent_steps(
     for i in range(advance_count):
         ctrl.advance(summary=f"step {i}")
 
-    # Navigate back to target
+    completed_before = dict(ctrl.completed_steps)
+    frontier_before = ctrl.frontier_step
+
+    # Browse back to target
     target_step = sequence[back_target_idx]
     ctrl.go_to_step(target_step)
 
     # Current step should be the target
     assert ctrl.current_step == target_step
 
-    # All steps from target onward should NOT be in completed set
-    target_idx_in_seq = sequence.index(target_step)
-    for step in sequence[target_idx_in_seq:]:
-        assert step not in ctrl.completed_steps, (
-            f"Step {step} at or after target should not be in completed set"
-        )
-
-    # Steps before target should still be in completed set
-    for step in sequence[:target_idx_in_seq]:
-        assert step in ctrl.completed_steps, (
-            f"Step {step} before target should remain in completed set"
-        )
+    # Browsing destroys nothing and never moves the frontier
+    assert dict(ctrl.completed_steps) == completed_before
+    assert ctrl.frontier_step == frontier_before
 
 
 # ---------------------------------------------------------------------------

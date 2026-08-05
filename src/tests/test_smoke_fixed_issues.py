@@ -12,7 +12,7 @@ from src.gui import main_window
 from src.gui.components.sidebar_nav import SidebarNav
 from src.gui.pages.push_page import PushPage
 from src.gui.primary_workflows import PrimaryWorkflowManager
-from src.gui.wizard_controller import FlowType, WizardController, WizardState, WizardStep
+from src.gui.wizard_controller import FlowType, WizardState, WizardStep
 from src.logging.setup import configure_logging, install_crash_handler
 from src.models import constants as model_constants
 from src.models.canonical import CanonicalFilter
@@ -233,8 +233,11 @@ def test_pushpage_show_filters_button_opens_dialog(qtbot, monkeypatch):
     assert len(opened) == 1
 
 
-# Issue 111: Sidebar device label click should emit 'connect' and set home active
-def test_sidebar_device_header_click_emits_connect_and_sets_home_active(qtbot):
+# Issue 111 (superseded by #246 Stage 2 / PR #19 review D2): the sidebar
+# device label now requests the read-only device-info popover instead of
+# navigating to Connect -- the Connect pill covers navigation, and the
+# popover gives the capability warning a real home.
+def test_sidebar_device_header_click_requests_device_info(qtbot):
     nav = SidebarNav()
     qtbot.addWidget(nav)
     nav.set_device_info("Bedroom", connected=True)
@@ -250,7 +253,8 @@ def test_sidebar_device_header_click_emits_connect_and_sets_home_active(qtbot):
 
     qtbot.mouseClick(nav._device_label, Qt.MouseButton.LeftButton)
 
-    assert captured.get("key") == "connect"
+    assert captured.get("key") == "device_info"
+    # No page change, so the active highlight is left alone
     assert nav._active_key == "home"
 
 
@@ -372,23 +376,34 @@ def test_status_banner_close_button_visibility_and_size(qtbot):
     assert banner._close_button.height() >= 22
 
 
-# Issue 124: Navigation to 'connect' should call wizard_controller.go_to_step(CONNECT)
-def test_navigation_connect_uses_wizard_go_to_step():
+# Issue 124 successor (#246 Stage 2, PR #19 review D2): the sidebar header's
+# 'device_info' request shows the read-only device popover -- name, IP, and
+# the capability warning, which previously only lived in a hijacked tooltip.
+def test_navigation_device_info_shows_popover():
     from src.gui.main_window import MainWindow
+
     with patch.object(MainWindow, "_apply_settings", lambda self: None):
         mock_bridge = MagicMock()
         mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
 
-        called: dict[str, WizardStep] = {}
+        window._wizard_controller.state.selected_device = "192.168.1.50"
+        with patch(
+            "src.gui.dialogs.device_info_dialog.DeviceInfoDialog.show_info"
+        ) as info:
+            window._on_navigation_requested("device_info")
 
-        class FakeWizard:
-            def go_to_step(self, step: WizardStep) -> None:
-                called["step"] = step
+        assert info.call_count == 1
+        assert "192.168.1.50" in info.call_args.args
 
-        window._wizard_controller = cast(WizardController, FakeWizard())
-        window._on_navigation_requested("connect")
-        assert called.get("step") == WizardStep.CONNECT
+        # No device connected -> header is disabled anyway, but the handler
+        # must stay a silent no-op if reached.
+        window._wizard_controller.state.selected_device = None
+        with patch(
+            "src.gui.dialogs.device_info_dialog.DeviceInfoDialog.show_info"
+        ) as info:
+            window._on_navigation_requested("device_info")
+        assert info.call_count == 0
 
 
 # Fix: sidebar "Back" from a secondary view (e.g. Settings) while the wizard
@@ -406,7 +421,13 @@ def test_sidebar_back_from_secondary_view_preserves_push_dry_run_result(qtbot):
         qtbot.addWidget(window)
         window.show()
 
-        window._wizard_controller.go_to_step(WizardStep.PUSH)
+        # Reach PUSH the way a real session does: every prior step is
+        # completed, so PUSH is the frontier -- "Resume Setup" must then
+        # redisplay it rather than jumping (and resetting) anything.
+        ctrl = window._wizard_controller
+        for step in ctrl.get_steps()[:-1]:
+            ctrl.set_step_summary(step, "done")
+        ctrl.go_to_step(WizardStep.PUSH)
         window._push_page.set_dry_run_result("3 filters mapped")
         assert window._push_page._status_badge.isVisible()
 
@@ -501,11 +522,11 @@ def test_resync_current_page_geometry_ignores_invalid_index(qtbot):
 
 
 # Fix: jumping directly to Review from a sidebar load (e.g. "Load into
-# Editor" from Presets on Device / My Presets) bypasses
-# wizard_controller.advance()/go_to_step(), so step_changed never fires and
-# _on_step_changed's set_current() call — the only place that normally syncs
-# the StepIndicator's highlighted pill — is skipped. Without an explicit
-# set_current() call in this branch, Review renders with no step highlighted.
+# Editor" from Presets on Device / My Presets) originally bypassed
+# wizard_controller.advance()/go_to_step(), so step_changed never fired and
+# the StepIndicator's highlighted pill (now synced via set_view() in
+# _sync_navigation_chrome) was never updated -- Review rendered with no step
+# highlighted.
 def test_sidebar_load_into_review_highlights_review_step(qtbot):
     from src.gui.main_window import PAGE_INDICES, MainWindow
     from src.models.canonical import CanonicalFilter
@@ -530,7 +551,7 @@ def test_sidebar_load_into_review_highlights_review_step(qtbot):
 
         sequence = window._wizard_controller.get_steps()
         review_index = sequence.index(WizardStep.REVIEW)
-        assert window._step_indicator._current_index == review_index
+        assert window._step_indicator._view_index == review_index
         assert window._step_indicator._steps[review_index]._dimmed is False
 
 
@@ -589,7 +610,7 @@ def test_profile_recalled_from_my_presets_highlights_review_and_resets_sidebar(q
 
         sequence = window._wizard_controller.get_steps()
         review_index = sequence.index(WizardStep.REVIEW)
-        assert window._step_indicator._current_index == review_index
+        assert window._step_indicator._view_index == review_index
         assert window._step_indicator._steps[review_index]._dimmed is False
         assert window._sidebar_nav.active_key == "home"
 
@@ -617,7 +638,7 @@ def test_step_indicator_click_from_sidebar_destination_resets_sidebar_highlight(
         # pill dimmed.
         window._on_navigation_requested("presets_device")
         assert window._sidebar_nav.active_key == "presets_device"
-        assert window._step_indicator._steps[window._step_indicator._current_index]._dimmed
+        assert window._step_indicator._steps[window._step_indicator._view_index]._dimmed
 
         # Click the first (CONNECT) step pill, as if jumping back to a
         # finished step from within a sidebar destination.
@@ -625,7 +646,7 @@ def test_step_indicator_click_from_sidebar_destination_resets_sidebar_highlight(
 
         assert window._stacked_widget.currentIndex() == PAGE_INDICES["connect"]
         assert window._sidebar_nav.active_key == "home"
-        assert window._step_indicator._current_index == 0
+        assert window._step_indicator._view_index == 0
         assert not window._step_indicator._steps[0]._dimmed
 
 

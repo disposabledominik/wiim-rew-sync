@@ -1,7 +1,17 @@
 """Horizontal breadcrumb bar showing wizard progress.
 
-Displays step labels with visual states (completed, active, upcoming)
-and allows backward navigation by clicking completed steps.
+Displays step labels with visual states (completed, active, viewing,
+upcoming) and allows navigation by clicking completed steps or the
+frontier step. The widget is a pure view: it renders from data pushed in
+by MainWindow (completed flags + view/frontier indices) and never decides
+wizard state itself.
+
+State semantics (lazy-invalidation model, docs/smoke_test_issues.md #246):
+- ACTIVE marks the frontier -- the first not-yet-completed step, "where
+  you left off". It is clickable when the user has browsed elsewhere.
+- VIEWING marks the step whose page is on screen when that is not the
+  frontier -- "where you are". Browsing never destroys completed state.
+- When view and frontier coincide, only ACTIVE renders.
 """
 
 from __future__ import annotations
@@ -28,6 +38,7 @@ class _StepState(Enum):
     UPCOMING = auto()
     ACTIVE = auto()
     COMPLETED = auto()
+    VIEWING = auto()
 
 
 class _StepWidget(QWidget):
@@ -41,6 +52,10 @@ class _StepWidget(QWidget):
         self._state = _StepState.UPCOMING
         self._label_text = label
         self._dimmed = False
+        self._completed = False
+        self._clickable = False
+        self._summary_text = ""
+        self._summary_tooltip = ""
 
         # Required for the "stepWidgetActive" background pill (QSS
         # background-color/border-radius) to actually paint on a plain
@@ -84,40 +99,51 @@ class _StepWidget(QWidget):
         """Current visual state."""
         return self._state
 
-    def set_state(self, state: _StepState) -> None:
-        """Update the visual state of this step."""
-        self._state = state
-        self._apply_state()
+    def apply(
+        self,
+        state: _StepState,
+        *,
+        completed: bool,
+        clickable: bool,
+        dimmed: bool,
+    ) -> None:
+        """Apply the full visual state in one pass.
 
-    def set_dimmed(self, dimmed: bool) -> None:
-        """Mute the ACTIVE pill's accent color (no-op for other states).
+        The only mutation entry point besides the summary setters: storing
+        all four facts before a single ``_apply_state()`` call keeps the
+        widget from re-polishing its stylesheet once per field
+        (``set_qss_property`` forces a style re-evaluation each time).
 
-        Used while the user is on a sidebar destination (Presets on
-        Device, Settings, etc.) so the step indicator's "you are here"
-        pill doesn't visually disagree with the sidebar's own highlight —
-        see MainWindow's sidebar/step-indicator sync helpers.
+        Args:
+            state: Visual state (frontier/viewing/completed/upcoming).
+            completed: Whether the step's underlying data says "completed" --
+                distinct from ``state``: a VIEWING step renders its checkmark
+                and summary only when this flag is set.
+            clickable: Whether clicking navigates (and the hand cursor shows).
+            dimmed: Whether to mute the ACTIVE/VIEWING pill's accent color
+                (used while a sidebar destination is on screen).
         """
+        self._state = state
+        self._completed = completed
+        self._clickable = clickable
         self._dimmed = dimmed
         self._apply_state()
 
     def set_summary(self, text: str, tooltip: str = "") -> None:
-        """Set the summary text shown below the label for completed steps,
+        """Store the summary text shown below the label for completed steps,
         and an optional tooltip (e.g. what the loaded filters came from, or
-        the full source list behind an "N sources" summary) shown on hover."""
-        if text:
-            self._summary.setText(text)
-            self._summary.setToolTip(tooltip)
-            self._summary.show()
-        else:
-            self._summary.setText("")
-            self._summary.setToolTip("")
-            self._summary.hide()
+        the full source list behind an "N sources" summary) shown on hover.
+
+        Data-only: callers (StepIndicator) always follow with an
+        ``apply()`` pass via ``_refresh()``, which renders it.
+        """
+        self._summary_text = text
+        self._summary_tooltip = tooltip if text else ""
 
     def clear_summary(self) -> None:
-        """Remove summary text and tooltip."""
-        self._summary.setText("")
-        self._summary.setToolTip("")
-        self._summary.hide()
+        """Remove summary text and tooltip (data-only, like ``set_summary``)."""
+        self._summary_text = ""
+        self._summary_tooltip = ""
 
     def set_label(self, text: str) -> None:
         """Update the step label text."""
@@ -125,8 +151,8 @@ class _StepWidget(QWidget):
         self._label.setText(text)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """Emit clicked signal for completed steps only."""
-        if self._state == _StepState.COMPLETED:
+        """Emit clicked signal when this step is a navigation target."""
+        if self._clickable:
             self.clicked.emit(self._index)
         super().mousePressEvent(event)
 
@@ -134,30 +160,58 @@ class _StepWidget(QWidget):
         """Set the QSS ``class`` property and force a style re-evaluation."""
         set_qss_property(widget, "class", class_name)
 
+    def _show_summary(self) -> None:
+        """Show the stored summary text (if any) below the label."""
+        if self._summary_text:
+            self._summary.setText(self._summary_text)
+            self._summary.setToolTip(self._summary_tooltip)
+            set_qss_property(self._summary, "class", "caption")
+            self._summary.show()
+        else:
+            self._summary.setText("")
+            self._summary.setToolTip("")
+            self._summary.hide()
+
+    def _apply_circle_and_label(self, checked: bool) -> None:
+        """Apply the completed (checkmark) or upcoming (empty ring)
+        circle/label classes -- shared by every non-ACTIVE state so the two
+        stylings each live in exactly one place."""
+        if checked:
+            self._set_class(self._circle, "stepCircleCompleted")
+            self._circle.setText("\u2713")
+            self._set_class(self._label, "stepLabelCompleted")
+        else:
+            self._set_class(self._circle, "stepCircleUpcoming")
+            self._circle.setText("")
+            self._set_class(self._label, "stepLabelUpcoming")
+
     def _apply_state(self) -> None:
         """Apply visual styling based on current state."""
-        # Background "pill" behind the whole widget marks the active step as
-        # a distinct "you are here" zone, separate from the completed
+        # Background "pill" behind the whole widget marks a "you are here"
+        # zone: accent for the ACTIVE frontier, an outlined treatment for a
+        # VIEWING (browsed-to) step -- distinct from the completed
         # checkmark and the plain upcoming style.
-        is_active = self._state == _StepState.ACTIVE
-        if is_active:
+        if self._state == _StepState.ACTIVE:
             set_qss_property(
                 self, "class", "stepWidgetActiveDimmed" if self._dimmed else "stepWidgetActive"
+            )
+        elif self._state == _StepState.VIEWING:
+            set_qss_property(
+                self, "class", "stepWidgetViewingDimmed" if self._dimmed else "stepWidgetViewing"
             )
         else:
             set_qss_property(self, "class", "")
 
-        if self._state == _StepState.COMPLETED:
-            self._set_class(self._circle, "stepCircleCompleted")
-            self._circle.setText("\u2713")
-            self._set_class(self._label, "stepLabelCompleted")
-            font = self._label.font()
-            font.setBold(False)
-            self._label.setFont(font)
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
-            set_qss_property(self._summary, "class", "caption")
+        # A VIEWING step reuses the completed circle/label classes when its
+        # data says completed (a browsed-to step is still complete); a
+        # non-completed VIEWING step (defensive -- the controller never
+        # produces it) falls back to upcoming visuals. The bold label below
+        # plus the pill outline above carry the "you are here" cue.
+        checked = self._state == _StepState.COMPLETED or (
+            self._state == _StepState.VIEWING and self._completed
+        )
 
-        elif self._state == _StepState.ACTIVE:
+        if self._state == _StepState.ACTIVE:
             self._set_class(
                 self._circle, "stepCircleActiveDimmed" if self._dimmed else "stepCircleActive"
             )
@@ -165,21 +219,27 @@ class _StepWidget(QWidget):
             self._set_class(
                 self._label, "stepLabelActiveDimmed" if self._dimmed else "stepLabelActive"
             )
-            font = self._label.font()
-            font.setBold(True)
-            self._label.setFont(font)
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            self._apply_circle_and_label(checked)
+
+        font = self._label.font()
+        font.setBold(self._state in (_StepState.ACTIVE, _StepState.VIEWING))
+        self._label.setFont(font)
+
+        # Summary shows wherever the checkmark does; a hidden summary also
+        # drops its text/tooltip so stale content never lingers on the label.
+        if checked:
+            self._show_summary()
+        else:
+            self._summary.setText("")
+            self._summary.setToolTip("")
             self._summary.hide()
 
-        else:  # UPCOMING
-            self._set_class(self._circle, "stepCircleUpcoming")
-            self._circle.setText("")
-            self._set_class(self._label, "stepLabelUpcoming")
-            font = self._label.font()
-            font.setBold(False)
-            self._label.setFont(font)
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-            self._summary.hide()
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor
+            if self._clickable
+            else Qt.CursorShape.ArrowCursor
+        )
 
 
 class _ConnectorLine(QLabel):
@@ -201,8 +261,11 @@ class _ConnectorLine(QLabel):
 class StepIndicator(QWidget):
     """Horizontal breadcrumb bar showing wizard progress.
 
-    Shows step labels with visual states (completed, active, upcoming)
-    and emits step_clicked for backward navigation on completed steps.
+    A pure data-driven view: per-step completed flags plus a view index
+    (whose page is on screen) and a frontier index (first not-completed
+    step) fully determine every widget's state via ``_refresh()``. Emits
+    ``step_clicked`` for navigation on completed steps and on the frontier
+    step while the user is browsing elsewhere.
     """
 
     step_clicked = Signal(int)
@@ -218,7 +281,9 @@ class StepIndicator(QWidget):
 
         self._steps: list[_StepWidget] = []
         self._connectors: list[_ConnectorLine] = []
-        self._current_index: int = 0
+        self._completed: list[bool] = []
+        self._view_index: int = 0
+        self._frontier_index: int = 0
         self._dimmed: bool = False
 
     def set_steps(self, labels: list[str]) -> None:
@@ -242,38 +307,64 @@ class StepIndicator(QWidget):
                 self._connectors.append(connector)
                 self._layout.addWidget(connector)
 
-        self._current_index = 0
-        if self._steps:
-            self._steps[0].set_dimmed(self._dimmed)
-            self._steps[0].set_state(_StepState.ACTIVE)
+        self._completed = [False] * len(labels)
+        self._view_index = 0
+        self._frontier_index = 0
+        self._refresh()
 
-    def set_current(self, index: int) -> None:
-        """Set which step is active.
+    def set_view(self, view_index: int, frontier_index: int) -> None:
+        """Set which step's page is on screen and where the frontier is.
+
+        An out-of-range index is ignored (the previous value is kept), but a
+        refresh still runs so any pending data changes (``sync``'s summary
+        updates) always render.
 
         Args:
-            index: Zero-based index of the step to mark as active.
+            view_index: Zero-based index of the step whose page is shown.
+            frontier_index: Zero-based index of the first not-yet-completed
+                step (clamped to the last step when all are complete) --
+                rendered ACTIVE, "where you left off".
         """
-        if not self._steps or index < 0 or index >= len(self._steps):
+        if not self._steps:
             return
+        if 0 <= view_index < len(self._steps):
+            self._view_index = view_index
+        if 0 <= frontier_index < len(self._steps):
+            self._frontier_index = frontier_index
+        self._refresh()
 
-        # Only change the active step marker, don't touch completed states
-        if 0 <= self._current_index < len(self._steps):
-            old = self._steps[self._current_index]
-            if old.state == _StepState.ACTIVE:
-                old.set_state(_StepState.UPCOMING)
+    def sync(
+        self,
+        completed: list[tuple[str, str] | None],
+        view_index: int,
+        frontier_index: int,
+    ) -> None:
+        """Bulk resync of every step's completed data plus the view and
+        frontier, with a single refresh.
 
-        self._current_index = index
-        # If the target was previously COMPLETED (e.g. navigating back to it
-        # via go_to_step), clear its summary and trailing connector through
-        # the same path back-navigation invalidation already uses, then
-        # force it ACTIVE -- the step you're currently on should never show
-        # a stale checkmark or a "completed" connector past it.
-        self.clear_completed(index)
-        self._steps[index].set_dimmed(self._dimmed)
-        self._steps[index].set_state(_StepState.ACTIVE)
+        The full-resync entry point (flow switch, change-time invalidation):
+        per-step ``set_completed``/``clear_completed`` calls would each
+        trigger a full refresh, restyling every widget once per step.
+
+        Args:
+            completed: Per-step entries, index-aligned with the labels from
+                ``set_steps``: ``(summary, tooltip)`` for a completed step,
+                ``None`` for a not-completed one. Missing trailing entries
+                count as not completed.
+            view_index: As in ``set_view``.
+            frontier_index: As in ``set_view``.
+        """
+        for i, step in enumerate(self._steps):
+            entry = completed[i] if i < len(completed) else None
+            self._completed[i] = entry is not None
+            if entry is not None:
+                step.set_summary(entry[0], entry[1])
+            else:
+                step.clear_summary()
+        self.set_view(view_index, frontier_index)
 
     def set_dimmed(self, dimmed: bool) -> None:
-        """Mute the active step's pill while a sidebar destination is shown.
+        """Mute the viewed step's pill while a sidebar destination is shown.
 
         Args:
             dimmed: True while the user is on a non-wizard page (Presets on
@@ -283,8 +374,7 @@ class StepIndicator(QWidget):
                 the wizard flow.
         """
         self._dimmed = dimmed
-        if 0 <= self._current_index < len(self._steps):
-            self._steps[self._current_index].set_dimmed(dimmed)
+        self._refresh()
 
     def set_completed(self, index: int, summary: str = "", tooltip: str = "") -> None:
         """Mark a step as completed with optional summary text.
@@ -299,18 +389,15 @@ class StepIndicator(QWidget):
         if not self._steps or index < 0 or index >= len(self._steps):
             return
 
-        step = self._steps[index]
-        step.set_state(_StepState.COMPLETED)
-        step.set_summary(summary, tooltip)
-
-        # Update connector line color to accent for completed connections
-        if index < len(self._connectors):
-            self._connectors[index].set_active(True)
+        self._completed[index] = True
+        self._steps[index].set_summary(summary, tooltip)
+        self._refresh()
 
     def clear_completed(self, index: int) -> None:
-        """Remove the completed state from a step (revert to upcoming).
+        """Remove the completed state from a step.
 
-        Used when back-navigation invalidates subsequent steps.
+        Used when a change-time invalidation removes steps from the
+        wizard's completed set.
 
         Args:
             index: Zero-based index of the step to uncomplete.
@@ -318,38 +405,55 @@ class StepIndicator(QWidget):
         if not self._steps or index < 0 or index >= len(self._steps):
             return
 
-        step = self._steps[index]
-        if step.state == _StepState.COMPLETED:
-            step.set_state(_StepState.UPCOMING)
-            step.clear_summary()
-            # Revert connector line color
-            if index < len(self._connectors):
-                self._connectors[index].set_active(False)
+        self._completed[index] = False
+        self._steps[index].clear_summary()
+        self._refresh()
 
-    def invalidate_from(self, index: int) -> None:
-        """Remove completed state from this index onward.
+    def _refresh(self) -> None:
+        """Recompute every widget's visual state from the stored data.
 
-        Args:
-            index: Zero-based index from which to invalidate steps.
+        Rendering rules (V = view index, F = frontier index):
+        - i == V == F: ACTIVE, not clickable (you are at the frontier);
+          COMPLETED if the step's data says so (all-complete clamp, e.g.
+          PUSH marked "Done" while still on it -- show the checkmark).
+        - i == V != F: VIEWING, not clickable (you are here, browsing).
+        - i == F != V: ACTIVE and clickable ("back to where I left off"),
+          unless completed (all-complete clamp) -- then plain COMPLETED.
+        - otherwise: COMPLETED (clickable) or UPCOMING (not).
+        Connector i is accented iff step i is completed.
         """
-        if not self._steps or index < 0 or index >= len(self._steps):
-            return
+        view = self._view_index
+        frontier = self._frontier_index
 
-        for i in range(index, len(self._steps)):
-            step = self._steps[i]
-            step.set_state(_StepState.UPCOMING)
-            step.clear_summary()
+        for i, step in enumerate(self._steps):
+            completed = self._completed[i]
+            if i == view:
+                if view != frontier:
+                    state = _StepState.VIEWING
+                elif completed:
+                    state = _StepState.COMPLETED
+                else:
+                    state = _StepState.ACTIVE
+                clickable = False
+            elif i == frontier:
+                state = _StepState.COMPLETED if completed else _StepState.ACTIVE
+                clickable = True
+            elif completed:
+                state = _StepState.COMPLETED
+                clickable = True
+            else:
+                state = _StepState.UPCOMING
+                clickable = False
 
-            # Reset connector lines from this point
-            if i < len(self._connectors):
-                self._connectors[i].set_active(False)
+            step.apply(
+                state,
+                completed=completed,
+                clickable=clickable,
+                dimmed=self._dimmed if i == view else False,
+            )
 
-        # Also reset connector before the invalidated step if it exists
-        # (connector at index-1 connects step index-1 to step index)
-        if index > 0 and index - 1 < len(self._connectors):
-            prev_step = self._steps[index - 1]
-            if prev_step.state != _StepState.COMPLETED:
-                self._connectors[index - 1].set_active(False)
+        for i, connector in enumerate(self._connectors):
+            connector.set_active(self._completed[i])
 
     def _on_step_clicked(self, index: int) -> None:
         """Forward step click to the public signal."""
@@ -365,3 +469,4 @@ class StepIndicator(QWidget):
                     widget.deleteLater()
         self._steps = []
         self._connectors = []
+        self._completed = []

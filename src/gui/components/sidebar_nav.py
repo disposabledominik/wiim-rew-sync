@@ -159,7 +159,7 @@ class SidebarNav(QWidget):
         self._device_label.setObjectName("SidebarDeviceLabel")
         self._device_label.setFlat(True)
         self._device_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._device_label.setToolTip("Go to Connect step")
+        self._device_label.setToolTip("Device details")
         self._device_label.clicked.connect(self._on_device_header_clicked)
         header_layout.addWidget(self._device_label)
 
@@ -201,22 +201,19 @@ class SidebarNav(QWidget):
             name: Device display name.
             connected: Whether the device is currently connected.
             capability_warning: When non-empty, appends a warning glyph to
-                the label and sets it as the tooltip -- e.g. capabilities
-                came from a capability-file override or generic defaults
-                rather than live device probing. Persists on every wizard
-                step since the sidebar itself is always visible.
+                the label -- e.g. capabilities came from a capability-file
+                override or generic defaults rather than live device
+                probing. The warning text itself lives in the device-info
+                popover (see ``_on_device_header_clicked``), so the
+                tooltip stays a stable affordance hint.
         """
         if connected and name:
             label_text = f"{name}  ⚠" if capability_warning else name
             self._device_label.setText(label_text)
             self._device_label.setEnabled(True)
-            self._device_label.setToolTip(
-                capability_warning if capability_warning else "Go to Connect step"
-            )
         else:
             self._device_label.setText("No device")
             self._device_label.setEnabled(False)
-            self._device_label.setToolTip("Go to Connect step")
 
     def set_collapsed(self, collapsed: bool) -> None:
         """Toggle between full labels and icon-only mode.
@@ -292,11 +289,12 @@ class SidebarNav(QWidget):
         self.collapse_toggled.emit(self._collapsed)
 
     def _on_device_header_clicked(self) -> None:
-        """Navigate to Connect step when device name is clicked."""
-        self.navigation_requested.emit("connect")
-        # Update active state to home (connect = first wizard step)
-        if self._active_key != "home":
-            if self._active_key in self._nav_buttons:
-                self._nav_buttons[self._active_key].set_active(False)
-            self._active_key = "home"
-            self._nav_buttons["home"].set_active(True)
+        """Request the read-only device-info popover.
+
+        The header used to navigate to the Connect step, but that
+        duplicated the Connect pill while looking like a status readout;
+        a details popover gives the capability warning a real home instead
+        of hijacking the tooltip (PR #19 review, D2). No page change, so
+        the active highlight is left alone.
+        """
+        self.navigation_requested.emit("device_info")

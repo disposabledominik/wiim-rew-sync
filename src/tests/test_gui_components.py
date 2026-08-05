@@ -216,7 +216,7 @@ class TestStepIndicator:
 
         for current_index in range(len(labels)):
             indicator.set_steps(labels)
-            indicator.set_current(current_index)
+            indicator.set_view(current_index, current_index)
             window.resize(MIN_WINDOW_WIDTH, 100)
             window.show()
             qtbot.wait(10)
@@ -227,27 +227,27 @@ class TestStepIndicator:
                     f"{step._label.text()!r} at index {current_index}"
                 )
 
-    def test_set_current_highlights_active(self, qtbot) -> None:
-        """set_current marks the specified step as active."""
+    def test_set_view_highlights_active(self, qtbot) -> None:
+        """set_view at the frontier marks that step ACTIVE; others stay
+        UPCOMING when not completed."""
         from src.gui.components.step_indicator import _StepState
 
         indicator = StepIndicator()
         qtbot.addWidget(indicator)
 
         indicator.set_steps(["Connect", "EQ Type", "Source"])
-        indicator.set_current(1)
+        indicator.set_view(1, 1)
 
         assert indicator._steps[1].state == _StepState.ACTIVE
-        # Step 0 should revert to UPCOMING since it wasn't completed
         assert indicator._steps[0].state == _StepState.UPCOMING
 
     def test_set_dimmed_mutes_active_pill(self, qtbot) -> None:
-        """set_dimmed swaps the active step's classes to the muted variant."""
+        """set_dimmed swaps the viewed step's classes to the muted variant."""
         indicator = StepIndicator()
         qtbot.addWidget(indicator)
 
         indicator.set_steps(["Connect", "EQ Type", "Source"])
-        indicator.set_current(1)
+        indicator.set_view(1, 1)
 
         indicator.set_dimmed(True)
         active = indicator._steps[1]
@@ -260,14 +260,14 @@ class TestStepIndicator:
         assert active._circle.property("class") == "stepCircleActive"
         assert active._label.property("class") == "stepLabelActive"
 
-    def test_set_current_preserves_dimmed_state(self, qtbot) -> None:
-        """Navigating to a new active step keeps the indicator's dimmed flag."""
+    def test_set_view_preserves_dimmed_state(self, qtbot) -> None:
+        """Moving the view to a new step keeps the indicator's dimmed flag."""
         indicator = StepIndicator()
         qtbot.addWidget(indicator)
 
         indicator.set_steps(["Connect", "EQ Type", "Source"])
         indicator.set_dimmed(True)
-        indicator.set_current(2)
+        indicator.set_view(2, 2)
 
         assert indicator._steps[2].property("class") == "stepWidgetActiveDimmed"
 
@@ -302,12 +302,14 @@ class TestStepIndicator:
         assert isinstance(indicator._steps[0]._summary, ElidingLabel)
 
     def test_completed_step_emits_click(self, qtbot) -> None:
-        """Clicking a completed step emits step_clicked with the step index."""
+        """Clicking a completed step (not currently viewed) emits
+        step_clicked with the step index."""
         indicator = StepIndicator()
         qtbot.addWidget(indicator)
 
         indicator.set_steps(["Connect", "EQ Type", "Source"])
         indicator.set_completed(0)
+        indicator.set_view(1, 1)
 
         with qtbot.waitSignal(indicator.step_clicked, timeout=1000) as blocker:
             qtbot.mouseClick(indicator._steps[0], Qt.MouseButton.LeftButton)
@@ -329,13 +331,12 @@ class TestStepIndicator:
 
         assert signals_received == []
 
-    def test_set_current_overrides_completed_state(self, qtbot) -> None:
-        """set_current on a COMPLETED step forces it back to ACTIVE.
-
-        Regression test for the breadcrumb bug: clicking back to a
-        previously-completed step left a stale checkmark instead of
-        showing the "you are here" active marker.
-        """
+    def test_browsing_to_completed_step_shows_viewing_with_checkmark(
+        self, qtbot
+    ) -> None:
+        """Viewing a completed step (view != frontier) renders VIEWING with
+        the checkmark, summary, and trailing connector all preserved --
+        looking is not changing (lazy invalidation, #246)."""
         from src.gui.components.step_indicator import _StepState
 
         indicator = StepIndicator()
@@ -343,64 +344,138 @@ class TestStepIndicator:
 
         indicator.set_steps(["Connect", "EQ Type", "Source"])
         indicator.set_completed(0, "WiiM Pro")
-        indicator.set_current(2)
+        indicator.set_completed(1, "PEQ")
 
-        # Navigate back to the now-completed step 0.
-        indicator.set_current(0)
+        # Browse back to completed step 0; frontier stays at 2.
+        indicator.set_view(0, 2)
 
-        assert indicator._steps[0].state == _StepState.ACTIVE
-        assert indicator._steps[0]._circle.text() == ""
+        step = indicator._steps[0]
+        assert step.state == _StepState.VIEWING
+        assert step._circle.text() == "\u2713"
+        assert step._summary.text() == "WiiM Pro"
+        assert step.property("class") == "stepWidgetViewing"
+        assert indicator._connectors[0].property("class") == "stepConnectorActive"
 
-    def test_set_current_overrides_completed_clears_summary_and_connector(
-        self, qtbot
-    ) -> None:
-        """Forcing a COMPLETED step back to ACTIVE also clears its summary
-        text and trailing connector accent, matching clear_completed's
-        existing behaviour for back-navigation invalidation."""
+    def test_frontier_pill_active_and_clickable_while_browsing(self, qtbot) -> None:
+        """While the user browses elsewhere, the frontier pill stays ACTIVE
+        and is clickable ("back to where I left off")."""
+        from src.gui.components.step_indicator import _StepState
+
         indicator = StepIndicator()
         qtbot.addWidget(indicator)
 
         indicator.set_steps(["Connect", "EQ Type", "Source"])
         indicator.set_completed(0, "WiiM Pro")
+        indicator.set_completed(1, "PEQ")
+        indicator.set_view(0, 2)
 
-        indicator.set_current(0)
+        frontier = indicator._steps[2]
+        assert frontier.state == _StepState.ACTIVE
+        with qtbot.waitSignal(indicator.step_clicked, timeout=1000) as blocker:
+            qtbot.mouseClick(frontier, Qt.MouseButton.LeftButton)
+        assert blocker.args == [2]
 
-        assert indicator._steps[0]._summary.text() == ""
-        assert indicator._connectors[0].property("class") == "stepConnector"
+    def test_viewed_step_not_clickable(self, qtbot) -> None:
+        """The step being viewed is never clickable -- neither as the ACTIVE
+        frontier nor as a browsed-to VIEWING step (you're already on it)."""
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source"])
+        indicator.set_completed(0)
+        indicator.set_completed(1)
+
+        signals_received: list[int] = []
+        indicator.step_clicked.connect(signals_received.append)
+
+        # ACTIVE at the frontier (view == frontier)
+        indicator.set_view(2, 2)
+        qtbot.mouseClick(indicator._steps[2], Qt.MouseButton.LeftButton)
+        # VIEWING a completed step
+        indicator.set_view(0, 2)
+        qtbot.mouseClick(indicator._steps[0], Qt.MouseButton.LeftButton)
+
+        assert signals_received == []
+
+    def test_all_complete_clamp_renders_completed_frontier(self, qtbot) -> None:
+        """When every step is completed the frontier clamps to the last step
+        and renders as plain COMPLETED (checkmark), not as an ACTIVE ring --
+        e.g. PUSH marked "Done" while still on it."""
+        from src.gui.components.step_indicator import _StepState
+
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source"])
+        for i in range(3):
+            indicator.set_completed(i, "done")
+        indicator.set_view(2, 2)
+
+        assert indicator._steps[2].state == _StepState.COMPLETED
+        assert indicator._steps[2]._circle.text() == "\u2713"
 
     def test_active_step_has_pill_class(self, qtbot) -> None:
-        """The active step widget gets the stepWidgetActive QSS class; the
-        previously active widget loses it."""
+        """The viewed frontier step gets the stepWidgetActive QSS class; the
+        previously viewed widget loses it."""
         indicator = StepIndicator()
         qtbot.addWidget(indicator)
 
         indicator.set_steps(["Connect", "EQ Type", "Source"])
         assert indicator._steps[0].property("class") == "stepWidgetActive"
 
-        indicator.set_current(1)
+        indicator.set_view(1, 1)
 
         assert indicator._steps[0].property("class") == ""
         assert indicator._steps[1].property("class") == "stepWidgetActive"
 
-    def test_invalidate_from_resets_steps(self, qtbot) -> None:
-        """invalidate_from resets steps from the given index onward to UPCOMING."""
+    def test_clear_completed_reverts_to_upcoming(self, qtbot) -> None:
+        """clear_completed reverts a completed step (and its summary and
+        connector accent) to the upcoming rendering -- used when change-time
+        invalidation removes steps from the completed set."""
         from src.gui.components.step_indicator import _StepState
 
         indicator = StepIndicator()
         qtbot.addWidget(indicator)
 
         indicator.set_steps(["Connect", "EQ Type", "Source", "Review"])
-        indicator.set_completed(0)
-        indicator.set_completed(1)
-        indicator.set_completed(2)
+        for i in (0, 1, 2):
+            indicator.set_completed(i, "done")
 
-        # Invalidate from step 1 onward
-        indicator.invalidate_from(1)
+        indicator.clear_completed(1)
+        indicator.clear_completed(2)
 
         assert indicator._steps[0].state == _StepState.COMPLETED
         assert indicator._steps[1].state == _StepState.UPCOMING
+        assert indicator._steps[1]._summary.text() == ""
+        assert indicator._connectors[1].property("class") == "stepConnector"
         assert indicator._steps[2].state == _StepState.UPCOMING
+
+    def test_sync_bulk_resyncs_in_one_call(self, qtbot) -> None:
+        """sync() replays every step's completed data plus view/frontier in
+        a single call -- the full-resync entry point MainWindow uses so a
+        flow switch or invalidation doesn't restyle every widget once per
+        step."""
+        from src.gui.components.step_indicator import _StepState
+
+        indicator = StepIndicator()
+        qtbot.addWidget(indicator)
+
+        indicator.set_steps(["Connect", "EQ Type", "Source", "Review"])
+        for i in range(4):
+            indicator.set_completed(i, "done")
+
+        # Resync: only step 0 completed now, viewing step 0, frontier at 1
+        indicator.sync([("Living Room", "192.168.1.5"), None, None, None], 0, 1)
+
+        assert indicator._steps[0].state == _StepState.VIEWING
+        assert indicator._steps[0]._summary.text() == "Living Room"
+        assert indicator._steps[0]._summary.toolTip() == "192.168.1.5"
+        assert indicator._steps[1].state == _StepState.ACTIVE
+        assert indicator._steps[2].state == _StepState.UPCOMING
+        assert indicator._steps[2]._summary.text() == ""
         assert indicator._steps[3].state == _StepState.UPCOMING
+        assert indicator._connectors[0].property("class") == "stepConnectorActive"
+        assert indicator._connectors[1].property("class") == "stepConnector"
 
 
 # ---------------------------------------------------------------------------
@@ -519,11 +594,10 @@ class TestSidebarNav:
         assert nav._device_label.text() == "No device"
         assert not nav._device_label.isEnabled()
 
-    def test_device_info_with_capability_warning_appends_glyph_and_tooltip(
-        self, qtbot
-    ) -> None:
+    def test_device_info_with_capability_warning_appends_glyph(self, qtbot) -> None:
         """A non-empty capability_warning appends a warning glyph to the
-        label and surfaces the message as the tooltip."""
+        label; the tooltip stays the stable affordance hint (the warning
+        text itself lives in the device-info popover, PR #19 review D2)."""
         nav = SidebarNav()
         qtbot.addWidget(nav)
 
@@ -532,20 +606,32 @@ class TestSidebarNav:
         )
 
         assert nav._device_label.text() == "WiiM Pro Plus  ⚠"
-        assert nav._device_label.toolTip() == "Using generic defaults."
+        assert nav._device_label.toolTip() == "Device details"
 
-    def test_device_info_without_capability_warning_keeps_default_tooltip(
-        self, qtbot
-    ) -> None:
-        """No warning -- label stays plain and tooltip is the normal
-        navigation hint."""
+    def test_device_info_without_capability_warning_plain_label(self, qtbot) -> None:
+        """No warning -- label stays plain, same stable tooltip."""
         nav = SidebarNav()
         qtbot.addWidget(nav)
 
         nav.set_device_info("WiiM Pro Plus", connected=True)
 
         assert nav._device_label.text() == "WiiM Pro Plus"
-        assert nav._device_label.toolTip() == "Go to Connect step"
+        assert nav._device_label.toolTip() == "Device details"
+
+    def test_device_header_click_requests_device_info(self, qtbot) -> None:
+        """Clicking the device header emits navigation_requested with
+        "device_info" (read-only popover) and leaves the active highlight
+        untouched -- it no longer navigates to Connect."""
+        nav = SidebarNav()
+        qtbot.addWidget(nav)
+        nav.set_device_info("WiiM Pro Plus", connected=True)
+        qtbot.mouseClick(nav._nav_buttons["settings"], Qt.MouseButton.LeftButton)
+
+        with qtbot.waitSignal(nav.navigation_requested, timeout=1000) as blocker:
+            qtbot.mouseClick(nav._device_label, Qt.MouseButton.LeftButton)
+
+        assert blocker.args == ["device_info"]
+        assert nav.active_key == "settings"
 
 
 # ---------------------------------------------------------------------------
