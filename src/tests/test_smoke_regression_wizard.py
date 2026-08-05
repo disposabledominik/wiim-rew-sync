@@ -1089,6 +1089,43 @@ class TestDeviceSwitchConfirmation:
         assert state.selected_device == "192.168.1.200"
         assert state.current_filters == []
 
+    def test_lr_only_filters_trigger_prompt(self, window, monkeypatch) -> None:
+        """docs/smoke_test_issues.md #249: unpushed work living only in
+        filters_l/filters_r (L/R mode, current_filters empty) must trigger
+        the prompt too. _has_unsaved_changes reads state.filters, which
+        prefers the L/R lists -- checking only current_filters would let a
+        device switch destroy L/R-only payload silently (the same
+        field-subset gap class as #247)."""
+        from src.models.canonical import CanonicalFilter
+        from src.models.channel_mode import ChannelMode
+
+        # Restore the real _has_unsaved_changes (stubbed False by the
+        # conftest autouse fixture); the escape hatch keeps closeEvent from
+        # blocking on the unmocked UnsavedChangesDialog at teardown.
+        monkeypatch.undo()
+        window._skip_unsaved_prompt = True
+        window._on_device_selected("192.168.1.100")
+        state = window._wizard_controller.state
+        state.channel_mode = ChannelMode.LR
+        state.filters_l = [
+            CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)
+        ]
+        state.filters_r = [
+            CanonicalFilter(type="PEAK", frequency_hz=2000.0, gain_db=-2.0, q=1.0)
+        ]
+        assert state.current_filters == []
+
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=False,
+        ) as confirm:
+            window._on_device_selected("192.168.1.200")
+
+        confirm.assert_called_once()
+        assert state.selected_device == "192.168.1.100"
+        assert state.filters_l != []
+        assert state.filters_r != []
+
     def test_no_unsaved_changes_switches_without_prompt(self, window) -> None:
         """No unsaved filter work -- the switch proceeds silently (the
         autouse fixture forces _has_unsaved_changes to False)."""

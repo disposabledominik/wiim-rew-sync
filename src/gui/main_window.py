@@ -1833,8 +1833,11 @@ class MainWindow(QMainWindow):
                 backup_path, filters=filters, filters_l=filters_l, filters_r=filters_r
             )
             self._wizard_controller.state.last_backup_path = backup_path
+            # Snapshot through state.filters so the operand matches what
+            # _has_unsaved_changes compares -- in L/R mode that is
+            # filters_l + filters_r, not current_filters.
             self._wizard_controller.state.last_pushed_filters = list(
-                self._wizard_controller.state.current_filters
+                self._wizard_controller.state.filters
             )
             # Mark PUSH step as completed in the step indicator
             self._wizard_controller.set_step_summary(WizardStep.PUSH, "Done")
@@ -3923,9 +3926,12 @@ class MainWindow(QMainWindow):
         # Dirty means filters are loaded AND they don't match the snapshot
         # taken at the last successful push (e.g. never pushed, edited again
         # since, or undone since -- see last_pushed_filters docstring).
+        # Read through state.filters (not current_filters directly): in L/R
+        # mode the real payload lives in filters_l/filters_r, which the
+        # accessor prefers -- checking only current_filters would miss
+        # unpushed L/R-only work, silently destroying it on device switch
+        # or app close (the same field-subset gap class as #247).
         state = self._wizard_controller.state
-        return (
-            len(state.current_filters) > 0
-            and state.current_filters != state.last_pushed_filters
-        )
+        filters = state.filters
+        return len(filters) > 0 and filters != state.last_pushed_filters
 
