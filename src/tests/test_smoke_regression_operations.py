@@ -1261,20 +1261,16 @@ class TestPresets:
                 return_value=("/tmp/movie-night.txt", ""),
             ),
             patch.object(
-                window._primary_workflows, "_do_preset_export", return_value=object()
+                window._primary_workflows, "export_presets"
             ) as mock_export_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
-            patch.object(
-                window._bridge, "run_async", side_effect=close_coroutine_tree
-            ) as mock_run,
         ):
             window._presets_device_view.export_requested.emit([item])
 
         mock_progress.assert_called_once_with("Exporting 'Movie Night'...")
         mock_export_workflow.assert_called_once_with(
-            "Movie Night", "PEQ", "/tmp/movie-night.txt", is_custom=False
+            [("Movie Night", "PEQ", "/tmp/movie-night.txt", False)]
         )
-        mock_run.assert_called_once()
 
     def test_preset_export_seeds_device_prefixed_filename(self, window) -> None:
         """Presets-on-Device stereo export seeds the save dialog with a
@@ -1310,26 +1306,22 @@ class TestPresets:
                 return_value=True,
             ),
             patch.object(
-                window._primary_workflows, "_do_preset_save", return_value=object()
+                window._primary_workflows, "save_presets"
             ) as mock_save_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
-            patch.object(
-                window._bridge, "run_async", side_effect=close_coroutine_tree
-            ) as mock_run,
         ):
             window._presets_device_view.save_to_my_presets.emit([item])
 
         mock_progress.assert_called_once_with("Saving 'Movie Night' to My Presets...")
         mock_save_workflow.assert_called_once_with(
-            "Movie Night", "PEQ", "WiiM - Movie Night", is_custom=False
+            [("Movie Night", "PEQ", "WiiM - Movie Night", False)]
         )
-        mock_run.assert_called_once()
 
     # --- #165c: Export/Save/Copy on the synthetic "Custom" row ---
 
     def test_export_custom_item_reads_live_not_preview(self, window) -> None:
         """Exporting the synthetic "Custom" row passes is_custom=True through
-        to _do_preset_export -- and, since it's already live, skips the
+        to export_presets -- and, since it's already live, skips the
         "this will briefly change what's playing" preview-warning dialog
         entirely (no WarningConfirmDialog call)."""
         item = PresetItem(
@@ -1345,20 +1337,19 @@ class TestPresets:
                 return_value=("/tmp/custom.txt", ""),
             ),
             patch.object(
-                window._primary_workflows, "_do_preset_export", return_value=object()
+                window._primary_workflows, "export_presets"
             ) as mock_export_workflow,
-            patch.object(window._bridge, "run_async", side_effect=close_coroutine_tree),
         ):
             window._presets_device_view.export_requested.emit([item])
 
         mock_warning.assert_not_called()
         mock_export_workflow.assert_called_once_with(
-            "Custom", "PEQ", "/tmp/custom.txt", is_custom=True
+            [("Custom", "PEQ", "/tmp/custom.txt", True)]
         )
 
     def test_save_custom_item_reads_live_not_preview(self, window) -> None:
         """Saving the synthetic "Custom" row passes is_custom=True through to
-        _do_preset_save, and skips the preview-warning dialog the same way
+        save_presets, and skips the preview-warning dialog the same way
         export does."""
         item = PresetItem(
             name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
@@ -1369,16 +1360,127 @@ class TestPresets:
                 "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
             ) as mock_warning,
             patch.object(
-                window._primary_workflows, "_do_preset_save", return_value=object()
+                window._primary_workflows, "save_presets"
             ) as mock_save_workflow,
-            patch.object(window._bridge, "run_async", side_effect=close_coroutine_tree),
         ):
             window._presets_device_view.save_to_my_presets.emit([item])
 
         mock_warning.assert_not_called()
         mock_save_workflow.assert_called_once_with(
-            "Custom", "PEQ", "WiiM - Custom", is_custom=True
+            [("Custom", "PEQ", "WiiM - Custom", True)]
         )
+
+    # --- Multi-select Export/Save must process every item, not just the
+    # first (pre-#165c-follow-up gap: the button enabled for a multi-select
+    # but silently exported/saved only items[0]) ---
+
+    def test_export_multiple_presets_uses_folder_picker_and_processes_all(
+        self, window
+    ) -> None:
+        """Selecting 2+ presets and clicking Export picks one destination
+        folder (not a per-item filename dialog), then exports every
+        selected preset into it under its own device-prefixed filename."""
+        items = [
+            PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Preset B", channel_mode="L/R", preset_type="PEQ"),
+        ]
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch(
+                "src.gui.main_window.QFileDialog.getExistingDirectory",
+                return_value="/tmp/exports",
+            ) as mock_folder_dialog,
+            patch.object(window._primary_workflows, "export_presets") as mock_export,
+            patch.object(window._status_banner, "show_progress") as mock_progress,
+        ):
+            window._presets_device_view.export_requested.emit(items)
+
+        mock_folder_dialog.assert_called_once()
+        mock_progress.assert_called_once_with("Exporting 2 preset(s)...")
+        mock_export.assert_called_once()
+        requests = mock_export.call_args[0][0]
+        assert requests == [
+            ("Preset A", "PEQ", "/tmp/exports/WiiM - Preset A.txt", False),
+            ("Preset B", "PEQ", "/tmp/exports/WiiM - Preset B.txt", False),
+        ]
+
+    def test_export_multiple_presets_cancelled_folder_picker_aborts(self, window) -> None:
+        """Cancelling the destination-folder dialog aborts the whole batch
+        export -- no dispatch at all, not a partial export."""
+        items = [
+            PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Preset B", channel_mode="Stereo", preset_type="PEQ"),
+        ]
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch(
+                "src.gui.main_window.QFileDialog.getExistingDirectory",
+                return_value="",
+            ),
+            patch.object(window._primary_workflows, "export_presets") as mock_export,
+        ):
+            window._presets_device_view.export_requested.emit(items)
+
+        mock_export.assert_not_called()
+
+    def test_save_multiple_presets_processes_all(self, window) -> None:
+        """Selecting 2+ presets and clicking Save to My Presets saves every
+        one of them, not just the first -- no dialog needed, same as the
+        single-item case."""
+        items = [
+            PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Preset B", channel_mode="Stereo", preset_type="RoomFit"),
+        ]
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch.object(window._primary_workflows, "save_presets") as mock_save,
+            patch.object(window._status_banner, "show_progress") as mock_progress,
+        ):
+            window._presets_device_view.save_to_my_presets.emit(items)
+
+        mock_progress.assert_called_once_with("Saving 2 preset(s) to My Presets...")
+        mock_save.assert_called_once_with(
+            [
+                ("Preset A", "PEQ", "WiiM - Preset A", False),
+                ("Preset B", "RoomFit", "WiiM - Preset B", False),
+            ]
+        )
+
+    def test_presets_export_complete_shows_success_and_partial_failure(
+        self, window
+    ) -> None:
+        """_on_presets_export_complete forwards the batch result to the
+        status banner, success or partial-failure."""
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            window._on_presets_export_complete(2, 0)
+        mock_success.assert_called_once_with("2 preset(s) exported")
+
+        with patch.object(window._status_banner, "show_error") as mock_error:
+            window._on_presets_export_complete(1, 1)
+        mock_error.assert_called_once_with("Exported 1, 1 failed")
+
+    def test_presets_save_complete_shows_success_and_partial_failure(self, window) -> None:
+        """_on_presets_save_complete forwards the batch result to the
+        status banner, success or partial-failure."""
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            window._on_presets_save_complete(2, 0)
+        mock_success.assert_called_once_with("2 preset(s) saved to My Presets")
+
+        with patch.object(window._status_banner, "show_error") as mock_error:
+            window._on_presets_save_complete(1, 1)
+        mock_error.assert_called_once_with("Saved 1, 1 failed")
 
     def test_copy_custom_item_prompts_for_name_and_renames(self, window) -> None:
         """Copying the synthetic "Custom" row prompts for a real name (it

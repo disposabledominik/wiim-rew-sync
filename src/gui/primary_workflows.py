@@ -134,6 +134,14 @@ class PrimaryWorkflowManager(QObject):
             MainWindow._status_banner directly rather than raising an
             exception (partial failure isn't an error condition
             _bridge_wrapper's mapping fits), so it needs a signal instead.
+        presets_export_complete(int, int) / presets_save_complete(int, int):
+            same succeeded/failed-counts pattern as presets_delete_complete,
+            for export_presets()/save_presets() batches. A single preset's
+            EmptyPresetFiltersError (or any other read failure) inside the
+            batch loop is caught and counted as one failure rather than
+            propagated -- matching presets_delete_complete's existing
+            partial-failure handling, deliberately, even for a batch of one
+            (see _do_export_presets/_do_save_presets docstrings).
     """
 
     peq_presets_ready = Signal(list, str, str)
@@ -142,6 +150,8 @@ class PrimaryWorkflowManager(QObject):
     roomfit_profiles_hidden = Signal()
     name_profiles_ready = Signal(list, str, bool)
     presets_delete_complete = Signal(int, int)
+    presets_export_complete = Signal(int, int)
+    presets_save_complete = Signal(int, int)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -908,14 +918,52 @@ class PrimaryWorkflowManager(QObject):
     # Workflow: Preset Export/Save (Phase 3)
     # ------------------------------------------------------------------
 
-    def export_preset(
-        self, preset_name: str, preset_type: str, path: str, *, is_custom: bool = False
+    def export_presets(
+        self, requests: list[tuple[str, str, str, bool]]
     ) -> None:
-        """Trigger a device preset export to file; progress arrives via progress_update."""
-        self._dispatch(
-            "preset_export",
-            self._do_preset_export(preset_name, preset_type, path, is_custom=is_custom),
-        )
+        """Trigger a batch device-preset export to file(s); result via
+        presets_export_complete.
+
+        Args:
+            requests: (preset_name, preset_type, path, is_custom) tuples,
+                one per preset to export -- built by MainWindow from however
+                many items are selected (one or many, no special-casing
+                needed here; see _do_export_presets).
+        """
+        self._dispatch("preset_export_batch", self._do_export_presets(requests))
+
+    async def _do_export_presets(
+        self, requests: list[tuple[str, str, str, bool]]
+    ) -> None:
+        """Sequentially read+export each preset in `requests`.
+
+        Sequential, not concurrent: reading a named preset briefly loads it
+        onto the device's live DSP (see #166) -- running several of these
+        concurrently would race on that same shared device state, same
+        reasoning as _do_save_presets/_do_delete_presets/
+        _do_copy_presets_batch_multi (secondary_workflows.py).
+
+        One preset's failure (including EmptyPresetFiltersError) doesn't
+        abort the rest -- it's counted as a failure in the emitted totals
+        instead of propagating, matching _do_delete_presets's existing
+        partial-failure handling. This applies even to a "batch" of one: a
+        single preset with no filters to export now reports as "0
+        exported, 1 failed" rather than a specific EmptyPresetFiltersError
+        message, a deliberate consistency trade-off (#165c follow-up) with
+        every other batch action in this codebase.
+        """
+        succeeded = 0
+        failed = 0
+        for preset_name, preset_type, path, is_custom in requests:
+            try:
+                await self._do_preset_export(
+                    preset_name, preset_type, path, is_custom=is_custom
+                )
+                succeeded += 1
+            except Exception:
+                logger.exception("Export preset '%s' failed", preset_name)
+                failed += 1
+        self.presets_export_complete.emit(succeeded, failed)
 
     async def _do_preset_export(
         self, preset_name: str, preset_type: str, path: str, *, is_custom: bool = False
@@ -995,14 +1043,39 @@ class PrimaryWorkflowManager(QObject):
                     f"Exported '{preset_name}' to {file_path.name}"
                 )
 
-    def save_preset(
-        self, preset_name: str, preset_type: str, saved_name: str, *, is_custom: bool = False
+    def save_presets(
+        self, requests: list[tuple[str, str, str, bool]]
     ) -> None:
-        """Trigger a device preset save to local storage; progress arrives via progress_update."""
-        self._dispatch(
-            "preset_save",
-            self._do_preset_save(preset_name, preset_type, saved_name, is_custom=is_custom),
-        )
+        """Trigger a batch device-preset save to local storage; result via
+        presets_save_complete.
+
+        Args:
+            requests: (preset_name, preset_type, saved_name, is_custom)
+                tuples, one per preset to save.
+        """
+        self._dispatch("preset_save_batch", self._do_save_presets(requests))
+
+    async def _do_save_presets(
+        self, requests: list[tuple[str, str, str, bool]]
+    ) -> None:
+        """Sequentially read+save each preset in `requests`.
+
+        Sequential, not concurrent -- and one preset's failure doesn't abort
+        the rest, even a "batch" of one -- for the same reasons as
+        _do_export_presets above.
+        """
+        succeeded = 0
+        failed = 0
+        for preset_name, preset_type, saved_name, is_custom in requests:
+            try:
+                await self._do_preset_save(
+                    preset_name, preset_type, saved_name, is_custom=is_custom
+                )
+                succeeded += 1
+            except Exception:
+                logger.exception("Save preset '%s' failed", preset_name)
+                failed += 1
+        self.presets_save_complete.emit(succeeded, failed)
 
     async def _do_preset_save(
         self, preset_name: str, preset_type: str, saved_name: str, *, is_custom: bool = False

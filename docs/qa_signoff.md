@@ -177,6 +177,15 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] Save to My Presets: creates local copy
 - [P] Copy to another device: shows device picker; copies preset to **all** selected devices, not
   just the first
+- [P] Multi-select (ctrl+click/shift+click/select-all) within one section, then Export: prompts
+  once for a destination **folder** (not a per-item filename) and exports **every** selected
+  preset into it, not just the first
+- [P] Multi-select, then Save to My Presets: saves **every** selected preset as its own local copy,
+  not just the first
+- [P] Multi-select, then Copy to another device: copies **every** selected preset to each chosen
+  target device
+- [P] A batch Export/Save/Delete with a partial failure (e.g. an empty-filter preset) still
+  processes the rest and shows a "X succeeded, Y failed" status instead of aborting
 - [P] Without a device connected: shows "Connect a device to browse..." empty state
 - [P] There is no "Load" action here — loading a preset into the wizard happens via the Filters
   step's Device option (Test 12a)

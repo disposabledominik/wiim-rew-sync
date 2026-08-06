@@ -724,6 +724,143 @@ def _capture_signal(signal: object) -> list[tuple[object, ...]]:
 
 
 # ---------------------------------------------------------------------------
+# Preset export/save batches (#165c follow-up: Export/Save must process
+# every selected preset, not silently only the first)
+# ---------------------------------------------------------------------------
+
+
+class TestPresetExportBatch:
+    """Test PrimaryWorkflowManager._do_export_presets."""
+
+    @pytest.mark.asyncio
+    async def test_processes_all_requests_and_emits_complete(self, tmp_path) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.presets_export_complete)
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=filters)
+        manager._current_adapter = MagicMock(
+            read_preset_preview_or_live=AsyncMock(return_value=settings)
+        )
+
+        requests = [
+            ("Preset A", "PEQ", str(tmp_path / "a.txt"), False),
+            ("Preset B", "PEQ", str(tmp_path / "b.txt"), False),
+        ]
+
+        with patch(
+            "src.translator.rew_generator.REWGenerator.generate_file", return_value=[]
+        ):
+            await manager._do_export_presets(requests)
+
+        assert manager._current_adapter.read_preset_preview_or_live.await_count == 2
+        assert (tmp_path / "a.txt").parent.exists()  # sanity: real tmp_path used
+        assert captured == [(2, 0)]
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_continues_and_counts(self, tmp_path) -> None:
+        """One preset with no filters (EmptyPresetFiltersError) doesn't
+        abort the batch -- the rest are still exported, and the failure is
+        counted rather than propagated."""
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        captured = _capture_signal(manager.presets_export_complete)
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
+        good_settings = PEQSettings(
+            source_name="wifi", channel_mode=ChannelMode.STEREO, bands=filters
+        )
+        empty_settings = PEQSettings(
+            source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[]
+        )
+        manager._current_adapter = MagicMock(
+            read_preset_preview_or_live=AsyncMock(
+                side_effect=[empty_settings, good_settings]
+            )
+        )
+
+        requests = [
+            ("Empty Preset", "PEQ", str(tmp_path / "empty.txt"), False),
+            ("Preset B", "PEQ", str(tmp_path / "b.txt"), False),
+        ]
+
+        with patch(
+            "src.translator.rew_generator.REWGenerator.generate_file", return_value=[]
+        ):
+            await manager._do_export_presets(requests)
+
+        # Both were attempted despite the first one failing.
+        assert manager._current_adapter.read_preset_preview_or_live.await_count == 2
+        assert captured == [(1, 1)]
+
+
+class TestPresetSaveBatch:
+    """Test PrimaryWorkflowManager._do_save_presets."""
+
+    @pytest.mark.asyncio
+    async def test_processes_all_requests_and_emits_complete(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        manager._profile_repository = MagicMock()
+        captured = _capture_signal(manager.presets_save_complete)
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=filters)
+        manager._current_adapter = MagicMock(
+            read_preset_preview_or_live=AsyncMock(return_value=settings)
+        )
+
+        requests = [
+            ("Preset A", "PEQ", "WiiM - Preset A", False),
+            ("Preset B", "PEQ", "WiiM - Preset B", False),
+        ]
+
+        await manager._do_save_presets(requests)
+
+        assert manager._profile_repository.save.call_count == 2
+        saved_names = {
+            call.args[0].name for call in manager._profile_repository.save.call_args_list
+        }
+        assert saved_names == {"WiiM - Preset A", "WiiM - Preset B"}
+        assert captured == [(2, 0)]
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_continues_and_counts(self) -> None:
+        manager = PrimaryWorkflowManager()
+        manager._wizard_controller = _wizard_controller_stub()
+        manager._bridge = MagicMock()
+        manager._profile_repository = MagicMock()
+        captured = _capture_signal(manager.presets_save_complete)
+
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=-3.0, q=1.0)]
+        good_settings = PEQSettings(
+            source_name="wifi", channel_mode=ChannelMode.STEREO, bands=filters
+        )
+        empty_settings = PEQSettings(
+            source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[]
+        )
+        manager._current_adapter = MagicMock(
+            read_preset_preview_or_live=AsyncMock(
+                side_effect=[empty_settings, good_settings]
+            )
+        )
+
+        requests = [
+            ("Empty Preset", "PEQ", "WiiM - Empty Preset", False),
+            ("Preset B", "PEQ", "WiiM - Preset B", False),
+        ]
+
+        await manager._do_save_presets(requests)
+
+        assert manager._profile_repository.save.call_count == 1
+        assert captured == [(1, 1)]
+
+
+# ---------------------------------------------------------------------------
 # RoomFit: populate NameProfilePage
 # ---------------------------------------------------------------------------
 

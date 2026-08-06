@@ -2406,6 +2406,22 @@ class MainWindow(QMainWindow):
         else:
             self._status_banner.show_error(f"Deleted {succeeded}, {failed} failed")
 
+    @Slot(int, int)
+    def _on_presets_export_complete(self, succeeded: int, failed: int) -> None:
+        """Forward PrimaryWorkflowManager.presets_export_complete into the status banner."""
+        if failed == 0:
+            self._status_banner.show_success(f"{succeeded} preset(s) exported")
+        else:
+            self._status_banner.show_error(f"Exported {succeeded}, {failed} failed")
+
+    @Slot(int, int)
+    def _on_presets_save_complete(self, succeeded: int, failed: int) -> None:
+        """Forward PrimaryWorkflowManager.presets_save_complete into the status banner."""
+        if failed == 0:
+            self._status_banner.show_success(f"{succeeded} preset(s) saved to My Presets")
+        else:
+            self._status_banner.show_error(f"Saved {succeeded}, {failed} failed")
+
     # ------------------------------------------------------------------
     # Navigation handlers
     # ------------------------------------------------------------------
@@ -2929,6 +2945,12 @@ class MainWindow(QMainWindow):
         self._primary_workflows.presets_delete_complete.connect(
             self._on_presets_delete_complete
         )
+        self._primary_workflows.presets_export_complete.connect(
+            self._on_presets_export_complete
+        )
+        self._primary_workflows.presets_save_complete.connect(
+            self._on_presets_save_complete
+        )
 
     # ------------------------------------------------------------------
     # Secondary Workflows (Req 17, 18, 20, 21)
@@ -3250,8 +3272,12 @@ class MainWindow(QMainWindow):
     def _on_preset_export_requested(self, items: list[Any]) -> None:
         """Handle PresetsDeviceView "Export as REW File" for selected presets.
 
-        Shows the appropriate file dialog (stereo or L/R based on item metadata),
-        then reads from device and writes to file.
+        A single selected item keeps the existing per-file save dialog
+        (exact filename control). Multiple selected items instead pick one
+        destination folder, then each preset is exported to its own
+        device-prefixed filename inside it -- every selected item gets
+        exported, not just the first (previously silently dropped the rest
+        despite Export being enabled for a multi-select; #165c follow-up).
 
         Args:
             items: List of PresetItem objects selected for export.
@@ -3262,7 +3288,13 @@ class MainWindow(QMainWindow):
         if not self._confirm_preset_preview(items):
             return
 
-        item = items[0]
+        if len(items) == 1:
+            self._export_one_preset_with_dialog(items[0])
+        else:
+            self._export_presets_to_folder(items)
+
+    def _export_one_preset_with_dialog(self, item: object) -> None:
+        """Single-item export: existing per-file dialog, exact filename control."""
         preset_name = getattr(item, "name", "")
         preset_type = getattr(item, "preset_type", "PEQ")
         channel_mode = getattr(item, "channel_mode", "Stereo")
@@ -3270,7 +3302,7 @@ class MainWindow(QMainWindow):
 
         # Device-prefixed only for the destination filename -- preset_name
         # itself stays exactly as the device reports it, since it's also the
-        # on-device lookup key passed to PrimaryWorkflowManager.export_preset below.
+        # on-device lookup key passed to PrimaryWorkflowManager.export_presets below.
         export_default_name = self._device_prefixed_name(preset_name)
 
         # Use the same dialog pattern as ReviewPage export
@@ -3302,17 +3334,52 @@ class MainWindow(QMainWindow):
             export_path = export_path_or_none
 
         self._status_banner.show_progress(f"Exporting '{preset_name}'...")
-        self._primary_workflows.export_preset(
-            preset_name, preset_type, export_path, is_custom=is_custom
+        self._primary_workflows.export_presets(
+            [(preset_name, preset_type, export_path, is_custom)]
         )
         logger.info("Preset export requested: %s -> %s", preset_name, export_path)
+
+    def _export_presets_to_folder(self, items: list[Any]) -> None:
+        """Multi-item export: one destination folder picked once, each
+        preset auto-named inside it from its own device-prefixed name (no
+        per-file dialog -- picking N filenames one at a time doesn't scale,
+        and Copy/Delete don't ask per-item either)."""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Export Presets To Folder",
+            self._settings.rew_folder or str(Path.home()),
+        )
+        if not folder:
+            logger.debug("Multi-preset export cancelled")
+            return
+
+        requests = [
+            (
+                getattr(item, "name", ""),
+                getattr(item, "preset_type", "PEQ"),
+                str(
+                    Path(folder)
+                    / f"{self._device_prefixed_name(getattr(item, 'name', ''))}.txt"
+                ),
+                getattr(item, "is_custom", False),
+            )
+            for item in items
+        ]
+        self._status_banner.show_progress(f"Exporting {len(requests)} preset(s)...")
+        self._primary_workflows.export_presets(requests)
+        logger.info(
+            "Batch preset export requested: %d preset(s) -> %s", len(requests), folder
+        )
 
     @Slot(list)
     def _on_preset_save_requested(self, items: list[Any]) -> None:
         """Handle PresetsDeviceView "Save to My Presets" for selected items.
 
         Reads filters from device for each selected item and saves to local
-        profile repository.
+        profile repository -- every selected item, not just the first
+        (#165c follow-up). No dialog needed regardless of selection size:
+        the saved name is always auto-derived from the device name, same as
+        the single-item case always was.
 
         Args:
             items: List of PresetItem objects selected for saving.
@@ -3323,19 +3390,26 @@ class MainWindow(QMainWindow):
         if not self._confirm_preset_preview(items):
             return
 
-        item = items[0]
-        preset_name = getattr(item, "name", "")
-        preset_type = getattr(item, "preset_type", "PEQ")
-        is_custom = getattr(item, "is_custom", False)
-        # Device-prefixed only for the locally-saved Profile's name --
-        # preset_name itself stays exactly as the device reports it, since
-        # it's also the on-device lookup key _do_preset_save reads with.
-        saved_name = self._device_prefixed_name(preset_name)
-        self._status_banner.show_progress(f"Saving '{preset_name}' to My Presets...")
-        self._primary_workflows.save_preset(
-            preset_name, preset_type, saved_name, is_custom=is_custom
-        )
-        logger.info("Preset save requested: %s", [i.name for i in items])
+        requests = [
+            (
+                getattr(item, "name", ""),
+                getattr(item, "preset_type", "PEQ"),
+                # Device-prefixed only for the locally-saved Profile's name --
+                # preset_name itself stays exactly as the device reports it,
+                # since it's also the on-device lookup key the read uses.
+                self._device_prefixed_name(getattr(item, "name", "")),
+                getattr(item, "is_custom", False),
+            )
+            for item in items
+        ]
+        if len(requests) == 1:
+            self._status_banner.show_progress(f"Saving '{requests[0][0]}' to My Presets...")
+        else:
+            self._status_banner.show_progress(
+                f"Saving {len(requests)} preset(s) to My Presets..."
+            )
+        self._primary_workflows.save_presets(requests)
+        logger.info("Preset save requested: %s", [name for name, *_ in requests])
 
     def _format_preset_names(self, items: list[Any]) -> str:
         """Bullet-list "Name (Type)" for each item, shared by every preset

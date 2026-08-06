@@ -82,6 +82,13 @@ profiles stored directly on your WiiM device. From here you can:
 - **Copy to another device** — Push the preset to one or more other WiiM
   devices on your network
 
+You can select multiple presets at once (ctrl+click, shift+click, or select
+all) and all three actions above apply to the whole selection — Export
+downloads one file per preset (prompting once for a destination folder
+rather than a filename when more than one is selected), Save creates one
+local copy per preset, and Copy pushes every selected preset to each chosen
+target device. Delete works the same way, removing every selected preset.
+
 To bring a device preset into the wizard instead, use the Filters step's
 **Device** dropdown option — see "Loading a Preset" above; the same merged
 PEQ/RoomFit list appears there, selectable from within the wizard itself.
