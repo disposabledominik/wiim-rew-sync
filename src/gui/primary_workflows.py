@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -952,18 +952,44 @@ class PrimaryWorkflowManager(QObject):
         message, a deliberate consistency trade-off (#165c follow-up) with
         every other batch action in this codebase.
         """
+        succeeded, failed = await self._run_batch_preset_requests(
+            requests, self._do_preset_export, "Export"
+        )
+        self.presets_export_complete.emit(succeeded, failed)
+
+    async def _run_batch_preset_requests(
+        self,
+        requests: list[tuple[str, str, str, bool]],
+        worker: Callable[..., Awaitable[None]],
+        action: str,
+    ) -> tuple[int, int]:
+        """Sequentially run `worker(preset_name, preset_type, target, is_custom=...)`
+        over every (preset_name, preset_type, target, is_custom) request,
+        tolerating per-item failure. Shared by _do_export_presets and
+        _do_save_presets -- both loop over the identical request shape and
+        only differ in which per-item worker they call and the log/signal
+        labels, so the loop itself lives here once (see _do_export_presets's
+        docstring for why sequential, not concurrent, and why a failure
+        doesn't abort the rest).
+
+        Args:
+            requests: (preset_name, preset_type, target, is_custom) tuples.
+            worker: Async per-item callable, e.g. self._do_preset_export.
+            action: Verb used in the per-item failure log line ("Export"/"Save").
+
+        Returns:
+            (succeeded, failed) counts for the caller to emit on its own signal.
+        """
         succeeded = 0
         failed = 0
-        for preset_name, preset_type, path, is_custom in requests:
+        for preset_name, preset_type, target, is_custom in requests:
             try:
-                await self._do_preset_export(
-                    preset_name, preset_type, path, is_custom=is_custom
-                )
+                await worker(preset_name, preset_type, target, is_custom=is_custom)
                 succeeded += 1
             except Exception:
-                logger.exception("Export preset '%s' failed", preset_name)
+                logger.exception("%s preset '%s' failed", action, preset_name)
                 failed += 1
-        self.presets_export_complete.emit(succeeded, failed)
+        return succeeded, failed
 
     async def _do_preset_export(
         self, preset_name: str, preset_type: str, path: str, *, is_custom: bool = False
@@ -1064,17 +1090,9 @@ class PrimaryWorkflowManager(QObject):
         the rest, even a "batch" of one -- for the same reasons as
         _do_export_presets above.
         """
-        succeeded = 0
-        failed = 0
-        for preset_name, preset_type, saved_name, is_custom in requests:
-            try:
-                await self._do_preset_save(
-                    preset_name, preset_type, saved_name, is_custom=is_custom
-                )
-                succeeded += 1
-            except Exception:
-                logger.exception("Save preset '%s' failed", preset_name)
-                failed += 1
+        succeeded, failed = await self._run_batch_preset_requests(
+            requests, self._do_preset_save, "Save"
+        )
         self.presets_save_complete.emit(succeeded, failed)
 
     async def _do_preset_save(

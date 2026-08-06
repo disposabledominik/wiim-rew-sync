@@ -745,6 +745,101 @@ class TestFiltersPage:
 
         assert received == []
 
+    def test_set_peq_unavailable_clears_peq_items(self, qtbot) -> None:
+        """Code-review round (2026-08-06): set_peq_unavailable() -- forwarded
+        from PrimaryWorkflowManager.peq_presets_unavailable alongside
+        PresetsDeviceView's own handler -- must clear the Device panel's
+        cached PEQ items too, or a device that stops reporting profile
+        enumeration support would still show the previous device's PEQ
+        presets as loadable."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.set_peq_presets(
+            [PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="Preset A",
+        )
+        assert page._device_list.count() == 1
+
+        page.set_peq_unavailable()
+
+        assert page._device_peq_items == []
+        assert page._device_active_peq_name is None
+        assert page._device_list.count() == 0
+
+    def test_set_roomfit_hidden_clears_roomfit_items(self, qtbot) -> None:
+        """Code-review round (2026-08-06): set_roomfit_hidden() -- forwarded
+        from PrimaryWorkflowManager.roomfit_profiles_hidden -- must clear the
+        Device panel's cached RoomFit items, matching PresetsDeviceView's own
+        set_roomfit_hidden()."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.set_roomfit_profiles(
+            [PresetItem(name="Profile A", channel_mode="Stereo", preset_type="RoomFit")],
+            active_name="Profile A",
+        )
+        assert page._device_list.count() == 1
+
+        page.set_roomfit_hidden()
+
+        assert page._device_roomfit_items == []
+        assert page._device_active_roomfit_name == ""
+        assert page._device_list.count() == 0
+
+    def test_clear_device_presets_empties_merged_list(self, qtbot) -> None:
+        """Code-review round (2026-08-06): clear_device_presets() -- called by
+        MainWindow._on_device_selected on a device switch -- resets both the
+        PEQ and RoomFit caches, since the Device panel is a merged list and
+        neither device-scoped cache belongs to the newly connected device."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page.set_peq_presets(
+            [PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="Preset A",
+        )
+        page.set_roomfit_profiles(
+            [PresetItem(name="Profile A", channel_mode="Stereo", preset_type="RoomFit")],
+            active_name="Profile A",
+        )
+        assert page._device_list.count() == 2
+
+        page.clear_device_presets()
+
+        assert page._device_peq_items == []
+        assert page._device_roomfit_items == []
+        assert page._device_active_peq_name is None
+        assert page._device_active_roomfit_name == ""
+        assert page._device_list.count() == 0
+
+    def test_clear_device_presets_refetches_when_device_panel_active(self, qtbot) -> None:
+        """clear_device_presets() re-emits device_presets_requested when the
+        combo is currently on "Device" -- without this, a device switch while
+        already viewing that panel would leave it empty until the user
+        manually flips the "Import source" dropdown away and back."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        page._source_combo.setCurrentIndex(_DEVICE_INDEX)
+
+        with qtbot.waitSignal(page.device_presets_requested, timeout=1000):
+            page.clear_device_presets()
+
+    def test_clear_device_presets_does_not_refetch_when_other_panel_active(
+        self, qtbot
+    ) -> None:
+        """clear_device_presets() must not emit device_presets_requested when
+        a different source panel is showing -- there's nothing to refresh on
+        screen, and it would trigger an unnecessary device fetch."""
+        from src.gui.wizard_controller import FiltersSource
+
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        assert page._current_source == FiltersSource.REW_FILE
+
+        received: list[None] = []
+        page.device_presets_requested.connect(lambda: received.append(None))
+        page.clear_device_presets()
+
+        assert received == []
+
     # ------------------------------------------------------------------
     # Local Library panel
     # ------------------------------------------------------------------

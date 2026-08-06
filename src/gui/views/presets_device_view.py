@@ -88,6 +88,23 @@ def build_custom_peq_item(channel_mode: str) -> PresetItem:
     )
 
 
+def build_peq_rows(
+    items: list[PresetItem], active_name: str | None, active_channel_mode: str
+) -> list[tuple[PresetItem, bool]]:
+    """PEQ items paired with an is-active flag, with a synthetic Custom row
+    prepended when active_name == "" (the PEQ fetch resolved and found no
+    active preset name -- see build_custom_peq_item). Shared by
+    PresetsDeviceView and FiltersPage's merged Device list so the "when does
+    Custom appear" rule can't drift between the two call sites (#165c).
+    """
+    rows: list[tuple[PresetItem, bool]] = [
+        (item, item.name == active_name) for item in items
+    ]
+    if active_name == "":
+        rows.insert(0, (build_custom_peq_item(active_channel_mode), True))
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Main view widget
 # ---------------------------------------------------------------------------
@@ -426,11 +443,9 @@ class PresetsDeviceView(QWidget):
         # Show search field when > 10 items (Req 10.9)
         self._peq_search.setVisible(len(self._peq_items) > 10)
 
-        rows: list[tuple[PresetItem, bool]] = [
-            (item, item.name == self._active_peq_name) for item in self._peq_items
-        ]
-        if self._active_peq_name == "":
-            rows.insert(0, (build_custom_peq_item(self._active_peq_channel_mode), True))
+        rows = build_peq_rows(
+            self._peq_items, self._active_peq_name, self._active_peq_channel_mode
+        )
 
         for item, is_active in rows:
             if filter_text and filter_text.lower() not in item.name.lower():

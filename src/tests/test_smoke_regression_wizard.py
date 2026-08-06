@@ -468,6 +468,28 @@ class TestIssue41DeviceSelectResetsFlow:
         assert state.filters_r == []
         assert state.filters == []
 
+    def test_device_switch_clears_filters_page_device_cache(self, window) -> None:
+        """Code-review round (2026-08-06): FiltersPage's own Device-panel
+        cache (_device_peq_items/_device_roomfit_items/_device_active_*_name)
+        is separate from WizardState and wasn't cleared by
+        clear_device_scoped_state() -- browsing back to the Filters step's
+        Device panel after switching devices would keep showing (and let the
+        user load) the previous device's presets under names that may not
+        exist on the newly connected device."""
+        from src.gui.views.presets_device_view import PresetItem
+
+        window._on_device_selected("192.168.1.100")
+        window._filters_page.set_peq_presets(
+            [PresetItem(name="Old Preset", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="Old Preset",
+        )
+        assert window._filters_page._device_peq_items != []
+
+        window._on_device_selected("192.168.1.200")
+
+        assert window._filters_page._device_peq_items == []
+        assert window._filters_page._device_active_peq_name is None
+
     def test_device_switch_resets_filters_page_channel_mode_radio(self, window) -> None:
         """PR #19 review follow-up: FiltersPage keeps its own Stereo/L-R radio
         selection independent of state.channel_mode (it's the source of truth

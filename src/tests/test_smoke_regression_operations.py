@@ -1164,6 +1164,39 @@ class TestPresets:
         assert window._presets_device_view._peq_list.count() == 1
         assert window._presets_device_view._roomfit_list.count() == 1
 
+    # --- Code-review round (2026-08-06): unavailable/hidden forwarding ---
+
+    def test_peq_presets_unavailable_forwards_to_both_views(self, window) -> None:
+        """_on_peq_presets_unavailable must clear FiltersPage's Device panel
+        too, not just PresetsDeviceView -- both are consumers of
+        PrimaryWorkflowManager.peq_presets_unavailable, and before this fix
+        only PresetsDeviceView was kept in sync."""
+        window._filters_page.set_peq_presets(
+            [PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="Preset A",
+        )
+        assert window._filters_page._device_peq_items != []
+
+        window._on_peq_presets_unavailable()
+
+        assert window._filters_page._device_peq_items == []
+        assert window._presets_device_view._peq_items == []
+
+    def test_roomfit_profiles_hidden_forwards_to_both_views(self, window) -> None:
+        """_on_roomfit_profiles_hidden must clear FiltersPage's Device panel
+        too, not just PresetsDeviceView -- same gap as
+        test_peq_presets_unavailable_forwards_to_both_views, for RoomFit."""
+        window._filters_page.set_roomfit_profiles(
+            [PresetItem(name="Profile A", channel_mode="Stereo", preset_type="RoomFit")],
+            active_name="Profile A",
+        )
+        assert window._filters_page._device_roomfit_items != []
+
+        window._on_roomfit_profiles_hidden()
+
+        assert window._filters_page._device_roomfit_items == []
+        assert window._presets_device_view._roomfit_items == []
+
     # --- Issue #22: _do_list_presets fetches both PEQ + RoomFit ---
 
     def test_issue22_do_list_presets_fetches_both(self, window) -> None:

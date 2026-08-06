@@ -54,7 +54,7 @@ from src.gui.constants import (
     SPACING_SM,
 )
 from src.gui.views.my_presets_view import _PresetItemWidget
-from src.gui.views.presets_device_view import PresetItem, build_custom_peq_item
+from src.gui.views.presets_device_view import PresetItem, build_peq_rows
 from src.gui.views.rew_pull_view import RewPullView
 from src.gui.wizard_controller import FiltersSource
 from src.models.profile import Profile
@@ -290,6 +290,44 @@ class FiltersPage(QWidget):
         """
         self._local_profiles = list(profiles)
         self._populate_local_list()
+
+    def set_peq_unavailable(self) -> None:
+        """Clear the Device panel's PEQ presets when the device doesn't
+        support profile enumeration -- mirrors PresetsDeviceView's
+        set_peq_unavailable() so both consumers of
+        PrimaryWorkflowManager.peq_presets_unavailable stay in sync."""
+        self._device_peq_items = []
+        self._device_active_peq_name = None
+        self._populate_device_list()
+
+    def set_roomfit_hidden(self) -> None:
+        """Clear the Device panel's RoomFit profiles when the device has no
+        RoomFit support -- mirrors PresetsDeviceView's set_roomfit_hidden()
+        so both consumers of PrimaryWorkflowManager.roomfit_profiles_hidden
+        stay in sync."""
+        self._device_roomfit_items = []
+        self._device_active_roomfit_name = ""
+        self._populate_device_list()
+
+    def clear_device_presets(self) -> None:
+        """Clear the Device panel's cached PEQ/RoomFit lists after a device
+        switch, and refetch immediately if the panel is currently showing.
+
+        Without this, browsing back to the Filters step's Device panel after
+        switching devices on the Connect step would keep showing the
+        previous device's presets/profiles -- the combo's currentIndexChanged
+        (which normally triggers a refetch, see _on_source_index_changed)
+        never fires just from revisiting an already-selected wizard step, so
+        the stale list would otherwise persist until the user manually
+        flips the "Import source" dropdown away and back.
+        """
+        self._device_peq_items = []
+        self._device_active_peq_name = None
+        self._device_roomfit_items = []
+        self._device_active_roomfit_name = ""
+        self._populate_device_list()
+        if self._current_source == FiltersSource.DEVICE:
+            self.device_presets_requested.emit()
 
     def show_warnings(self, warnings: list[str]) -> None:
         """Display validation warnings inline with a continue button."""
@@ -784,17 +822,19 @@ class FiltersPage(QWidget):
         device" button emits, rather than device_item_selected.
         """
         self._device_list.clear()
+        peq_rows = build_peq_rows(
+            self._device_peq_items,
+            self._device_active_peq_name,
+            self._device_active_peq_channel_mode,
+        )
         combined: list[tuple[PresetItem, bool, object]] = [
-            (item, item.name == self._device_active_peq_name, item)
-            for item in self._device_peq_items
+            (item, is_active, _CUSTOM_ROW_MARKER if item.is_custom else item)
+            for item, is_active in peq_rows
         ]
         combined += [
             (item, item.name == self._device_active_roomfit_name, item)
             for item in self._device_roomfit_items
         ]
-        if self._device_active_peq_name == "":
-            custom_item = build_custom_peq_item(self._device_active_peq_channel_mode)
-            combined.insert(0, (custom_item, True, _CUSTOM_ROW_MARKER))
         self._device_empty_label.setVisible(not combined)
         self._device_list.setVisible(bool(combined))
         for display_item, is_active, user_data in combined:

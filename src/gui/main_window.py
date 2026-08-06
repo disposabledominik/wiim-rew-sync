@@ -874,6 +874,12 @@ class MainWindow(QMainWindow):
             state.clear_device_scoped_state()
             self._wizard_controller.set_flow_type(FlowType.PEQ)
             state.selected_device = device_ip
+            # The Filters step's Device panel caches the previous device's
+            # PEQ/RoomFit lists independently of WizardState -- clear it too,
+            # or browsing back to that panel could show (and let the user
+            # load) presets by a name that belongs to the old device, not
+            # the newly connected one.
+            self._filters_page.clear_device_presets()
             # FiltersPage keeps its own Stereo/L-R radio selection independent
             # of state.channel_mode (it's the source of truth for a fresh
             # import, not a mirror of it) -- without this, switching devices
@@ -2376,8 +2382,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_peq_presets_unavailable(self) -> None:
-        """Forward PrimaryWorkflowManager.peq_presets_unavailable into the view."""
+        """Forward PrimaryWorkflowManager.peq_presets_unavailable into both consuming views."""
         self._presets_device_view.set_peq_unavailable()
+        self._filters_page.set_peq_unavailable()
 
     @Slot(list, str)
     def _on_roomfit_profiles_ready(self, items: list[Any], active_name: str) -> None:
@@ -2387,8 +2394,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_roomfit_profiles_hidden(self) -> None:
-        """Forward PrimaryWorkflowManager.roomfit_profiles_hidden into the view."""
+        """Forward PrimaryWorkflowManager.roomfit_profiles_hidden into both consuming views."""
         self._presets_device_view.set_roomfit_hidden()
+        self._filters_page.set_roomfit_hidden()
 
     @Slot(list, str, bool)
     def _on_name_profiles_ready(
