@@ -1199,11 +1199,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_preset_preview([item]):
             return
 
-        # No Stereo/L-R toggle for this source: channel mode is already
-        # known from the selected preset/profile itself.
-        self._wizard_controller.state.channel_mode = coerce_channel_mode(
-            getattr(item, "channel_mode", ChannelMode.STEREO)
-        )
+        self._apply_channel_mode_from_item(item)
         self._status_banner.show_progress(f"Loading preset '{name}'...")
         if preset_type == "RoomFit":
             self._wizard_controller.state.roomfit_profile_name = name
@@ -1223,12 +1219,21 @@ class MainWindow(QMainWindow):
             return
 
         logger.info("Local profile selected: %s", getattr(profile, "name", "unknown"))
-        # No Stereo/L-R toggle for this source: channel mode is already
-        # known from the selected profile itself.
-        self._wizard_controller.state.channel_mode = coerce_channel_mode(
-            getattr(profile, "channel_mode", ChannelMode.STEREO)
-        )
+        self._apply_channel_mode_from_item(profile)
         self._secondary_workflows.recall_profile(profile)
+
+    def _apply_channel_mode_from_item(self, item: object) -> None:
+        """Set state.channel_mode from a selected PresetItem/Profile's own
+        channel_mode field.
+
+        Shared by _on_device_item_selected and _on_local_profile_selected --
+        neither the Device panel nor the Local Library panel has a
+        Stereo/L-R toggle of its own, since the channel mode is already
+        known from the selected preset/profile itself.
+        """
+        self._wizard_controller.state.channel_mode = coerce_channel_mode(
+            getattr(item, "channel_mode", ChannelMode.STEREO)
+        )
 
     @Slot(bool)
     def _on_dry_run_toggled(self, enabled: bool) -> None:
