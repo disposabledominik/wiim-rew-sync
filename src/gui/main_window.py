@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QMainWindow,
     QMenuBar,
     QSizePolicy,
@@ -3030,6 +3031,11 @@ class MainWindow(QMainWindow):
         if not items:
             return
 
+        renamed_items = self._prompt_custom_item_name(items)
+        if renamed_items is None:
+            return  # user cancelled the name prompt
+        items = renamed_items
+
         # Get current device IP to exclude from picker
         state = self._wizard_controller.state
         current_ip = state.selected_device or ""
@@ -3076,6 +3082,42 @@ class MainWindow(QMainWindow):
         self._secondary_workflows.copy_presets_to_devices(
             items, selected_devices, target_source, target_source
         )
+
+    def _prompt_custom_item_name(self, items: list[Any]) -> list[Any] | None:
+        """If `items` includes the synthetic "Custom" row (#165c), ask the
+        user for a real name to save it under on the target device(s) --
+        "Custom" itself isn't a name the device assigned, unlike every other
+        item here. Returns `items` unchanged (same list, not a copy) when no
+        custom item is present, a new list with the custom item renamed
+        (its `is_custom` flag preserved, since that still drives the
+        *source*-side read in SecondaryWorkflowManager) if the user
+        confirms, or None if the prompt is cancelled -- distinct from an
+        empty list, which the caller would otherwise treat as "nothing to
+        copy" rather than "cancelled."
+        """
+        for i, item in enumerate(items):
+            if not getattr(item, "is_custom", False):
+                continue
+            from src.gui.views.presets_device_view import PresetItem
+
+            new_name, ok = QInputDialog.getText(
+                self,
+                "Name This Configuration",
+                "This device configuration isn't saved under a name yet. "
+                "Enter a name to save it as on the target device:",
+            )
+            new_name = new_name.strip()
+            if not ok or not new_name:
+                return None
+            renamed = items[:]
+            renamed[i] = PresetItem(
+                name=new_name,
+                channel_mode=item.channel_mode,
+                preset_type=item.preset_type,
+                is_custom=True,
+            )
+            return renamed
+        return items
 
     @Slot(object)
     def _on_local_preset_copy_to_device_requested(self, profile: object) -> None:
@@ -3224,6 +3266,7 @@ class MainWindow(QMainWindow):
         preset_name = getattr(item, "name", "")
         preset_type = getattr(item, "preset_type", "PEQ")
         channel_mode = getattr(item, "channel_mode", "Stereo")
+        is_custom = getattr(item, "is_custom", False)
 
         # Device-prefixed only for the destination filename -- preset_name
         # itself stays exactly as the device reports it, since it's also the
@@ -3259,7 +3302,9 @@ class MainWindow(QMainWindow):
             export_path = export_path_or_none
 
         self._status_banner.show_progress(f"Exporting '{preset_name}'...")
-        self._primary_workflows.export_preset(preset_name, preset_type, export_path)
+        self._primary_workflows.export_preset(
+            preset_name, preset_type, export_path, is_custom=is_custom
+        )
         logger.info("Preset export requested: %s -> %s", preset_name, export_path)
 
     @Slot(list)
@@ -3281,12 +3326,15 @@ class MainWindow(QMainWindow):
         item = items[0]
         preset_name = getattr(item, "name", "")
         preset_type = getattr(item, "preset_type", "PEQ")
+        is_custom = getattr(item, "is_custom", False)
         # Device-prefixed only for the locally-saved Profile's name --
         # preset_name itself stays exactly as the device reports it, since
         # it's also the on-device lookup key _do_preset_save reads with.
         saved_name = self._device_prefixed_name(preset_name)
         self._status_banner.show_progress(f"Saving '{preset_name}' to My Presets...")
-        self._primary_workflows.save_preset(preset_name, preset_type, saved_name)
+        self._primary_workflows.save_preset(
+            preset_name, preset_type, saved_name, is_custom=is_custom
+        )
         logger.info("Preset save requested: %s", [i.name for i in items])
 
     def _format_preset_names(self, items: list[Any]) -> str:
@@ -3332,11 +3380,19 @@ class MainWindow(QMainWindow):
     def _preset_preview_warning_html(self, items: list[Any]) -> str | None:
         """Build the warning body for `_confirm_preset_preview()` (below), and
         for `DevicePickerDialog`'s embedded warning in the copy-to-device
-        flow. Returns None when there's nothing to warn about (all-RoomFit
-        selection) -- see `_confirm_preset_preview()`'s docstring for why
-        RoomFit is excluded.
+        flow. Returns None when there's nothing to warn about (all-RoomFit,
+        or the synthetic "Custom" row, selection) -- see
+        `_confirm_preset_preview()`'s docstring for why RoomFit is excluded;
+        "Custom" (#165c) is excluded for the same reason a live read is
+        preferred over the named-preset path in the first place -- it's
+        already live, so reading it never "temporarily activates" anything.
         """
-        peq_items = [i for i in items if getattr(i, "preset_type", "PEQ") != "RoomFit"]
+        peq_items = [
+            i
+            for i in items
+            if getattr(i, "preset_type", "PEQ") != "RoomFit"
+            and not getattr(i, "is_custom", False)
+        ]
         if not peq_items:
             return None
         names_html = self._html_bullet_list(peq_items)

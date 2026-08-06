@@ -103,6 +103,18 @@ def _setup_device(window) -> MagicMock:
         return await mock_adapter.read_peq_preset_preview(source_name, preset_name)
 
     mock_adapter.read_preset_preview = AsyncMock(side_effect=_dispatch_preview)
+
+    async def _dispatch_preview_or_live(
+        preset_type: str, source_name: str, preset_name: str, *, is_custom: bool = False
+    ):
+        # Mirrors WiiMAdapter.read_preset_preview_or_live()'s real dispatch
+        # (#165c) -- a plain read_peq() for the synthetic "Custom" item,
+        # otherwise the same read_preset_preview() dispatch above.
+        if is_custom:
+            return await mock_adapter.read_peq(source_name)
+        return await _dispatch_preview(preset_type, source_name, preset_name)
+
+    mock_adapter.read_preset_preview_or_live = AsyncMock(side_effect=_dispatch_preview_or_live)
     window._wiim_adapter = mock_adapter
     window._primary_workflows.set_current_adapter(mock_adapter)
     # _do_undo_roomfit/_do_undo_multi_source now live on SecondaryWorkflowManager
@@ -1259,7 +1271,9 @@ class TestPresets:
             window._presets_device_view.export_requested.emit([item])
 
         mock_progress.assert_called_once_with("Exporting 'Movie Night'...")
-        mock_export_workflow.assert_called_once_with("Movie Night", "PEQ", "/tmp/movie-night.txt")
+        mock_export_workflow.assert_called_once_with(
+            "Movie Night", "PEQ", "/tmp/movie-night.txt", is_custom=False
+        )
         mock_run.assert_called_once()
 
     def test_preset_export_seeds_device_prefixed_filename(self, window) -> None:
@@ -1306,8 +1320,149 @@ class TestPresets:
             window._presets_device_view.save_to_my_presets.emit([item])
 
         mock_progress.assert_called_once_with("Saving 'Movie Night' to My Presets...")
-        mock_save_workflow.assert_called_once_with("Movie Night", "PEQ", "WiiM - Movie Night")
+        mock_save_workflow.assert_called_once_with(
+            "Movie Night", "PEQ", "WiiM - Movie Night", is_custom=False
+        )
         mock_run.assert_called_once()
+
+    # --- #165c: Export/Save/Copy on the synthetic "Custom" row ---
+
+    def test_export_custom_item_reads_live_not_preview(self, window) -> None:
+        """Exporting the synthetic "Custom" row passes is_custom=True through
+        to _do_preset_export -- and, since it's already live, skips the
+        "this will briefly change what's playing" preview-warning dialog
+        entirely (no WarningConfirmDialog call)."""
+        item = PresetItem(
+            name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
+        )
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+            ) as mock_warning,
+            patch(
+                "src.gui.main_window.QFileDialog.getSaveFileName",
+                return_value=("/tmp/custom.txt", ""),
+            ),
+            patch.object(
+                window._primary_workflows, "_do_preset_export", return_value=object()
+            ) as mock_export_workflow,
+            patch.object(window._bridge, "run_async", side_effect=close_coroutine_tree),
+        ):
+            window._presets_device_view.export_requested.emit([item])
+
+        mock_warning.assert_not_called()
+        mock_export_workflow.assert_called_once_with(
+            "Custom", "PEQ", "/tmp/custom.txt", is_custom=True
+        )
+
+    def test_save_custom_item_reads_live_not_preview(self, window) -> None:
+        """Saving the synthetic "Custom" row passes is_custom=True through to
+        _do_preset_save, and skips the preview-warning dialog the same way
+        export does."""
+        item = PresetItem(
+            name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
+        )
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+            ) as mock_warning,
+            patch.object(
+                window._primary_workflows, "_do_preset_save", return_value=object()
+            ) as mock_save_workflow,
+            patch.object(window._bridge, "run_async", side_effect=close_coroutine_tree),
+        ):
+            window._presets_device_view.save_to_my_presets.emit([item])
+
+        mock_warning.assert_not_called()
+        mock_save_workflow.assert_called_once_with(
+            "Custom", "PEQ", "WiiM - Custom", is_custom=True
+        )
+
+    def test_copy_custom_item_prompts_for_name_and_renames(self, window) -> None:
+        """Copying the synthetic "Custom" row prompts for a real name (it
+        isn't a device-assigned one, unlike every other copyable item) and
+        passes the renamed item -- is_custom still True, so the source-side
+        read stays a plain live read -- through to copy_presets_to_devices."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        item = PresetItem(
+            name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
+        )
+
+        with (
+            patch(
+                "src.gui.main_window.QInputDialog.getText",
+                return_value=("Living Room Snapshot", True),
+            ) as mock_prompt,
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=[MagicMock(ip="192.168.1.200")],
+            ),
+            patch.object(
+                window._secondary_workflows, "copy_presets_to_devices"
+            ) as mock_copy,
+        ):
+            window._on_copy_to_device_requested([item])
+
+        mock_prompt.assert_called_once()
+        mock_copy.assert_called_once()
+        copied_items = mock_copy.call_args[0][0]
+        assert len(copied_items) == 1
+        assert copied_items[0].name == "Living Room Snapshot"
+        assert copied_items[0].is_custom is True
+
+    def test_copy_custom_item_cancelled_prompt_aborts(self, window) -> None:
+        """Cancelling the name prompt aborts the whole copy -- no device
+        picker, no dispatch -- same "declined" contract as cancelling the
+        device picker itself (#166)."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        item = PresetItem(
+            name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
+        )
+
+        with (
+            patch(
+                "src.gui.main_window.QInputDialog.getText", return_value=("", False)
+            ),
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices"
+            ) as mock_picker,
+            patch.object(window._secondary_workflows, "copy_presets_to_devices") as mock_copy,
+        ):
+            window._on_copy_to_device_requested([item])
+
+        mock_picker.assert_not_called()
+        mock_copy.assert_not_called()
+
+    def test_copy_named_presets_skip_name_prompt(self, window) -> None:
+        """Copying ordinary named presets (no "Custom" row involved) never
+        touches the name prompt -- regression guard for the #165c addition."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
+
+        with (
+            patch("src.gui.main_window.QInputDialog.getText") as mock_prompt,
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=[MagicMock(ip="192.168.1.200")],
+            ),
+            patch.object(window._secondary_workflows, "copy_presets_to_devices") as mock_copy,
+        ):
+            window._on_copy_to_device_requested([item])
+
+        mock_prompt.assert_not_called()
+        mock_copy.assert_called_once()
+        assert mock_copy.call_args[0][0] == [item]
 
     def test_do_preset_save_reads_device_with_unprefixed_name(self, window) -> None:
         """_do_preset_save must read the on-device preset using the raw

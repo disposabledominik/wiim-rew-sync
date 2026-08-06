@@ -908,14 +908,17 @@ class PrimaryWorkflowManager(QObject):
     # Workflow: Preset Export/Save (Phase 3)
     # ------------------------------------------------------------------
 
-    def export_preset(self, preset_name: str, preset_type: str, path: str) -> None:
+    def export_preset(
+        self, preset_name: str, preset_type: str, path: str, *, is_custom: bool = False
+    ) -> None:
         """Trigger a device preset export to file; progress arrives via progress_update."""
         self._dispatch(
-            "preset_export", self._do_preset_export(preset_name, preset_type, path)
+            "preset_export",
+            self._do_preset_export(preset_name, preset_type, path, is_custom=is_custom),
         )
 
     async def _do_preset_export(
-        self, preset_name: str, preset_type: str, path: str
+        self, preset_name: str, preset_type: str, path: str, *, is_custom: bool = False
     ) -> None:
         """Read a preset from device and export as REW file.
 
@@ -925,6 +928,8 @@ class PrimaryWorkflowManager(QObject):
             preset_name: Name of the preset to export.
             preset_type: "PEQ" or "RoomFit".
             path: Destination file path.
+            is_custom: True for the synthetic "Custom" row (#165c) -- reads
+                the live PEQ config directly instead of a named preset.
 
         Raises:
             EmptyPresetFiltersError: if the preset resolves to zero filters
@@ -937,11 +942,12 @@ class PrimaryWorkflowManager(QObject):
         state = self._require_wizard_state()
         source_name = state.primary_source
 
-        # Read preset filters from device (previewing + restoring -- the
-        # confirmation dialog in _on_preset_export_requested already warned
-        # the user this briefly changes what's playing, see #166)
-        peq_settings = await wiim_adapter.read_preset_preview(
-            preset_type, source_name, preset_name
+        # Read preset filters from device -- a named preset previews+restores
+        # (the confirmation dialog in _on_preset_export_requested already
+        # warned the user this briefly changes what's playing, see #166);
+        # "Custom" is already live, so it's a plain read instead (#165c).
+        peq_settings = await wiim_adapter.read_preset_preview_or_live(
+            preset_type, source_name, preset_name, is_custom=is_custom
         )
 
         generator = REWGenerator()
@@ -989,14 +995,17 @@ class PrimaryWorkflowManager(QObject):
                     f"Exported '{preset_name}' to {file_path.name}"
                 )
 
-    def save_preset(self, preset_name: str, preset_type: str, saved_name: str) -> None:
+    def save_preset(
+        self, preset_name: str, preset_type: str, saved_name: str, *, is_custom: bool = False
+    ) -> None:
         """Trigger a device preset save to local storage; progress arrives via progress_update."""
         self._dispatch(
-            "preset_save", self._do_preset_save(preset_name, preset_type, saved_name)
+            "preset_save",
+            self._do_preset_save(preset_name, preset_type, saved_name, is_custom=is_custom),
         )
 
     async def _do_preset_save(
-        self, preset_name: str, preset_type: str, saved_name: str
+        self, preset_name: str, preset_type: str, saved_name: str, *, is_custom: bool = False
     ) -> None:
         """Read a preset from device and save to local profile repository.
 
@@ -1011,6 +1020,8 @@ class PrimaryWorkflowManager(QObject):
             saved_name: Name for the resulting local Profile (device-name
                 prefixed by the caller); independent of preset_name so the
                 device read always uses the real on-device preset name.
+            is_custom: True for the synthetic "Custom" row (#165c) -- reads
+                the live PEQ config directly instead of a named preset.
 
         Raises:
             EmptyPresetFiltersError: if the preset resolves to zero filters
@@ -1022,11 +1033,12 @@ class PrimaryWorkflowManager(QObject):
         state = self._require_wizard_state()
         source_name = state.primary_source
 
-        # Read preset filters from device (previewing + restoring -- the
-        # confirmation dialog in _on_preset_save_requested already warned the
-        # user this briefly changes what's playing, see #166)
-        peq_settings = await wiim_adapter.read_preset_preview(
-            preset_type, source_name, preset_name
+        # Read preset filters from device -- a named preset previews+restores
+        # (the confirmation dialog in _on_preset_save_requested already
+        # warned the user this briefly changes what's playing, see #166);
+        # "Custom" is already live, so it's a plain read instead (#165c).
+        peq_settings = await wiim_adapter.read_preset_preview_or_live(
+            preset_type, source_name, preset_name, is_custom=is_custom
         )
 
         # Determine channel mode and filter list

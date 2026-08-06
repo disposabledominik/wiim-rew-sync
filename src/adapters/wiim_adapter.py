@@ -994,6 +994,24 @@ class WiiMAdapter:
             return await self.read_roomfit_preset_preview(source_name, preset_name)
         return await self.read_peq_preset_preview(source_name, preset_name)
 
+    async def read_preset_preview_or_live(
+        self, preset_type: str, source_name: str, preset_name: str, *, is_custom: bool = False
+    ) -> PEQSettings:
+        """Read a preset's bands for export/save/copy, dispatching on whether
+        it's a saved preset or the live/unnamed "Custom" PEQ config (#165c).
+
+        A saved preset (is_custom=False) goes through read_preset_preview()
+        as before -- there's no other way to get its bands than briefly
+        loading it. The "Custom" row has no saved name to load in the first
+        place: its bands are already live, so a plain read_peq() gets them
+        directly, with no load/restore dance and no live-audio blip -- PEQ
+        only, since the synthetic "Custom" row is PEQ-only (see
+        presets_device_view.build_custom_peq_item).
+        """
+        if is_custom:
+            return await self.read_peq(source_name)
+        return await self.read_preset_preview(preset_type, source_name, preset_name)
+
     async def restore_roomfit_active_profile(
         self, original_name: str, current_name: str, *, context: str
     ) -> None:

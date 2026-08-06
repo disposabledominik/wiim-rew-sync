@@ -54,11 +54,19 @@ class PresetItem:
         name: Display name of the preset/profile.
         channel_mode: One of "Stereo", "L/R", or "Unknown".
         preset_type: Distinguishes PEQ presets from RoomFit profiles.
+        is_custom: True only for the synthetic "Custom" row (see
+            build_custom_peq_item) representing the device's live/unnamed
+            active PEQ config. Read at dispatch time to route actions that
+            need a real saved-preset name (e.g. Delete, or the source-side
+            read behind Export/Save/Copy) differently -- an intrinsic field
+            rather than a name comparison, so a real preset that happens to
+            also be named "Custom" is never confused with it.
     """
 
     name: str
     channel_mode: str = "Stereo"
     preset_type: Literal["PEQ", "RoomFit"] = "PEQ"
+    is_custom: bool = False
 
 
 CUSTOM_PEQ_NAME = "Custom"
@@ -75,7 +83,9 @@ def build_custom_peq_item(channel_mode: str) -> PresetItem:
     this state. Shared by PresetsDeviceView and FiltersPage's merged Device
     list so both surface it identically (#165c).
     """
-    return PresetItem(name=CUSTOM_PEQ_NAME, channel_mode=channel_mode, preset_type="PEQ")
+    return PresetItem(
+        name=CUSTOM_PEQ_NAME, channel_mode=channel_mode, preset_type="PEQ", is_custom=True
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -398,10 +408,13 @@ class PresetsDeviceView(QWidget):
         """Populate the PEQ list widget from stored items.
 
         Prepends a synthetic "Custom" row (see build_custom_peq_item) when
-        the live PEQ config on this source has no saved-preset name. That
-        row is marked non-selectable: the toolbar actions below (Export/
-        Save/Copy/Delete) are all keyed by preset name, and "Custom" has
-        none to operate on -- it's shown for visibility only (#165c).
+        the live PEQ config on this source has no saved-preset name.
+        Selectable like any other row -- Export/Save/Copy all work on it via
+        a plain live read instead of the named-preset preview/restore dance
+        (see WiiMAdapter.read_preset_preview_or_live). Delete is the
+        exception: _update_action_buttons() disables it whenever the
+        selection includes a custom item, since there's no saved preset to
+        delete (#165c).
 
         Args:
             filter_text: Optional filter string for search.
@@ -423,8 +436,6 @@ class PresetsDeviceView(QWidget):
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
             list_item = build_preset_list_item(item, is_active)
-            if item.name == CUSTOM_PEQ_NAME and is_active:
-                list_item.setFlags(list_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             self._peq_list.addItem(list_item)
 
         self._update_action_buttons()
@@ -475,14 +486,21 @@ class PresetsDeviceView(QWidget):
 
     @Slot()
     def _update_action_buttons(self) -> None:
-        """Enable/disable action buttons based on current selection."""
+        """Enable/disable action buttons based on current selection.
+
+        Delete is disabled whenever the synthetic "Custom" row (#165c) is
+        part of the selection -- there's no saved preset on the device to
+        delete, unlike Export/Save/Copy, which all work on it via a plain
+        live read (see build_custom_peq_item).
+        """
         selected = self._get_all_selected_items()
         has_selection = len(selected) > 0
+        has_custom = any(item.is_custom for item in selected)
 
         self._export_btn.setEnabled(has_selection)
         self._save_btn.setEnabled(has_selection)
         self._copy_btn.setEnabled(has_selection)
-        self._delete_btn.setEnabled(has_selection)
+        self._delete_btn.setEnabled(has_selection and not has_custom)
 
     # ------------------------------------------------------------------
     # Search/filter handlers

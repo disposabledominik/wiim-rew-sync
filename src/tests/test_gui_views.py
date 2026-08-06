@@ -209,7 +209,7 @@ class TestPresetsDeviceViewActiveHighlight:
     def test_empty_active_name_shows_custom_row(self, qtbot) -> None:
         """active_name="" (the device confirmed no saved preset matches the
         live config) prepends a synthetic "Custom" row, styled active and
-        non-selectable (#165c)."""
+        selectable like any other row (#165c)."""
         from PySide6.QtCore import Qt
 
         view = PresetsDeviceView()
@@ -225,20 +225,20 @@ class TestPresetsDeviceViewActiveHighlight:
         assert "[L/R]" in custom_item.text()
         assert "(active)" in custom_item.text()
         assert custom_item.font().bold()
-        assert not custom_item.flags() & Qt.ItemFlag.ItemIsSelectable
+        assert custom_item.flags() & Qt.ItemFlag.ItemIsSelectable
+        assert custom_item.data(Qt.ItemDataRole.UserRole).is_custom
 
-        # The real presets are unaffected -- neither is marked active.
+        # The real presets are unaffected -- neither is marked active or custom.
         for i in (1, 2):
             item = view._peq_list.item(i)
             assert "(active)" not in item.text()
-            assert item.flags() & Qt.ItemFlag.ItemIsSelectable
+            assert not item.data(Qt.ItemDataRole.UserRole).is_custom
 
-    def test_custom_row_cannot_be_selected_or_deleted(self, qtbot) -> None:
-        """The synthetic "Custom" row has no saved-preset name for Delete
-        (or Export/Save/Copy) to operate on -- Qt excludes non-selectable
-        items from selectedItems() even via select-all, so it can never
-        enter a batch action's selection regardless of how the user tries
-        to select it (#165c)."""
+    def test_custom_row_selectable_but_disables_delete(self, qtbot) -> None:
+        """The synthetic "Custom" row is selectable -- Export/Save/Copy all
+        work on it via a plain live read (#165c) -- but Delete is disabled
+        whenever it's part of the selection, since there's no saved preset
+        on the device to delete."""
         view = PresetsDeviceView()
         qtbot.addWidget(view)
         view.show()
@@ -247,17 +247,26 @@ class TestPresetsDeviceViewActiveHighlight:
         custom_item = view._peq_list.item(0)
         assert custom_item.text().startswith("Custom")
 
-        view._peq_list.selectAll()
-
-        # Qt's select-all skips non-selectable items -- only the two real
-        # presets end up selected, never the synthetic "Custom" row.
-        selected_texts = {item.text() for item in view._peq_list.selectedItems()}
-        assert len(selected_texts) == 2
-        assert not any(text.startswith("Custom") for text in selected_texts)
+        custom_item.setSelected(True)
 
         selected_items = view._get_all_selected_items()
-        assert all(item.name != "Custom" for item in selected_items)
-        assert view._delete_btn.isEnabled()  # enabled for the 2 real presets
+        assert len(selected_items) == 1
+        assert selected_items[0].is_custom
+        assert view._export_btn.isEnabled()
+        assert view._save_btn.isEnabled()
+        assert view._copy_btn.isEnabled()
+        assert not view._delete_btn.isEnabled()
+
+        # Selecting everything (Custom + the 2 real presets) still disables
+        # Delete -- a mixed batch delete can't operate on the custom item.
+        view._peq_list.selectAll()
+        assert len(view._get_all_selected_items()) == 3
+        assert not view._delete_btn.isEnabled()
+
+        # Deselecting Custom, leaving only real presets, re-enables Delete.
+        custom_item.setSelected(False)
+        assert all(not item.is_custom for item in view._get_all_selected_items())
+        assert view._delete_btn.isEnabled()
 
     def test_active_name_matching_nothing_styles_nothing(self, qtbot) -> None:
         """An active_name that doesn't match any item styles nothing (e.g. the

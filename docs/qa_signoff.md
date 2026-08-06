@@ -181,8 +181,14 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] There is no "Load" action here — loading a preset into the wizard happens via the Filters
   step's Device option (Test 12a)
 - [P] If the live PEQ config on the selected source doesn't match any saved preset, a "Custom" row
-  (WiiM Home's own term) appears at the top of the PEQ Presets list, marked "(active)" — it cannot
-  be selected, so Export/Save/Copy/Delete never apply to it
+  (WiiM Home's own term) appears at the top of the PEQ Presets list, marked "(active)"
+- [P] Selecting the "Custom" row and clicking Export or Save to My Presets works via a plain live
+  read — no "this will briefly activate on your device" confirmation dialog appears, since nothing
+  needs to temporarily switch
+- [P] Selecting the "Custom" row and clicking Copy to Another Device prompts for a name (it has no
+  device-assigned one) before opening the device picker; cancelling the name prompt aborts the copy
+- [P] Selecting the "Custom" row (alone, or together with real presets) disables Delete — there's no
+  saved preset on the device to delete
 
 ### Test 12a: Filters Step — Device Source
 - [P] On the Filters step, selecting "Device" from the dropdown shows a "Current configuration on

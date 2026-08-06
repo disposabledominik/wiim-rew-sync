@@ -504,14 +504,19 @@ class SecondaryWorkflowManager(QObject):
     # ------------------------------------------------------------------
 
     async def _read_preset_to_copy(
-        self, source_name: str, preset_name: str, preset_type: str
+        self, source_name: str, preset_name: str, preset_type: str, *, is_custom: bool = False
     ) -> tuple[list[CanonicalFilter], ChannelMode, PEQSettings]:
-        """Read+preview a preset from the currently connected (source) device.
+        """Read a preset from the currently connected (source) device.
 
-        Shared by both copy flows so the read/preview -- which briefly loads
-        the preset onto the source device's live DSP and restores it after,
-        see #166 -- happens exactly once per preset, not once per target
-        device it's copied to (#171).
+        Shared by every preset copied in a batch so the read -- which for a
+        named preset briefly loads it onto the source device's live DSP and
+        restores it after, see #166 -- happens exactly once per preset, not
+        once per target device it's copied to (#171).
+
+        Args:
+            is_custom: True for the synthetic "Custom" row (#165c) -- reads
+                the live PEQ config directly instead of a named preset, with
+                no preview/restore and no live-audio blip.
 
         Raises:
             EmptyPresetFiltersError: if the preset resolves to zero filters.
@@ -521,11 +526,11 @@ class SecondaryWorkflowManager(QObject):
         """
         assert self._current_adapter is not None
 
-        # Reading (previewing + restoring) -- the confirmation dialog shown
-        # before this is triggered already warned the user this briefly
-        # changes what's playing, see #166.
-        peq_settings = await self._current_adapter.read_preset_preview(
-            preset_type, source_name, preset_name
+        # Reading (previewing + restoring, for a named preset) -- the
+        # confirmation dialog shown before this is triggered already warned
+        # the user this briefly changes what's playing, see #166.
+        peq_settings = await self._current_adapter.read_preset_preview_or_live(
+            preset_type, source_name, preset_name, is_custom=is_custom
         )
         filters, channel_mode = extract_filters(peq_settings)
 
@@ -760,6 +765,7 @@ class SecondaryWorkflowManager(QObject):
         for item in items:
             preset_name = getattr(item, "name", "")
             preset_type = getattr(item, "preset_type", "PEQ")
+            is_custom = getattr(item, "is_custom", False)
             if not preset_name:
                 # Never attempted -- not a read failure, so it must not
                 # count toward n_items below either, or the batch-complete
@@ -771,7 +777,7 @@ class SecondaryWorkflowManager(QObject):
             self._bridge.progress_update.emit(f"Reading '{preset_name}'...")
             try:
                 filters, channel_mode, peq_settings = await self._read_preset_to_copy(
-                    source_name, preset_name, preset_type
+                    source_name, preset_name, preset_type, is_custom=is_custom
                 )
             except Exception:
                 logger.exception("Read preset '%s' for copy failed", preset_name)

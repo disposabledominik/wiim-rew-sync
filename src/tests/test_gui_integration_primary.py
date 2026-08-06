@@ -603,6 +603,7 @@ class TestPresetExport:
         manager._current_adapter = MagicMock(
             read_peq_preset_preview=AsyncMock(return_value=settings),
             read_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview_or_live=AsyncMock(return_value=settings),
         )
         path = tmp_path / "movie-night.txt"
 
@@ -625,6 +626,7 @@ class TestPresetExport:
         manager._current_adapter = MagicMock(
             read_peq_preset_preview=AsyncMock(return_value=settings),
             read_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview_or_live=AsyncMock(return_value=settings),
         )
 
         with pytest.raises(EmptyPresetFiltersError, match="has no filters to export"):
@@ -644,6 +646,7 @@ class TestPresetExport:
         manager._current_adapter = MagicMock(
             read_roomfit_preset_preview=AsyncMock(return_value=settings),
             read_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview_or_live=AsyncMock(return_value=settings),
         )
 
         with pytest.raises(EmptyPresetFiltersError, match="has no filters to export"):
@@ -673,6 +676,7 @@ class TestPresetSave:
         manager._current_adapter = MagicMock(
             read_peq_preset_preview=AsyncMock(return_value=settings),
             read_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview_or_live=AsyncMock(return_value=settings),
         )
 
         await manager._do_preset_save("Movie Night", "PEQ", "WiiM - Movie Night")
@@ -695,6 +699,7 @@ class TestPresetSave:
         manager._current_adapter = MagicMock(
             read_peq_preset_preview=AsyncMock(return_value=settings),
             read_preset_preview=AsyncMock(return_value=settings),
+            read_preset_preview_or_live=AsyncMock(return_value=settings),
         )
 
         with pytest.raises(EmptyPresetFiltersError, match="has no filters to save"):

@@ -95,11 +95,17 @@ actually playing before you export or overwrite anything.
 If the live PEQ config on the device doesn't match any saved preset — for
 example, after adjusting bands directly rather than loading a saved preset —
 a **Custom** row (the same term the WiiM Home app uses) appears at the top
-of the PEQ Presets list, marked "(active)." It's shown for visibility only:
-since it has no saved name, it can't be selected for Export, Save locally,
-Copy, or Delete. To bring that live config into the wizard, use the Filters
-step's "Current configuration on device" button, or select the equivalent
-"Custom" row shown there instead.
+of the PEQ Presets list, marked "(active)." Since it's already live, reading
+it for Export or Save to My Presets skips the usual "this will briefly
+activate on your device" confirmation entirely — there's nothing to
+temporarily switch to. Copy to Another Device also works, but since
+"Custom" isn't a name the device actually assigned, you'll be asked to
+enter a real name before it's saved on the target device. The one exception
+is **Delete** — it stays disabled whenever the Custom row is selected
+(alone or alongside other presets), since there's no saved preset on this
+device to delete. To bring that live config into the wizard instead, use
+the Filters step's "Current configuration on device" button, or select the
+equivalent "Custom" row shown there.
 
 Reading a **PEQ** preset's filters (for any of the three actions above, or
 when loading one via the Filters step's Device option) briefly switches your
