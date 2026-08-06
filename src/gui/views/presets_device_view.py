@@ -21,14 +21,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from src.gui.components.action_button import make_action_button
-from src.gui.components.list_item_style import apply_active_item_style
+from src.gui.components.list_item_style import build_preset_list_item
 from src.gui.components.page_layout import (
     ICON_NO_CONNECTION,
     build_centered_content,
@@ -37,7 +36,6 @@ from src.gui.components.page_layout import (
     make_page_title,
 )
 from src.gui.constants import (
-    LIST_ITEM_HEIGHT,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
@@ -61,6 +59,23 @@ class PresetItem:
     name: str
     channel_mode: str = "Stereo"
     preset_type: Literal["PEQ", "RoomFit"] = "PEQ"
+
+
+CUSTOM_PEQ_NAME = "Custom"
+
+
+def build_custom_peq_item(channel_mode: str) -> PresetItem:
+    """Synthetic PresetItem for the device's live/unnamed active PEQ config.
+
+    Shown whenever a PEQ preset fetch resolves with active_name == "" -- the
+    hardware-confirmed signal that the live config on this source was written
+    directly (EQSetLV2SourceBand) rather than loaded from a saved preset,
+    orphaning the device's own name association (docs/corrections.md,
+    2026-07-05). Named "Custom" to match WiiM Home's own terminology for
+    this state. Shared by PresetsDeviceView and FiltersPage's merged Device
+    list so both surface it identically (#165c).
+    """
+    return PresetItem(name=CUSTOM_PEQ_NAME, channel_mode=channel_mode, preset_type="PEQ")
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +111,10 @@ class PresetsDeviceView(QWidget):
 
         self._peq_items: list[PresetItem] = []
         self._roomfit_items: list[PresetItem] = []
-        self._active_peq_name: str = ""
+        # None = not yet known (distinct from "" = confirmed no active
+        # preset name) -- only "" shows the synthetic "Custom" row.
+        self._active_peq_name: str | None = None
+        self._active_peq_channel_mode: str = "Stereo"
         self._active_roomfit_name: str = ""
 
         self._setup_ui()
@@ -116,16 +134,29 @@ class PresetsDeviceView(QWidget):
             self._delete_btn,
         ]
 
-    def set_peq_presets(self, presets: list[PresetItem], active_name: str = "") -> None:
+    def set_peq_presets(
+        self,
+        presets: list[PresetItem],
+        active_name: str | None = None,
+        active_channel_mode: str = "Stereo",
+    ) -> None:
         """Populate the PEQ Presets section.
 
         Args:
             presets: List of PresetItem objects for PEQ presets.
             active_name: Name of the preset currently active on this source,
-                if any (#165c) -- highlighted distinctly from selection.
+                if known (#165c) -- highlighted distinctly from selection.
+                "" means the device confirmed the live config doesn't match
+                any saved preset -- shown as a synthetic "Custom" row
+                instead (see build_custom_peq_item). None (the default)
+                means this isn't known yet -- no highlight, no Custom row.
+            active_channel_mode: Channel mode of the live active config,
+                used only to label the synthetic "Custom" row when
+                active_name is "".
         """
         self._peq_items = list(presets)
         self._active_peq_name = active_name
+        self._active_peq_channel_mode = active_channel_mode
         self._show_content_state()
         self._populate_peq_list()
 
@@ -366,6 +397,12 @@ class PresetsDeviceView(QWidget):
     def _populate_peq_list(self, filter_text: str = "") -> None:
         """Populate the PEQ list widget from stored items.
 
+        Prepends a synthetic "Custom" row (see build_custom_peq_item) when
+        the live PEQ config on this source has no saved-preset name. That
+        row is marked non-selectable: the toolbar actions below (Export/
+        Save/Copy/Delete) are all keyed by preset name, and "Custom" has
+        none to operate on -- it's shown for visibility only (#165c).
+
         Args:
             filter_text: Optional filter string for search.
         """
@@ -376,10 +413,18 @@ class PresetsDeviceView(QWidget):
         # Show search field when > 10 items (Req 10.9)
         self._peq_search.setVisible(len(self._peq_items) > 10)
 
-        for item in self._peq_items:
+        rows: list[tuple[PresetItem, bool]] = [
+            (item, item.name == self._active_peq_name) for item in self._peq_items
+        ]
+        if self._active_peq_name == "":
+            rows.insert(0, (build_custom_peq_item(self._active_peq_channel_mode), True))
+
+        for item, is_active in rows:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            list_item = self._build_list_item(item, item.name == self._active_peq_name)
+            list_item = build_preset_list_item(item, is_active)
+            if item.name == CUSTOM_PEQ_NAME and is_active:
+                list_item.setFlags(list_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
             self._peq_list.addItem(list_item)
 
         self._update_action_buttons()
@@ -398,40 +443,10 @@ class PresetsDeviceView(QWidget):
         for item in self._roomfit_items:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            list_item = self._build_list_item(
-                item, item.name == self._active_roomfit_name
-            )
+            list_item = build_preset_list_item(item, item.name == self._active_roomfit_name)
             self._roomfit_list.addItem(list_item)
 
         self._update_action_buttons()
-
-    def _build_list_item(self, item: PresetItem, is_active: bool) -> QListWidgetItem:
-        """Build a QListWidgetItem for a preset/profile, optionally marked as
-        currently-active on the device (#165c).
-
-        The "(active)" text label is the primary signal (self-explanatory,
-        doesn't rely on color perception); bold/accent styling is
-        reinforcement, not the only cue -- matching NameProfilePage's
-        equivalent convention (#165a). This is visually distinct from
-        QListWidget's own click-selection highlighting (background color),
-        which is untouched and orthogonal.
-        """
-        text = self._format_item_text(item)
-        list_item = QListWidgetItem(f"{text}  (active)" if is_active else text)
-        apply_active_item_style(list_item, is_active)
-        list_item.setData(Qt.ItemDataRole.UserRole, item)
-        list_item.setSizeHint(list_item.sizeHint().expandedTo(
-            list_item.sizeHint().__class__(0, LIST_ITEM_HEIGHT)
-        ))
-        return list_item
-
-    @staticmethod
-    def _format_item_text(item: PresetItem) -> str:
-        """Format display text for a list item with badges.
-
-        Format: "Name  [ChannelMode]  [Type]"
-        """
-        return f"{item.name}  [{item.channel_mode}]  [{item.preset_type}]"
 
     # ------------------------------------------------------------------
     # State helpers

@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
+from src.gui.components.list_item_style import build_preset_list_item
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     LIST_ITEM_HEIGHT,
@@ -53,10 +54,16 @@ from src.gui.constants import (
     SPACING_SM,
 )
 from src.gui.views.my_presets_view import _PresetItemWidget
-from src.gui.views.presets_device_view import PresetItem
+from src.gui.views.presets_device_view import PresetItem, build_custom_peq_item
 from src.gui.views.rew_pull_view import RewPullView
 from src.gui.wizard_controller import FiltersSource
 from src.models.profile import Profile
+
+# Sentinel stored as a Device-list row's UserRole data for the synthetic
+# "Custom" row (see build_custom_peq_item) -- identity-checked at dispatch
+# time rather than matching on item.name, so a real saved preset that
+# happens to also be named "Custom" is never misrouted to device_pull_requested.
+_CUSTOM_ROW_MARKER = object()
 
 # Dropdown/stack index order -- shared by the combo's model construction and
 # every index<->FiltersSource lookup in this file.
@@ -82,12 +89,6 @@ _SOURCE_SUBTITLES: dict[FiltersSource, str] = {
 }
 
 
-def _device_item_label(item: PresetItem, active_name: str) -> str:
-    """Format a merged Device-list row: name, type, channel mode, active marker."""
-    marker = " (active)" if active_name and item.name == active_name else ""
-    return f"{item.name} — {item.preset_type} — {item.channel_mode}{marker}"
-
-
 class FiltersPage(QWidget):
     """Filter loading step with a four-option Import source dropdown.
 
@@ -95,7 +96,14 @@ class FiltersPage(QWidget):
     - A File Import / Pull from REW API / Device / Local Library source dropdown
     - File Import: a Stereo vs L/R radio toggle + file browse button(s)
     - Pull from REW API: the embedded RewPullView picker
-    - Device: a "Current configuration" action + merged PEQ/RoomFit preset list
+    - Device: a "Current configuration on device" action + merged PEQ/
+      RoomFit preset list. When the live PEQ config on the selected source
+      doesn't match any saved preset, the list also shows a synthetic
+      "Custom" row for it (WiiM Home's own term for this state) --
+      selecting it and clicking Load Preset does the same thing as the
+      button above. The button stays the only way to pull the live config
+      on devices that don't support listing saved presets at all (no
+      profile-enumeration capability), or before the list has loaded.
     - Local Library: a list of locally-saved presets
     - Inline warnings/errors after import
 
@@ -103,7 +111,9 @@ class FiltersPage(QWidget):
         file_import_requested: Path to a single REW .txt file (stereo mode).
         file_import_lr_requested: Paths to left and right channel files.
         device_pull_requested: User wants the device's current live PEQ
-            configuration (no named preset involved).
+            configuration (no named preset involved) -- emitted by the
+            "Current configuration on device" button, or equivalently by
+            selecting the merged list's synthetic "Custom" row.
         rew_api_pull_requested: User switched to "Pull from REW API" -
             caller should connect to REW and list measurements, then drive
             rew_pull_view via its set_connecting/set_measurements/set_message
@@ -113,8 +123,10 @@ class FiltersPage(QWidget):
             set_peq_presets()/set_roomfit_profiles().
         local_profiles_requested: User switched to "Local Library" - caller
             should (re)fetch saved profiles and populate via set_local_profiles().
-        device_item_selected: User picked a preset/profile from the merged
-            Device list (PresetItem payload; caller branches on preset_type).
+        device_item_selected: User picked a named preset/profile from the
+            merged Device list (PresetItem payload; caller branches on
+            preset_type). Never emitted for the synthetic "Custom" row --
+            that emits device_pull_requested instead (see above).
         local_profile_selected: User picked a preset from the Local Library
             list (Profile payload).
         filters_accepted: User clicked "Continue with adjustments" after warnings.
@@ -143,7 +155,13 @@ class FiltersPage(QWidget):
         self._default_import_dir: str = ""
         self._session_import_dir: str = ""
         self._device_peq_items: list[PresetItem] = []
-        self._device_active_peq_name: str = ""
+        # None = PEQ fetch hasn't resolved yet (distinct from "" = it
+        # resolved and found no active preset name). The RoomFit fetch runs
+        # concurrently and can populate the list on its own first, so "not
+        # yet known" has to stay distinguishable from "confirmed empty" --
+        # only the latter shows the synthetic "Custom" row.
+        self._device_active_peq_name: str | None = None
+        self._device_active_peq_channel_mode: str = "Stereo"
         self._device_roomfit_items: list[PresetItem] = []
         self._device_active_roomfit_name: str = ""
         self._local_profiles: list[Profile] = []
@@ -226,16 +244,30 @@ class FiltersPage(QWidget):
             self._stereo_radio.setChecked(True)
         self._update_mode_ui()
 
-    def set_peq_presets(self, presets: list[PresetItem], active_name: str = "") -> None:
+    def set_peq_presets(
+        self,
+        presets: list[PresetItem],
+        active_name: str | None = None,
+        active_channel_mode: str = "Stereo",
+    ) -> None:
         """Populate the Device panel's PEQ presets.
 
         Args:
             presets: List of PresetItem objects for PEQ presets.
             active_name: Name of the preset currently active on this source,
-                if any -- highlighted distinctly in the merged list.
+                if known -- highlighted distinctly in the merged list. ""
+                means the device confirmed the live config doesn't match any
+                saved preset -- shown as a synthetic "Custom" row instead
+                (see presets_device_view.build_custom_peq_item). None (the
+                default) means this isn't known yet -- no highlight, no
+                Custom row.
+            active_channel_mode: Channel mode of the live active config,
+                used only to label the synthetic "Custom" row when
+                active_name is "".
         """
         self._device_peq_items = list(presets)
         self._device_active_peq_name = active_name
+        self._device_active_peq_channel_mode = active_channel_mode
         self._populate_device_list()
 
     def set_roomfit_profiles(self, profiles: list[PresetItem], active_name: str = "") -> None:
@@ -742,18 +774,32 @@ class FiltersPage(QWidget):
             self.file_import_requested.emit(self._stereo_path)
 
     def _populate_device_list(self) -> None:
-        """Rebuild the merged Device list from the stored PEQ + RoomFit items."""
+        """Rebuild the merged Device list from the stored PEQ + RoomFit items.
+
+        Prepends a synthetic "Custom" row (see
+        presets_device_view.build_custom_peq_item) when the PEQ fetch has
+        resolved and found no active preset name -- selecting it and
+        clicking Load Preset emits device_pull_requested (via
+        _CUSTOM_ROW_MARKER), the same signal the "Current configuration on
+        device" button emits, rather than device_item_selected.
+        """
         self._device_list.clear()
-        combined = [
-            (item, self._device_active_peq_name) for item in self._device_peq_items
-        ] + [
-            (item, self._device_active_roomfit_name) for item in self._device_roomfit_items
+        combined: list[tuple[PresetItem, bool, object]] = [
+            (item, item.name == self._device_active_peq_name, item)
+            for item in self._device_peq_items
         ]
+        combined += [
+            (item, item.name == self._device_active_roomfit_name, item)
+            for item in self._device_roomfit_items
+        ]
+        if self._device_active_peq_name == "":
+            custom_item = build_custom_peq_item(self._device_active_peq_channel_mode)
+            combined.insert(0, (custom_item, True, _CUSTOM_ROW_MARKER))
         self._device_empty_label.setVisible(not combined)
         self._device_list.setVisible(bool(combined))
-        for preset_item, active_name in combined:
-            list_item = QListWidgetItem(_device_item_label(preset_item, active_name))
-            list_item.setData(Qt.ItemDataRole.UserRole, preset_item)
+        for display_item, is_active, user_data in combined:
+            list_item = build_preset_list_item(display_item, is_active)
+            list_item.setData(Qt.ItemDataRole.UserRole, user_data)
             self._device_list.addItem(list_item)
         self._device_load_btn.setEnabled(False)
 
@@ -766,12 +812,21 @@ class FiltersPage(QWidget):
 
     @Slot()
     def _on_device_load_clicked(self) -> None:
-        """Emit device_item_selected with the selected list row's PresetItem."""
+        """Emit device_item_selected with the selected list row's PresetItem.
+
+        The synthetic "Custom" row is the one exception: it carries
+        _CUSTOM_ROW_MARKER instead of a PresetItem, and emits
+        device_pull_requested -- same as the "Current configuration on
+        device" button -- rather than device_item_selected.
+        """
         current = self._device_list.currentItem()
         if current is None:
             return
-        preset_item = current.data(Qt.ItemDataRole.UserRole)
-        self.device_item_selected.emit(preset_item)
+        user_data = current.data(Qt.ItemDataRole.UserRole)
+        if user_data is _CUSTOM_ROW_MARKER:
+            self.device_pull_requested.emit()
+            return
+        self.device_item_selected.emit(user_data)
 
     def _populate_local_list(self) -> None:
         """Rebuild the Local Library list from the stored Profile list."""

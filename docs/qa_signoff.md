@@ -180,6 +180,9 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] Without a device connected: shows "Connect a device to browse..." empty state
 - [P] There is no "Load" action here — loading a preset into the wizard happens via the Filters
   step's Device option (Test 12a)
+- [P] If the live PEQ config on the selected source doesn't match any saved preset, a "Custom" row
+  (WiiM Home's own term) appears at the top of the PEQ Presets list, marked "(active)" — it cannot
+  be selected, so Export/Save/Copy/Delete never apply to it
 
 ### Test 12a: Filters Step — Device Source
 - [P] On the Filters step, selecting "Device" from the dropdown shows a "Current configuration on
@@ -191,6 +194,9 @@ gates fully before the next sign-off rather than carrying these numbers forward.
   preset itself)
 - [P] Clicking "Current configuration on device" loads the live PEQ bands for the currently
   selected source(s) and advances to Review
+- [P] If the live PEQ config doesn't match any saved preset, a "Custom" row appears at the top of
+  the list, marked "(active)"; selecting it and clicking "Load Preset" does the same thing as
+  "Current configuration on device" above
 
 ### Test 13: My Saved Presets
 - [P] Sidebar "My Saved Presets" navigates to presets library

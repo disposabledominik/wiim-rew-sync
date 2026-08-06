@@ -2357,7 +2357,7 @@ class MainWindow(QMainWindow):
     # directly; results arrive via name_profiles_ready, see
     # _on_name_profiles_ready.
 
-    # _read_active_name_or_default, _do_list_presets, _peq_name_for_highlight,
+    # _read_active_name_or_default, _do_list_presets, _peq_active_info_or_default,
     # _roomfit_name_for_highlight moved to PrimaryWorkflowManager
     # (src/gui/primary_workflows.py) as refresh_presets() and its helpers —
     # docs/backlog.md item 3, Phase 1b. See _on_peq_presets_ready /
@@ -2365,11 +2365,13 @@ class MainWindow(QMainWindow):
     # _on_roomfit_profiles_hidden below for the thin pass-through into
     # PresetsDeviceView that replaced this method's direct widget writes.
 
-    @Slot(list, str)
-    def _on_peq_presets_ready(self, items: list[Any], active_name: str) -> None:
+    @Slot(list, str, str)
+    def _on_peq_presets_ready(
+        self, items: list[Any], active_name: str, active_channel_mode: str
+    ) -> None:
         """Forward PrimaryWorkflowManager.peq_presets_ready into both consuming views."""
-        self._presets_device_view.set_peq_presets(items, active_name)
-        self._filters_page.set_peq_presets(items, active_name)
+        self._presets_device_view.set_peq_presets(items, active_name, active_channel_mode)
+        self._filters_page.set_peq_presets(items, active_name, active_channel_mode)
 
     @Slot()
     def _on_peq_presets_unavailable(self) -> None:

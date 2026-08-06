@@ -92,6 +92,15 @@ RoomFit profile is currently active on the device, its entry is shown in
 bold accent text with an "(active)" label, so you can see at a glance what's
 actually playing before you export or overwrite anything.
 
+If the live PEQ config on the device doesn't match any saved preset — for
+example, after adjusting bands directly rather than loading a saved preset —
+a **Custom** row (the same term the WiiM Home app uses) appears at the top
+of the PEQ Presets list, marked "(active)." It's shown for visibility only:
+since it has no saved name, it can't be selected for Export, Save locally,
+Copy, or Delete. To bring that live config into the wizard, use the Filters
+step's "Current configuration on device" button, or select the equivalent
+"Custom" row shown there instead.
+
 Reading a **PEQ** preset's filters (for any of the three actions above, or
 when loading one via the Filters step's Device option) briefly switches your
 device's current input to that preset so its bands can be read, then

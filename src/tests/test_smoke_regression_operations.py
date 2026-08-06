@@ -1122,6 +1122,9 @@ class TestPresets:
         """
         import asyncio
 
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
         mock_adapter = _setup_device(window)
         mock_adapter.list_peq_profiles = AsyncMock(
             return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
@@ -1129,6 +1132,16 @@ class TestPresets:
         mock_adapter.list_roomfit_profiles = AsyncMock(
             return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
         )
+        # Also mock the active-name reads -- without these, they raise on
+        # the plain (non-AsyncMock) adapter attribute, degrading to "",
+        # which would add a synthetic "Custom" row (#165c) and throw off
+        # this test's count assertions, which aren't about that behavior.
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi", channel_mode=ChannelMode.STEREO, name="Movie Night"
+            )
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
 
         def _run_now(coro: object) -> None:
             asyncio.run(coro)

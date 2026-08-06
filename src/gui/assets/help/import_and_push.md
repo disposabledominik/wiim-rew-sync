@@ -60,7 +60,10 @@ whatever PEQ bands are currently live on your selected source(s), or pick a
 row from the list below it — a single merged list of PEQ presets and
 RoomFit profiles saved on the device, regardless of whether you chose PEQ or
 RoomFit on the EQ Type step (a saved RoomFit profile can be loaded into a
-PEQ push and vice versa). Select a row and click "Load Preset." No separate
+PEQ push and vice versa). If the live PEQ config on your selected source
+doesn't match any saved preset, a **Custom** row (the same term WiiM Home
+uses) appears at the top of the list, marked active — selecting it and
+clicking "Load Preset" does the same thing as the button above. No separate
 Stereo/L-R choice is needed here — the channel mode comes from the selected
 configuration itself.
 

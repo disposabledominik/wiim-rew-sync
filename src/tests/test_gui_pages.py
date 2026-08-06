@@ -665,13 +665,17 @@ class TestFiltersPage:
             active_name="Living Room RF",
         )
 
-        assert page._device_list.count() == 2
-        labels = {page._device_list.item(i).text() for i in range(2)}
+        # active_name="" on the PEQ side means the device confirmed no
+        # saved preset matches the live config -- a synthetic "Custom" row
+        # joins the two real rows (#165c).
+        assert page._device_list.count() == 3
+        labels = {page._device_list.item(i).text() for i in range(3)}
         assert any("Living Room PEQ" in label and "PEQ" in label for label in labels)
         assert any(
             "Living Room RF" in label and "RoomFit" in label and "active" in label
             for label in labels
         )
+        assert any("Custom" in label and "PEQ" in label and "active" in label for label in labels)
 
     def test_device_load_button_enabled_only_with_selection(self, qtbot) -> None:
         """The Device panel's Load Preset button is disabled until a row is selected."""
@@ -699,6 +703,47 @@ class TestFiltersPage:
             page._device_load_btn.click()
 
         assert blocker.args == [item]
+
+    def test_custom_row_shown_when_active_peq_name_empty(self, qtbot) -> None:
+        """active_name="" on set_peq_presets() prepends a synthetic "Custom"
+        row for the device's live/unnamed active PEQ config (#165c)."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+
+        page.set_peq_presets(
+            [PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="",
+            active_channel_mode="L/R",
+        )
+
+        assert page._device_list.count() == 2
+        custom_label = page._device_list.item(0).text()
+        assert custom_label.startswith("Custom")
+        assert "[L/R]" in custom_label
+        assert "(active)" in custom_label
+
+    def test_custom_row_load_emits_device_pull_requested_not_item_selected(
+        self, qtbot
+    ) -> None:
+        """Selecting the synthetic "Custom" row and clicking Load Preset
+        behaves like the "Current configuration on device" button -- it
+        emits device_pull_requested, never device_item_selected."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+
+        page.set_peq_presets(
+            [PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="",
+        )
+        page._device_list.setCurrentRow(0)  # the synthetic "Custom" row
+
+        received: list[object] = []
+        page.device_item_selected.connect(received.append)
+
+        with qtbot.waitSignal(page.device_pull_requested, timeout=1000):
+            page._device_load_btn.click()
+
+        assert received == []
 
     # ------------------------------------------------------------------
     # Local Library panel

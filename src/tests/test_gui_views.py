@@ -193,16 +193,71 @@ class TestPresetsDeviceViewActiveHighlight:
         assert not item2.font().bold()
 
     def test_no_active_name_no_item_styled(self, qtbot) -> None:
-        """An empty active_name (default) styles nothing."""
+        """Not specifying active_name (None default) styles nothing and
+        shows no synthetic "Custom" row -- distinct from active_name=""."""
         view = PresetsDeviceView()
         qtbot.addWidget(view)
 
         view.set_peq_presets(_make_peq_presets(3))
 
+        assert view._peq_list.count() == 3
         for i in range(view._peq_list.count()):
             item = view._peq_list.item(i)
             assert "(active)" not in item.text()
             assert not item.font().bold()
+
+    def test_empty_active_name_shows_custom_row(self, qtbot) -> None:
+        """active_name="" (the device confirmed no saved preset matches the
+        live config) prepends a synthetic "Custom" row, styled active and
+        non-selectable (#165c)."""
+        from PySide6.QtCore import Qt
+
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(
+            _make_peq_presets(2), active_name="", active_channel_mode="L/R"
+        )
+
+        assert view._peq_list.count() == 3
+        custom_item = view._peq_list.item(0)
+        assert custom_item.text().startswith("Custom")
+        assert "[L/R]" in custom_item.text()
+        assert "(active)" in custom_item.text()
+        assert custom_item.font().bold()
+        assert not custom_item.flags() & Qt.ItemFlag.ItemIsSelectable
+
+        # The real presets are unaffected -- neither is marked active.
+        for i in (1, 2):
+            item = view._peq_list.item(i)
+            assert "(active)" not in item.text()
+            assert item.flags() & Qt.ItemFlag.ItemIsSelectable
+
+    def test_custom_row_cannot_be_selected_or_deleted(self, qtbot) -> None:
+        """The synthetic "Custom" row has no saved-preset name for Delete
+        (or Export/Save/Copy) to operate on -- Qt excludes non-selectable
+        items from selectedItems() even via select-all, so it can never
+        enter a batch action's selection regardless of how the user tries
+        to select it (#165c)."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(2), active_name="")
+        custom_item = view._peq_list.item(0)
+        assert custom_item.text().startswith("Custom")
+
+        view._peq_list.selectAll()
+
+        # Qt's select-all skips non-selectable items -- only the two real
+        # presets end up selected, never the synthetic "Custom" row.
+        selected_texts = {item.text() for item in view._peq_list.selectedItems()}
+        assert len(selected_texts) == 2
+        assert not any(text.startswith("Custom") for text in selected_texts)
+
+        selected_items = view._get_all_selected_items()
+        assert all(item.name != "Custom" for item in selected_items)
+        assert view._delete_btn.isEnabled()  # enabled for the 2 real presets
 
     def test_active_name_matching_nothing_styles_nothing(self, qtbot) -> None:
         """An active_name that doesn't match any item styles nothing (e.g. the

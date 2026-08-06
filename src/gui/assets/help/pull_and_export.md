@@ -80,7 +80,9 @@ two ways to pull filters straight from the connected device:
   combining every PEQ preset and RoomFit profile saved on the device,
   regardless of whether you chose PEQ or RoomFit on the EQ Type step (a
   RoomFit-saved profile can be loaded into a PEQ push and vice versa). Select
-  a row and click "Load Preset."
+  a row and click "Load Preset." If the live PEQ config doesn't match any
+  saved preset, a **Custom** row appears at the top of the list, marked
+  active — selecting it does the same thing as the button above.
 
 Either way, filters are loaded and you're advanced straight to the Review
 step — no separate Stereo/L-R choice is needed for a saved preset/profile,
