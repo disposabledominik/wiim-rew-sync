@@ -47,8 +47,11 @@ source selection step is skipped (since RoomFit is global).
 On the Filters page, choose Stereo or L/R mode and browse for your REW
 measurement file(s), just like the PEQ workflow.
 
-You can also load an existing RoomFit profile from the device via "Presets
-on Device" in the sidebar.
+You can also load an existing RoomFit profile from the device: choose
+**Device** from the "Import source" dropdown on the Filters step. It shows
+one merged list of PEQ presets and RoomFit profiles saved on the device — a
+profile saved under RoomFit shows up there too — so you can select it and
+click "Load Preset."
 
 ### 3. Review
 
@@ -100,7 +103,7 @@ actions here, though:
 
 - **Pushing a profile** (or copying one to another device) makes it the
   active one there and turns RoomFit on if it was off.
-- **Loading a profile** (via "Presets on Device" or the Filters page) briefly
+- **Loading a profile** (via the Filters step's **Device** option) briefly
   selects it on the device so its filters can be read, then restores whatever
   was previously active.
 
