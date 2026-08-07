@@ -142,7 +142,7 @@ _STEP_TO_PAGE_KEY: dict[WizardStep, str] = {
 
 # Reverse lookups used by _sync_navigation_chrome (see its docstring for why
 # this single, signal-driven hook replaced a dozen hand-maintained
-# sidebar_nav.set_active_key()/step_indicator.set_dimmed()/set_view()
+# sidebar_nav.set_active_key()/step_indicator.setVisible()/set_view()
 # call sites scattered across every navigation handler in this class).
 _PAGE_INDEX_TO_KEY: dict[int, str] = {v: k for k, v in PAGE_INDICES.items()}
 _PAGE_KEY_TO_STEP: dict[str, WizardStep] = {v: k for k, v in _STEP_TO_PAGE_KEY.items()}
@@ -446,7 +446,7 @@ class MainWindow(QMainWindow):
         shortcuts (#144, #147) — ends with
         QStackedWidget.setCurrentIndex(). Before this hook existed, every
         one of those handlers had to remember to separately call
-        sidebar_nav.set_active_key(), step_indicator.set_dimmed(), and
+        sidebar_nav.set_active_key(), step_indicator.setVisible(), and
         step_indicator.set_view() in the right combination, and several
         of them didn't (hence #138, #142, #144, #147, and the step-pill
         case reported after those: clicking a finished step pill while
@@ -455,6 +455,17 @@ class MainWindow(QMainWindow):
         became current, in one place wired to currentChanged, means a new
         navigation path can't reintroduce this bug class just by
         forgetting one of those calls — there's nothing left to forget.
+
+        A sidebar destination (Presets on Device, My Saved Presets,
+        Settings) has no entry point *into* the wizard of its own — the
+        user reaches the wizard again only via the sidebar's "Setup
+        Wizard" (home) entry, never by interacting with the breadcrumb —
+        so the step indicator is hidden entirely there rather than merely
+        dimmed: a still-visible, still-clickable wizard breadcrumb over an
+        unrelated page reads as "you're still in the wizard" and wastes
+        vertical space that page could use instead. Hiding it also frees
+        that row for the QStackedWidget (stretch=1 in the layout), so the
+        destination view grows to fill it automatically.
         """
         page_key = _PAGE_INDEX_TO_KEY.get(index)
         if page_key is None:
@@ -462,7 +473,7 @@ class MainWindow(QMainWindow):
 
         if page_key in _SIDEBAR_DESTINATION_KEYS:
             self._sidebar_nav.set_active_key(page_key)
-            self._step_indicator.set_dimmed(True)
+            self._step_indicator.setVisible(False)
             return
 
         step = _PAGE_KEY_TO_STEP.get(page_key)
@@ -470,7 +481,7 @@ class MainWindow(QMainWindow):
             return
 
         self._sidebar_nav.set_active_key("home")
-        self._step_indicator.set_dimmed(False)
+        self._step_indicator.setVisible(True)
         sequence = self._wizard_controller.get_steps()
         if step in sequence:
             frontier = self._wizard_controller.frontier_step
@@ -1510,8 +1521,8 @@ class MainWindow(QMainWindow):
             return
 
         # Switching the stacked widget's page fires currentChanged, which
-        # _sync_navigation_chrome handles centrally (undimming the step
-        # pill, setting its view/frontier indices, and resetting the
+        # _sync_navigation_chrome handles centrally (showing the step
+        # indicator, setting its view/frontier indices, and resetting the
         # sidebar highlight to "home") — no need to duplicate any of that
         # here.
         page_key = _STEP_TO_PAGE_KEY.get(step)
@@ -2651,9 +2662,9 @@ class MainWindow(QMainWindow):
             view_key: Navigation target key from SidebarNav.
         """
         logger.debug("Navigation requested: %s", view_key)
-        # Sidebar highlight + step-pill dimming are synced centrally by
-        # _sync_navigation_chrome (wired to currentChanged) — this handler
-        # only needs to decide which page to switch to.
+        # Sidebar highlight + step-indicator visibility are synced centrally
+        # by _sync_navigation_chrome (wired to currentChanged) — this
+        # handler only needs to decide which page to switch to.
         if view_key == "home":
             # "Setup Wizard" returns to the frontier -- where the user left
             # off. Two distinct cases:
@@ -2682,7 +2693,8 @@ class MainWindow(QMainWindow):
 
         if view_key == "help":
             # Open Help as a separate window (smoke #112). Doesn't replace
-            # the current page, so the step indicator isn't dimmed.
+            # the current page, so the step indicator's visibility is
+            # untouched.
             self._on_user_guide_triggered()
             return
 

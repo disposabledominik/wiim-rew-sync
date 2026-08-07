@@ -494,6 +494,7 @@ def test_profile_recalled_highlights_review_and_resets_sidebar(qtbot):
         mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
+        window.show()
 
         state = window._wizard_controller.state
         state.selected_device = "device-1"
@@ -514,7 +515,7 @@ def test_profile_recalled_highlights_review_and_resets_sidebar(qtbot):
         sequence = window._wizard_controller.get_steps()
         review_index = sequence.index(WizardStep.REVIEW)
         assert window._step_indicator._view_index == review_index
-        assert window._step_indicator._steps[review_index]._dimmed is False
+        assert window._step_indicator.isVisible() is True
         assert window._sidebar_nav.active_key == "home"
 
 
@@ -528,6 +529,12 @@ def test_profile_recalled_highlights_review_and_resets_sidebar(qtbot):
 # step-indicator chrome) recurring on yet another path, which is why the
 # fix is now a single handler (_sync_navigation_chrome, wired to
 # QStackedWidget.currentChanged) instead of one more hand-added call.
+#
+# Also covers the later "hide, don't just dim" change (a sidebar
+# destination has no entry point back into the wizard of its own, so the
+# breadcrumb is fully hidden there rather than left visible-but-muted --
+# docs/qa_signoff.md follow-up): the step indicator must be visible again
+# once a pill click returns the wizard to the stacked page.
 def test_step_indicator_click_from_sidebar_destination_resets_sidebar_highlight(qtbot):
     from src.gui.main_window import PAGE_INDICES, MainWindow
 
@@ -536,12 +543,13 @@ def test_step_indicator_click_from_sidebar_destination_resets_sidebar_highlight(
         mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
         window = MainWindow(async_bridge=mock_bridge)
         qtbot.addWidget(window)
+        window.show()
 
         # Viewing a sidebar destination — sidebar highlighted there, step
-        # pill dimmed.
+        # indicator hidden.
         window._on_navigation_requested("presets_device")
         assert window._sidebar_nav.active_key == "presets_device"
-        assert window._step_indicator._steps[window._step_indicator._view_index]._dimmed
+        assert window._step_indicator.isVisible() is False
 
         # Click the first (CONNECT) step pill, as if jumping back to a
         # finished step from within a sidebar destination.
@@ -550,7 +558,36 @@ def test_step_indicator_click_from_sidebar_destination_resets_sidebar_highlight(
         assert window._stacked_widget.currentIndex() == PAGE_INDICES["connect"]
         assert window._sidebar_nav.active_key == "home"
         assert window._step_indicator._view_index == 0
-        assert not window._step_indicator._steps[0]._dimmed
+        assert window._step_indicator.isVisible() is True
+
+
+# Issue #267 (user-raised): the wizard breadcrumb (step indicator) stayed
+# visible and clickable over Presets on Device, My Saved Presets, and
+# Settings even though none of those views has an entry point back into the
+# wizard of its own -- reading as "you're still in the wizard" and wasting
+# vertical space those views could use instead. Hidden entirely for all
+# three sidebar destinations; restored when returning to the wizard via
+# "Setup Wizard" (home).
+@pytest.mark.parametrize("view_key", ["presets_device", "my_presets", "settings"])
+def test_step_indicator_hidden_for_every_sidebar_destination(qtbot, view_key: str) -> None:
+    from src.gui.main_window import MainWindow
+
+    with patch.object(MainWindow, "_apply_settings", lambda self: None):
+        mock_bridge = MagicMock()
+        mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
+        window = MainWindow(async_bridge=mock_bridge)
+        qtbot.addWidget(window)
+        window.show()
+
+        assert window._step_indicator.isVisible() is True
+
+        window._on_navigation_requested(view_key)
+
+        assert window._step_indicator.isVisible() is False
+
+        window._on_navigation_requested("home")
+
+        assert window._step_indicator.isVisible() is True
 
 
 # Fix: a capability probe for a superseded device selection must not advance
