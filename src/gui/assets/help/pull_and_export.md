@@ -71,18 +71,18 @@ device, depending on what you want to do:
 
 ### Loading from the Filters Step
 
-On the Filters step, choose **Device** from the "Import source" dropdown for
-two ways to pull filters straight from the connected device:
+On the Filters step, choose **Device** from the "Import source" dropdown.
+It shows one merged list combining every PEQ preset and RoomFit profile
+saved on the device, regardless of whether you chose PEQ or RoomFit on the
+EQ Type step (a RoomFit-saved profile can be loaded into a PEQ push and
+vice versa). Select a row and click "Load Preset."
 
-- **Current configuration on device** — reads whatever PEQ bands are
-  currently live on your selected source(s).
-- **A saved preset or profile** — the dropdown shows one merged list
-  combining every PEQ preset and RoomFit profile saved on the device,
-  regardless of whether you chose PEQ or RoomFit on the EQ Type step (a
-  RoomFit-saved profile can be loaded into a PEQ push and vice versa). Select
-  a row and click "Load Preset." If the live PEQ config doesn't match any
-  saved preset, a **Custom** row appears at the top of the list, marked
-  active — selecting it does the same thing as the button above.
+If the live PEQ config on your selected source doesn't match any saved
+preset, a **Custom** row appears at the top of the list, marked active —
+select it the same way to pull whatever PEQ bands are currently live
+instead of a saved preset. On a device that can't list saved presets at
+all, "Custom" is the only PEQ row shown, so it's still how you reach the
+live config there too.
 
 Either way, filters are loaded and you're advanced straight to the Review
 step — no separate Stereo/L-R choice is needed for a saved preset/profile,

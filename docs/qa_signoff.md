@@ -105,9 +105,9 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] Selecting a valid `.txt` file shows filename next to Browse
 - [P] "Continue" button appears and is enabled after file is selected
 - [P] Clicking "Continue" advances to Review page with filters loaded
-- [P] Switching the dropdown to "Device" shows a "Current configuration on device" action plus a
-  single merged list of PEQ presets and RoomFit profiles (regardless of the PEQ/RoomFit choice made
-  on the EQ Type page) — see Test 12a
+- [P] Switching the dropdown to "Device" shows a single merged list of PEQ presets and RoomFit
+  profiles (regardless of the PEQ/RoomFit choice made on the EQ Type page), with a "Custom" row
+  for the live PEQ config when it doesn't match a saved preset — see Test 12a
 - [P] Switching the dropdown to "Local Library" shows a list of locally saved presets — see Test 13a
 
 ### Test 4: PEQ Flow — Filter Import (L/R)
@@ -200,18 +200,23 @@ gates fully before the next sign-off rather than carrying these numbers forward.
   saved preset on the device to delete
 
 ### Test 12a: Filters Step — Device Source
-- [P] On the Filters step, selecting "Device" from the dropdown shows a "Current configuration on
-  device" button plus one merged list combining PEQ presets and RoomFit profiles (both types
-  together, type-tagged, regardless of the EQ Type step's PEQ/RoomFit choice)
+- [P] On the Filters step, selecting "Device" from the dropdown shows one merged list combining
+  PEQ presets and RoomFit profiles (both types together, type-tagged, regardless of the EQ Type
+  step's PEQ/RoomFit choice) — no separate "pull current config" button
 - [P] The active preset/profile (if any) is marked "(active)" in the list
 - [P] Selecting a row enables "Load Preset"; clicking it loads that preset's filters and advances
   to Review with the correct channel mode (no separate Stereo/L-R choice needed — it comes from the
   preset itself)
-- [P] Clicking "Current configuration on device" loads the live PEQ bands for the currently
-  selected source(s) and advances to Review
 - [P] If the live PEQ config doesn't match any saved preset, a "Custom" row appears at the top of
-  the list, marked "(active)"; selecting it and clicking "Load Preset" does the same thing as
-  "Current configuration on device" above
+  the list, marked "(active)"; selecting it and clicking "Load Preset" loads the live PEQ bands for
+  the currently selected source(s) and advances to Review
+- [P] On a device without PEQ-profile-enumeration support (a capability-file or hardware limitation,
+  not a UI toggle — see a device with `supports_profile_enumeration: false`), "Custom" is the only
+  PEQ row shown (RoomFit profiles, if any, still list normally) — confirm this by temporarily
+  forcing that capability off via a capability-file override rather than real hardware if no such
+  device is on hand
+- [P] Same "Custom"-only-row behavior confirmed in "Presets on Device" (sidebar) for the same
+  device — previously this showed "Device presets not available on this model" instead
 
 ### Test 13: My Saved Presets
 - [P] Sidebar "My Saved Presets" navigates to presets library

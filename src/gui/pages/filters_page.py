@@ -9,10 +9,13 @@ QStackedWidget:
       sidebar before it was consolidated here, see
       src/gui/views/rew_pull_view.py) so REW measurement selection behaves
       identically wherever it's reached from.
-    - Device: a "Current configuration on device" action plus a merged list
-      of PEQ presets and RoomFit profiles saved on the connected device
-      (regardless of the wizard's current EQ_TYPE -- a saved preset's origin
-      doesn't have to match the flow pushing it).
+    - Device: a merged list of PEQ presets and RoomFit profiles saved on the
+      connected device (regardless of the wizard's current EQ_TYPE -- a
+      saved preset's origin doesn't have to match the flow pushing it). The
+      device's live/unnamed PEQ config -- when it doesn't match any saved
+      preset, or the device can't enumerate saved presets at all -- appears
+      in the same list as a synthetic "Custom" row rather than a separate
+      action (see FiltersPage's own docstring for the full rule).
     - Local Library: a list of presets saved locally on this computer.
 
 Supports inline validation warnings and error display with retry.
@@ -84,7 +87,7 @@ _SOURCE_LABELS: dict[FiltersSource, str] = {
 _SOURCE_SUBTITLES: dict[FiltersSource, str] = {
     FiltersSource.REW_FILE: "Select channel mode and browse for your REW EQ text file(s).",
     FiltersSource.REW_API: "Select a REW measurement to import filters from.",
-    FiltersSource.DEVICE: "Read the device's current configuration, or load a saved preset.",
+    FiltersSource.DEVICE: "Load a saved preset, or the device's current configuration.",
     FiltersSource.LOCAL_LIBRARY: "Load a preset saved locally on this computer.",
 }
 
@@ -96,14 +99,26 @@ class FiltersPage(QWidget):
     - A File Import / Pull from REW API / Device / Local Library source dropdown
     - File Import: a Stereo vs L/R radio toggle + file browse button(s)
     - Pull from REW API: the embedded RewPullView picker
-    - Device: a "Current configuration on device" action + merged PEQ/
-      RoomFit preset list. When the live PEQ config on the selected source
-      doesn't match any saved preset, the list also shows a synthetic
-      "Custom" row for it (WiiM Home's own term for this state) --
-      selecting it and clicking Load Preset does the same thing as the
-      button above. The button stays the only way to pull the live config
-      on devices that don't support listing saved presets at all (no
-      profile-enumeration capability), or before the list has loaded.
+    - Device: a merged PEQ/RoomFit preset list, no separate "pull current
+      config" action. The device's live PEQ config always surfaces as a
+      synthetic "Custom" row (WiiM Home's own term for this state) instead
+      -- either because it doesn't match any saved preset, or because the
+      device can't enumerate saved presets at all (no
+      supports_profile_enumeration capability), in which case "Custom" is
+      the *only* PEQ row shown. Selecting it and clicking Load Preset reads
+      the device's current live config, same as any other row read. A
+      device with neither PEQ nor RoomFit support (or where even the live
+      read fails) shows the plain empty state instead -- there is
+      deliberately no fallback button for this case; see
+      set_peq_unavailable()'s docstring.
+
+      Caveat documented here rather than fixed: "Custom" only ever reflects
+      the live config on the *currently selected* per-source PEQ slot
+      (`state.primary_source`) -- other sources on the same device may be
+      running entirely different filters, and this list gives no visibility
+      into those. Switching which source is being configured (a separate,
+      earlier wizard step) is the only way to see another source's live
+      config.
     - Local Library: a list of locally-saved presets
     - Inline warnings/errors after import
 
@@ -111,9 +126,9 @@ class FiltersPage(QWidget):
         file_import_requested: Path to a single REW .txt file (stereo mode).
         file_import_lr_requested: Paths to left and right channel files.
         device_pull_requested: User wants the device's current live PEQ
-            configuration (no named preset involved) -- emitted by the
-            "Current configuration on device" button, or equivalently by
-            selecting the merged list's synthetic "Custom" row.
+            configuration (no named preset involved) -- emitted by
+            selecting the merged list's synthetic "Custom" row and clicking
+            Load Preset.
         rew_api_pull_requested: User switched to "Pull from REW API" -
             caller should connect to REW and list measurements, then drive
             rew_pull_view via its set_connecting/set_measurements/set_message
@@ -181,7 +196,6 @@ class FiltersPage(QWidget):
             self._import_lr_btn,
             self._continue_with_warnings_btn,
             self._retry_btn,
-            self._device_current_btn,
             self._device_load_btn,
             self._local_load_btn,
         ]
@@ -302,10 +316,14 @@ class FiltersPage(QWidget):
         return self._current_source
 
     def set_peq_unavailable(self) -> None:
-        """Clear the Device panel's PEQ presets when the device doesn't
-        support profile enumeration -- mirrors PresetsDeviceView's
+        """Clear the Device panel's PEQ presets when the device has no
+        usable PEQ info at all (no PEQ support, or the live-config read
+        failed outright) -- mirrors PresetsDeviceView's
         set_peq_unavailable() so both consumers of
-        PrimaryWorkflowManager.peq_presets_unavailable stay in sync."""
+        PrimaryWorkflowManager.peq_presets_unavailable stay in sync.
+        Deliberately not called just because named-preset enumeration is
+        unsupported -- that case still gets a synthetic "Custom" row via
+        set_peq_presets()."""
         self._device_peq_items = []
         self._device_active_peq_name = None
         self._populate_device_list()
@@ -591,26 +609,16 @@ class FiltersPage(QWidget):
         return panel
 
     def _build_device_panel(self) -> QWidget:
-        """Build the Device panel - current-config action + merged preset list."""
+        """Build the Device panel - merged preset list.
+
+        No dedicated "pull current config" action -- the live PEQ config
+        always appears as a synthetic "Custom" row in the list itself (see
+        this class's docstring and _populate_device_list()).
+        """
         panel = QWidget()
         device_layout = QVBoxLayout(panel)
         device_layout.setContentsMargins(0, 0, 0, 0)
         device_layout.setSpacing(SPACING_MD)
-
-        current_row = QHBoxLayout()
-        self._device_current_btn = make_action_button(
-            "Current configuration on device",
-            object_name="filters_device_current",
-            style_class="secondary",
-        )
-        self._device_current_btn.clicked.connect(self.device_pull_requested.emit)
-        current_row.addWidget(self._device_current_btn)
-        current_row.addStretch()
-        device_layout.addLayout(current_row)
-
-        list_label = QLabel("Or load a saved preset:")
-        list_label.setProperty("class", "subheading")
-        device_layout.addWidget(list_label)
 
         self._device_list = QListWidget()
         self._device_list.setObjectName("FiltersDeviceList")
@@ -831,10 +839,12 @@ class FiltersPage(QWidget):
 
         Prepends a synthetic "Custom" row (see
         presets_device_view.build_custom_peq_item) when the PEQ fetch has
-        resolved and found no active preset name -- selecting it and
-        clicking Load Preset emits device_pull_requested (via
-        _CUSTOM_ROW_MARKER), the same signal the "Current configuration on
-        device" button emits, rather than device_item_selected.
+        resolved and found no active preset name -- either because it
+        doesn't match any saved preset, or because the device can't
+        enumerate saved presets at all, in which case "Custom" is the only
+        PEQ row. Selecting it and clicking Load Preset emits
+        device_pull_requested (via _CUSTOM_ROW_MARKER) rather than
+        device_item_selected.
         """
         self._device_list.clear()
         peq_rows = build_peq_rows(
@@ -871,8 +881,7 @@ class FiltersPage(QWidget):
 
         The synthetic "Custom" row is the one exception: it carries
         _CUSTOM_ROW_MARKER instead of a PresetItem, and emits
-        device_pull_requested -- same as the "Current configuration on
-        device" button -- rather than device_item_selected.
+        device_pull_requested rather than device_item_selected.
         """
         current = self._device_list.currentItem()
         if current is None:

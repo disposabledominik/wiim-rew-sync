@@ -298,7 +298,6 @@ class TestOperationFeedbackButtonRegistration:
         assert window._review_page._push_button in registered
         assert window._filters_page._next_btn in registered
         assert window._filters_page.rew_pull_view._continue_btn in registered
-        assert window._filters_page._device_current_btn in registered
         assert window._filters_page._device_load_btn in registered
         assert window._filters_page._local_load_btn in registered
         assert window._settings_view._bundle_btn in registered

@@ -54,18 +54,21 @@ measurements to choose from.
 
 ### Device
 
-Select **Device** from the dropdown for two ways to get filters straight
-from the connected device: click "Current configuration on device" to read
-whatever PEQ bands are currently live on your selected source(s), or pick a
-row from the list below it — a single merged list of PEQ presets and
-RoomFit profiles saved on the device, regardless of whether you chose PEQ or
-RoomFit on the EQ Type step (a saved RoomFit profile can be loaded into a
-PEQ push and vice versa). If the live PEQ config on your selected source
-doesn't match any saved preset, a **Custom** row (the same term WiiM Home
-uses) appears at the top of the list, marked active — selecting it and
-clicking "Load Preset" does the same thing as the button above. No separate
-Stereo/L-R choice is needed here — the channel mode comes from the selected
-configuration itself.
+Select **Device** from the dropdown to pick a row from a single merged list
+of PEQ presets and RoomFit profiles saved on the device, regardless of
+whether you chose PEQ or RoomFit on the EQ Type step (a saved RoomFit
+profile can be loaded into a PEQ push and vice versa). If the live PEQ
+config on your selected source doesn't match any saved preset, a **Custom**
+row (the same term WiiM Home uses) appears at the top of the list, marked
+active — select it and click "Load Preset" to bring that live config into
+the wizard. On a device that can't list saved presets at all, "Custom" is
+the only PEQ row shown, so it's still how you reach the live config there
+too. No separate Stereo/L-R choice is needed here — the channel mode comes
+from the selected configuration itself.
+
+The Custom row always reflects the live config on whichever source you
+picked earlier, on the Source step — not every source on the device. If
+you want another source's live config, go back and pick that source first.
 
 ### Local Library
 

@@ -726,7 +726,6 @@ class TestFiltersPage:
         self, qtbot
     ) -> None:
         """Selecting the synthetic "Custom" row and clicking Load Preset
-        behaves like the "Current configuration on device" button -- it
         emits device_pull_requested, never device_item_selected."""
         page = FiltersPage()
         qtbot.addWidget(page)

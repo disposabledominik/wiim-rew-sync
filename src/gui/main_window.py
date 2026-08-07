@@ -2355,19 +2355,25 @@ class MainWindow(QMainWindow):
         """Fetch and display device presets in the PresetsDeviceView.
 
         If no device is connected, shows the empty state. Otherwise
-        fetches preset list via the adapter and populates the view.
+        fetches PEQ presets and RoomFit profiles via
+        PrimaryWorkflowManager.list_presets(), which independently gates
+        each on its own capability (supports_peq/supports_profile_enumeration
+        for PEQ, supports_roomfit for RoomFit -- see refresh_presets()) and
+        emits peq_presets_ready/peq_presets_unavailable and
+        roomfit_profiles_ready/roomfit_profiles_hidden accordingly.
+
+        Deliberately does NOT pre-check supports_profile_enumeration here
+        and bail out early -- that used to skip the RoomFit fetch too,
+        since both were only reachable past this one early return. Profile
+        enumeration and RoomFit support are independent capabilities; a
+        device lacking only the former still gets its RoomFit profiles
+        listed, and its live PEQ config still surfaces as a synthetic
+        "Custom" row via refresh_presets()'s own supports_peq fallback.
         """
         if self._wiim_adapter is None:
             self._presets_device_view.set_no_device()
             return
 
-        # Check if profile enumeration is supported
-        caps = getattr(self._wiim_adapter, "capabilities", None)
-        if caps and not getattr(caps, "supports_profile_enumeration", False):
-            self._presets_device_view.set_peq_unavailable()
-            return
-
-        # Fetch presets asynchronously
         self._primary_workflows.list_presets()
 
     def _populate_name_profile_page(self) -> None:
@@ -2395,9 +2401,9 @@ class MainWindow(QMainWindow):
     # _on_roomfit_profiles_hidden below for the thin pass-through into
     # PresetsDeviceView that replaced this method's direct widget writes.
 
-    @Slot(list, str, str)
+    @Slot(list, object, str)
     def _on_peq_presets_ready(
-        self, items: list[Any], active_name: str, active_channel_mode: str
+        self, items: list[Any], active_name: str | None, active_channel_mode: str
     ) -> None:
         """Forward PrimaryWorkflowManager.peq_presets_ready into both consuming views."""
         self._presets_device_view.set_peq_presets(items, active_name, active_channel_mode)

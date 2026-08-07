@@ -216,7 +216,14 @@ class PresetsDeviceView(QWidget):
         self._update_action_buttons()
 
     def set_peq_unavailable(self) -> None:
-        """Show message when device doesn't support profile enumeration (Req 15.10)."""
+        """Show message when the device has no usable PEQ info at all (Req 15.10).
+
+        Emitted by PrimaryWorkflowManager.refresh_presets() when the device
+        doesn't support PEQ, or does but the live-config read that would
+        back a synthetic "Custom" row failed outright -- not merely because
+        named-preset enumeration is unsupported, since that case still
+        surfaces the live config as "Custom" via set_peq_presets().
+        """
         self._peq_items = []
         self._peq_unavailable_label.setVisible(True)
         self._peq_list.setVisible(False)

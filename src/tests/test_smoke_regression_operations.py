@@ -1252,7 +1252,12 @@ class TestPresets:
         self, window
     ) -> None:
         """A failed active-name read doesn't fail the whole preset list --
-        it just means no highlight for that section."""
+        it just means no highlight for that section.
+
+        The PEQ side degrades to None (unknown), not "" (confirmed no
+        active preset) -- "" would incorrectly show a synthetic "Custom"
+        row for a read that never actually confirmed anything. RoomFit has
+        no such row concept, so it keeps degrading to "" (no highlight)."""
         import asyncio
 
         mock_adapter = _setup_device(window)
@@ -1274,9 +1279,96 @@ class TestPresets:
 
         # Still populated with the real items, just no active-name highlight.
         assert len(mock_set_peq.call_args[0][0]) == 1
-        assert mock_set_peq.call_args[0][1] == ""
+        assert mock_set_peq.call_args[0][1] is None
         assert len(mock_set_roomfit.call_args[0][0]) == 1
         assert mock_set_roomfit.call_args[0][1] == ""
+
+    # --- "Current configuration on device" button removal: the synthetic
+    # "Custom" row now covers devices without profile-enumeration support
+    # too, gated on supports_peq instead ---
+
+    def test_no_peq_support_emits_unavailable_without_listing(self, window) -> None:
+        """supports_peq=False skips both list_peq_profiles() and the
+        active-config read entirely -- there's nothing to show."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.supports_peq = False
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock()
+        mock_adapter.list_roomfit_profiles = AsyncMock(return_value=[])
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(False, ""))
+
+        with patch.object(window._presets_device_view, "set_peq_unavailable") as mock_unavail:
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_unavail.assert_called_once()
+        mock_adapter.list_peq_profiles.assert_not_called()
+        mock_adapter.read_peq.assert_not_called()
+
+    def test_no_enumeration_but_peq_supported_shows_custom_row(self, window) -> None:
+        """supports_peq=True + supports_profile_enumeration=False: no named
+        list, but the live config still surfaces as a synthetic "Custom"
+        row via a plain read_peq() -- this is what replaces the old
+        dedicated "Current configuration on device" button for such
+        devices."""
+        import asyncio
+
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.supports_peq = True
+        mock_adapter.capabilities.supports_profile_enumeration = False
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(source_name="wifi", channel_mode=ChannelMode.LR, name="")
+        )
+
+        with patch.object(window._presets_device_view, "set_peq_presets") as mock_set_peq:
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_adapter.list_peq_profiles.assert_not_called()
+        mock_set_peq.assert_called_once()
+        assert mock_set_peq.call_args[0][0] == []
+        assert mock_set_peq.call_args[0][1] == ""
+        assert mock_set_peq.call_args[0][2] == "L/R"
+
+    def test_no_enumeration_and_read_fails_emits_unavailable(self, window) -> None:
+        """supports_peq=True + supports_profile_enumeration=False, but the
+        live-config read itself fails: nothing confirmed to show, same
+        outcome as no PEQ support at all -- not a "Custom" row with no
+        actual data behind it."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.supports_peq = True
+        mock_adapter.capabilities.supports_profile_enumeration = False
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with (
+            patch.object(window._presets_device_view, "set_peq_unavailable") as mock_unavail,
+            patch.object(window._presets_device_view, "set_peq_presets") as mock_set_peq,
+        ):
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_adapter.list_peq_profiles.assert_not_called()
+        mock_unavail.assert_called_once()
+        mock_set_peq.assert_not_called()
+
+    def test_load_device_presets_fetches_roomfit_without_enumeration(self, window) -> None:
+        """_load_device_presets() must not skip the RoomFit fetch just
+        because PEQ profile enumeration is unsupported -- the two are
+        independent capabilities (a stale early-return used to bail out of
+        the whole method, silently dropping RoomFit too)."""
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.supports_profile_enumeration = False
+
+        with patch.object(window._primary_workflows, "list_presets") as mock_list:
+            window._load_device_presets()
+
+        mock_list.assert_called_once()
 
     # --- Issue #24: PresetsDeviceView signals connected in MainWindow ---
 

@@ -100,15 +100,24 @@ class PrimaryWorkflowManager(QObject):
     panel, which share the same PresetItem-shaped data.
 
     Signals:
-        peq_presets_ready(list, str, str): PEQ PresetItem list + active
+        peq_presets_ready(list, object, str): PEQ PresetItem list + active
             preset name + active preset's channel mode, mirrors
             PresetsDeviceView.set_peq_presets() and
             FiltersPage.set_peq_presets(). The channel mode travels
             alongside the name (rather than needing its own read) because
             both come from the same read_peq() call; it's used only to
             label the synthetic "Custom" row shown when the active name is
-            "" (see presets_device_view.build_custom_peq_item).
-        peq_presets_unavailable(): mirrors set_peq_unavailable().
+            "" (see presets_device_view.build_custom_peq_item). The active
+            name is `object`, not `str`, because it must carry `None`
+            through the signal when the live-config read itself failed --
+            "unknown" is not the same thing as "" (confirmed no active
+            preset), and only `object`-typed Qt signal args can carry None.
+        peq_presets_unavailable(): mirrors set_peq_unavailable(). Emitted
+            when the device has no PEQ support at all, or the live-config
+            read needed to confirm PEQ state failed outright (see
+            _fetch_peq() below) -- never emitted just because named-preset
+            enumeration is unsupported, since the live config can still be
+            shown as a synthetic "Custom" row without it.
         roomfit_profiles_ready(list, str): RoomFit PresetItem list + active
             profile name, mirrors set_roomfit_profiles() on both views.
         roomfit_profiles_hidden(): mirrors set_roomfit_hidden().
@@ -144,7 +153,7 @@ class PrimaryWorkflowManager(QObject):
             (see _do_export_presets/_do_save_presets docstrings).
     """
 
-    peq_presets_ready = Signal(list, str, str)
+    peq_presets_ready = Signal(list, object, str)
     peq_presets_unavailable = Signal()
     roomfit_profiles_ready = Signal(list, str)
     roomfit_profiles_hidden = Signal()
@@ -521,23 +530,40 @@ class PrimaryWorkflowManager(QObject):
             ]
 
         async def _fetch_peq() -> None:
-            try:
-                if wiim_adapter.capabilities.supports_profile_enumeration:
+            if not wiim_adapter.capabilities.supports_peq:
+                self.peq_presets_unavailable.emit()
+                return
+
+            peq_items: list[PresetItem] = []
+            if wiim_adapter.capabilities.supports_profile_enumeration:
+                try:
                     peq_presets = await wiim_adapter.list_peq_profiles(source_name)
                     peq_items = _to_preset_items(peq_presets, "PEQ")
-                    # read_peq() is a plain, harmless read, unlike
-                    # load_peq_profile()/EQv2SourceLoad.
-                    active_peq_name, active_peq_channel_mode = (
-                        await self._peq_active_info_or_default(source_name)
-                    )
-                    self.peq_presets_ready.emit(
-                        peq_items, active_peq_name, active_peq_channel_mode
-                    )
-                else:
+                except Exception:
+                    logger.warning("Failed to list PEQ presets", exc_info=True)
                     self.peq_presets_unavailable.emit()
-            except Exception:
-                logger.warning("Failed to list PEQ presets", exc_info=True)
+                    return
+
+            # read_peq() is a plain, harmless read, unlike
+            # load_peq_profile()/EQv2SourceLoad. This is the *only* PEQ
+            # signal on a device without profile enumeration -- it backs
+            # the synthetic "Custom" row (see build_custom_peq_item) that
+            # replaces the old dedicated "Current configuration on device"
+            # button for such devices.
+            active_peq_name, active_peq_channel_mode = (
+                await self._peq_active_info_or_default(source_name)
+            )
+            if active_peq_name is None and not peq_items:
+                # Nothing confirmed: no named presets (unsupported or none
+                # saved) and the live-config read that would back a
+                # synthetic "Custom" row also failed -- same outcome as
+                # peq_presets_unavailable, not a preset list with an
+                # unearned "Custom" entry.
                 self.peq_presets_unavailable.emit()
+                return
+            self.peq_presets_ready.emit(
+                peq_items, active_peq_name, active_peq_channel_mode
+            )
 
         async def _fetch_roomfit() -> None:
             try:
@@ -569,22 +595,27 @@ class PrimaryWorkflowManager(QObject):
             logger.warning(log_msg, exc_info=True)
             return ""
 
-    async def _peq_active_info_or_default(self, source_name: str) -> tuple[str, str]:
+    async def _peq_active_info_or_default(
+        self, source_name: str
+    ) -> tuple[str | None, str]:
         """The active PEQ config's (name, channel_mode), for #165c
         highlighting and the merged Device list's synthetic "Custom" row.
 
         A single read_peq() call serves both -- channel_mode comes along
         for free rather than needing its own request. Degrades to
-        ("", "Stereo") on failure, same rationale as
-        _read_active_name_or_default: a failure here means no highlight,
-        not a failed view.
+        (None, "Stereo") on failure -- deliberately *not* ("", "Stereo"):
+        "" is the hardware-confirmed signal that the live config doesn't
+        match any saved preset (show "Custom"), while a read failure means
+        the active state is simply unknown (no highlight, no "Custom" row,
+        same as never having fetched at all). Collapsing those two into one
+        value would render a "Custom" row nothing actually confirmed.
         """
         try:
             settings = await self._require_adapter().read_peq(source_name)
             return settings.name, settings.channel_mode.display_value
         except Exception:
             logger.warning("Failed to read active PEQ preset name", exc_info=True)
-            return "", "Stereo"
+            return None, "Stereo"
 
     async def _roomfit_name_for_highlight(self) -> str:
         """The active RoomFit profile's name, for #165c highlighting."""
