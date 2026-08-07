@@ -1370,6 +1370,97 @@ class TestPresets:
 
         mock_list.assert_called_once()
 
+    # --- EQ-off qualifier: "(active)" alone claims a config is actually
+    # being applied, but the device reports a Name/selected-profile
+    # independent of the PEQ/RoomFit on-off toggle for that scope ---
+
+    def test_peq_off_forwards_enabled_false_to_both_views(self, window) -> None:
+        """A source with PEQ toggled off (EQStat: Off) still has a Name, but
+        peq_presets_ready's enabled flag must reflect the real off state so
+        both views can qualify the active row as "(active, PEQ off)"."""
+        import asyncio
+
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(
+            return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
+        )
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi",
+                channel_mode=ChannelMode.STEREO,
+                name="Movie Night",
+                enabled=False,
+            )
+        )
+        mock_adapter.list_roomfit_profiles = AsyncMock(return_value=[])
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, ""))
+
+        with patch.object(window._presets_device_view, "set_peq_presets") as mock_set_peq:
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_set_peq.assert_called_once()
+        assert mock_set_peq.call_args[0][1] == "Movie Night"
+        assert mock_set_peq.call_args[0][3] is False
+
+    def test_roomfit_off_forwards_enabled_false_to_both_views(self, window) -> None:
+        """RoomFit toggled off globally (EQStat: Off) still reports a
+        selected profile name -- roomfit_profiles_ready's enabled flag must
+        carry the real off state through to the "(active, RoomFit off)"
+        qualifier."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock(side_effect=RuntimeError("no peq"))
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(False, "Living Room"))
+
+        with patch.object(window._presets_device_view, "set_roomfit_profiles") as mock_set_rf:
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_set_rf.assert_called_once()
+        assert mock_set_rf.call_args[0][1] == "Living Room"
+        assert mock_set_rf.call_args[0][2] is False
+
+    def test_peq_and_roomfit_enabled_default_true(self, window) -> None:
+        """The common case (EQStat: On) forwards enabled=True through both
+        signals -- no qualifier shown, matching pre-existing behavior."""
+        import asyncio
+
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(
+            return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
+        )
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi",
+                channel_mode=ChannelMode.STEREO,
+                name="Movie Night",
+                enabled=True,
+            )
+        )
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
+
+        with (
+            patch.object(window._presets_device_view, "set_peq_presets") as mock_set_peq,
+            patch.object(window._presets_device_view, "set_roomfit_profiles") as mock_set_rf,
+        ):
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        assert mock_set_peq.call_args[0][3] is True
+        assert mock_set_rf.call_args[0][2] is True
+
     # --- Issue #24: PresetsDeviceView signals connected in MainWindow ---
 
     def test_issue24_presets_device_export_connected(self, window) -> None:

@@ -82,7 +82,15 @@ preset, a **Custom** row appears at the top of the list, marked active —
 select it the same way to pull whatever PEQ bands are currently live
 instead of a saved preset. On a device that can't list saved presets at
 all, "Custom" is the only PEQ row shown, so it's still how you reach the
-live config there too.
+live config there too. Note that a source that's never had a preset loaded
+onto it reports this same "no match" signal, so "Custom" can just as easily
+mean flat, default filters as genuinely hand-adjusted ones — pull it and
+check the Review step if you need to know which.
+
+A row marked "(active, PEQ off)" or "(active, RoomFit off)" instead of
+plain "(active)" means PEQ/RoomFit is currently switched off for that
+scope — you can still pull and push it the same way, it just isn't audible
+right now.
 
 Either way, filters are loaded and you're advanced straight to the Review
 step — no separate Stereo/L-R choice is needed for a saved preset/profile,

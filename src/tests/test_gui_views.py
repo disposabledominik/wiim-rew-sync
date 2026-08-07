@@ -281,6 +281,68 @@ class TestPresetsDeviceViewActiveHighlight:
             assert "(active)" not in item.text()
             assert not item.font().bold()
 
+    def test_active_peq_item_shows_eq_off_qualifier(self, qtbot) -> None:
+        """active_enabled=False on the active PEQ preset's own source shows
+        "(active, PEQ off)" instead of plain "(active)" -- the device
+        reports a Name independent of whether PEQ is actually toggled on
+        for that source."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        presets = _make_peq_presets(2)
+        view.set_peq_presets(presets, active_name="PEQ Preset 2", active_enabled=False)
+
+        item2 = view._peq_list.item(1)
+        assert "(active, PEQ off)" in item2.text()
+        assert "(active)" not in item2.text().replace("(active, PEQ off)", "")
+        # Still styled as active (bold/accent) -- off just qualifies the text.
+        assert item2.font().bold()
+
+        # Non-active items are unaffected.
+        item1 = view._peq_list.item(0)
+        assert "(active" not in item1.text()
+
+    def test_custom_row_shows_eq_off_qualifier(self, qtbot) -> None:
+        """The synthetic "Custom" row also gets the "PEQ off" qualifier when
+        the source it reflects has PEQ toggled off."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(
+            _make_peq_presets(1), active_name="", active_enabled=False
+        )
+
+        custom_item = view._peq_list.item(0)
+        assert custom_item.text().startswith("Custom")
+        assert "(active, PEQ off)" in custom_item.text()
+
+    def test_active_roomfit_item_shows_eq_off_qualifier(self, qtbot) -> None:
+        """Same qualifier convention applies to the RoomFit list, reading
+        "RoomFit off" instead of "PEQ off" (RoomFit's own toggle scope)."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        profiles = _make_roomfit_profiles(2)
+        view.set_roomfit_profiles(
+            profiles, active_name="RoomFit Profile 1", active_enabled=False
+        )
+
+        item1 = view._roomfit_list.item(0)
+        assert "(active, RoomFit off)" in item1.text()
+        item2 = view._roomfit_list.item(1)
+        assert "(active" not in item2.text()
+
+    def test_eq_off_qualifier_defaults_to_omitted(self, qtbot) -> None:
+        """active_enabled defaults to True (the pre-existing behavior) --
+        callers that don't know/care about EQStat get plain "(active)"."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(_make_peq_presets(2), active_name="PEQ Preset 1")
+        item1 = view._peq_list.item(0)
+        assert item1.text().endswith("(active)")
+        assert "PEQ off" not in item1.text()
+
 
 class TestPresetsDeviceViewSearch:
     """Tests for search field visibility and filtering."""

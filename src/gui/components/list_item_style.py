@@ -38,7 +38,9 @@ def apply_active_item_style(item: QListWidgetItem, is_active: bool) -> None:
     item.setToolTip("Currently active on this device")
 
 
-def build_preset_list_item(item: PresetItem, is_active: bool) -> QListWidgetItem:
+def build_preset_list_item(
+    item: PresetItem, is_active: bool, is_eq_off: bool = False
+) -> QListWidgetItem:
     """Build a QListWidgetItem for a device preset/profile row.
 
     Format: "Name  [ChannelMode]  [Type]", with a "(active)" text suffix --
@@ -46,9 +48,28 @@ def build_preset_list_item(item: PresetItem, is_active: bool) -> QListWidgetItem
     bold/accent reinforcement when `is_active`. The item's UserRole data is
     set to `item` itself; callers needing a different payload (e.g. a
     synthetic sentinel) should overwrite it with setData() after this call.
+
+    Args:
+        is_active: Whether this row's Name matches the source's/device's
+            current active config -- see build_preset_list_item's callers
+            (build_peq_rows, _populate_roomfit_list) for how that's decided.
+        is_eq_off: Only meaningful when `is_active` is True. The device
+            reports a Name (or lack of one) independent of whether that
+            config is actually being applied to audio right now -- "(active)"
+            alone would claim it's live even when the PEQ/RoomFit toggle for
+            that scope is off. When True, the suffix becomes
+            "(active, PEQ off)"/"(active, RoomFit off)" instead of plain
+            "(active)", read from `item.preset_type` since a single shared
+            list can mix both types.
     """
     text = f"{item.name}  [{item.channel_mode}]  [{item.preset_type}]"
-    list_item = QListWidgetItem(f"{text}  (active)" if is_active else text)
+    if is_active:
+        if is_eq_off:
+            off_label = "PEQ off" if item.preset_type == "PEQ" else "RoomFit off"
+            text = f"{text}  (active, {off_label})"
+        else:
+            text = f"{text}  (active)"
+    list_item = QListWidgetItem(text)
     apply_active_item_style(list_item, is_active)
     list_item.setData(Qt.ItemDataRole.UserRole, item)
     list_item.setSizeHint(QSize(0, LIST_ITEM_HEIGHT))

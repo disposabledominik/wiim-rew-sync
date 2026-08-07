@@ -2393,21 +2393,29 @@ class MainWindow(QMainWindow):
     # directly; results arrive via name_profiles_ready, see
     # _on_name_profiles_ready.
 
-    # _read_active_name_or_default, _do_list_presets, _peq_active_info_or_default,
-    # _roomfit_name_for_highlight moved to PrimaryWorkflowManager
-    # (src/gui/primary_workflows.py) as refresh_presets() and its helpers —
-    # docs/backlog.md item 3, Phase 1b. See _on_peq_presets_ready /
-    # _on_peq_presets_unavailable / _on_roomfit_profiles_ready /
-    # _on_roomfit_profiles_hidden below for the thin pass-through into
-    # PresetsDeviceView that replaced this method's direct widget writes.
+    # _do_list_presets, _peq_active_info_or_default, _roomfit_active_info_or_default
+    # moved to PrimaryWorkflowManager (src/gui/primary_workflows.py) as
+    # refresh_presets() and its helpers — docs/backlog.md item 3, Phase 1b.
+    # See _on_peq_presets_ready / _on_peq_presets_unavailable /
+    # _on_roomfit_profiles_ready / _on_roomfit_profiles_hidden below for the
+    # thin pass-through into PresetsDeviceView that replaced this method's
+    # direct widget writes.
 
-    @Slot(list, object, str)
+    @Slot(list, object, str, bool)
     def _on_peq_presets_ready(
-        self, items: list[Any], active_name: str | None, active_channel_mode: str
+        self,
+        items: list[Any],
+        active_name: str | None,
+        active_channel_mode: str,
+        active_enabled: bool,
     ) -> None:
         """Forward PrimaryWorkflowManager.peq_presets_ready into both consuming views."""
-        self._presets_device_view.set_peq_presets(items, active_name, active_channel_mode)
-        self._filters_page.set_peq_presets(items, active_name, active_channel_mode)
+        self._presets_device_view.set_peq_presets(
+            items, active_name, active_channel_mode, active_enabled
+        )
+        self._filters_page.set_peq_presets(
+            items, active_name, active_channel_mode, active_enabled
+        )
 
     @Slot()
     def _on_peq_presets_unavailable(self) -> None:
@@ -2415,11 +2423,13 @@ class MainWindow(QMainWindow):
         self._presets_device_view.set_peq_unavailable()
         self._filters_page.set_peq_unavailable()
 
-    @Slot(list, str)
-    def _on_roomfit_profiles_ready(self, items: list[Any], active_name: str) -> None:
+    @Slot(list, str, bool)
+    def _on_roomfit_profiles_ready(
+        self, items: list[Any], active_name: str, active_enabled: bool
+    ) -> None:
         """Forward PrimaryWorkflowManager.roomfit_profiles_ready into both consuming views."""
-        self._presets_device_view.set_roomfit_profiles(items, active_name)
-        self._filters_page.set_roomfit_profiles(items, active_name)
+        self._presets_device_view.set_roomfit_profiles(items, active_name, active_enabled)
+        self._filters_page.set_roomfit_profiles(items, active_name, active_enabled)
 
     @Slot()
     def _on_roomfit_profiles_hidden(self) -> None:

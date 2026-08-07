@@ -70,6 +70,16 @@ The Custom row always reflects the live config on whichever source you
 picked earlier, on the Source step — not every source on the device. If
 you want another source's live config, go back and pick that source first.
 
+A row marked "(active, PEQ off)" or "(active, RoomFit off)" instead of
+plain "(active)" means that Name is selected but PEQ/RoomFit is currently
+switched off for that scope — the config isn't audible right now, though
+loading it into the wizard and pushing works the same either way. And a
+"Custom" row doesn't necessarily mean something was manually adjusted — a
+source that's never had a preset loaded reports the same signal, so it can
+show completely flat, default filters just as easily as genuinely
+hand-tuned ones; the Review step after loading is the way to tell which one
+you actually got.
+
 ### Local Library
 
 Select **Local Library** from the dropdown to browse presets saved locally

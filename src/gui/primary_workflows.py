@@ -100,26 +100,34 @@ class PrimaryWorkflowManager(QObject):
     panel, which share the same PresetItem-shaped data.
 
     Signals:
-        peq_presets_ready(list, object, str): PEQ PresetItem list + active
-            preset name + active preset's channel mode, mirrors
+        peq_presets_ready(list, object, str, bool): PEQ PresetItem list +
+            active preset name + active preset's channel mode + whether PEQ
+            (EQStat) is actually switched on for this source, mirrors
             PresetsDeviceView.set_peq_presets() and
-            FiltersPage.set_peq_presets(). The channel mode travels
-            alongside the name (rather than needing its own read) because
-            both come from the same read_peq() call; it's used only to
-            label the synthetic "Custom" row shown when the active name is
-            "" (see presets_device_view.build_custom_peq_item). The active
-            name is `object`, not `str`, because it must carry `None`
-            through the signal when the live-config read itself failed --
-            "unknown" is not the same thing as "" (confirmed no active
-            preset), and only `object`-typed Qt signal args can carry None.
+            FiltersPage.set_peq_presets(). The channel mode and enabled flag
+            travel alongside the name (rather than needing their own reads)
+            because all three come from the same read_peq() call. The name
+            is used to label the synthetic "Custom" row shown when it's ""
+            (see presets_device_view.build_custom_peq_item); the enabled
+            flag is used to qualify the active row's badge as
+            "(active, PEQ off)" instead of plain "(active)" when a
+            name/custom config is selected but PEQ itself is toggled off for
+            that source (build_preset_list_item). The active name is
+            `object`, not `str`, because it must carry `None` through the
+            signal when the live-config read itself failed -- "unknown" is
+            not the same thing as "" (confirmed no active preset), and only
+            `object`-typed Qt signal args can carry None.
         peq_presets_unavailable(): mirrors set_peq_unavailable(). Emitted
             when the device has no PEQ support at all, or the live-config
             read needed to confirm PEQ state failed outright (see
             _fetch_peq() below) -- never emitted just because named-preset
             enumeration is unsupported, since the live config can still be
             shown as a synthetic "Custom" row without it.
-        roomfit_profiles_ready(list, str): RoomFit PresetItem list + active
-            profile name, mirrors set_roomfit_profiles() on both views.
+        roomfit_profiles_ready(list, str, bool): RoomFit PresetItem list +
+            active profile name + whether RoomFit is actually switched on,
+            mirrors set_roomfit_profiles() on both views. Same "(active,
+            RoomFit off)" qualifier rationale as peq_presets_ready's enabled
+            flag, above.
         roomfit_profiles_hidden(): mirrors set_roomfit_hidden().
 
         Four signals rather than one combined result: the PEQ and RoomFit
@@ -132,10 +140,11 @@ class PrimaryWorkflowManager(QObject):
             active profile name + whether RoomFit is currently on, mirrors
             NameProfilePage.set_existing_profiles() plus MainWindow's
             _roomfit_enabled attribute. Distinct from roomfit_profiles_ready
-            above despite the similar name — that one already feeds
-            PresetsDeviceView/FiltersPage with a different payload shape
-            (PresetItem objects, no enabled flag); reusing it here would
-            misroute data.
+            above despite the similar name and now-shared enabled flag —
+            that one feeds PresetsDeviceView/FiltersPage with a different
+            payload shape (PresetItem objects, for the merged preset list)
+            than this one's plain profile-name list (for the Name Your
+            Profile step); reusing it here would misroute data.
         presets_delete_complete(int, int): succeeded/failed counts from a
             delete_presets() batch. delete_presets() is otherwise a normal
             _dispatch()-based entry point, but its two completion paths
@@ -153,9 +162,9 @@ class PrimaryWorkflowManager(QObject):
             (see _do_export_presets/_do_save_presets docstrings).
     """
 
-    peq_presets_ready = Signal(list, object, str)
+    peq_presets_ready = Signal(list, object, str, bool)
     peq_presets_unavailable = Signal()
-    roomfit_profiles_ready = Signal(list, str)
+    roomfit_profiles_ready = Signal(list, str, bool)
     roomfit_profiles_hidden = Signal()
     name_profiles_ready = Signal(list, str, bool)
     presets_delete_complete = Signal(int, int)
@@ -550,7 +559,7 @@ class PrimaryWorkflowManager(QObject):
             # the synthetic "Custom" row (see build_custom_peq_item) that
             # replaces the old dedicated "Current configuration on device"
             # button for such devices.
-            active_peq_name, active_peq_channel_mode = (
+            active_peq_name, active_peq_channel_mode, active_peq_enabled = (
                 await self._peq_active_info_or_default(source_name)
             )
             if active_peq_name is None and not peq_items:
@@ -562,7 +571,7 @@ class PrimaryWorkflowManager(QObject):
                 self.peq_presets_unavailable.emit()
                 return
             self.peq_presets_ready.emit(
-                peq_items, active_peq_name, active_peq_channel_mode
+                peq_items, active_peq_name, active_peq_channel_mode, active_peq_enabled
             )
 
         async def _fetch_roomfit() -> None:
@@ -570,11 +579,12 @@ class PrimaryWorkflowManager(QObject):
                 if wiim_adapter.capabilities.supports_roomfit:
                     rf_profiles = await wiim_adapter.list_roomfit_profiles(source_name)
                     rf_items = _to_preset_items(rf_profiles, "RoomFit")
-                    active_roomfit_name = await self._read_active_name_or_default(
-                        self._roomfit_name_for_highlight(),
-                        "Failed to read active RoomFit profile name",
+                    active_roomfit_name, active_roomfit_enabled = (
+                        await self._roomfit_active_info_or_default()
                     )
-                    self.roomfit_profiles_ready.emit(rf_items, active_roomfit_name)
+                    self.roomfit_profiles_ready.emit(
+                        rf_items, active_roomfit_name, active_roomfit_enabled
+                    )
                 else:
                     self.roomfit_profiles_hidden.emit()
             except Exception:
@@ -583,44 +593,52 @@ class PrimaryWorkflowManager(QObject):
 
         await asyncio.gather(_fetch_peq(), _fetch_roomfit())
 
-    async def _read_active_name_or_default(
-        self, coro: Coroutine[Any, Any, Any], log_msg: str
-    ) -> str:
-        """Await a read whose only purpose is an active-item name for
-        highlighting (#165c) -- a failure here means no highlight, not a
-        failed view, so it degrades to "" rather than propagating."""
-        try:
-            return str(await coro)
-        except Exception:
-            logger.warning(log_msg, exc_info=True)
-            return ""
-
     async def _peq_active_info_or_default(
         self, source_name: str
-    ) -> tuple[str | None, str]:
-        """The active PEQ config's (name, channel_mode), for #165c
+    ) -> tuple[str | None, str, bool]:
+        """The active PEQ config's (name, channel_mode, enabled), for #165c
         highlighting and the merged Device list's synthetic "Custom" row.
 
-        A single read_peq() call serves both -- channel_mode comes along
-        for free rather than needing its own request. Degrades to
-        (None, "Stereo") on failure -- deliberately *not* ("", "Stereo"):
-        "" is the hardware-confirmed signal that the live config doesn't
-        match any saved preset (show "Custom"), while a read failure means
-        the active state is simply unknown (no highlight, no "Custom" row,
-        same as never having fetched at all). Collapsing those two into one
-        value would render a "Custom" row nothing actually confirmed.
+        A single read_peq() call serves all three -- channel_mode and the
+        EQStat-derived enabled flag come along for free rather than needing
+        their own requests. `enabled` backs the "(active, PEQ off)" qualifier
+        (build_preset_list_item) -- a source can have a name/custom config
+        selected while PEQ itself is toggled off for that source, and
+        "(active)" alone would misleadingly claim it's actually being
+        applied to audio right now.
+
+        Degrades to (None, "Stereo", True) on failure -- deliberately *not*
+        ("", "Stereo", True): "" is the hardware-confirmed signal that the
+        live config doesn't match any saved preset (show "Custom"), while a
+        read failure means the active state is simply unknown (no
+        highlight, no "Custom" row, same as never having fetched at all).
+        Collapsing those two into one value would render a "Custom" row
+        nothing actually confirmed. `enabled`'s default is moot in this
+        branch since no row ever renders off a None name.
         """
         try:
             settings = await self._require_adapter().read_peq(source_name)
-            return settings.name, settings.channel_mode.display_value
+            return settings.name, settings.channel_mode.display_value, settings.enabled
         except Exception:
             logger.warning("Failed to read active PEQ preset name", exc_info=True)
-            return None, "Stereo"
+            return None, "Stereo", True
 
-    async def _roomfit_name_for_highlight(self) -> str:
-        """The active RoomFit profile's name, for #165c highlighting."""
-        _enabled, active_roomfit_name = await self._require_adapter().get_roomfit_status()
-        return active_roomfit_name
+    async def _roomfit_active_info_or_default(self) -> tuple[str, bool]:
+        """The active RoomFit profile's (name, enabled), for #165c
+        highlighting and the "(active, RoomFit off)" qualifier.
+
+        Degrades to ("", True) on failure -- a failure here means no
+        highlight, not a failed view (same rationale as
+        _peq_active_info_or_default), and RoomFit has no "Custom" row
+        concept so "" carries no special meaning here the way it does for
+        PEQ.
+        """
+        try:
+            enabled, active_roomfit_name = await self._require_adapter().get_roomfit_status()
+            return active_roomfit_name, enabled
+        except Exception:
+            logger.warning("Failed to read active RoomFit profile name", exc_info=True)
+            return "", True
 
     # ------------------------------------------------------------------
     # Workflow: Device / Preset Reads (Phase 2)

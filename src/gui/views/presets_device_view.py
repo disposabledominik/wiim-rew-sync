@@ -89,19 +89,29 @@ def build_custom_peq_item(channel_mode: str) -> PresetItem:
 
 
 def build_peq_rows(
-    items: list[PresetItem], active_name: str | None, active_channel_mode: str
-) -> list[tuple[PresetItem, bool]]:
-    """PEQ items paired with an is-active flag, with a synthetic Custom row
-    prepended when active_name == "" (the PEQ fetch resolved and found no
-    active preset name -- see build_custom_peq_item). Shared by
+    items: list[PresetItem],
+    active_name: str | None,
+    active_channel_mode: str,
+    active_enabled: bool = True,
+) -> list[tuple[PresetItem, bool, bool]]:
+    """PEQ items paired with (is_active, is_eq_off) flags, with a synthetic
+    Custom row prepended when active_name == "" (the PEQ fetch resolved and
+    found no active preset name -- see build_custom_peq_item). Shared by
     PresetsDeviceView and FiltersPage's merged Device list so the "when does
     Custom appear" rule can't drift between the two call sites (#165c).
+
+    active_enabled reflects the source's real-time PEQ on/off toggle
+    (EQStat) -- independent of which Name is stored, since a source can have
+    a saved or custom config selected while PEQ itself is switched off for
+    that source. Only the active row's is_eq_off can ever be True; every
+    other row is unaffected since it isn't what's currently loaded anyway.
     """
-    rows: list[tuple[PresetItem, bool]] = [
-        (item, item.name == active_name) for item in items
+    rows: list[tuple[PresetItem, bool, bool]] = [
+        (item, item.name == active_name, item.name == active_name and not active_enabled)
+        for item in items
     ]
     if active_name == "":
-        rows.insert(0, (build_custom_peq_item(active_channel_mode), True))
+        rows.insert(0, (build_custom_peq_item(active_channel_mode), True, not active_enabled))
     return rows
 
 
@@ -142,7 +152,9 @@ class PresetsDeviceView(QWidget):
         # preset name) -- only "" shows the synthetic "Custom" row.
         self._active_peq_name: str | None = None
         self._active_peq_channel_mode: str = "Stereo"
+        self._active_peq_enabled: bool = True
         self._active_roomfit_name: str = ""
+        self._active_roomfit_enabled: bool = True
 
         self._setup_ui()
         # Start in empty state
@@ -166,6 +178,7 @@ class PresetsDeviceView(QWidget):
         presets: list[PresetItem],
         active_name: str | None = None,
         active_channel_mode: str = "Stereo",
+        active_enabled: bool = True,
     ) -> None:
         """Populate the PEQ Presets section.
 
@@ -180,15 +193,22 @@ class PresetsDeviceView(QWidget):
             active_channel_mode: Channel mode of the live active config,
                 used only to label the synthetic "Custom" row when
                 active_name is "".
+            active_enabled: Whether PEQ (EQStat) is actually switched on for
+                this source right now -- independent of active_name/which
+                config is stored, since a source can have a name/custom
+                config selected while PEQ itself is toggled off. When False,
+                the active row's "(active)" suffix becomes
+                "(active, PEQ off)" instead (see build_peq_rows).
         """
         self._peq_items = list(presets)
         self._active_peq_name = active_name
         self._active_peq_channel_mode = active_channel_mode
+        self._active_peq_enabled = active_enabled
         self._show_content_state()
         self._populate_peq_list()
 
     def set_roomfit_profiles(
-        self, profiles: list[PresetItem], active_name: str = ""
+        self, profiles: list[PresetItem], active_name: str = "", active_enabled: bool = True
     ) -> None:
         """Populate the RoomFit Profiles section.
 
@@ -196,9 +216,15 @@ class PresetsDeviceView(QWidget):
             profiles: List of PresetItem objects for RoomFit profiles.
             active_name: Name of the profile currently active on the device,
                 if any (#165c) -- highlighted distinctly from selection.
+            active_enabled: Whether RoomFit is actually switched on right
+                now -- independent of which profile is selected, since a
+                profile can be selected while RoomFit itself is toggled off.
+                When False, the active row's "(active)" suffix becomes
+                "(active, RoomFit off)" instead.
         """
         self._roomfit_items = list(profiles)
         self._active_roomfit_name = active_name
+        self._active_roomfit_enabled = active_enabled
         self._show_content_state()
         # Mirrors set_roomfit_hidden()'s setVisible(False) -- without this,
         # the section stays hidden forever after the first non-RoomFit device
@@ -451,13 +477,16 @@ class PresetsDeviceView(QWidget):
         self._peq_search.setVisible(len(self._peq_items) > 10)
 
         rows = build_peq_rows(
-            self._peq_items, self._active_peq_name, self._active_peq_channel_mode
+            self._peq_items,
+            self._active_peq_name,
+            self._active_peq_channel_mode,
+            self._active_peq_enabled,
         )
 
-        for item, is_active in rows:
+        for item, is_active, is_eq_off in rows:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            list_item = build_preset_list_item(item, is_active)
+            list_item = build_preset_list_item(item, is_active, is_eq_off)
             self._peq_list.addItem(list_item)
 
         self._update_action_buttons()
@@ -476,7 +505,9 @@ class PresetsDeviceView(QWidget):
         for item in self._roomfit_items:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            list_item = build_preset_list_item(item, item.name == self._active_roomfit_name)
+            is_active = item.name == self._active_roomfit_name
+            is_eq_off = is_active and not self._active_roomfit_enabled
+            list_item = build_preset_list_item(item, is_active, is_eq_off)
             self._roomfit_list.addItem(list_item)
 
         self._update_action_buttons()

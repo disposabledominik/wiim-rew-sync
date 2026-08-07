@@ -677,6 +677,32 @@ class TestFiltersPage:
         )
         assert any("Custom" in label and "PEQ" in label and "active" in label for label in labels)
 
+    def test_device_list_shows_eq_off_qualifier_for_both_types(self, qtbot) -> None:
+        """active_enabled=False on either set_peq_presets() or
+        set_roomfit_profiles() qualifies that type's active row as
+        "(active, PEQ off)"/"(active, RoomFit off)" instead of plain
+        "(active)" -- the merged list's own equivalent of
+        TestPresetsDeviceViewActiveHighlight's coverage in test_gui_views.py."""
+        page = FiltersPage()
+        qtbot.addWidget(page)
+
+        page.set_peq_presets(
+            [PresetItem(name="Living Room PEQ", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="Living Room PEQ",
+            active_enabled=False,
+        )
+        page.set_roomfit_profiles(
+            [PresetItem(name="Living Room RF", channel_mode="Stereo", preset_type="RoomFit")],
+            active_name="Living Room RF",
+            active_enabled=False,
+        )
+
+        labels = {page._device_list.item(i).text() for i in range(page._device_list.count())}
+        assert any("Living Room PEQ" in label and "(active, PEQ off)" in label for label in labels)
+        assert any(
+            "Living Room RF" in label and "(active, RoomFit off)" in label for label in labels
+        )
+
     def test_device_load_button_enabled_only_with_selection(self, qtbot) -> None:
         """The Device panel's Load Preset button is disabled until a row is selected."""
         page = FiltersPage()

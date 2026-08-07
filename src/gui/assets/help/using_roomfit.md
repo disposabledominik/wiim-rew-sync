@@ -110,7 +110,10 @@ actions here, though:
 The "Name Your Profile" step and "Presets on Device" both mark the
 currently-active RoomFit profile (and PEQ preset) with a bold, colored
 "(active)" label, so you can see what's live on your device before you name
-or overwrite anything.
+or overwrite anything. If RoomFit is currently switched off, that label
+reads "(active, RoomFit off)" instead — the profile is still selected, it
+just isn't being applied to your audio right now. Turn RoomFit back on via
+the WiiM Home app (see above) if you want it audible again.
 
 ## Tips
 

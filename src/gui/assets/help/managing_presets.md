@@ -99,6 +99,12 @@ RoomFit profile is currently active on the device, its entry is shown in
 bold accent text with an "(active)" label, so you can see at a glance what's
 actually playing before you export or overwrite anything.
 
+**"(active)" means "this Name is currently selected," not "this is
+currently being applied to your audio."** If PEQ (or RoomFit) is toggled
+off for that source/device, the label instead reads "(active, PEQ off)" or
+"(active, RoomFit off)" — the config is still selected, just not audible
+right now. Enabling PEQ/RoomFit is done from the WiiM Home app, not here.
+
 If the live PEQ config on the device doesn't match any saved preset — for
 example, after adjusting bands directly rather than loading a saved preset —
 a **Custom** row (the same term the WiiM Home app uses) appears at the top
@@ -117,6 +123,15 @@ This "Custom" row is also how you reach the live PEQ config on a device
 that can't list saved presets at all — on such a device it's the only PEQ
 row shown, in both this view and the Filters step's Device option, rather
 than presets being unavailable entirely.
+
+**A "Custom" row doesn't necessarily mean something was customized.** A
+source that's never had a preset loaded onto it reports the same "no saved
+preset matches" signal as one with genuinely hand-adjusted filters — so a
+brand-new device, or a source you haven't touched yet, can show "Custom
+(active)" with completely flat, default filters. There's no way to tell the
+two apart from this list alone; check the actual filter values (e.g. by
+loading it into the wizard and viewing the Review step) if you need to know
+which case you're looking at.
 
 Reading a **PEQ** preset's filters (for any of the three actions above, or
 when loading one via the Filters step's Device option) briefly switches your

@@ -177,8 +177,10 @@ class FiltersPage(QWidget):
         # only the latter shows the synthetic "Custom" row.
         self._device_active_peq_name: str | None = None
         self._device_active_peq_channel_mode: str = "Stereo"
+        self._device_active_peq_enabled: bool = True
         self._device_roomfit_items: list[PresetItem] = []
         self._device_active_roomfit_name: str = ""
+        self._device_active_roomfit_enabled: bool = True
         self._local_profiles: list[Profile] = []
         self.rew_pull_view = RewPullView(
             show_title=False, show_header=False, embedded=True
@@ -263,6 +265,7 @@ class FiltersPage(QWidget):
         presets: list[PresetItem],
         active_name: str | None = None,
         active_channel_mode: str = "Stereo",
+        active_enabled: bool = True,
     ) -> None:
         """Populate the Device panel's PEQ presets.
 
@@ -278,22 +281,35 @@ class FiltersPage(QWidget):
             active_channel_mode: Channel mode of the live active config,
                 used only to label the synthetic "Custom" row when
                 active_name is "".
+            active_enabled: Whether PEQ (EQStat) is actually switched on for
+                this source right now -- independent of active_name, since a
+                source can have a name/custom config selected while PEQ
+                itself is toggled off. When False, the active row's
+                "(active)" suffix becomes "(active, PEQ off)" instead.
         """
         self._device_peq_items = list(presets)
         self._device_active_peq_name = active_name
         self._device_active_peq_channel_mode = active_channel_mode
+        self._device_active_peq_enabled = active_enabled
         self._populate_device_list()
 
-    def set_roomfit_profiles(self, profiles: list[PresetItem], active_name: str = "") -> None:
+    def set_roomfit_profiles(
+        self, profiles: list[PresetItem], active_name: str = "", active_enabled: bool = True
+    ) -> None:
         """Populate the Device panel's RoomFit profiles.
 
         Args:
             profiles: List of PresetItem objects for RoomFit profiles.
             active_name: Name of the profile currently active on the device,
                 if any -- highlighted distinctly in the merged list.
+            active_enabled: Whether RoomFit is actually switched on right
+                now -- independent of which profile is selected. When False,
+                the active row's "(active)" suffix becomes
+                "(active, RoomFit off)" instead.
         """
         self._device_roomfit_items = list(profiles)
         self._device_active_roomfit_name = active_name
+        self._device_active_roomfit_enabled = active_enabled
         self._populate_device_list()
 
     def set_local_profiles(self, profiles: list[Profile]) -> None:
@@ -851,19 +867,26 @@ class FiltersPage(QWidget):
             self._device_peq_items,
             self._device_active_peq_name,
             self._device_active_peq_channel_mode,
+            self._device_active_peq_enabled,
         )
-        combined: list[tuple[PresetItem, bool, object]] = [
-            (item, is_active, _CUSTOM_ROW_MARKER if item.is_custom else item)
-            for item, is_active in peq_rows
+        combined: list[tuple[PresetItem, bool, bool, object]] = [
+            (item, is_active, is_eq_off, _CUSTOM_ROW_MARKER if item.is_custom else item)
+            for item, is_active, is_eq_off in peq_rows
         ]
         combined += [
-            (item, item.name == self._device_active_roomfit_name, item)
+            (
+                item,
+                item.name == self._device_active_roomfit_name,
+                item.name == self._device_active_roomfit_name
+                and not self._device_active_roomfit_enabled,
+                item,
+            )
             for item in self._device_roomfit_items
         ]
         self._device_empty_label.setVisible(not combined)
         self._device_list.setVisible(bool(combined))
-        for display_item, is_active, user_data in combined:
-            list_item = build_preset_list_item(display_item, is_active)
+        for display_item, is_active, is_eq_off, user_data in combined:
+            list_item = build_preset_list_item(display_item, is_active, is_eq_off)
             list_item.setData(Qt.ItemDataRole.UserRole, user_data)
             self._device_list.addItem(list_item)
         self._device_load_btn.setEnabled(False)

@@ -198,6 +198,9 @@ gates fully before the next sign-off rather than carrying these numbers forward.
   device-assigned one) before opening the device picker; cancelling the name prompt aborts the copy
 - [P] Selecting the "Custom" row (alone, or together with real presets) disables Delete — there's no
   saved preset on the device to delete
+- [P] With PEQ toggled off for the active source (via WiiM Home), the active row's label reads
+  "(active, PEQ off)" instead of plain "(active)"; with RoomFit toggled off globally, the active
+  RoomFit row reads "(active, RoomFit off)" — same convention on the Filters step's Device option
 
 ### Test 12a: Filters Step — Device Source
 - [P] On the Filters step, selecting "Device" from the dropdown shows one merged list combining
