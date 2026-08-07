@@ -520,10 +520,14 @@ QComboBox::down-arrow {
        visual "this is a dropdown" affordance. A border-only triangle (no
        image, matching this theme's otherwise asset-free convention) was
        tried first but Qt's style engine renders it as a solid filled box
-       instead of a triangle, so an actual icon asset is used instead. */
+       instead of a triangle, so an actual icon asset is used instead.
+       %CHEVRON_ICON% resolves to a theme-specific filename in theme.py
+       (rather than a literal chevron_down_<theme>.svg here) so this rule stays
+       byte-identical between fluent_dark.qss/fluent_light.qss -- required
+       by test_qss_parity.py, which only masks color values, not filenames. */
     width: 12px;
     height: 8px;
-    image: url(%ICONS_DIR%/chevron_down_dark.svg);
+    image: url(%ICONS_DIR%/%CHEVRON_ICON%);
 }
 
 QComboBox QAbstractItemView {

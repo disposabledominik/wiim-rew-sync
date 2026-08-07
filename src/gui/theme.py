@@ -29,6 +29,14 @@ _ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 # _load_stylesheet() substitutes this for the real absolute path below.
 _ICONS_DIR_TOKEN = "%ICONS_DIR%"  # noqa: S105 -- a QSS placeholder, not a secret
 
+# The combo-box down-arrow icon is theme-specific (light/dark stroke color),
+# but fluent_dark.qss/fluent_light.qss must stay byte-identical apart from
+# color values (enforced by test_qss_parity.py, which only masks colors --
+# not filenames). So the QSS references this token instead of a literal
+# chevron_down_dark.svg/chevron_down_light.svg, and _load_stylesheet()
+# resolves it to the right filename for the theme actually being loaded.
+_CHEVRON_ICON_TOKEN = "%CHEVRON_ICON%"  # noqa: S105 -- a QSS placeholder, not a secret
+
 ThemeMode = Literal["light", "dark", "system"]
 
 # Dynamic property set on the QApplication instance recording the last
@@ -78,7 +86,7 @@ class ThemeManager:
         qss_filename = f"fluent_{resolved}.qss"
         qss_path = _STYLES_DIR / qss_filename
 
-        stylesheet = self._load_stylesheet(qss_path)
+        stylesheet = self._load_stylesheet(qss_path, resolved)
         self._app.setStyleSheet(stylesheet)
         self._app.setProperty(_RESOLVED_THEME_PROPERTY, resolved)
         logger.info("Applied theme: %s (resolved from mode=%s)", resolved, mode)
@@ -108,11 +116,17 @@ class ThemeManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _load_stylesheet(path: Path) -> str:
+    def _load_stylesheet(path: Path, resolved: Literal["light", "dark"]) -> str:
         """Read a QSS file from disk.
 
         Returns an empty string if the file does not exist yet (graceful
         handling during development when stylesheets haven't been created).
+
+        Args:
+            path: The .qss file to load.
+            resolved: The theme being loaded ("light" or "dark"), used to
+                pick the right file for placeholders like %CHEVRON_ICON%
+                that must resolve differently per theme.
         """
         if not path.exists():
             logger.warning(
@@ -127,7 +141,8 @@ class ThemeManager:
             return ""
 
         # Qt's url() always wants forward slashes, even on Windows.
-        return text.replace(_ICONS_DIR_TOKEN, _ICONS_DIR.as_posix())
+        text = text.replace(_ICONS_DIR_TOKEN, _ICONS_DIR.as_posix())
+        return text.replace(_CHEVRON_ICON_TOKEN, f"chevron_down_{resolved}.svg")
 
     @staticmethod
     def _detect_windows_theme() -> Literal["light", "dark"]:
