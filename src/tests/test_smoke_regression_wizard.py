@@ -13,6 +13,7 @@ from PySide6.QtGui import QShowEvent
 
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
+from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep, steps_for_flow
 from src.tests.conftest import close_coroutine_tree
 
@@ -1143,3 +1144,56 @@ class TestIssue9LateProbeAfterLeavingConnect:
             )
 
         set_devices.assert_called_once()
+
+
+class TestIssue9DeviceItemFlowSwitchStaleSource:
+    """The precise, confirmed root cause for #9 (from a more detailed repro
+    description): loading a cross-type preset (a RoomFit profile while in
+    PEQ flow, or a PEQ preset while in RoomFit flow) from the Filters step's
+    merged Device list goes through `_on_device_item_selected`, which --
+    unlike every other flow-changing handler (_on_eq_type_selected,
+    _on_device_selected) -- called `set_flow_type()` with no invalidation
+    at all. `SOURCE` exists in PEQ's sequence but not RoomFit's, so it
+    survived as a stale `completed_steps` entry: invisible while on
+    RoomFit (WizardController.invalidate_from only pops steps that are
+    part of the *current* sequence, so a step outside it is silently
+    skipped either way), then resurrected the next time flow_type resets
+    back to PEQ -- e.g. a later device switch, which always resets to PEQ
+    -- reproducing exactly "all steps cleared except Source"."""
+
+    def test_loading_roomfit_preset_while_in_peq_clears_stale_source(self, window) -> None:
+        """Switching flow type via the Device-panel selection must
+        invalidate SOURCE immediately, the same as the EQ_TYPE page does."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))  # RoomFit-capable
+        window._on_eq_type_selected("peq")  # EQ_TYPE done, at SOURCE
+        window._on_source_selected("wifi", "Stereo")  # SOURCE done, at FILTERS
+        assert WizardStep.SOURCE in wc.completed_steps
+
+        item = PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")
+        window._on_device_item_selected(item)
+
+        assert wc.flow_type == FlowType.ROOMFIT
+        assert WizardStep.SOURCE not in wc.completed_steps
+
+    def test_stale_source_does_not_resurface_after_later_device_switch(self, window) -> None:
+        """End-to-end repro of the reported symptom: PEQ dry run up through
+        Filters, load a RoomFit preset from the Device panel, then switch to
+        a different device (always resets flow_type to PEQ) -- SOURCE must
+        not come back as completed."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))
+        window._on_eq_type_selected("peq")
+        window._on_source_selected("wifi", "Stereo")
+
+        item = PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")
+        window._on_device_item_selected(item)
+
+        window._on_device_selected("192.168.1.200")
+
+        assert WizardStep.SOURCE not in wc.completed_steps
+        seq = wc.get_steps()
+        source_idx = seq.index(WizardStep.SOURCE)
+        assert window._step_indicator._completed[source_idx] is False

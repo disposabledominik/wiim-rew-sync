@@ -1253,8 +1253,20 @@ class MainWindow(QMainWindow):
 
         current_flow = self._wizard_controller.flow_type
         if preset_type == "RoomFit" and current_flow != FlowType.ROOMFIT:
+            # Same "old flow's sequence, before set_flow_type" invalidation
+            # rule as _on_eq_type_selected -- SOURCE exists in PEQ's
+            # sequence but not RoomFit's, so without this it survives as a
+            # stale completed_steps entry once the sequence no longer
+            # contains it: invisible while on RoomFit (not iterated by
+            # invalidate_from), then resurrected the next time something
+            # (e.g. a later device switch) resets flow_type back to PEQ,
+            # whose sequence includes SOURCE again (smoke #266 real root
+            # cause -- this call site changed flow_type with no
+            # invalidation at all).
+            self._wizard_controller.invalidate_after(WizardStep.EQ_TYPE)
             self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
         elif preset_type != "RoomFit" and current_flow == FlowType.ROOMFIT:
+            self._wizard_controller.invalidate_after(WizardStep.EQ_TYPE)
             self._wizard_controller.set_flow_type(FlowType.PEQ)
 
         self._apply_channel_mode_from_item(item)
