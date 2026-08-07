@@ -436,9 +436,55 @@ class WizardController(QObject):
         Emits ``flow_type_changed``.  Does not change the current step —
         the caller should call ``advance()`` or ``go_to_step()`` after this
         if a step transition is needed.
+
+        Also invalidates any step that exists in the sequence being left
+        but not in the one being entered (e.g. ``SOURCE`` leaving PEQ for
+        RoomFit, ``NAME_PROFILE`` leaving RoomFit for PEQ, ``EQ_TYPE``
+        leaving either for PEQ_ONLY) -- done once, here, rather than left
+        to every call site to remember. A caller that changed flow_type
+        without invalidating first (docs/smoke_test_issues.md #266's
+        confirmed root cause) leaves a completed step's ``completed_steps``
+        entry orphaned: invisible while the new flow doesn't reference it
+        (``invalidate_from`` only ever walks the *current* sequence, so an
+        entry for a step outside it is silently skipped, by design, for
+        every invalidation call that runs afterward), then resurrected the
+        next time something makes that step part of the sequence again.
+        That's a property of *any* flow-type change, not specific to one
+        call site, so the fix belongs on this shared path -- the single
+        place a flow_type transition can happen -- rather than duplicated
+        (and, as #266 showed, sometimes forgotten) at each caller.
+
+        The invalidation point is derived generically: the first step
+        where the old and new sequences diverge, walking from CONNECT --
+        found by comparing ``steps_for_flow(old)`` against
+        ``steps_for_flow(new_flow)`` rather than a hardcoded anchor step,
+        so a future flow variant or reordering can't reintroduce this bug
+        class by falling outside a hand-picked case. Everything from that
+        point onward is invalidated using the *old* sequence (same
+        ordering rule ``invalidate_after`` already documents), so a step
+        that only exists in the flow being left is still visible to
+        ``get_steps()`` at invalidation time.
+
+        Device-identity invalidation (a different device, not just a
+        different flow on the same one) is a separate, broader concern
+        handled independently by callers via ``invalidate_after`` --
+        switching devices must invalidate everything after CONNECT even
+        when the old and new flow_type happen to be equal (e.g. PEQ to
+        PEQ, on two different devices), which this method's "did
+        flow_type actually change" check would otherwise miss entirely.
         """
         if self._state.flow_type == flow_type:
             return
+
+        old_sequence = self.get_steps()
+        new_sequence = steps_for_flow(flow_type)
+        common_len = 0
+        for old_step, new_step in zip(old_sequence, new_sequence, strict=False):
+            if old_step != new_step:
+                break
+            common_len += 1
+        if common_len < len(old_sequence):
+            self.invalidate_from(old_sequence[common_len])
 
         self._state.flow_type = flow_type
         self.flow_type_changed.emit(flow_type)

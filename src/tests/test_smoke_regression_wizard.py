@@ -1197,3 +1197,41 @@ class TestIssue9DeviceItemFlowSwitchStaleSource:
         seq = wc.get_steps()
         source_idx = seq.index(WizardStep.SOURCE)
         assert window._step_indicator._completed[source_idx] is False
+
+
+class TestIssue9ReprobeSameDeviceDifferentCapabilities:
+    """A third, previously-undetected instance of the same bug class: the
+    no-op branch in _on_device_selected (re-selecting the already-connected
+    device -- e.g. a deliberate manual re-click while genuinely browsing
+    back at Connect) intentionally skips invalidate_after/
+    clear_device_scoped_state/set_flow_type entirely ("nothing about the
+    session is invalid"), but still relaunches a capability probe
+    ("capabilities can change server-side"). Before the consolidated fix,
+    if that re-probe resolved with different RoomFit support than before,
+    _on_capabilities_ready's set_flow_type(PEQ_ONLY) branch changed
+    flow_type with no invalidation of its own -- leaving a completed
+    RoomFit-only NAME_PROFILE (and EQ_TYPE/FILTERS/REVIEW) stale in
+    completed_steps."""
+
+    def test_reprobe_losing_roomfit_support_clears_name_profile(self, window) -> None:
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))  # RoomFit-capable
+        window._on_eq_type_selected("roomfit")  # EQ_TYPE done, at FILTERS
+        wc.advance(summary="Filters loaded")  # FILTERS done, at REVIEW
+        wc.advance(summary="Ready")  # REVIEW done, at NAME_PROFILE
+        wc.advance(summary="My Profile")  # NAME_PROFILE done, at PUSH
+        assert WizardStep.NAME_PROFILE in wc.completed_steps
+
+        wc.go_to_step(WizardStep.CONNECT)  # browsing -- nothing invalidated
+        # Manual re-click of the *same* already-connected device: the
+        # documented no-op branch, skips all invalidation by design.
+        window._on_device_selected("192.168.1.100")
+        # The re-probe now reports the device as PEQ-only.
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))
+
+        assert wc.flow_type == FlowType.PEQ_ONLY
+        assert WizardStep.NAME_PROFILE not in wc.completed_steps
+        assert WizardStep.EQ_TYPE not in wc.completed_steps
+        assert WizardStep.FILTERS not in wc.completed_steps
+        assert WizardStep.REVIEW not in wc.completed_steps

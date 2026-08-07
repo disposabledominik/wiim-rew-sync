@@ -877,7 +877,16 @@ class MainWindow(QMainWindow):
                     "keep them. Switch anyway?",
                 ):
                     return
-            # Invalidate using the *old* (pre-switch) flow's sequence, before
+            # This explicit invalidate_after(CONNECT) stays even though
+            # set_flow_type() below now invalidates orphaned steps on its
+            # own (docs/smoke_test_issues.md #266) -- that only fires when
+            # flow_type actually *changes*, but a device switch must
+            # invalidate everything after CONNECT regardless, since it's
+            # the *device* that's invalid now, not the flow choice (e.g.
+            # switching between two RoomFit-capable devices leaves
+            # flow_type at PEQ both before and after, so set_flow_type()'s
+            # own check would see no change and invalidate nothing). Run
+            # using the *old* (pre-switch) flow's sequence, before
             # resetting flow_type below -- a step that only exists in the
             # old flow (e.g. NAME_PROFILE, RoomFit-only) would otherwise be
             # invisible to get_steps() once flow_type has already changed.
@@ -1034,11 +1043,10 @@ class MainWindow(QMainWindow):
 
         Change detection (lazy invalidation, #246): re-confirming the EQ
         type the wizard already has just advances, keeping every downstream
-        checkmark. Only an actual switch invalidates the steps after
-        EQ_TYPE — using the *old* flow's sequence, before ``set_flow_type``
-        runs, so a step that only exists in the flow being left (e.g.
-        NAME_PROFILE, RoomFit-only) is still visible to ``get_steps()`` at
-        invalidation time (same ordering rule as ``_on_device_selected``).
+        checkmark. An actual switch invalidates the steps after EQ_TYPE --
+        ``WizardController.set_flow_type()`` itself owns that invalidation
+        now (docs/smoke_test_issues.md #266), so this handler only needs to
+        clear the loaded filter payload, not re-derive which steps to pop.
 
         Args:
             eq_type: Either "peq" or "roomfit".
@@ -1046,9 +1054,6 @@ class MainWindow(QMainWindow):
         new_flow = FlowType.ROOMFIT if eq_type == "roomfit" else FlowType.PEQ
 
         if new_flow != self._wizard_controller.flow_type:
-            # invalidate_after runs before set_flow_type below, so it sees
-            # the *old* flow's sequence (the ordering rule documented above).
-            self._wizard_controller.invalidate_after(WizardStep.EQ_TYPE)
             # PEQ and RoomFit are different pipelines: the loaded filter
             # payload (and its origin/rows/notes) from the flow being left
             # must not carry into the new one (#162d/#173) -- same
@@ -1251,22 +1256,16 @@ class MainWindow(QMainWindow):
         if not self._confirm_preset_preview([item]):
             return
 
+        # set_flow_type() itself invalidates whatever's orphaned by the
+        # switch (docs/smoke_test_issues.md #266's confirmed root cause was
+        # this exact call site changing flow_type with no invalidation at
+        # all -- SOURCE, PEQ-only, survived as a stale completed_steps
+        # entry across a load-a-RoomFit-preset-here switch). No hand-rolled
+        # invalidate_after needed here now; the shared path handles it.
         current_flow = self._wizard_controller.flow_type
         if preset_type == "RoomFit" and current_flow != FlowType.ROOMFIT:
-            # Same "old flow's sequence, before set_flow_type" invalidation
-            # rule as _on_eq_type_selected -- SOURCE exists in PEQ's
-            # sequence but not RoomFit's, so without this it survives as a
-            # stale completed_steps entry once the sequence no longer
-            # contains it: invisible while on RoomFit (not iterated by
-            # invalidate_from), then resurrected the next time something
-            # (e.g. a later device switch) resets flow_type back to PEQ,
-            # whose sequence includes SOURCE again (smoke #266 real root
-            # cause -- this call site changed flow_type with no
-            # invalidation at all).
-            self._wizard_controller.invalidate_after(WizardStep.EQ_TYPE)
             self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
         elif preset_type != "RoomFit" and current_flow == FlowType.ROOMFIT:
-            self._wizard_controller.invalidate_after(WizardStep.EQ_TYPE)
             self._wizard_controller.set_flow_type(FlowType.PEQ)
 
         self._apply_channel_mode_from_item(item)
@@ -1768,7 +1767,16 @@ class MainWindow(QMainWindow):
         # diagnostics) is safe/desirable to refresh unconditionally.
         if self._wizard_controller.current_step == WizardStep.CONNECT:
             if not roomfit_readable:
-                # PEQ-only device — skip EQ_TYPE step (Req 1.10)
+                # PEQ-only device — skip EQ_TYPE step (Req 1.10). This
+                # call site has no explicit invalidation of its own -- the
+                # `current_step == CONNECT` guard above narrows the window,
+                # but doesn't rule out a *manual* re-probe of an
+                # already-connected device (the intentional no-op branch in
+                # _on_device_selected) reporting different RoomFit support
+                # than a prior, still-completed EQ_TYPE/NAME_PROFILE flow on
+                # the same device. set_flow_type() itself invalidates
+                # whatever's orphaned by that (docs/smoke_test_issues.md
+                # #266), so nothing extra is needed here.
                 self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
                 self._wizard_controller.advance(summary=device_name)
             else:
