@@ -646,6 +646,45 @@ class TestIssue57BackNavClearsCompletedSteps:
 
         assert WizardStep.FILTERS in wc.completed_steps
 
+    def test_filters_reselection_invalidates_downstream_same_selection_does_not(
+        self, window
+    ) -> None:
+        """QA-reported bug: browsing back from Push to Filters, picking a
+        DIFFERENT filter/preset, and clicking Continue left Review/Push's
+        checkmarks in place, letting a push proceed against stale reviewed
+        data. Unlike Source's own state field, `state.current_filters` is
+        already overwritten by the producer (file import/device pull/preset
+        load) well before Continue is clicked, so _on_filters_accepted
+        tracks its own "last confirmed" snapshot rather than comparing
+        against wizard state directly (see that method's docstring).
+        Re-confirming the SAME filters must not invalidate anything,
+        mirroring Source's own change-vs-no-change split."""
+        wc = window._wizard_controller
+        wc.set_flow_type(FlowType.PEQ_ONLY)
+
+        filters_a = [MagicMock()]
+        wc.state.selected_source = "wifi"
+        wc.advance(summary="Connected")  # CONNECT done, at SOURCE
+        wc.advance(summary="wifi")  # SOURCE done, at FILTERS
+        wc.state.current_filters = filters_a
+        window._on_filters_accepted()  # FILTERS done, at REVIEW
+        wc.advance(summary="Reviewed")  # REVIEW done, at PUSH
+
+        # Browse back, re-confirm the SAME filters -- nothing clears
+        wc.go_to_step(WizardStep.FILTERS)
+        wc.state.current_filters = filters_a
+        window._on_filters_accepted()
+        assert WizardStep.REVIEW in wc.completed_steps
+
+        # Browse back, load a DIFFERENT filter set, re-confirm -- Review/Push clear
+        wc.go_to_step(WizardStep.FILTERS)
+        wc.state.current_filters = [MagicMock()]
+        window._on_filters_accepted()
+        assert WizardStep.REVIEW not in wc.completed_steps
+        # FILTERS itself was just re-completed by the advance()
+        assert WizardStep.FILTERS in wc.completed_steps
+        assert WizardStep.SOURCE in wc.completed_steps
+
     def test_eq_type_change_invalidates_downstream_same_type_does_not(
         self, window
     ) -> None:
@@ -966,3 +1005,51 @@ class TestDeviceSwitchConfirmation:
 
         confirm.assert_not_called()
         assert window._wizard_controller.state.selected_device == "192.168.1.200"
+
+
+class TestIssue9SourceCheckmarkAfterDeviceSwitch:
+    """QA-reported: after finishing a PEQ dry run, navigating back to Connect
+    and choosing a different device left the Source step showing checked
+    while every other step correctly showed unchecked. Covers both the
+    WizardController's completed_steps data and the StepIndicator widget's
+    own rendered `_completed` flags, through the real handler chain
+    (_on_device_selected -> _on_capabilities_ready), for both a
+    RoomFit-capable device (PEQ chosen at EQ_TYPE) and a PEQ_ONLY device
+    (no EQ_TYPE step) -- could not reproduce a discrepancy in either case;
+    kept as a regression guard for this exact scenario."""
+
+    def test_source_checkmark_clears_with_eq_type_step(self, window) -> None:
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))  # RoomFit-capable
+        window._on_eq_type_selected("peq")  # EQ_TYPE done, at SOURCE
+        window._on_source_selected("wifi", "Stereo")  # SOURCE done, at FILTERS
+        wc.advance(summary="Filters loaded")  # FILTERS done, at REVIEW
+        wc.advance(summary="Dry Run")  # REVIEW done, at PUSH -- PEQ dry run
+        assert WizardStep.SOURCE in wc.completed_steps
+
+        window._on_device_selected("192.168.1.200")
+
+        assert WizardStep.SOURCE not in wc.completed_steps
+        assert WizardStep.FILTERS not in wc.completed_steps
+        assert WizardStep.REVIEW not in wc.completed_steps
+
+        seq = wc.get_steps()
+        source_idx = seq.index(WizardStep.SOURCE)
+        assert window._step_indicator._completed[source_idx] is False
+
+    def test_source_checkmark_clears_without_eq_type_step(self, window) -> None:
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))  # PEQ_ONLY device
+        window._on_source_selected("wifi", "Stereo")  # SOURCE done, at FILTERS
+        wc.advance(summary="Filters loaded")  # FILTERS done, at REVIEW
+        wc.advance(summary="Dry Run")  # REVIEW done, at PUSH -- PEQ dry run
+        assert WizardStep.SOURCE in wc.completed_steps
+
+        window._on_device_selected("192.168.1.200")
+
+        assert WizardStep.SOURCE not in wc.completed_steps
+        seq = wc.get_steps()
+        source_idx = seq.index(WizardStep.SOURCE)
+        assert window._step_indicator._completed[source_idx] is False

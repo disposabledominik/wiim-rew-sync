@@ -118,7 +118,9 @@ class FiltersPage(QWidget):
       running entirely different filters, and this list gives no visibility
       into those. Switching which source is being configured (a separate,
       earlier wizard step) is the only way to see another source's live
-      config.
+      config. A caption above the list names that source explicitly (see
+      set_peq_presets()'s source_name arg) so this scope doesn't read as
+      "the device's currently-playing input".
     - Local Library: a list of locally-saved presets
     - Inline warnings/errors after import
 
@@ -178,6 +180,7 @@ class FiltersPage(QWidget):
         self._device_active_peq_name: str | None = None
         self._device_active_peq_channel_mode: str = "Stereo"
         self._device_active_peq_enabled: bool = True
+        self._device_peq_enumeration_supported: bool = True
         self._device_roomfit_items: list[PresetItem] = []
         self._device_active_roomfit_name: str = ""
         self._device_active_roomfit_enabled: bool = True
@@ -266,6 +269,8 @@ class FiltersPage(QWidget):
         active_name: str | None = None,
         active_channel_mode: str = "Stereo",
         active_enabled: bool = True,
+        source_name: str = "",
+        enumeration_supported: bool = True,
     ) -> None:
         """Populate the Device panel's PEQ presets.
 
@@ -286,11 +291,24 @@ class FiltersPage(QWidget):
                 source can have a name/custom config selected while PEQ
                 itself is toggled off. When False, the active row's
                 "(active)" suffix becomes "(active, PEQ off)" instead.
+            source_name: The source this PEQ list/active state was fetched
+                for (`state.primary_source`, set on the earlier Source
+                step) -- shown as a caption above the Device list so
+                "Custom"/"(active)" don't read as reflecting the device's
+                currently-playing input. Empty hides the caption.
+            enumeration_supported: Whether `presets` is a real, complete
+                saved-preset list (DeviceCapabilities.supports_profile_enumeration).
+                When False, `presets` is always empty and the live config is
+                the only PEQ information available, so it always gets a row
+                (see presets_device_view.build_peq_rows).
         """
         self._device_peq_items = list(presets)
         self._device_active_peq_name = active_name
         self._device_active_peq_channel_mode = active_channel_mode
         self._device_active_peq_enabled = active_enabled
+        self._device_peq_enumeration_supported = enumeration_supported
+        self._device_source_label.setText(f"Showing live PEQ status for source: {source_name}")
+        self._device_source_label.setVisible(bool(source_name))
         self._populate_device_list()
 
     def set_roomfit_profiles(
@@ -342,6 +360,8 @@ class FiltersPage(QWidget):
         set_peq_presets()."""
         self._device_peq_items = []
         self._device_active_peq_name = None
+        self._device_peq_enumeration_supported = True
+        self._device_source_label.setVisible(False)
         self._populate_device_list()
 
     def set_roomfit_hidden(self) -> None:
@@ -374,8 +394,10 @@ class FiltersPage(QWidget):
         """
         self._device_peq_items = []
         self._device_active_peq_name = None
+        self._device_peq_enumeration_supported = True
         self._device_roomfit_items = []
         self._device_active_roomfit_name = ""
+        self._device_source_label.setVisible(False)
         self._populate_device_list()
 
     def show_warnings(self, warnings: list[str]) -> None:
@@ -636,8 +658,18 @@ class FiltersPage(QWidget):
         device_layout.setContentsMargins(0, 0, 0, 0)
         device_layout.setSpacing(SPACING_MD)
 
+        # Caption: which source the list's "Custom"/"(active)" state
+        # reflects -- RoomFit rows are global, but PEQ rows are scoped to
+        # the source picked on the earlier Source step (see
+        # set_peq_presets()'s source_name docstring).
+        self._device_source_label = QLabel("")
+        self._device_source_label.setProperty("class", "secondary")
+        self._device_source_label.setVisible(False)
+        device_layout.addWidget(self._device_source_label)
+
         self._device_list = QListWidget()
         self._device_list.setObjectName("FiltersDeviceList")
+        self._device_list.setProperty("class", "selectableList")
         self._device_list.currentItemChanged.connect(self._on_device_selection_changed)
         device_layout.addWidget(self._device_list, 1)
 
@@ -667,6 +699,7 @@ class FiltersPage(QWidget):
 
         self._local_list = QListWidget()
         self._local_list.setObjectName("FiltersLocalLibraryList")
+        self._local_list.setProperty("class", "selectableList")
         self._local_list.currentItemChanged.connect(self._on_local_selection_changed)
         local_layout.addWidget(self._local_list, 1)
 
@@ -868,6 +901,7 @@ class FiltersPage(QWidget):
             self._device_active_peq_name,
             self._device_active_peq_channel_mode,
             self._device_active_peq_enabled,
+            self._device_peq_enumeration_supported,
         )
         combined: list[tuple[PresetItem, bool, bool, object]] = [
             (item, is_active, is_eq_off, _CUSTOM_ROW_MARKER if item.is_custom else item)

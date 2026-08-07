@@ -311,6 +311,16 @@ class MainWindow(QMainWindow):
         # --- Create controller ---
         self._wizard_controller = WizardController(self)
 
+        # Snapshot of (current_filters, filters_l, filters_r, channel_mode)
+        # as of the last time the Filters step was completed -- lets
+        # _on_filters_accepted() detect an actual change-of-selection the
+        # same way _on_source_changed() does for the Source step (see that
+        # method), so re-confirming Filters with a *different* filter set
+        # after navigating back invalidates the now-stale Review/Push
+        # checkmarks instead of leaving them in place (docs/smoke_test_issues.md,
+        # QA issue #8). None until the Filters step is completed once.
+        self._last_confirmed_filters_signature: tuple[object, ...] | None = None
+
         # --- Primary workflows (discovery, probing, file import, push) ---
         # Configured eagerly, unlike SecondaryWorkflowManager: only push()
         # needs a live device adapter, obtained the same way every other
@@ -1083,8 +1093,32 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_filters_accepted(self) -> None:
-        """Handle user accepting filters (with or without warnings) — advance."""
+        """Handle user accepting filters (with or without warnings) — advance.
+
+        Mirrors _on_source_changed's change-detection (see that method):
+        picking a different filter set (a different device/local preset, or
+        a fresh file import) than what Review/Push last saw invalidates
+        those downstream steps, so browsing back to Filters, changing the
+        selection, and clicking Continue can't leave a stale Review/Push
+        checkmark in place -- unlike Source's own state field, which still
+        holds the previous confirmed value at compare time,
+        `state.current_filters` is already overwritten by the producer
+        (file import/device pull/preset load) well before this handler
+        runs, so the "previous confirmed" value has to be tracked
+        separately in `_last_confirmed_filters_signature` rather than read
+        back off wizard state itself.
+        """
         state = self._wizard_controller.state
+        new_signature = (
+            tuple(state.current_filters),
+            tuple(state.filters_l),
+            tuple(state.filters_r),
+            state.channel_mode,
+        )
+        if new_signature != self._last_confirmed_filters_signature:
+            self._wizard_controller.invalidate_after(WizardStep.FILTERS)
+        self._last_confirmed_filters_signature = new_signature
+
         summary = self._resolve_filters_summary(len(state.current_filters))
         self._wizard_controller.advance(summary=summary, tooltip=state.filters_origin)
 
@@ -1314,13 +1348,22 @@ class MainWindow(QMainWindow):
                 self._wizard_controller.advance(summary="Dry Run")
             filters = state.current_filters
             band_count = len(filters)
-            sources = state.selected_sources
-            source_info = ", ".join(sources) if sources else state.primary_source
             channel = state.channel_mode.display_value
-            self._push_page.set_dry_run_result(
-                f"Dry run complete: {band_count} bands validated for "
-                f"{source_info} ({channel}). No changes were written to device."
-            )
+            if flow_type == FlowType.ROOMFIT:
+                # RoomFit applies globally, not per-source (CLAUDE.md) — naming
+                # a source here would be misleading, and selected_sources may
+                # still hold stale values from an earlier PEQ run anyway.
+                self._push_page.set_dry_run_result(
+                    f"Dry run complete: {band_count} bands validated "
+                    f"({channel}). No changes were written to device."
+                )
+            else:
+                sources = state.selected_sources
+                source_info = ", ".join(sources) if sources else state.primary_source
+                self._push_page.set_dry_run_result(
+                    f"Dry run complete: {band_count} bands validated for "
+                    f"{source_info} ({channel}). No changes were written to device."
+                )
             return
 
         if flow_type == FlowType.ROOMFIT:
@@ -2417,20 +2460,32 @@ class MainWindow(QMainWindow):
     # thin pass-through into PresetsDeviceView that replaced this method's
     # direct widget writes.
 
-    @Slot(list, object, str, bool)
+    @Slot(list, object, str, bool, str, bool)
     def _on_peq_presets_ready(
         self,
         items: list[Any],
         active_name: str | None,
         active_channel_mode: str,
         active_enabled: bool,
+        source_name: str,
+        enumeration_supported: bool,
     ) -> None:
         """Forward PrimaryWorkflowManager.peq_presets_ready into both consuming views."""
         self._presets_device_view.set_peq_presets(
-            items, active_name, active_channel_mode, active_enabled
+            items,
+            active_name,
+            active_channel_mode,
+            active_enabled,
+            source_name,
+            enumeration_supported,
         )
         self._filters_page.set_peq_presets(
-            items, active_name, active_channel_mode, active_enabled
+            items,
+            active_name,
+            active_channel_mode,
+            active_enabled,
+            source_name,
+            enumeration_supported,
         )
 
     @Slot()
@@ -3311,25 +3366,50 @@ class MainWindow(QMainWindow):
             "Duplicate",
         )
 
-    @Slot(str)
-    def _on_profile_delete_requested(self, name: str) -> None:
-        """Handle MyPresetsView delete action.
+    @Slot(list)
+    def _on_profile_delete_requested(self, names: list[str]) -> None:
+        """Handle MyPresetsView delete action -- single or multi-select batch.
 
         Confirms before deleting, matching the equivalent safety check on
         the device-side preset delete (`_on_preset_delete_requested`) --
         this one is a local, in-app-storage deletion, not a device write.
+        A partial failure (e.g. one preset already removed by a concurrent
+        change) still deletes the rest and reports a "X succeeded, Y failed"
+        status instead of aborting the whole batch, matching
+        `_on_preset_delete_requested`'s device-side convention.
         """
-        if not self._confirm_action(
-            "Delete Preset?",
-            f"Permanently delete '{name}' from My Presets?\n\nThis cannot be undone.",
-        ):
+        if not names:
             return
 
-        self._run_profile_action(
-            lambda: self._profile_repository.delete(name),
-            f"Deleted '{name}'",
-            "Delete",
-        )
+        if len(names) == 1:
+            message = f"Permanently delete '{names[0]}' from My Presets?\n\nThis cannot be undone."
+        else:
+            bullet_list = "\n".join(f"• {name}" for name in names)
+            message = (
+                f"Permanently delete the following {len(names)} presets from "
+                f"My Presets?\n\n{bullet_list}\n\nThis cannot be undone."
+            )
+        if not self._confirm_action("Delete Preset(s)", message):
+            return
+
+        succeeded = 0
+        for name in names:
+            try:
+                self._profile_repository.delete(name)
+                succeeded += 1
+            except Exception:
+                logger.warning("Failed to delete local preset %r", name, exc_info=True)
+
+        self._refresh_presets_view()
+        failed = len(names) - succeeded
+        if failed:
+            self._status_banner.show_error(
+                f"Deleted {succeeded} preset(s), {failed} failed."
+            )
+        elif succeeded == 1:
+            self._status_banner.show_success(f"Deleted '{names[0]}'")
+        else:
+            self._status_banner.show_success(f"Deleted {succeeded} presets")
 
     @Slot(list)
     def _on_preset_export_requested(self, items: list[Any]) -> None:

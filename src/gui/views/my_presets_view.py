@@ -101,12 +101,15 @@ class MyPresetsView(QWidget):
     Signals:
         rename_requested: Emitted with (old_name, new_name) after inline rename.
         duplicate_requested: Emitted with the preset name to duplicate.
-        delete_requested: Emitted with the preset name to delete.
+        delete_requested: Emitted with the list of preset names to delete --
+            a list (not a single str) since the list supports multi-select
+            (ExtendedSelection) for this one action; Rename/Duplicate/Copy
+            stay single-item (see _on_selection_changed).
     """
 
     rename_requested = Signal(str, str)  # old_name, new_name
     duplicate_requested = Signal(str)  # preset name
-    delete_requested = Signal(str)  # preset name
+    delete_requested = Signal(list)  # preset names
     copy_to_device_requested = Signal(object)  # Profile
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -183,9 +186,9 @@ class MyPresetsView(QWidget):
         self._list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list_widget.customContextMenuRequested.connect(self._show_context_menu)
         self._list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self._list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self._list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self._list_widget.setSpacing(2)
-        self._list_widget.currentItemChanged.connect(self._on_selection_changed)
+        self._list_widget.itemSelectionChanged.connect(self._on_selection_changed)
         content_layout.addWidget(self._list_widget, 1)
 
         # Empty state label
@@ -418,7 +421,7 @@ class MyPresetsView(QWidget):
         menu.addSeparator()
 
         delete_action = QAction("Delete", menu)
-        delete_action.triggered.connect(lambda: self.delete_requested.emit(profile.name))
+        delete_action.triggered.connect(lambda: self.delete_requested.emit([profile.name]))
         menu.addAction(delete_action)
 
         return menu
@@ -427,20 +430,38 @@ class MyPresetsView(QWidget):
     # Toolbar button handlers
     # ------------------------------------------------------------------
 
-    def _on_selection_changed(self, current: QListWidgetItem | None, _prev: object) -> None:
-        """Enable/disable toolbar buttons based on selection state."""
-        has_selection = current is not None
-        self._rename_btn.setEnabled(has_selection)
-        self._duplicate_btn.setEnabled(has_selection)
-        self._copy_btn.setEnabled(has_selection)
-        self._delete_btn.setEnabled(has_selection)
+    def _on_selection_changed(self) -> None:
+        """Enable/disable toolbar buttons based on selection state.
+
+        The list supports multi-select (ExtendedSelection), but only Delete
+        operates on a batch -- Rename edits one name inline, Duplicate makes
+        one copy, and Copy to Another Device emits a single Profile
+        (copy_to_device_requested(object)), so those three stay restricted
+        to exactly one selected item.
+        """
+        selected_count = len(self._list_widget.selectedItems())
+        self._rename_btn.setEnabled(selected_count == 1)
+        self._duplicate_btn.setEnabled(selected_count == 1)
+        self._copy_btn.setEnabled(selected_count == 1)
+        self._delete_btn.setEnabled(selected_count >= 1)
 
     def _get_selected_profile(self) -> Profile | None:
-        """Return the currently selected Profile, or None."""
+        """Return the currently selected Profile, or None.
+
+        Only meaningful when exactly one item is selected -- callers using
+        this are the single-item-only actions (Rename/Duplicate/Copy), whose
+        toolbar buttons are disabled otherwise (see _on_selection_changed).
+        """
         item = self._list_widget.currentItem()
         if item is None:
             return None
         return item.data(Qt.ItemDataRole.UserRole)  # type: ignore[no-any-return]
+
+    def _get_selected_profiles(self) -> list[Profile]:
+        """Return every currently-selected Profile, for the batch Delete action."""
+        return [
+            item.data(Qt.ItemDataRole.UserRole) for item in self._list_widget.selectedItems()
+        ]
 
     def _on_rename_clicked(self) -> None:
         """Handle Rename button click — start inline rename."""
@@ -455,10 +476,10 @@ class MyPresetsView(QWidget):
             self.duplicate_requested.emit(profile.name)
 
     def _on_delete_clicked(self) -> None:
-        """Handle Delete button click."""
-        profile = self._get_selected_profile()
-        if profile:
-            self.delete_requested.emit(profile.name)
+        """Handle Delete button click — batch-deletes every selected preset."""
+        profiles = self._get_selected_profiles()
+        if profiles:
+            self.delete_requested.emit([p.name for p in profiles])
 
     def _on_copy_clicked(self) -> None:
         """Handle Copy to Another Device button click."""

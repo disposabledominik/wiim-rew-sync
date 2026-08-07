@@ -636,16 +636,16 @@ class TestMyPresetsViewContextMenu:
     """Tests for context menu actions and signal emission."""
 
     def test_delete_requested_signal(self, qtbot) -> None:
-        """delete_requested signal emits with the correct preset name."""
+        """delete_requested signal emits with the correct preset name list."""
         view = MyPresetsView()
         qtbot.addWidget(view)
 
         view.set_presets([_make_profile("To Delete")])
 
         with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
-            view.delete_requested.emit("To Delete")
+            view.delete_requested.emit(["To Delete"])
 
-        assert blocker.args == ["To Delete"]
+        assert blocker.args == [["To Delete"]]
 
     def test_duplicate_requested_signal(self, qtbot) -> None:
         """duplicate_requested signal emits with the correct preset name."""
@@ -683,6 +683,50 @@ class TestMyPresetsViewContextMenu:
         view.set_presets([_make_profile("Some Preset")])
 
         assert not view._copy_btn.isEnabled()
+
+
+class TestMyPresetsViewMultiSelect:
+    """QA-reported gap: My Saved Presets had no multi-select, unlike Presets
+    on Device / the Filters step's Device panel, which both use
+    ExtendedSelection. Delete now supports a multi-select batch, matching
+    that convention -- Rename/Duplicate/Copy stay single-item only, since
+    they're inherently one-name/one-Profile operations."""
+
+    def test_selection_mode_is_extended(self, qtbot) -> None:
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+
+        from PySide6.QtWidgets import QListWidget
+
+        assert view._list_widget.selectionMode() == QListWidget.SelectionMode.ExtendedSelection
+
+    def test_multi_select_enables_delete_but_not_single_item_actions(self, qtbot) -> None:
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
+
+        view._list_widget.item(0).setSelected(True)
+        view._list_widget.item(1).setSelected(True)
+
+        assert view._delete_btn.isEnabled()
+        assert not view._rename_btn.isEnabled()
+        assert not view._duplicate_btn.isEnabled()
+        assert not view._copy_btn.isEnabled()
+
+    def test_delete_clicked_with_multi_select_emits_all_selected_names(self, qtbot) -> None:
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets(
+            [_make_profile("A"), _make_profile("B"), _make_profile("C")]
+        )
+
+        view._list_widget.item(0).setSelected(True)
+        view._list_widget.item(2).setSelected(True)
+
+        with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
+            view._on_delete_clicked()
+
+        assert sorted(blocker.args[0]) == ["A", "C"]
 
 
 class TestMyPresetsViewToolbarLayout:

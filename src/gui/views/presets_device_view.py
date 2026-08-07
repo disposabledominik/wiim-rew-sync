@@ -72,7 +72,7 @@ class PresetItem:
 CUSTOM_PEQ_NAME = "Custom"
 
 
-def build_custom_peq_item(channel_mode: str) -> PresetItem:
+def build_custom_peq_item(channel_mode: str, name: str = CUSTOM_PEQ_NAME) -> PresetItem:
     """Synthetic PresetItem for the device's live/unnamed active PEQ config.
 
     Shown whenever a PEQ preset fetch resolves with active_name == "" -- the
@@ -82,9 +82,18 @@ def build_custom_peq_item(channel_mode: str) -> PresetItem:
     2026-07-05). Named "Custom" to match WiiM Home's own terminology for
     this state. Shared by PresetsDeviceView and FiltersPage's merged Device
     list so both surface it identically (#165c).
+
+    Args:
+        channel_mode: Channel mode label for the row.
+        name: Display name. Defaults to "Custom", but build_peq_rows passes
+            the device's real reported Name on an enumeration-unsupported
+            device instead (see that function's enumeration_supported
+            branch) -- it's still routed as `is_custom=True` either way,
+            since without enumeration this app has no way to confirm the
+            name corresponds to a real, separately-manageable saved preset.
     """
     return PresetItem(
-        name=CUSTOM_PEQ_NAME, channel_mode=channel_mode, preset_type="PEQ", is_custom=True
+        name=name or CUSTOM_PEQ_NAME, channel_mode=channel_mode, preset_type="PEQ", is_custom=True
     )
 
 
@@ -93,10 +102,10 @@ def build_peq_rows(
     active_name: str | None,
     active_channel_mode: str,
     active_enabled: bool = True,
+    enumeration_supported: bool = True,
 ) -> list[tuple[PresetItem, bool, bool]]:
     """PEQ items paired with (is_active, is_eq_off) flags, with a synthetic
-    Custom row prepended when active_name == "" (the PEQ fetch resolved and
-    found no active preset name -- see build_custom_peq_item). Shared by
+    row prepended for the live config when appropriate. Shared by
     PresetsDeviceView and FiltersPage's merged Device list so the "when does
     Custom appear" rule can't drift between the two call sites (#165c).
 
@@ -105,12 +114,39 @@ def build_peq_rows(
     a saved or custom config selected while PEQ itself is switched off for
     that source. Only the active row's is_eq_off can ever be True; every
     other row is unaffected since it isn't what's currently loaded anyway.
+
+    enumeration_supported=True (the common case): `items` is a real,
+    complete saved-preset list, so a synthetic "Custom" row only makes sense
+    when active_name == "" -- the hardware-confirmed signal that the live
+    config doesn't match any saved preset (see build_custom_peq_item).
+
+    enumeration_supported=False: `items` is always empty (there is no way to
+    list saved presets on this device/model at all -- see
+    DeviceCapabilities.supports_profile_enumeration), so there is no
+    enumerated list to compare the live config against in the first place.
+    The live config is then the *only* PEQ information available for this
+    source, and must always get a row when known (active_name is not None)
+    -- using the device's real reported Name if it has one, or "Custom" if
+    not. Comparing only against active_name == "" here would silently drop
+    a device that already has a *named* live config (e.g. set via WiiM
+    Home before this app was ever used) from the list entirely, since
+    "" was the only condition that ever produced a row.
     """
     rows: list[tuple[PresetItem, bool, bool]] = [
         (item, item.name == active_name, item.name == active_name and not active_enabled)
         for item in items
     ]
-    if active_name == "":
+    if not enumeration_supported:
+        if active_name is not None:
+            rows.insert(
+                0,
+                (
+                    build_custom_peq_item(active_channel_mode, active_name),
+                    True,
+                    not active_enabled,
+                ),
+            )
+    elif active_name == "":
         rows.insert(0, (build_custom_peq_item(active_channel_mode), True, not active_enabled))
     return rows
 
@@ -174,6 +210,7 @@ class PresetsDeviceView(QWidget):
         self._active_peq_name: str | None = None
         self._active_peq_channel_mode: str = "Stereo"
         self._active_peq_enabled: bool = True
+        self._peq_enumeration_supported: bool = True
         self._active_roomfit_name: str = ""
         self._active_roomfit_enabled: bool = True
 
@@ -200,6 +237,8 @@ class PresetsDeviceView(QWidget):
         active_name: str | None = None,
         active_channel_mode: str = "Stereo",
         active_enabled: bool = True,
+        source_name: str = "",
+        enumeration_supported: bool = True,
     ) -> None:
         """Populate the PEQ Presets section.
 
@@ -220,11 +259,28 @@ class PresetsDeviceView(QWidget):
                 config selected while PEQ itself is toggled off. When False,
                 the active row's "(active)" suffix becomes
                 "(active, PEQ off)" instead (see build_peq_rows).
+            source_name: The source this list/active state was fetched for
+                (`state.primary_source`), shown as a caption under the
+                section header so it's clear "Custom"/"(active)" reflect
+                this one source, not the device's currently-playing input --
+                this view has no source picker of its own, and can be
+                reached (via the sidebar) before the user has ever visited
+                the Source wizard step. Empty hides the caption.
+            enumeration_supported: Whether `presets` is a real, complete
+                saved-preset list (DeviceCapabilities.supports_profile_enumeration).
+                When False, `presets` is always empty and the live config
+                (active_name, whatever it is -- "" or a real device-assigned
+                Name) is the only PEQ information available, so it must
+                always get a row rather than only when active_name == ""
+                (see build_peq_rows).
         """
         self._peq_items = list(presets)
         self._active_peq_name = active_name
         self._active_peq_channel_mode = active_channel_mode
         self._active_peq_enabled = active_enabled
+        self._peq_enumeration_supported = enumeration_supported
+        self._peq_source_label.setText(f"Showing live PEQ status for source: {source_name}")
+        self._peq_source_label.setVisible(bool(source_name))
         self._show_content_state()
         self._populate_peq_list()
 
@@ -275,6 +331,7 @@ class PresetsDeviceView(QWidget):
         self._peq_unavailable_label.setVisible(True)
         self._peq_list.setVisible(False)
         self._peq_search.setVisible(False)
+        self._peq_source_label.setVisible(False)
 
     def set_roomfit_hidden(self) -> None:
         """Hide the RoomFit section when the device has no RoomFit support (Req 15.11)."""
@@ -361,6 +418,14 @@ class PresetsDeviceView(QWidget):
         header.setObjectName("section_header_peq")
         header.setProperty("class", "subheading")
         layout.addWidget(header)
+
+        # Caption: which source this section's "Custom"/"(active)" state
+        # reflects -- PEQ is per-source and this view has no source picker
+        # of its own (see set_peq_presets()'s source_name docstring).
+        self._peq_source_label = QLabel("")
+        self._peq_source_label.setProperty("class", "secondary")
+        self._peq_source_label.setVisible(False)
+        layout.addWidget(self._peq_source_label)
 
         # Unavailable message (Req 15.10)
         self._peq_unavailable_label = QLabel(
@@ -502,6 +567,7 @@ class PresetsDeviceView(QWidget):
             self._active_peq_name,
             self._active_peq_channel_mode,
             self._active_peq_enabled,
+            self._peq_enumeration_supported,
         )
 
         for item, is_active, is_eq_off in rows:

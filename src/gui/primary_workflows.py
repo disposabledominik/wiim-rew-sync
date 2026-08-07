@@ -100,9 +100,10 @@ class PrimaryWorkflowManager(QObject):
     panel, which share the same PresetItem-shaped data.
 
     Signals:
-        peq_presets_ready(list, object, str, bool): PEQ PresetItem list +
+        peq_presets_ready(list, object, str, bool, str, bool): PEQ PresetItem list +
             active preset name + active preset's channel mode + whether PEQ
-            (EQStat) is actually switched on for this source, mirrors
+            (EQStat) is actually switched on for this source + the source
+            name the list/active state was fetched for, mirrors
             PresetsDeviceView.set_peq_presets() and
             FiltersPage.set_peq_presets(). The channel mode and enabled flag
             travel alongside the name (rather than needing their own reads)
@@ -116,7 +117,22 @@ class PrimaryWorkflowManager(QObject):
             `object`, not `str`, because it must carry `None` through the
             signal when the live-config read itself failed -- "unknown" is
             not the same thing as "" (confirmed no active preset), and only
-            `object`-typed Qt signal args can carry None.
+            `object`-typed Qt signal args can carry None. The trailing
+            source_name exists so both views can show which source's live
+            state "Custom"/"(active)" reflects -- unlike RoomFit, PEQ is
+            scoped per-source (`state.primary_source`), and neither view
+            otherwise has a source picker of its own to make that scope
+            visible (smoke test issue: Filters/Presets-on-Device "Custom"
+            row looked like it reflected the device's active input rather
+            than the wizard's selected source). The final bool is
+            DeviceCapabilities.supports_profile_enumeration for this
+            device -- when False, `peq_items` is always empty (there's no
+            way to list saved presets at all) and build_peq_rows must
+            surface the live config unconditionally (real name or
+            "Custom") rather than only when active_name == "" (smoke test
+            issue: a device with a *named* live config and no enumeration
+            support showed an empty list, since "" was the only condition
+            that ever produced a row).
         peq_presets_unavailable(): mirrors set_peq_unavailable(). Emitted
             when the device has no PEQ support at all, or the live-config
             read needed to confirm PEQ state failed outright (see
@@ -162,7 +178,7 @@ class PrimaryWorkflowManager(QObject):
             (see _do_export_presets/_do_save_presets docstrings).
     """
 
-    peq_presets_ready = Signal(list, object, str, bool)
+    peq_presets_ready = Signal(list, object, str, bool, str, bool)
     peq_presets_unavailable = Signal()
     roomfit_profiles_ready = Signal(list, str, bool)
     roomfit_profiles_hidden = Signal()
@@ -571,7 +587,12 @@ class PrimaryWorkflowManager(QObject):
                 self.peq_presets_unavailable.emit()
                 return
             self.peq_presets_ready.emit(
-                peq_items, active_peq_name, active_peq_channel_mode, active_peq_enabled
+                peq_items,
+                active_peq_name,
+                active_peq_channel_mode,
+                active_peq_enabled,
+                source_name,
+                wiim_adapter.capabilities.supports_profile_enumeration,
             )
 
         async def _fetch_roomfit() -> None:

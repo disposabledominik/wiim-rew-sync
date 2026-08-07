@@ -25,6 +25,14 @@ class TestSanitizeDeviceName:
     def test_all_disallowed_characters_yields_empty(self) -> None:
         assert sanitize_device_name("!!!@@@") == ""
 
+    def test_allows_non_latin_alphabet_letters(self) -> None:
+        """QA-reported bug (docs/corrections.md, 2026-08-07): the device
+        accepts non-Latin-alphabet letters (e.g. Cyrillic/Slavic) the same
+        as it does for ASCII ones via WiiM Home -- the old ASCII-only
+        [A-Za-z0-9_] set stripped these out entirely."""
+        name = "Гостиная_2-Основной"
+        assert sanitize_device_name(name) == name
+
 
 class TestHasInvalidDeviceNameChars:
     """has_invalid_device_name_chars flags any character outside the set."""
@@ -37,3 +45,6 @@ class TestHasInvalidDeviceNameChars:
 
     def test_false_for_empty_string(self) -> None:
         assert not has_invalid_device_name_chars("")
+
+    def test_false_for_non_latin_alphabet_letters(self) -> None:
+        assert not has_invalid_device_name_chars("Гостиная")

@@ -75,4 +75,19 @@ def make_action_button(
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     if tooltip:
         button.setToolTip(tooltip)
+    # QPushButton.autoDefault defaults to True whenever the button's
+    # top-level window is a QDialog (several panels in this app, e.g.
+    # HelpView/DiagnosticsPanel, are embedded in one) -- Qt then silently
+    # auto-picks the first-created autoDefault button as the dialog's
+    # Enter-key target, with no explicit opt-in from this app's code. That
+    # caused a real bug: HelpView's close ("X") button is built first, so
+    # pressing Enter anywhere in the "User Guide" dialog closed it, while
+    # DiagnosticsPanel merely triggered a different (also un-opted-in)
+    # button silently -- neither was an intentional design choice. Default
+    # every action button built here to NOT respond to a stray Enter/Return;
+    # callers that do want an explicit Enter-triggered default button call
+    # setDefault(True) on the returned button afterward (that call already
+    # re-enables autoDefault as needed), e.g. crash_dialog.py,
+    # unsaved_changes_dialog.py, warning_confirm_dialog.py.
+    button.setAutoDefault(False)
     return button
