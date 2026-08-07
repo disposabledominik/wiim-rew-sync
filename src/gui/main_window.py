@@ -1635,10 +1635,28 @@ class MainWindow(QMainWindow):
         Implements auto-advance: if single device found, ConnectPage
         auto-selects it (emits device_selected internally).
 
+        The background scan that produces this result is a one-shot task
+        started when Connect was entered/refreshed -- nothing cancels it if
+        the user picks a device from progressive results and moves on
+        before it finishes. Discarding a result that arrives after the
+        wizard has left Connect avoids feeding a stale device list into an
+        invisible ConnectPage, whose auto-select would otherwise re-emit
+        ``device_selected`` for the already-connected device and trigger a
+        pointless re-probe (the probe itself is now also guarded in
+        ``_on_capabilities_ready``, but skipping it here avoids the wasted
+        network round-trip entirely -- smoke #266 investigation).
+
         Args:
             devices: List of device info dicts from discovery.
         """
         self._connect_page.set_scanning(False)
+        if self._wizard_controller.current_step != WizardStep.CONNECT:
+            logger.debug(
+                "Discovery completed after leaving Connect step (now %s); "
+                "discarding results",
+                self._wizard_controller.current_step,
+            )
+            return
         self._connect_page.set_devices(devices)
 
     @Slot(list)
@@ -1661,7 +1679,8 @@ class MainWindow(QMainWindow):
         1. Creates WiiMAdapter and SafeWrite (Req 14.2, 14.3)
         2. Checks for empty source_names (Req 2.7) — error if none
         3. Determines flow type based on RoomFit read support
-        4. Advances the wizard
+        4. Advances the wizard -- but only if the wizard is still actually
+           on the Connect step (see the guard below).
 
         Args:
             caps: DeviceCapabilities object from the probe.
@@ -1723,13 +1742,34 @@ class MainWindow(QMainWindow):
         # device_capabilities.json entry provides an explicit override for
         # that exact model, so there's no model-name special-casing to do
         # here.
-        if not roomfit_readable:
-            # PEQ-only device — skip EQ_TYPE step (Req 1.10)
-            self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
-            self._wizard_controller.advance(summary=device_name)
+        #
+        # advance() always completes *whatever step is currently active* --
+        # it has no notion of "the step this probe was for". A probe can
+        # resolve after the wizard has already moved past Connect (e.g. a
+        # late-arriving background discovery result re-selecting the
+        # already-connected device, smoke #266 investigation), and an
+        # unguarded advance() here would then silently mark the user's
+        # *current* step (Source, Filters, ...) completed with a bogus
+        # device-name summary and yank them forward one step. Only drive
+        # the wizard when Connect is still genuinely the active step;
+        # everything above this point (adapter, sidebar, source list,
+        # diagnostics) is safe/desirable to refresh unconditionally.
+        if self._wizard_controller.current_step == WizardStep.CONNECT:
+            if not roomfit_readable:
+                # PEQ-only device — skip EQ_TYPE step (Req 1.10)
+                self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
+                self._wizard_controller.advance(summary=device_name)
+            else:
+                # Device supports RoomFit — show EQ_TYPE choice (Req 1.9)
+                self._wizard_controller.advance(summary=device_name)
         else:
-            # Device supports RoomFit — show EQ_TYPE choice (Req 1.9)
-            self._wizard_controller.advance(summary=device_name)
+            logger.info(
+                "Capabilities probe for %s resolved after the wizard left "
+                "Connect (now on %s); refreshing device data without "
+                "advancing",
+                device_name,
+                self._wizard_controller.current_step,
+            )
 
         # Update sidebar with device info, warning if displayed capabilities
         # aren't purely from live device probing (capability-file override

@@ -1015,8 +1015,11 @@ class TestIssue9SourceCheckmarkAfterDeviceSwitch:
     own rendered `_completed` flags, through the real handler chain
     (_on_device_selected -> _on_capabilities_ready), for both a
     RoomFit-capable device (PEQ chosen at EQ_TYPE) and a PEQ_ONLY device
-    (no EQ_TYPE step) -- could not reproduce a discrepancy in either case;
-    kept as a regression guard for this exact scenario."""
+    (no EQ_TYPE step) -- could not reproduce a discrepancy in either case
+    via this exact click sequence; kept as a regression guard for it. The
+    actual root cause was later found to be a different trigger (a
+    late-arriving background discovery result, not a manual device
+    switch) -- see TestIssue9LateProbeAfterLeavingConnect below."""
 
     def test_source_checkmark_clears_with_eq_type_step(self, window) -> None:
         wc = window._wizard_controller
@@ -1053,3 +1056,90 @@ class TestIssue9SourceCheckmarkAfterDeviceSwitch:
         seq = wc.get_steps()
         source_idx = seq.index(WizardStep.SOURCE)
         assert window._step_indicator._completed[source_idx] is False
+
+
+class TestIssue9LateProbeAfterLeavingConnect:
+    """Root cause for #9: the background discovery scan started when
+    Connect is entered/refreshed is a one-shot async task nothing cancels
+    once the user picks a device from progressive results and moves on.
+    If it completes later, ConnectPage.set_devices()'s auto-select
+    (Req 2.4: single discovered device auto-selects) re-emits
+    device_selected for the already-connected device, which
+    _on_device_selected's documented no-op-past-busy-check branch still
+    answers by creating fresh adapters and launching a new capability
+    probe. _on_capabilities_ready used to unconditionally call advance(),
+    which completes whatever step is *currently* active with no check
+    that it's the Connect step the probe was actually for -- so a probe
+    resolving after the user had already moved on to Source/Filters/...
+    would silently mark that step "completed" with a bogus device-name
+    summary and yank the wizard one step forward.
+
+    Fixed two ways: (1) _on_capabilities_ready only drives the wizard
+    (set_flow_type/advance) when Connect is still the active step: (2)
+    _on_discovery_complete discards results that arrive after the wizard
+    has left Connect, so the redundant probe is never even launched in
+    the first place.
+    """
+
+    def test_late_capabilities_probe_does_not_advance_past_connect(self, window) -> None:
+        """A capabilities-ready callback resolving while the wizard has
+        already moved to Source (simulating a redundant re-probe) must not
+        mark Source completed or move the wizard to Filters."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))  # PEQ_ONLY -> at SOURCE
+        assert wc.current_step == WizardStep.SOURCE
+        assert WizardStep.SOURCE not in wc.completed_steps
+
+        # Simulate the redundant probe's result resolving late, after the
+        # user is already sitting on Source.
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))
+
+        assert wc.current_step == WizardStep.SOURCE
+        assert WizardStep.SOURCE not in wc.completed_steps
+
+    def test_late_capabilities_probe_still_refreshes_device_data(self, window) -> None:
+        """The guard only skips the wizard-advancing side effects -- the
+        rest of the capability refresh (sidebar, source list, adapter)
+        must still happen even when it arrives late."""
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0, model="WiiM Pro"))
+
+        late_caps = _make_caps(
+            roomfit_level=0, model="WiiM Pro", source_names=["wifi", "optical", "hdmi", "aux"]
+        )
+        window._on_capabilities_ready(late_caps)
+
+        assert window._device_caps is late_caps
+        assert set(window._source_page._source_checkboxes.keys()) == {
+            "wifi",
+            "optical",
+            "hdmi",
+            "aux",
+        }
+
+    def test_late_discovery_complete_does_not_reselect_device(self, window) -> None:
+        """discovery_complete arriving after the wizard has left Connect
+        must not feed ConnectPage's auto-select and re-trigger a probe."""
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))  # at SOURCE
+        assert window._wizard_controller.current_step == WizardStep.SOURCE
+
+        with patch.object(window._connect_page, "set_devices") as set_devices:
+            window._on_discovery_complete(
+                [{"name": "Living Room", "ip": "192.168.1.100", "model": "WiiM Pro"}]
+            )
+
+        set_devices.assert_not_called()
+
+    def test_discovery_complete_still_populates_connect_page_on_connect(self, window) -> None:
+        """Sanity check the guard doesn't break the normal case: discovery
+        results arriving while still on Connect populate the page as usual."""
+        assert window._wizard_controller.current_step == WizardStep.CONNECT
+
+        with patch.object(window._connect_page, "set_devices") as set_devices:
+            window._on_discovery_complete(
+                [{"name": "Living Room", "ip": "192.168.1.100", "model": "WiiM Pro"}]
+            )
+
+        set_devices.assert_called_once()
