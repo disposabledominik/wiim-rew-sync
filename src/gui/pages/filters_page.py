@@ -291,6 +291,16 @@ class FiltersPage(QWidget):
         self._local_profiles = list(profiles)
         self._populate_local_list()
 
+    @property
+    def current_source(self) -> FiltersSource:
+        """The "Import source" dropdown's currently selected panel.
+
+        Public so MainWindow can decide whether a re-triggered fetch (e.g.
+        after a device switch's adapter becomes ready) is actually relevant
+        to what's currently on screen.
+        """
+        return self._current_source
+
     def set_peq_unavailable(self) -> None:
         """Clear the Device panel's PEQ presets when the device doesn't
         support profile enumeration -- mirrors PresetsDeviceView's
@@ -311,7 +321,7 @@ class FiltersPage(QWidget):
 
     def clear_device_presets(self) -> None:
         """Clear the Device panel's cached PEQ/RoomFit lists after a device
-        switch, and refetch immediately if the panel is currently showing.
+        switch.
 
         Without this, browsing back to the Filters step's Device panel after
         switching devices on the Connect step would keep showing the
@@ -320,14 +330,19 @@ class FiltersPage(QWidget):
         never fires just from revisiting an already-selected wizard step, so
         the stale list would otherwise persist until the user manually
         flips the "Import source" dropdown away and back.
+
+        Deliberately does NOT refetch here even if the Device panel is
+        currently showing: the new device's adapter isn't ready yet at this
+        call site (MainWindow._on_device_selected calls this synchronously,
+        before the async capability probe completes) -- refetching here
+        would read presets from the *old* device. MainWindow re-triggers the
+        fetch itself once the new adapter is live (_on_capabilities_ready).
         """
         self._device_peq_items = []
         self._device_active_peq_name = None
         self._device_roomfit_items = []
         self._device_active_roomfit_name = ""
         self._populate_device_list()
-        if self._current_source == FiltersSource.DEVICE:
-            self.device_presets_requested.emit()
 
     def show_warnings(self, warnings: list[str]) -> None:
         """Display validation warnings inline with a continue button."""

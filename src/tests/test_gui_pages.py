@@ -810,35 +810,37 @@ class TestFiltersPage:
         assert page._device_active_roomfit_name == ""
         assert page._device_list.count() == 0
 
-    def test_clear_device_presets_refetches_when_device_panel_active(self, qtbot) -> None:
-        """clear_device_presets() re-emits device_presets_requested when the
-        combo is currently on "Device" -- without this, a device switch while
-        already viewing that panel would leave it empty until the user
-        manually flips the "Import source" dropdown away and back."""
+    def test_clear_device_presets_never_refetches(self, qtbot) -> None:
+        """clear_device_presets() must never emit device_presets_requested --
+        it's called synchronously from MainWindow._on_device_selected, before
+        the new device's adapter exists (that's only created later, in
+        _on_capabilities_ready), so refetching here would read the *old*
+        device's presets (round-2 code review, 2026-08-06, BUG 1). This holds
+        even when the Device panel is the currently showing source: MainWindow
+        itself re-triggers the fetch once the new adapter is actually ready,
+        via FiltersPage.current_source."""
         page = FiltersPage()
         qtbot.addWidget(page)
         page._source_combo.setCurrentIndex(_DEVICE_INDEX)
-
-        with qtbot.waitSignal(page.device_presets_requested, timeout=1000):
-            page.clear_device_presets()
-
-    def test_clear_device_presets_does_not_refetch_when_other_panel_active(
-        self, qtbot
-    ) -> None:
-        """clear_device_presets() must not emit device_presets_requested when
-        a different source panel is showing -- there's nothing to refresh on
-        screen, and it would trigger an unnecessary device fetch."""
-        from src.gui.wizard_controller import FiltersSource
-
-        page = FiltersPage()
-        qtbot.addWidget(page)
-        assert page._current_source == FiltersSource.REW_FILE
 
         received: list[None] = []
         page.device_presets_requested.connect(lambda: received.append(None))
         page.clear_device_presets()
 
         assert received == []
+
+    def test_current_source_reflects_combo_selection(self, qtbot) -> None:
+        """current_source is a public read of the combo's selected panel --
+        MainWindow reads it to decide whether a re-triggered fetch (e.g. after
+        a device switch's adapter becomes ready) matches what's on screen."""
+        from src.gui.wizard_controller import FiltersSource
+
+        page = FiltersPage()
+        qtbot.addWidget(page)
+        assert page.current_source == FiltersSource.REW_FILE
+
+        page._source_combo.setCurrentIndex(_DEVICE_INDEX)
+        assert page.current_source == FiltersSource.DEVICE
 
     # ------------------------------------------------------------------
     # Local Library panel

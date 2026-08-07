@@ -526,6 +526,21 @@ class TestREWPullBusyGuard:
         window._bridge.run_async.assert_not_called()
 
 
+class TestDevicePresetsRequestedBusyGuard:
+    """Round-2 code review, 2026-08-06 (BUG 2): _on_device_presets_requested
+    was missing the busy-guard its sibling dropdown-switch handlers
+    (_on_device_pull_requested, _on_rew_api_pull_requested) already have. A
+    rapid source-dropdown toggle while a push/pull is in flight could
+    dispatch a concurrent list_presets() call otherwise."""
+
+    def test_device_presets_requested_blocked_when_busy(self, window) -> None:
+        window._feedback_manager._is_active = True
+
+        window._on_device_presets_requested()
+
+        window._bridge.run_async.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # filters_origin — what current_filters currently came from (#162d)
 # ---------------------------------------------------------------------------

@@ -515,8 +515,10 @@ QComboBox::drop-down {
 }
 
 QComboBox::down-arrow {
+    /* See fluent_dark.qss for why this needs an explicit icon. */
     width: 12px;
-    height: 12px;
+    height: 8px;
+    image: url(%ICONS_DIR%/chevron_down_light.svg);
 }
 
 QComboBox QAbstractItemView {

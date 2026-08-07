@@ -17,8 +17,17 @@ from PySide6.QtWidgets import QApplication
 
 logger = logging.getLogger(__name__)
 
-# Resolve the assets/styles directory relative to this module.
+# Resolve the assets/styles and assets/icons directories relative to this module.
 _STYLES_DIR = Path(__file__).resolve().parent / "assets" / "styles"
+_ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
+
+# Placeholder QSS files use in url(...) references (e.g. the combo-box
+# drop-down chevron) instead of a baked-in relative path -- Qt resolves a
+# stylesheet's relative url()s against the process's current working
+# directory, not the .qss file's own location, so a literal relative path
+# would break depending on how the packaged app happens to be launched.
+# _load_stylesheet() substitutes this for the real absolute path below.
+_ICONS_DIR_TOKEN = "%ICONS_DIR%"  # noqa: S105 -- a QSS placeholder, not a secret
 
 ThemeMode = Literal["light", "dark", "system"]
 
@@ -112,10 +121,13 @@ class ThemeManager:
             return ""
 
         try:
-            return path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
         except OSError:
             logger.exception("Failed to read stylesheet: %s", path)
             return ""
+
+        # Qt's url() always wants forward slashes, even on Windows.
+        return text.replace(_ICONS_DIR_TOKEN, _ICONS_DIR.as_posix())
 
     @staticmethod
     def _detect_windows_theme() -> Literal["light", "dark"]:

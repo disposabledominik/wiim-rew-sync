@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Combo-box drop-down chevron for the light theme (fluent_light.qss):
+     dark stroke for visibility against the theme's light backgrounds. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8" viewBox="0 0 12 8">
+  <path d="M1 1.5L6 6.5L11 1.5" fill="none" stroke="#616161" stroke-width="1.6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

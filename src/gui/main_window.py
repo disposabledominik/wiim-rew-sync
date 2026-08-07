@@ -77,10 +77,11 @@ from src.gui.secondary_workflows import (
 from src.gui.theme import ThemeManager
 from src.gui.views.help_view import HelpView
 from src.gui.views.my_presets_view import MyPresetsView
-from src.gui.views.presets_device_view import PresetsDeviceView
+from src.gui.views.presets_device_view import PresetItem, PresetsDeviceView
 from src.gui.views.rew_pull_view import RewPullView
 from src.gui.views.settings_view import SettingsView
 from src.gui.wizard_controller import (
+    FiltersSource,
     FlowType,
     WizardController,
     WizardState,
@@ -1161,6 +1162,8 @@ class MainWindow(QMainWindow):
         peq_presets_ready/roomfit_profiles_ready signals, forwarded to both
         views by _on_peq_presets_ready/_on_roomfit_profiles_ready.
         """
+        if self._is_busy():
+            return
         if self._wiim_adapter is None:
             return
         self._primary_workflows.list_presets()
@@ -1180,6 +1183,11 @@ class MainWindow(QMainWindow):
         flow is active (a saved preset's origin doesn't have to match the
         flow pushing it; the Canonical Filter Model doesn't care which
         device API wrote it).
+
+        No wizard-state pre-check (EQ type / source chosen) needed here --
+        with QuickSetupDialog gone, this handler is only reachable from the
+        Filters step itself, so both are already set by the time a user can
+        select anything in this panel.
 
         Args:
             item: PresetItem selected from the merged Device list.
@@ -1211,6 +1219,9 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_local_profile_selected(self, profile: object) -> None:
         """Handle a Local Library selection from FiltersPage.
+
+        No wizard-state pre-check needed here either, for the same reason as
+        _on_device_item_selected: only reachable from the Filters step.
 
         Args:
             profile: Profile object selected from the Local Library list.
@@ -1626,6 +1637,13 @@ class MainWindow(QMainWindow):
         )
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)
         self._primary_workflows.set_current_adapter(self._wiim_adapter)
+
+        # If a device switch left the Filters step's Device panel showing,
+        # clear_device_presets() (called synchronously in _on_device_selected,
+        # before this adapter existed) deliberately did not refetch -- do it
+        # now that the new device's adapter is actually live.
+        if self._filters_page.current_source == FiltersSource.DEVICE:
+            self._primary_workflows.list_presets()
 
         # Source names: resolved once, centrally, in merge_into() (#167) --
         # real enumeration via getAudioInputEnable where the device supports
@@ -3133,7 +3151,6 @@ class MainWindow(QMainWindow):
         for i, item in enumerate(items):
             if not getattr(item, "is_custom", False):
                 continue
-            from src.gui.views.presets_device_view import PresetItem
 
             new_name, ok = QInputDialog.getText(
                 self,
@@ -3151,6 +3168,9 @@ class MainWindow(QMainWindow):
                 preset_type=item.preset_type,
                 is_custom=True,
             )
+            # At most one custom item can appear (the merged Device list only
+            # ever contains one synthetic "Custom" row), so stop after the
+            # first match instead of scanning the rest of `items`.
             return renamed
         return items
 
@@ -3178,8 +3198,6 @@ class MainWindow(QMainWindow):
         preset_type = PresetTypeDialog.get_type(self)
         if preset_type is None:
             return
-
-        from src.gui.views.presets_device_view import PresetItem
 
         name: str = getattr(profile, "name", "")
         channel_mode_value = getattr(profile, "channel_mode", ChannelMode.STEREO)

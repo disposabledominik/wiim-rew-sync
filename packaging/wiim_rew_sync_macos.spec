@@ -89,9 +89,15 @@ if os.path.isdir(styles_src):
                 (os.path.join(styles_src, f), os.path.join("src", "gui", "assets", "styles"))
             )
 
-# Bundle app icon (SVG/PNG) for runtime window icon
+# Bundle app icon (SVG/PNG) for runtime window icon, plus the QSS-referenced
+# combo-box chevron icons (see src/gui/theme.py's %ICONS_DIR% substitution).
 icons_src = os.path.join(_PROJECT_ROOT, "src", "gui", "assets", "icons")
-for icon_file in ("app_icon.svg", "app_icon.png"):
+for icon_file in (
+    "app_icon.svg",
+    "app_icon.png",
+    "chevron_down_dark.svg",
+    "chevron_down_light.svg",
+):
     _icon_path = os.path.join(icons_src, icon_file)
     if os.path.isfile(_icon_path):
         datas_list.append(

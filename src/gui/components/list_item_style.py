@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QListWidgetItem
 
@@ -51,7 +51,5 @@ def build_preset_list_item(item: PresetItem, is_active: bool) -> QListWidgetItem
     list_item = QListWidgetItem(f"{text}  (active)" if is_active else text)
     apply_active_item_style(list_item, is_active)
     list_item.setData(Qt.ItemDataRole.UserRole, item)
-    list_item.setSizeHint(
-        list_item.sizeHint().expandedTo(list_item.sizeHint().__class__(0, LIST_ITEM_HEIGHT))
-    )
+    list_item.setSizeHint(QSize(0, LIST_ITEM_HEIGHT))
     return list_item

@@ -118,7 +118,9 @@ def _suppress_blocking_message_boxes(monkeypatch):
     -- those must still be mocked individually at their own static factory
     method (e.g. `DevicePickerDialog.get_devices`), since there's no single
     shared base to intercept generically the way QMessageBox's static
-    methods allow.
+    methods allow. It also does NOT cover `QInputDialog.getText` (used by
+    `_prompt_custom_item_name`) -- mock it explicitly in any test whose code
+    path reaches it.
     """
     from PySide6.QtWidgets import QMessageBox
 

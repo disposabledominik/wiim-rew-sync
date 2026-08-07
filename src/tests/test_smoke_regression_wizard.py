@@ -490,6 +490,43 @@ class TestIssue41DeviceSelectResetsFlow:
         assert window._filters_page._device_peq_items == []
         assert window._filters_page._device_active_peq_name is None
 
+    def test_capabilities_ready_refetches_device_presets_when_panel_active(
+        self, window
+    ) -> None:
+        """Round-2 code review, 2026-08-06 (BUG 1): clear_device_presets()
+        (called by _on_device_selected, before the new device's adapter
+        exists) deliberately does not refetch. _on_capabilities_ready must
+        pick that up once the new adapter is actually live, or the Device
+        panel would keep showing a device switch's brief empty state forever
+        if the user is already looking at it."""
+        from src.gui.pages.filters_page import _SOURCE_ORDER
+        from src.gui.wizard_controller import FiltersSource
+
+        window._on_device_selected("192.168.1.100")
+        window._filters_page._source_combo.setCurrentIndex(
+            _SOURCE_ORDER.index(FiltersSource.DEVICE)
+        )
+        assert window._filters_page.current_source == FiltersSource.DEVICE
+
+        window._primary_workflows.list_presets = MagicMock()
+        window._on_capabilities_ready(_make_caps())
+
+        window._primary_workflows.list_presets.assert_called_once()
+
+    def test_capabilities_ready_does_not_refetch_when_other_panel_active(
+        self, window
+    ) -> None:
+        """Counterpart to the refetch test above: no reason to fetch device
+        presets on every capabilities_ready if the user isn't even looking at
+        the Device panel."""
+        window._on_device_selected("192.168.1.100")
+        assert window._filters_page.current_source.value == "rew_file"
+
+        window._primary_workflows.list_presets = MagicMock()
+        window._on_capabilities_ready(_make_caps())
+
+        window._primary_workflows.list_presets.assert_not_called()
+
     def test_device_switch_resets_filters_page_channel_mode_radio(self, window) -> None:
         """PR #19 review follow-up: FiltersPage keeps its own Stereo/L-R radio
         selection independent of state.channel_mode (it's the source of truth

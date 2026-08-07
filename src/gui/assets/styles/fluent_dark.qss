@@ -515,8 +515,15 @@ QComboBox::drop-down {
 }
 
 QComboBox::down-arrow {
+    /* Styling ::drop-down opts the combo out of Qt's native arrow -- without
+       an explicit image here nothing is painted at all, so there's no
+       visual "this is a dropdown" affordance. A border-only triangle (no
+       image, matching this theme's otherwise asset-free convention) was
+       tried first but Qt's style engine renders it as a solid filled box
+       instead of a triangle, so an actual icon asset is used instead. */
     width: 12px;
-    height: 12px;
+    height: 8px;
+    image: url(%ICONS_DIR%/chevron_down_dark.svg);
 }
 
 QComboBox QAbstractItemView {
