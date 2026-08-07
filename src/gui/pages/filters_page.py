@@ -1,14 +1,27 @@
 """FiltersPage - filter loading wizard step.
 
-Presents an Import source toggle (File Import vs Pull from REW API). File
-Import shows a Stereo/L/R toggle and file browse buttons for loading REW EQ
-files; Pull from REW API embeds RewPullView (the same picker used by the
-sidebar "Pull from REW" entry, see src/gui/views/rew_pull_view.py) so REW
-measurement selection behaves identically in both places. Supports inline
-validation warnings and error display with retry.
+Presents an Import source dropdown with four options: File Import, Pull from
+REW API, Device, and Local Library. Each option shows its own panel in a
+QStackedWidget:
+    - File Import: a Stereo/L/R toggle and file browse buttons for loading
+      REW EQ files.
+    - Pull from REW API: embeds RewPullView (the same picker used by the
+      sidebar before it was consolidated here, see
+      src/gui/views/rew_pull_view.py) so REW measurement selection behaves
+      identically wherever it's reached from.
+    - Device: a merged list of PEQ presets and RoomFit profiles saved on the
+      connected device (regardless of the wizard's current EQ_TYPE -- a
+      saved preset's origin doesn't have to match the flow pushing it). The
+      device's live/unnamed PEQ config -- when it doesn't match any saved
+      preset, or the device can't enumerate saved presets at all -- appears
+      in the same list as a synthetic "Custom" row rather than a separate
+      action (see FiltersPage's own docstring for the full rule).
+    - Local Library: a list of presets saved locally on this computer.
 
-The page does NOT perform network I/O - it only emits signals. RewPullView
-is driven from the outside (MainWindow) exactly like the sidebar's instance.
+Supports inline validation warnings and error display with retry.
+
+The page does NOT perform network I/O or filesystem reads - it only emits
+signals; all four panels are populated from the outside (MainWindow).
 
 Requirements referenced: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 9.3, 5.2, 5.7.
 """
@@ -17,47 +30,120 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import QSize, Qt, Signal, Slot
+from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QRadioButton,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from src.gui.components.action_button import make_action_button
+from src.gui.components.list_item_style import build_preset_list_item
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
+    LIST_ITEM_HEIGHT,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
 )
+from src.gui.views.my_presets_view import _PresetItemWidget
+from src.gui.views.presets_device_view import PresetItem, build_peq_rows, build_roomfit_rows
 from src.gui.views.rew_pull_view import RewPullView
+from src.gui.wizard_controller import FiltersSource
+from src.models.profile import Profile
+
+# Sentinel stored as a Device-list row's UserRole data for the synthetic
+# "Custom" row (see build_custom_peq_item) -- identity-checked at dispatch
+# time rather than matching on item.name, so a real saved preset that
+# happens to also be named "Custom" is never misrouted to device_pull_requested.
+_CUSTOM_ROW_MARKER = object()
+
+# Dropdown/stack index order -- shared by the combo's model construction and
+# every index<->FiltersSource lookup in this file.
+_SOURCE_ORDER: list[FiltersSource] = [
+    FiltersSource.REW_FILE,
+    FiltersSource.REW_API,
+    FiltersSource.DEVICE,
+    FiltersSource.LOCAL_LIBRARY,
+]
+
+_SOURCE_LABELS: dict[FiltersSource, str] = {
+    FiltersSource.REW_FILE: "File Import",
+    FiltersSource.REW_API: "Pull from REW API",
+    FiltersSource.DEVICE: "Device",
+    FiltersSource.LOCAL_LIBRARY: "Local Library",
+}
+
+_SOURCE_SUBTITLES: dict[FiltersSource, str] = {
+    FiltersSource.REW_FILE: "Select channel mode and browse for your REW EQ text file(s).",
+    FiltersSource.REW_API: "Select a REW measurement to import filters from.",
+    FiltersSource.DEVICE: "Load a saved preset, or the device's current configuration.",
+    FiltersSource.LOCAL_LIBRARY: "Load a preset saved locally on this computer.",
+}
 
 
 class FiltersPage(QWidget):
-    """Filter loading step with an Import source toggle.
+    """Filter loading step with a four-option Import source dropdown.
 
     The page always shows:
-    - A File Import / Pull from REW API source toggle
+    - A File Import / Pull from REW API / Device / Local Library source dropdown
     - File Import: a Stereo vs L/R radio toggle + file browse button(s)
     - Pull from REW API: the embedded RewPullView picker
+    - Device: a merged PEQ/RoomFit preset list, no separate "pull current
+      config" action. The device's live PEQ config always surfaces as a
+      synthetic "Custom" row (WiiM Home's own term for this state) instead
+      -- either because it doesn't match any saved preset, or because the
+      device can't enumerate saved presets at all (no
+      supports_profile_enumeration capability), in which case "Custom" is
+      the *only* PEQ row shown. Selecting it and clicking Load Preset reads
+      the device's current live config, same as any other row read. A
+      device with neither PEQ nor RoomFit support (or where even the live
+      read fails) shows the plain empty state instead -- there is
+      deliberately no fallback button for this case; see
+      set_peq_unavailable()'s docstring.
+
+      Caveat documented here rather than fixed: "Custom" only ever reflects
+      the live config on the *currently selected* per-source PEQ slot
+      (`state.primary_source`) -- other sources on the same device may be
+      running entirely different filters, and this list gives no visibility
+      into those. Switching which source is being configured (a separate,
+      earlier wizard step) is the only way to see another source's live
+      config.
+    - Local Library: a list of locally-saved presets
     - Inline warnings/errors after import
 
     Signals:
         file_import_requested: Path to a single REW .txt file (stereo mode).
         file_import_lr_requested: Paths to left and right channel files.
-        device_pull_requested: (unused - kept for interface compatibility).
-        rew_api_pull_requested: User switched the source toggle to "Pull from
-            REW API" - caller should connect to REW and list measurements,
-            then drive rew_pull_view via its set_connecting/set_measurements/
-            set_message methods.
-        roomfit_profile_selected: User selected a RoomFit profile name.
+        device_pull_requested: User wants the device's current live PEQ
+            configuration (no named preset involved) -- emitted by
+            selecting the merged list's synthetic "Custom" row and clicking
+            Load Preset.
+        rew_api_pull_requested: User switched to "Pull from REW API" -
+            caller should connect to REW and list measurements, then drive
+            rew_pull_view via its set_connecting/set_measurements/set_message
+            methods.
+        device_presets_requested: User switched to "Device" - caller should
+            (re)fetch PEQ presets and RoomFit profiles and populate via
+            set_peq_presets()/set_roomfit_profiles().
+        local_profiles_requested: User switched to "Local Library" - caller
+            should (re)fetch saved profiles and populate via set_local_profiles().
+        device_item_selected: User picked a named preset/profile from the
+            merged Device list (PresetItem payload; caller branches on
+            preset_type). Never emitted for the synthetic "Custom" row --
+            that emits device_pull_requested instead (see above).
+        local_profile_selected: User picked a preset from the Local Library
+            list (Profile payload).
         filters_accepted: User clicked "Continue with adjustments" after warnings.
     """
 
@@ -65,14 +151,17 @@ class FiltersPage(QWidget):
     file_import_lr_requested = Signal(str, str)
     device_pull_requested = Signal()
     rew_api_pull_requested = Signal()
-    roomfit_profile_selected = Signal(str)
+    device_presets_requested = Signal()
+    local_profiles_requested = Signal()
+    device_item_selected = Signal(object)
+    local_profile_selected = Signal(object)
     filters_accepted = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("FiltersPage")
         self._channel_mode: str = "stereo"
-        self._roomfit_mode: bool = False
+        self._current_source: FiltersSource = FiltersSource.REW_FILE
         self._stereo_path: str = ""
         self._left_path: str = ""
         self._right_path: str = ""
@@ -80,6 +169,19 @@ class FiltersPage(QWidget):
         # during this session overrides it for the rest of the session.
         self._default_import_dir: str = ""
         self._session_import_dir: str = ""
+        self._device_peq_items: list[PresetItem] = []
+        # None = PEQ fetch hasn't resolved yet (distinct from "" = it
+        # resolved and found no active preset name). The RoomFit fetch runs
+        # concurrently and can populate the list on its own first, so "not
+        # yet known" has to stay distinguishable from "confirmed empty" --
+        # only the latter shows the synthetic "Custom" row.
+        self._device_active_peq_name: str | None = None
+        self._device_active_peq_channel_mode: str = "Stereo"
+        self._device_active_peq_enabled: bool = True
+        self._device_roomfit_items: list[PresetItem] = []
+        self._device_active_roomfit_name: str = ""
+        self._device_active_roomfit_enabled: bool = True
+        self._local_profiles: list[Profile] = []
         self.rew_pull_view = RewPullView(
             show_title=False, show_header=False, embedded=True
         )
@@ -96,6 +198,8 @@ class FiltersPage(QWidget):
             self._import_lr_btn,
             self._continue_with_warnings_btn,
             self._retry_btn,
+            self._device_load_btn,
+            self._local_load_btn,
         ]
 
     def set_default_import_folder(self, path: str) -> None:
@@ -118,27 +222,9 @@ class FiltersPage(QWidget):
         Args:
             available: Whether REW API pull should be offered on this page.
         """
-        self._rew_api_source_radio.setEnabled(available)
-        if not available and self._rew_api_source_radio.isChecked():
-            self._file_source_radio.setChecked(True)
-
-    def set_roomfit_mode(self, enabled: bool) -> None:
-        """Toggle RoomFit mode flag.
-
-        RoomFit profile pull is accessible via the "Presets on Device" sidebar.
-        The Filters page always shows the file import flow regardless of EQ type.
-        """
-        self._roomfit_mode = enabled
-
-    def set_roomfit_profiles(self, profiles: list[str]) -> None:
-        """Populate the RoomFit profile dropdown (kept for interface compat).
-
-        Args:
-            profiles: List of profile names available on the device.
-        """
-        self._roomfit_combo.clear()
-        self._roomfit_combo.addItem("Select a profile...")
-        self._roomfit_combo.addItems(profiles)
+        self._source_items[FiltersSource.REW_API].setEnabled(available)
+        if not available and self._current_source == FiltersSource.REW_API:
+            self._source_combo.setCurrentIndex(_SOURCE_ORDER.index(FiltersSource.REW_FILE))
 
     def set_lr_enabled(self, enabled: bool) -> None:
         """Enable or disable the L/R channel mode option.
@@ -174,13 +260,131 @@ class FiltersPage(QWidget):
             self._stereo_radio.setChecked(True)
         self._update_mode_ui()
 
+    def set_peq_presets(
+        self,
+        presets: list[PresetItem],
+        active_name: str | None = None,
+        active_channel_mode: str = "Stereo",
+        active_enabled: bool = True,
+    ) -> None:
+        """Populate the Device panel's PEQ presets.
+
+        Args:
+            presets: List of PresetItem objects for PEQ presets.
+            active_name: Name of the preset currently active on this source,
+                if known -- highlighted distinctly in the merged list. ""
+                means the device confirmed the live config doesn't match any
+                saved preset -- shown as a synthetic "Custom" row instead
+                (see presets_device_view.build_custom_peq_item). None (the
+                default) means this isn't known yet -- no highlight, no
+                Custom row.
+            active_channel_mode: Channel mode of the live active config,
+                used only to label the synthetic "Custom" row when
+                active_name is "".
+            active_enabled: Whether PEQ (EQStat) is actually switched on for
+                this source right now -- independent of active_name, since a
+                source can have a name/custom config selected while PEQ
+                itself is toggled off. When False, the active row's
+                "(active)" suffix becomes "(active, PEQ off)" instead.
+        """
+        self._device_peq_items = list(presets)
+        self._device_active_peq_name = active_name
+        self._device_active_peq_channel_mode = active_channel_mode
+        self._device_active_peq_enabled = active_enabled
+        self._populate_device_list()
+
+    def set_roomfit_profiles(
+        self, profiles: list[PresetItem], active_name: str = "", active_enabled: bool = True
+    ) -> None:
+        """Populate the Device panel's RoomFit profiles.
+
+        Args:
+            profiles: List of PresetItem objects for RoomFit profiles.
+            active_name: Name of the profile currently active on the device,
+                if any -- highlighted distinctly in the merged list.
+            active_enabled: Whether RoomFit is actually switched on right
+                now -- independent of which profile is selected. When False,
+                the active row's "(active)" suffix becomes
+                "(active, RoomFit off)" instead.
+        """
+        self._device_roomfit_items = list(profiles)
+        self._device_active_roomfit_name = active_name
+        self._device_active_roomfit_enabled = active_enabled
+        self._populate_device_list()
+
+    def set_local_profiles(self, profiles: list[Profile]) -> None:
+        """Populate the Local Library panel's saved-preset list.
+
+        Args:
+            profiles: List of locally-saved Profile objects.
+        """
+        self._local_profiles = list(profiles)
+        self._populate_local_list()
+
+    @property
+    def current_source(self) -> FiltersSource:
+        """The "Import source" dropdown's currently selected panel.
+
+        Public so MainWindow can decide whether a re-triggered fetch (e.g.
+        after a device switch's adapter becomes ready) is actually relevant
+        to what's currently on screen.
+        """
+        return self._current_source
+
+    def set_peq_unavailable(self) -> None:
+        """Clear the Device panel's PEQ presets when the device has no
+        usable PEQ info at all (no PEQ support, or the live-config read
+        failed outright) -- mirrors PresetsDeviceView's
+        set_peq_unavailable() so both consumers of
+        PrimaryWorkflowManager.peq_presets_unavailable stay in sync.
+        Deliberately not called just because named-preset enumeration is
+        unsupported -- that case still gets a synthetic "Custom" row via
+        set_peq_presets()."""
+        self._device_peq_items = []
+        self._device_active_peq_name = None
+        self._populate_device_list()
+
+    def set_roomfit_hidden(self) -> None:
+        """Clear the Device panel's RoomFit profiles when the device has no
+        RoomFit support -- mirrors PresetsDeviceView's set_roomfit_hidden()
+        so both consumers of PrimaryWorkflowManager.roomfit_profiles_hidden
+        stay in sync."""
+        self._device_roomfit_items = []
+        self._device_active_roomfit_name = ""
+        self._populate_device_list()
+
+    def clear_device_presets(self) -> None:
+        """Clear the Device panel's cached PEQ/RoomFit lists after a device
+        switch.
+
+        Without this, browsing back to the Filters step's Device panel after
+        switching devices on the Connect step would keep showing the
+        previous device's presets/profiles -- the combo's currentIndexChanged
+        (which normally triggers a refetch, see _on_source_index_changed)
+        never fires just from revisiting an already-selected wizard step, so
+        the stale list would otherwise persist until the user manually
+        flips the "Import source" dropdown away and back.
+
+        Deliberately does NOT refetch here even if the Device panel is
+        currently showing: the new device's adapter isn't ready yet at this
+        call site (MainWindow._on_device_selected calls this synchronously,
+        before the async capability probe completes) -- refetching here
+        would read presets from the *old* device. MainWindow re-triggers the
+        fetch itself once the new adapter is live (_on_capabilities_ready).
+        """
+        self._device_peq_items = []
+        self._device_active_peq_name = None
+        self._device_roomfit_items = []
+        self._device_active_roomfit_name = ""
+        self._populate_device_list()
+
     def show_warnings(self, warnings: list[str]) -> None:
         """Display validation warnings inline with a continue button."""
         self._error_section.setVisible(False)
         if not warnings:
             self._warnings_section.setVisible(False)
             return
-        text = "\n".join(f"\u2022 {w}" for w in warnings)
+        text = "\n".join(f"• {w}" for w in warnings)
         self._warnings_label.setText(text)
         self._warnings_section.setVisible(True)
 
@@ -194,7 +398,7 @@ class FiltersPage(QWidget):
         """Reset to initial state - hide warnings/errors, revert to File Import."""
         self._warnings_section.setVisible(False)
         self._error_section.setVisible(False)
-        self._file_source_radio.setChecked(True)
+        self._source_combo.setCurrentIndex(_SOURCE_ORDER.index(FiltersSource.REW_FILE))
         self._stereo_path = ""
         self._left_path = ""
         self._right_path = ""
@@ -209,7 +413,7 @@ class FiltersPage(QWidget):
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        """Build the page layout - toggle + browse buttons, no cards/dialogs."""
+        """Build the page layout - dropdown + stacked source panels."""
         page_layout, content_wrapper = build_centered_content(self)
 
         # Page title
@@ -218,9 +422,9 @@ class FiltersPage(QWidget):
         )
         page_layout.addWidget(title)
 
-        # --- Import source toggle (above the instruction text, so the
+        # --- Import source dropdown (above the instruction text, so the
         # instruction line always sits directly below it -- same position
-        # and font in both File Import and Pull from REW API modes) ---
+        # and font regardless of which source panel is active) ---
         source_section = QWidget()
         source_layout = QHBoxLayout(source_section)
         source_layout.setContentsMargins(0, 0, 0, 0)
@@ -230,49 +434,67 @@ class FiltersPage(QWidget):
         source_label.setProperty("class", "subheading")
         source_layout.addWidget(source_label)
 
-        self._source_group = QButtonGroup(self)
-        self._file_source_radio = QRadioButton("File Import")
-        self._file_source_radio.setChecked(True)
-        self._rew_api_source_radio = QRadioButton("Pull from REW API")
-        self._source_group.addButton(self._file_source_radio)
-        self._source_group.addButton(self._rew_api_source_radio)
-        self._rew_api_source_radio.toggled.connect(self._on_source_toggled)
-
-        source_layout.addWidget(self._file_source_radio)
-        source_layout.addWidget(self._rew_api_source_radio)
+        self._source_combo = QComboBox()
+        self._source_combo.setObjectName("FiltersSourceCombo")
+        source_model = QStandardItemModel(self._source_combo)
+        self._source_items: dict[FiltersSource, QStandardItem] = {}
+        for source in _SOURCE_ORDER:
+            item = QStandardItem(_SOURCE_LABELS[source])
+            source_model.appendRow(item)
+            self._source_items[source] = item
+        self._source_combo.setModel(source_model)
+        self._source_combo.currentIndexChanged.connect(self._on_source_index_changed)
+        source_layout.addWidget(self._source_combo)
         source_layout.addStretch()
 
         page_layout.addWidget(source_section)
 
-        # Instruction line (updated by _on_source_toggled to match the
+        # Instruction line (updated by _on_source_index_changed to match the
         # active source) -- stays in this exact layout position and keeps
-        # this styling in both modes, so switching source doesn't move or
+        # this styling for every source, so switching source doesn't move or
         # restyle it, only its text changes.
-        self._subtitle = QLabel(
-            "Select channel mode and browse for your REW EQ text file(s)."
-        )
+        self._subtitle = QLabel(_SOURCE_SUBTITLES[FiltersSource.REW_FILE])
         self._subtitle.setWordWrap(True)
         self._subtitle.setProperty("class", "secondary")
         page_layout.addWidget(self._subtitle)
 
-        # --- File Import section (channel toggle + browse buttons) ---
-        self._file_import_section = QWidget()
-        file_layout = QVBoxLayout(self._file_import_section)
+        # --- Stacked source panels -- given a stretch factor so it claims
+        # the page's spare vertical space directly (matching how
+        # rew_pull_view carried a stretch factor of 1 on its own before),
+        # each panel bottom-anchors its own action button internally via its
+        # own trailing addStretch(), the same layout trick this page always
+        # used, just scoped per-panel instead of shared across all of them.
+        self._source_panels = QStackedWidget()
+        self._rew_file_panel = self._build_rew_file_panel()
+        self._device_panel = self._build_device_panel()
+        self._local_library_panel = self._build_local_library_panel()
+        self._source_panels.addWidget(self._rew_file_panel)
+        self._source_panels.addWidget(self.rew_pull_view)
+        self._source_panels.addWidget(self._device_panel)
+        self._source_panels.addWidget(self._local_library_panel)
+        page_layout.addWidget(self._source_panels, 1)
+
+        self.rew_pull_view.back_requested.connect(self._on_rew_pull_back_requested)
+
+        # --- Warnings section ---
+        self._warnings_section = self._build_warnings_section()
+        self._warnings_section.setVisible(False)
+        page_layout.addWidget(self._warnings_section)
+
+        # --- Error section ---
+        self._error_section = self._build_error_section()
+        self._error_section.setVisible(False)
+        page_layout.addWidget(self._error_section)
+
+        # Set initial mode visibility
+        self._update_mode_ui()
+
+    def _build_rew_file_panel(self) -> QWidget:
+        """Build the File Import panel - channel toggle + browse buttons."""
+        panel = QWidget()
+        file_layout = QVBoxLayout(panel)
         file_layout.setContentsMargins(0, 0, 0, 0)
         file_layout.setSpacing(SPACING_LG)
-
-        # Added directly (no scroll wrapper, no stretch factor): unlike
-        # RewPullView's measurement list, this section's content (mode
-        # toggle + one or two short file rows) is never tall enough to need
-        # scrolling. A QScrollArea with setWidgetResizable(True) (smoke
-        # #234) and a plain outer stretch factor both cause the same bug --
-        # either one lets Qt grow this widget beyond its sizeHint, and since
-        # file_layout has no trailing addStretch() of its own, that extra
-        # height gets distributed as gaps between its child rows instead of
-        # collecting below them. Leaving this widget unstretched keeps it
-        # compact; the page's own trailing addStretch() (below) absorbs the
-        # leftover space and bottom-anchors the Continue button instead.
-        page_layout.addWidget(self._file_import_section)
 
         # --- Channel mode toggle ---
         mode_section = QWidget()
@@ -375,29 +597,9 @@ class FiltersPage(QWidget):
         self._lr_section.setVisible(False)
         file_layout.addWidget(self._lr_section)
 
-        # --- Pull from REW API section (embedded picker) ---
-        # measurement_selected is consumed directly by MainWindow (same
-        # signal the sidebar's RewPullView instance uses); back_requested
-        # is also handled locally to flip the source toggle back. Given a
-        # stretch factor so it claims the page's spare vertical space
-        # directly, rather than that space collecting below it at the
-        # trailing addStretch() -- RewPullView's own internal measurement
-        # list already has a stretch factor of 1 inside itself, so the
-        # extra height flows through to the actual list.
-        self.rew_pull_view.setVisible(False)
-        self.rew_pull_view.back_requested.connect(self._on_rew_pull_back_requested)
-        page_layout.addWidget(self.rew_pull_view, 1)
+        file_layout.addStretch()
 
-        # --- Continue action row (shared position for both modes, so
-        # switching between Stereo/L/R doesn't shift the button vertically
-        # the way it would if each mode kept its own button inline after
-        # its own (differently-sized) file rows). Lives in its own
-        # page_layout-level container (not file_layout) with a leading
-        # stretch so it's bottom-anchored like every other wizard step's
-        # primary button, regardless of how tall the file rows above it
-        # are; visibility is tied to the File Import section's own toggle
-        # in _on_source_toggled so it doesn't show while Pull from REW API
-        # (which has its own action bar) is active. ---
+        # --- Continue action row (bottom-anchored by the addStretch() above) ---
         self._file_import_actions = QWidget()
         actions_row = QHBoxLayout(self._file_import_actions)
         actions_row.setContentsMargins(0, 0, 0, 0)
@@ -418,34 +620,72 @@ class FiltersPage(QWidget):
         self._import_lr_btn.clicked.connect(self._on_import_lr_confirmed)
         actions_row.addWidget(self._import_lr_btn)
 
-        page_layout.addStretch()
-        page_layout.addWidget(self._file_import_actions)
+        file_layout.addWidget(self._file_import_actions)
 
-        # --- RoomFit profile dropdown (hidden - used only from sidebar) ---
-        self._roomfit_section = QWidget()
-        rf_layout = QVBoxLayout(self._roomfit_section)
-        rf_layout.setContentsMargins(0, 0, 0, 0)
-        self._roomfit_combo = QComboBox()
-        self._roomfit_combo.addItem("Select a profile...")
-        self._roomfit_combo.currentIndexChanged.connect(
-            self._on_roomfit_index_changed
+        return panel
+
+    def _build_device_panel(self) -> QWidget:
+        """Build the Device panel - merged preset list.
+
+        No dedicated "pull current config" action -- the live PEQ config
+        always appears as a synthetic "Custom" row in the list itself (see
+        this class's docstring and _populate_device_list()).
+        """
+        panel = QWidget()
+        device_layout = QVBoxLayout(panel)
+        device_layout.setContentsMargins(0, 0, 0, 0)
+        device_layout.setSpacing(SPACING_MD)
+
+        self._device_list = QListWidget()
+        self._device_list.setObjectName("FiltersDeviceList")
+        self._device_list.currentItemChanged.connect(self._on_device_selection_changed)
+        device_layout.addWidget(self._device_list, 1)
+
+        self._device_empty_label = QLabel("No presets found on this device.")
+        self._device_empty_label.setProperty("class", "secondary")
+        self._device_empty_label.setVisible(False)
+        device_layout.addWidget(self._device_empty_label)
+
+        device_actions_row = QHBoxLayout()
+        device_actions_row.addStretch()
+        self._device_load_btn = make_action_button(
+            "Load Preset", object_name="filters_device_load", style_class="primary"
         )
-        rf_layout.addWidget(self._roomfit_combo)
-        self._roomfit_section.setVisible(False)
-        page_layout.addWidget(self._roomfit_section)
+        self._device_load_btn.setEnabled(False)
+        self._device_load_btn.clicked.connect(self._on_device_load_clicked)
+        device_actions_row.addWidget(self._device_load_btn)
+        device_layout.addLayout(device_actions_row)
 
-        # --- Warnings section ---
-        self._warnings_section = self._build_warnings_section()
-        self._warnings_section.setVisible(False)
-        page_layout.addWidget(self._warnings_section)
+        return panel
 
-        # --- Error section ---
-        self._error_section = self._build_error_section()
-        self._error_section.setVisible(False)
-        page_layout.addWidget(self._error_section)
+    def _build_local_library_panel(self) -> QWidget:
+        """Build the Local Library panel - list of saved presets."""
+        panel = QWidget()
+        local_layout = QVBoxLayout(panel)
+        local_layout.setContentsMargins(0, 0, 0, 0)
+        local_layout.setSpacing(SPACING_MD)
 
-        # Set initial mode visibility
-        self._update_mode_ui()
+        self._local_list = QListWidget()
+        self._local_list.setObjectName("FiltersLocalLibraryList")
+        self._local_list.currentItemChanged.connect(self._on_local_selection_changed)
+        local_layout.addWidget(self._local_list, 1)
+
+        self._local_empty_label = QLabel("No saved presets yet.")
+        self._local_empty_label.setProperty("class", "secondary")
+        self._local_empty_label.setVisible(False)
+        local_layout.addWidget(self._local_empty_label)
+
+        local_actions_row = QHBoxLayout()
+        local_actions_row.addStretch()
+        self._local_load_btn = make_action_button(
+            "Load Preset", object_name="filters_local_load", style_class="primary"
+        )
+        self._local_load_btn.setEnabled(False)
+        self._local_load_btn.clicked.connect(self._on_local_load_clicked)
+        local_actions_row.addWidget(self._local_load_btn)
+        local_layout.addLayout(local_actions_row)
+
+        return panel
 
     def _build_warnings_section(self) -> QWidget:
         """Build the inline warnings display area."""
@@ -520,32 +760,31 @@ class FiltersPage(QWidget):
         self._lr_section.setVisible(is_lr)
         self._import_lr_btn.setVisible(is_lr)
 
-    @Slot(bool)
-    def _on_source_toggled(self, rew_api_checked: bool) -> None:
-        """Handle File Import / Pull from REW API source toggle.
+    @Slot(int)
+    def _on_source_index_changed(self, index: int) -> None:
+        """Handle Import source dropdown selection.
 
         Args:
-            rew_api_checked: Whether the "Pull from REW API" radio is now
-                checked (passed by the toggled(bool) signal of that radio).
+            index: New combo index, mapped to a FiltersSource via _SOURCE_ORDER.
         """
-        self._file_import_section.setVisible(not rew_api_checked)
-        self._file_import_actions.setVisible(not rew_api_checked)
-        self.rew_pull_view.setVisible(rew_api_checked)
+        self._current_source = _SOURCE_ORDER[index]
+        self._source_panels.setCurrentIndex(index)
         self._warnings_section.setVisible(False)
         self._error_section.setVisible(False)
-        if rew_api_checked:
-            self._subtitle.setText("Select a REW measurement to import filters from.")
+        self._subtitle.setText(_SOURCE_SUBTITLES[self._current_source])
+
+        if self._current_source == FiltersSource.REW_API:
             self.rew_pull_view.set_connecting()
             self.rew_api_pull_requested.emit()
-        else:
-            self._subtitle.setText(
-                "Select channel mode and browse for your REW EQ text file(s)."
-            )
+        elif self._current_source == FiltersSource.DEVICE:
+            self.device_presets_requested.emit()
+        elif self._current_source == FiltersSource.LOCAL_LIBRARY:
+            self.local_profiles_requested.emit()
 
     @Slot()
     def _on_rew_pull_back_requested(self) -> None:
         """Handle Back from the embedded RewPullView - revert to File Import."""
-        self._file_source_radio.setChecked(True)
+        self._source_combo.setCurrentIndex(_SOURCE_ORDER.index(FiltersSource.REW_FILE))
 
     def _browse_start_dir(self) -> str:
         """Return the starting directory for the REW import file dialogs.
@@ -611,12 +850,103 @@ class FiltersPage(QWidget):
         if self._stereo_path:
             self.file_import_requested.emit(self._stereo_path)
 
-    @Slot(int)
-    def _on_roomfit_index_changed(self, index: int) -> None:
-        """Handle RoomFit profile dropdown selection."""
-        if index > 0:
-            profile_name = self._roomfit_combo.currentText()
-            self.roomfit_profile_selected.emit(profile_name)
+    def _populate_device_list(self) -> None:
+        """Rebuild the merged Device list from the stored PEQ + RoomFit items.
+
+        Prepends a synthetic "Custom" row (see
+        presets_device_view.build_custom_peq_item) when the PEQ fetch has
+        resolved and found no active preset name -- either because it
+        doesn't match any saved preset, or because the device can't
+        enumerate saved presets at all, in which case "Custom" is the only
+        PEQ row. Selecting it and clicking Load Preset emits
+        device_pull_requested (via _CUSTOM_ROW_MARKER) rather than
+        device_item_selected.
+        """
+        self._device_list.clear()
+        peq_rows = build_peq_rows(
+            self._device_peq_items,
+            self._device_active_peq_name,
+            self._device_active_peq_channel_mode,
+            self._device_active_peq_enabled,
+        )
+        combined: list[tuple[PresetItem, bool, bool, object]] = [
+            (item, is_active, is_eq_off, _CUSTOM_ROW_MARKER if item.is_custom else item)
+            for item, is_active, is_eq_off in peq_rows
+        ]
+        combined += [
+            (item, is_active, is_eq_off, item)
+            for item, is_active, is_eq_off in build_roomfit_rows(
+                self._device_roomfit_items,
+                self._device_active_roomfit_name,
+                self._device_active_roomfit_enabled,
+            )
+        ]
+        self._device_empty_label.setVisible(not combined)
+        self._device_list.setVisible(bool(combined))
+        for display_item, is_active, is_eq_off, user_data in combined:
+            list_item = build_preset_list_item(display_item, is_active, is_eq_off)
+            list_item.setData(Qt.ItemDataRole.UserRole, user_data)
+            self._device_list.addItem(list_item)
+        self._device_load_btn.setEnabled(False)
+
+    @Slot(QListWidgetItem, QListWidgetItem)
+    def _on_device_selection_changed(
+        self, current: QListWidgetItem | None, _previous: QListWidgetItem | None
+    ) -> None:
+        """Enable the Load Preset button once a Device-list row is selected."""
+        self._device_load_btn.setEnabled(current is not None)
+
+    @Slot()
+    def _on_device_load_clicked(self) -> None:
+        """Emit device_item_selected with the selected list row's PresetItem.
+
+        The synthetic "Custom" row is the one exception: it carries
+        _CUSTOM_ROW_MARKER instead of a PresetItem, and emits
+        device_pull_requested rather than device_item_selected.
+        """
+        current = self._device_list.currentItem()
+        if current is None:
+            return
+        user_data = current.data(Qt.ItemDataRole.UserRole)
+        if user_data is _CUSTOM_ROW_MARKER:
+            self.device_pull_requested.emit()
+            return
+        self.device_item_selected.emit(user_data)
+
+    def _populate_local_list(self) -> None:
+        """Rebuild the Local Library list from the stored Profile list."""
+        self._local_list.clear()
+        self._local_empty_label.setVisible(not self._local_profiles)
+        self._local_list.setVisible(bool(self._local_profiles))
+        for profile in self._local_profiles:
+            active_bands, total_bands = profile.band_counts()
+            item_widget = _PresetItemWidget(
+                name=profile.name,
+                channel_mode=profile.channel_mode,
+                active_bands=active_bands,
+                total_bands=total_bands,
+            )
+            item = QListWidgetItem(self._local_list)
+            item.setSizeHint(QSize(0, LIST_ITEM_HEIGHT))
+            item.setData(Qt.ItemDataRole.UserRole, profile)
+            self._local_list.setItemWidget(item, item_widget)
+        self._local_load_btn.setEnabled(False)
+
+    @Slot(QListWidgetItem, QListWidgetItem)
+    def _on_local_selection_changed(
+        self, current: QListWidgetItem | None, _previous: QListWidgetItem | None
+    ) -> None:
+        """Enable the Load Preset button once a Local Library row is selected."""
+        self._local_load_btn.setEnabled(current is not None)
+
+    @Slot()
+    def _on_local_load_clicked(self) -> None:
+        """Emit local_profile_selected with the selected list row's Profile."""
+        current = self._local_list.currentItem()
+        if current is None:
+            return
+        profile = current.data(Qt.ItemDataRole.UserRole)
+        self.local_profile_selected.emit(profile)
 
     @Slot()
     def _on_continue_with_warnings(self) -> None:

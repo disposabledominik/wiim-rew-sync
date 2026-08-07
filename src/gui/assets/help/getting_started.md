@@ -75,7 +75,7 @@ the change if needed.
 - **Looking back is free** — click any completed step in the step indicator to
   review it. Nothing is lost by looking: your checkmarks and loaded filters
   stay intact. The step you left off at stays highlighted; click it (or
-  "Resume Setup" in the sidebar) to jump back to where you were. Progress only
+  "Setup Wizard" in the sidebar) to jump back to where you were. Progress only
   resets when you actually *change* an earlier answer, such as picking a
   different device or EQ type.
 - **Click the device name in the sidebar** to see the connected device's
@@ -84,8 +84,12 @@ the change if needed.
   and the User Guide at any time during the workflow.
 - **Presets on Device** in the sidebar lets you browse, export, and copy
   existing PEQ presets and RoomFit profiles directly from your WiiM device.
-- **Pull from REW** in the sidebar imports filters directly from REW's HTTP
-  API if REW is running with the API enabled (no file export needed).
+- On the **Filters** step of the wizard, the "Import source" dropdown also
+  offers **REW API** (imports directly from REW's HTTP API if REW is running
+  with the API enabled — no file export needed), **Device** (browse presets
+  saved on the connected device or read its current live configuration), and
+  **Local Library** (load a preset you've saved locally), alongside File
+  Import.
 
 ## Keyboard Shortcuts
 

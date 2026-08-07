@@ -2363,6 +2363,46 @@ class TestReadPresetPreview:
         mock_roomfit.assert_not_awaited()
 
 
+class TestReadPresetPreviewOrLive:
+    """Test read_preset_preview_or_live() -- the #165c dispatch used by
+    Export/Save/Copy for the synthetic "Custom" row: a plain read_peq() when
+    is_custom=True, otherwise the same read_preset_preview() dispatch above.
+    """
+
+    async def test_is_custom_reads_live_peq_not_preview(self, adapter: WiiMAdapter) -> None:
+        """is_custom=True bypasses read_preset_preview() entirely -- no
+        load/restore dance, since the config is already live."""
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        with (
+            patch.object(adapter, "read_peq", AsyncMock(return_value=settings)) as mock_read,
+            patch.object(adapter, "read_preset_preview", AsyncMock()) as mock_preview,
+        ):
+            result = await adapter.read_preset_preview_or_live(
+                "PEQ", "wifi", "Custom", is_custom=True
+            )
+
+        assert result is settings
+        mock_read.assert_awaited_once_with("wifi")
+        mock_preview.assert_not_awaited()
+
+    async def test_not_custom_dispatches_to_preview(self, adapter: WiiMAdapter) -> None:
+        """is_custom=False (the default) behaves exactly like
+        read_preset_preview() -- a named preset still needs the preview/
+        restore dance to read its bands."""
+        settings = PEQSettings(source_name="wifi", channel_mode=ChannelMode.STEREO, bands=[])
+        with (
+            patch.object(adapter, "read_peq", AsyncMock()) as mock_read,
+            patch.object(
+                adapter, "read_preset_preview", AsyncMock(return_value=settings)
+            ) as mock_preview,
+        ):
+            result = await adapter.read_preset_preview_or_live("PEQ", "wifi", "Movie Night")
+
+        assert result is settings
+        mock_preview.assert_awaited_once_with("PEQ", "wifi", "Movie Night")
+        mock_read.assert_not_awaited()
+
+
 class TestRestoreRoomfitActiveProfile:
     """Direct unit coverage for restore_roomfit_active_profile() (#178) --
     shared by read_roomfit_preset_preview() above and RoomFitSafeWrite.execute()

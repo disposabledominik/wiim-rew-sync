@@ -234,7 +234,7 @@ correct or extend.
 
 ## REW API Connection Issues
 
-If "Pull from REW" is not working:
+If the Filters step's "Pull from REW API" option is not working:
 
 - Ensure REW is running on your computer.
 - In REW, go to Preferences and enable the HTTP server.

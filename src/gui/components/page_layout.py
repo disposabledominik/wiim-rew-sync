@@ -1,7 +1,7 @@
 """Shared page chrome for wizard pages and sidebar views.
 
 Every wizard step page and every sidebar-navigable view (Presets on Device,
-My Saved Presets, Pull from REW, Settings, etc.) builds its title and
+My Saved Presets, Settings, etc.) builds its title and
 content column through this module instead of hand-rolling its own
 QVBoxLayout/QLabel boilerplate. Before this existed, pages had drifted to
 four different title font sizes and some had no title at all — going

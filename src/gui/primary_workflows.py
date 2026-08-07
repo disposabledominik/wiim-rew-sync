@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -73,9 +73,9 @@ class EmptyPresetFiltersError(Exception):
 def _extract_profile_names(profiles: list[dict[str, Any]]) -> list[str]:
     """Extract non-empty "Name" values from a list_roomfit_profiles() result.
 
-    Shared by _do_populate_name_profiles/_do_list_roomfit_profiles -- both
-    need the same "Name" key with the same empty-string skip, just for two
-    different downstream signals (round-4 review finding #9, 2026-07-19).
+    Used by _do_populate_name_profiles, which needs the "Name" key with an
+    empty-string skip for its downstream signal (round-4 review finding #9,
+    2026-07-19).
     """
     return [p.get("Name", "") for p in profiles if p.get("Name")]
 
@@ -95,15 +95,39 @@ class PrimaryWorkflowManager(QObject):
     progress_update) — this manager declares no new signals of its own for
     those workflows, so MainWindow's existing `_on_*` slot connections need
     no rewiring. list_presets()/refresh_presets() is the exception: it
-    declares four signals of its own (see below), one per PresetsDeviceView
-    setter it used to call directly.
+    declares four signals of its own (see below), each forwarded by
+    MainWindow to both PresetsDeviceView and FiltersPage's merged Device
+    panel, which share the same PresetItem-shaped data.
 
     Signals:
-        peq_presets_ready(list, str): PEQ PresetItem list + active preset
-            name, mirrors PresetsDeviceView.set_peq_presets().
-        peq_presets_unavailable(): mirrors set_peq_unavailable().
-        roomfit_profiles_ready(list, str): RoomFit PresetItem list + active
-            profile name, mirrors set_roomfit_profiles().
+        peq_presets_ready(list, object, str, bool): PEQ PresetItem list +
+            active preset name + active preset's channel mode + whether PEQ
+            (EQStat) is actually switched on for this source, mirrors
+            PresetsDeviceView.set_peq_presets() and
+            FiltersPage.set_peq_presets(). The channel mode and enabled flag
+            travel alongside the name (rather than needing their own reads)
+            because all three come from the same read_peq() call. The name
+            is used to label the synthetic "Custom" row shown when it's ""
+            (see presets_device_view.build_custom_peq_item); the enabled
+            flag is used to qualify the active row's badge as
+            "(active, PEQ off)" instead of plain "(active)" when a
+            name/custom config is selected but PEQ itself is toggled off for
+            that source (build_preset_list_item). The active name is
+            `object`, not `str`, because it must carry `None` through the
+            signal when the live-config read itself failed -- "unknown" is
+            not the same thing as "" (confirmed no active preset), and only
+            `object`-typed Qt signal args can carry None.
+        peq_presets_unavailable(): mirrors set_peq_unavailable(). Emitted
+            when the device has no PEQ support at all, or the live-config
+            read needed to confirm PEQ state failed outright (see
+            _fetch_peq() below) -- never emitted just because named-preset
+            enumeration is unsupported, since the live config can still be
+            shown as a synthetic "Custom" row without it.
+        roomfit_profiles_ready(list, str, bool): RoomFit PresetItem list +
+            active profile name + whether RoomFit is actually switched on,
+            mirrors set_roomfit_profiles() on both views. Same "(active,
+            RoomFit off)" qualifier rationale as peq_presets_ready's enabled
+            flag, above.
         roomfit_profiles_hidden(): mirrors set_roomfit_hidden().
 
         Four signals rather than one combined result: the PEQ and RoomFit
@@ -116,12 +140,11 @@ class PrimaryWorkflowManager(QObject):
             active profile name + whether RoomFit is currently on, mirrors
             NameProfilePage.set_existing_profiles() plus MainWindow's
             _roomfit_enabled attribute. Distinct from roomfit_profiles_ready
-            above despite the similar name — that one already feeds
-            PresetsDeviceView with a different payload shape (PresetItem
-            objects, no enabled flag); reusing it here would misroute data.
-        filters_roomfit_profiles_ready(list): RoomFit profile-name list,
-            mirrors FiltersPage.set_roomfit_profiles() (no active name or
-            enabled flag — that page's dropdown doesn't need either).
+            above despite the similar name and now-shared enabled flag —
+            that one feeds PresetsDeviceView/FiltersPage with a different
+            payload shape (PresetItem objects, for the merged preset list)
+            than this one's plain profile-name list (for the Name Your
+            Profile step); reusing it here would misroute data.
         presets_delete_complete(int, int): succeeded/failed counts from a
             delete_presets() batch. delete_presets() is otherwise a normal
             _dispatch()-based entry point, but its two completion paths
@@ -129,15 +152,24 @@ class PrimaryWorkflowManager(QObject):
             MainWindow._status_banner directly rather than raising an
             exception (partial failure isn't an error condition
             _bridge_wrapper's mapping fits), so it needs a signal instead.
+        presets_export_complete(int, int) / presets_save_complete(int, int):
+            same succeeded/failed-counts pattern as presets_delete_complete,
+            for export_presets()/save_presets() batches. A single preset's
+            EmptyPresetFiltersError (or any other read failure) inside the
+            batch loop is caught and counted as one failure rather than
+            propagated -- matching presets_delete_complete's existing
+            partial-failure handling, deliberately, even for a batch of one
+            (see _do_export_presets/_do_save_presets docstrings).
     """
 
-    peq_presets_ready = Signal(list, str)
+    peq_presets_ready = Signal(list, object, str, bool)
     peq_presets_unavailable = Signal()
-    roomfit_profiles_ready = Signal(list, str)
+    roomfit_profiles_ready = Signal(list, str, bool)
     roomfit_profiles_hidden = Signal()
     name_profiles_ready = Signal(list, str, bool)
-    filters_roomfit_profiles_ready = Signal(list)
     presets_delete_complete = Signal(int, int)
+    presets_export_complete = Signal(int, int)
+    presets_save_complete = Signal(int, int)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -469,10 +501,10 @@ class PrimaryWorkflowManager(QObject):
     def list_presets(self) -> None:
         """Trigger a fire-and-forget presets refresh; results arrive via signals.
 
-        Used by MainWindow's bridge-wrapped dispatch point
-        (_load_device_presets). _do_delete_presets, which needs to await
-        the refresh inline as part of its own coroutine, calls
-        refresh_presets() directly instead — see that method's docstring.
+        Used by MainWindow's bridge-wrapped dispatch points
+        (_load_device_presets, _on_device_presets_requested). _do_delete_presets,
+        which needs to await the refresh inline as part of its own coroutine,
+        calls refresh_presets() directly instead — see that method's docstring.
         """
         self._dispatch("list_presets", self.refresh_presets())
 
@@ -507,33 +539,52 @@ class PrimaryWorkflowManager(QObject):
             ]
 
         async def _fetch_peq() -> None:
-            try:
-                if wiim_adapter.capabilities.supports_profile_enumeration:
+            if not wiim_adapter.capabilities.supports_peq:
+                self.peq_presets_unavailable.emit()
+                return
+
+            peq_items: list[PresetItem] = []
+            if wiim_adapter.capabilities.supports_profile_enumeration:
+                try:
                     peq_presets = await wiim_adapter.list_peq_profiles(source_name)
                     peq_items = _to_preset_items(peq_presets, "PEQ")
-                    # read_peq() is a plain, harmless read, unlike
-                    # load_peq_profile()/EQv2SourceLoad.
-                    active_peq_name = await self._read_active_name_or_default(
-                        self._peq_name_for_highlight(source_name),
-                        "Failed to read active PEQ preset name",
-                    )
-                    self.peq_presets_ready.emit(peq_items, active_peq_name)
-                else:
+                except Exception:
+                    logger.warning("Failed to list PEQ presets", exc_info=True)
                     self.peq_presets_unavailable.emit()
-            except Exception:
-                logger.warning("Failed to list PEQ presets", exc_info=True)
+                    return
+
+            # read_peq() is a plain, harmless read, unlike
+            # load_peq_profile()/EQv2SourceLoad. This is the *only* PEQ
+            # signal on a device without profile enumeration -- it backs
+            # the synthetic "Custom" row (see build_custom_peq_item) that
+            # replaces the old dedicated "Current configuration on device"
+            # button for such devices.
+            active_peq_name, active_peq_channel_mode, active_peq_enabled = (
+                await self._peq_active_info_or_default(source_name)
+            )
+            if active_peq_name is None and not peq_items:
+                # Nothing confirmed: no named presets (unsupported or none
+                # saved) and the live-config read that would back a
+                # synthetic "Custom" row also failed -- same outcome as
+                # peq_presets_unavailable, not a preset list with an
+                # unearned "Custom" entry.
                 self.peq_presets_unavailable.emit()
+                return
+            self.peq_presets_ready.emit(
+                peq_items, active_peq_name, active_peq_channel_mode, active_peq_enabled
+            )
 
         async def _fetch_roomfit() -> None:
             try:
                 if wiim_adapter.capabilities.supports_roomfit:
                     rf_profiles = await wiim_adapter.list_roomfit_profiles(source_name)
                     rf_items = _to_preset_items(rf_profiles, "RoomFit")
-                    active_roomfit_name = await self._read_active_name_or_default(
-                        self._roomfit_name_for_highlight(),
-                        "Failed to read active RoomFit profile name",
+                    active_roomfit_name, active_roomfit_enabled = (
+                        await self._roomfit_active_info_or_default()
                     )
-                    self.roomfit_profiles_ready.emit(rf_items, active_roomfit_name)
+                    self.roomfit_profiles_ready.emit(
+                        rf_items, active_roomfit_name, active_roomfit_enabled
+                    )
                 else:
                     self.roomfit_profiles_hidden.emit()
             except Exception:
@@ -542,26 +593,52 @@ class PrimaryWorkflowManager(QObject):
 
         await asyncio.gather(_fetch_peq(), _fetch_roomfit())
 
-    async def _read_active_name_or_default(
-        self, coro: Coroutine[Any, Any, Any], log_msg: str
-    ) -> str:
-        """Await a read whose only purpose is an active-item name for
-        highlighting (#165c) -- a failure here means no highlight, not a
-        failed view, so it degrades to "" rather than propagating."""
+    async def _peq_active_info_or_default(
+        self, source_name: str
+    ) -> tuple[str | None, str, bool]:
+        """The active PEQ config's (name, channel_mode, enabled), for #165c
+        highlighting and the merged Device list's synthetic "Custom" row.
+
+        A single read_peq() call serves all three -- channel_mode and the
+        EQStat-derived enabled flag come along for free rather than needing
+        their own requests. `enabled` backs the "(active, PEQ off)" qualifier
+        (build_preset_list_item) -- a source can have a name/custom config
+        selected while PEQ itself is toggled off for that source, and
+        "(active)" alone would misleadingly claim it's actually being
+        applied to audio right now.
+
+        Degrades to (None, "Stereo", True) on failure -- deliberately *not*
+        ("", "Stereo", True): "" is the hardware-confirmed signal that the
+        live config doesn't match any saved preset (show "Custom"), while a
+        read failure means the active state is simply unknown (no
+        highlight, no "Custom" row, same as never having fetched at all).
+        Collapsing those two into one value would render a "Custom" row
+        nothing actually confirmed. `enabled`'s default is moot in this
+        branch since no row ever renders off a None name.
+        """
         try:
-            return str(await coro)
+            settings = await self._require_adapter().read_peq(source_name)
+            return settings.name, settings.channel_mode.display_value, settings.enabled
         except Exception:
-            logger.warning(log_msg, exc_info=True)
-            return ""
+            logger.warning("Failed to read active PEQ preset name", exc_info=True)
+            return None, "Stereo", True
 
-    async def _peq_name_for_highlight(self, source_name: str) -> str:
-        """The active PEQ preset's name, for #165c highlighting."""
-        return (await self._require_adapter().read_peq(source_name)).name
+    async def _roomfit_active_info_or_default(self) -> tuple[str, bool]:
+        """The active RoomFit profile's (name, enabled), for #165c
+        highlighting and the "(active, RoomFit off)" qualifier.
 
-    async def _roomfit_name_for_highlight(self) -> str:
-        """The active RoomFit profile's name, for #165c highlighting."""
-        _enabled, active_roomfit_name = await self._require_adapter().get_roomfit_status()
-        return active_roomfit_name
+        Degrades to ("", True) on failure -- a failure here means no
+        highlight, not a failed view (same rationale as
+        _peq_active_info_or_default), and RoomFit has no "Custom" row
+        concept so "" carries no special meaning here the way it does for
+        PEQ.
+        """
+        try:
+            enabled, active_roomfit_name = await self._require_adapter().get_roomfit_status()
+            return active_roomfit_name, enabled
+        except Exception:
+            logger.warning("Failed to read active RoomFit profile name", exc_info=True)
+            return "", True
 
     # ------------------------------------------------------------------
     # Workflow: Device / Preset Reads (Phase 2)
@@ -600,11 +677,7 @@ class PrimaryWorkflowManager(QObject):
 
         Args:
             profile_name: Name of the RoomFit profile to read.
-            operation_name: Log-context label for _bridge_wrapper — this
-                coroutine has two real callers today (selecting a RoomFit
-                profile in the Filters step vs. loading a preset from a
-                presets list), which want distinct labels in the failure
-                log even though the underlying read is identical.
+            operation_name: Log-context label for _bridge_wrapper.
         """
         self._dispatch(operation_name, self._do_roomfit_pull(profile_name))
 
@@ -646,7 +719,7 @@ class PrimaryWorkflowManager(QObject):
 
         Loads the preset via EQv2SourceLoad then reads the resulting bands,
         then restores the source's original active preset (#166) -- the
-        confirmation dialog in _on_preset_load_into_editor already warned the
+        confirmation dialog in _on_device_item_selected already warned the
         user this briefly changes what's playing. Sets channel_mode in wizard
         state from the device response to avoid stale L/R state from a
         previous load (smoke #111).
@@ -894,14 +967,81 @@ class PrimaryWorkflowManager(QObject):
     # Workflow: Preset Export/Save (Phase 3)
     # ------------------------------------------------------------------
 
-    def export_preset(self, preset_name: str, preset_type: str, path: str) -> None:
-        """Trigger a device preset export to file; progress arrives via progress_update."""
-        self._dispatch(
-            "preset_export", self._do_preset_export(preset_name, preset_type, path)
+    def export_presets(
+        self, requests: list[tuple[str, str, str, bool]]
+    ) -> None:
+        """Trigger a batch device-preset export to file(s); result via
+        presets_export_complete.
+
+        Args:
+            requests: (preset_name, preset_type, path, is_custom) tuples,
+                one per preset to export -- built by MainWindow from however
+                many items are selected (one or many, no special-casing
+                needed here; see _do_export_presets).
+        """
+        self._dispatch("preset_export_batch", self._do_export_presets(requests))
+
+    async def _do_export_presets(
+        self, requests: list[tuple[str, str, str, bool]]
+    ) -> None:
+        """Sequentially read+export each preset in `requests`.
+
+        Sequential, not concurrent: reading a named preset briefly loads it
+        onto the device's live DSP (see #166) -- running several of these
+        concurrently would race on that same shared device state, same
+        reasoning as _do_save_presets/_do_delete_presets/
+        _do_copy_presets_batch_multi (secondary_workflows.py).
+
+        One preset's failure (including EmptyPresetFiltersError) doesn't
+        abort the rest -- it's counted as a failure in the emitted totals
+        instead of propagating, matching _do_delete_presets's existing
+        partial-failure handling. This applies even to a "batch" of one: a
+        single preset with no filters to export now reports as "0
+        exported, 1 failed" rather than a specific EmptyPresetFiltersError
+        message, a deliberate consistency trade-off (#165c follow-up) with
+        every other batch action in this codebase.
+        """
+        succeeded, failed = await self._run_batch_preset_requests(
+            requests, self._do_preset_export, "Export"
         )
+        self.presets_export_complete.emit(succeeded, failed)
+
+    async def _run_batch_preset_requests(
+        self,
+        requests: list[tuple[str, str, str, bool]],
+        worker: Callable[..., Awaitable[None]],
+        action: str,
+    ) -> tuple[int, int]:
+        """Sequentially run `worker(preset_name, preset_type, target, is_custom=...)`
+        over every (preset_name, preset_type, target, is_custom) request,
+        tolerating per-item failure. Shared by _do_export_presets and
+        _do_save_presets -- both loop over the identical request shape and
+        only differ in which per-item worker they call and the log/signal
+        labels, so the loop itself lives here once (see _do_export_presets's
+        docstring for why sequential, not concurrent, and why a failure
+        doesn't abort the rest).
+
+        Args:
+            requests: (preset_name, preset_type, target, is_custom) tuples.
+            worker: Async per-item callable, e.g. self._do_preset_export.
+            action: Verb used in the per-item failure log line ("Export"/"Save").
+
+        Returns:
+            (succeeded, failed) counts for the caller to emit on its own signal.
+        """
+        succeeded = 0
+        failed = 0
+        for preset_name, preset_type, target, is_custom in requests:
+            try:
+                await worker(preset_name, preset_type, target, is_custom=is_custom)
+                succeeded += 1
+            except Exception:
+                logger.exception("%s preset '%s' failed", action, preset_name)
+                failed += 1
+        return succeeded, failed
 
     async def _do_preset_export(
-        self, preset_name: str, preset_type: str, path: str
+        self, preset_name: str, preset_type: str, path: str, *, is_custom: bool = False
     ) -> None:
         """Read a preset from device and export as REW file.
 
@@ -911,6 +1051,8 @@ class PrimaryWorkflowManager(QObject):
             preset_name: Name of the preset to export.
             preset_type: "PEQ" or "RoomFit".
             path: Destination file path.
+            is_custom: True for the synthetic "Custom" row (#165c) -- reads
+                the live PEQ config directly instead of a named preset.
 
         Raises:
             EmptyPresetFiltersError: if the preset resolves to zero filters
@@ -923,11 +1065,12 @@ class PrimaryWorkflowManager(QObject):
         state = self._require_wizard_state()
         source_name = state.primary_source
 
-        # Read preset filters from device (previewing + restoring -- the
-        # confirmation dialog in _on_preset_export_requested already warned
-        # the user this briefly changes what's playing, see #166)
-        peq_settings = await wiim_adapter.read_preset_preview(
-            preset_type, source_name, preset_name
+        # Read preset filters from device -- a named preset previews+restores
+        # (the confirmation dialog in _on_preset_export_requested already
+        # warned the user this briefly changes what's playing, see #166);
+        # "Custom" is already live, so it's a plain read instead (#165c).
+        peq_settings = await wiim_adapter.read_preset_preview_or_live(
+            preset_type, source_name, preset_name, is_custom=is_custom
         )
 
         generator = REWGenerator()
@@ -975,14 +1118,34 @@ class PrimaryWorkflowManager(QObject):
                     f"Exported '{preset_name}' to {file_path.name}"
                 )
 
-    def save_preset(self, preset_name: str, preset_type: str, saved_name: str) -> None:
-        """Trigger a device preset save to local storage; progress arrives via progress_update."""
-        self._dispatch(
-            "preset_save", self._do_preset_save(preset_name, preset_type, saved_name)
+    def save_presets(
+        self, requests: list[tuple[str, str, str, bool]]
+    ) -> None:
+        """Trigger a batch device-preset save to local storage; result via
+        presets_save_complete.
+
+        Args:
+            requests: (preset_name, preset_type, saved_name, is_custom)
+                tuples, one per preset to save.
+        """
+        self._dispatch("preset_save_batch", self._do_save_presets(requests))
+
+    async def _do_save_presets(
+        self, requests: list[tuple[str, str, str, bool]]
+    ) -> None:
+        """Sequentially read+save each preset in `requests`.
+
+        Sequential, not concurrent -- and one preset's failure doesn't abort
+        the rest, even a "batch" of one -- for the same reasons as
+        _do_export_presets above.
+        """
+        succeeded, failed = await self._run_batch_preset_requests(
+            requests, self._do_preset_save, "Save"
         )
+        self.presets_save_complete.emit(succeeded, failed)
 
     async def _do_preset_save(
-        self, preset_name: str, preset_type: str, saved_name: str
+        self, preset_name: str, preset_type: str, saved_name: str, *, is_custom: bool = False
     ) -> None:
         """Read a preset from device and save to local profile repository.
 
@@ -997,6 +1160,8 @@ class PrimaryWorkflowManager(QObject):
             saved_name: Name for the resulting local Profile (device-name
                 prefixed by the caller); independent of preset_name so the
                 device read always uses the real on-device preset name.
+            is_custom: True for the synthetic "Custom" row (#165c) -- reads
+                the live PEQ config directly instead of a named preset.
 
         Raises:
             EmptyPresetFiltersError: if the preset resolves to zero filters
@@ -1008,11 +1173,12 @@ class PrimaryWorkflowManager(QObject):
         state = self._require_wizard_state()
         source_name = state.primary_source
 
-        # Read preset filters from device (previewing + restoring -- the
-        # confirmation dialog in _on_preset_save_requested already warned the
-        # user this briefly changes what's playing, see #166)
-        peq_settings = await wiim_adapter.read_preset_preview(
-            preset_type, source_name, preset_name
+        # Read preset filters from device -- a named preset previews+restores
+        # (the confirmation dialog in _on_preset_save_requested already
+        # warned the user this briefly changes what's playing, see #166);
+        # "Custom" is already live, so it's a plain read instead (#165c).
+        peq_settings = await wiim_adapter.read_preset_preview_or_live(
+            preset_type, source_name, preset_name, is_custom=is_custom
         )
 
         # Determine channel mode and filter list
@@ -1069,29 +1235,6 @@ class PrimaryWorkflowManager(QObject):
         except Exception:
             logger.warning("Failed to list RoomFit profiles for naming", exc_info=True)
             self.name_profiles_ready.emit([], "", False)
-
-    def refresh_roomfit_dropdown(self) -> None:
-        """Trigger a FiltersPage RoomFit-dropdown refresh; result arrives via signal."""
-        self._dispatch("list_roomfit", self._do_list_roomfit_profiles())
-
-    async def _do_list_roomfit_profiles(self) -> None:
-        """Fetch RoomFit profile names and emit filters_roomfit_profiles_ready
-        for FiltersPage."""
-        assert self._bridge is not None
-        wiim_adapter = self._require_adapter()
-        state = self._require_wizard_state()
-        source_name = state.primary_source
-
-        try:
-            if wiim_adapter.capabilities.supports_roomfit:
-                profiles = await wiim_adapter.list_roomfit_profiles(source_name)
-                profile_names = _extract_profile_names(profiles)
-                self.filters_roomfit_profiles_ready.emit(profile_names)
-            else:
-                self.filters_roomfit_profiles_ready.emit([])
-        except Exception:
-            logger.warning("Failed to list RoomFit profiles for dropdown", exc_info=True)
-            self.filters_roomfit_profiles_ready.emit([])
 
     # ------------------------------------------------------------------
     # Workflow: Delete Presets (Phase 5)

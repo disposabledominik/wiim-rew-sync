@@ -53,6 +53,20 @@ class FlowType(Enum):
     PEQ_ONLY = "peq_only"
 
 
+class FiltersSource(Enum):
+    """Which sub-panel of the Filters step's source dropdown is active.
+
+    Purely UI selection state, owned by FiltersPage itself (not WizardState —
+    wizard pages persist for the app's lifetime, so the combo's own current
+    index already survives navigating away and back).
+    """
+
+    REW_FILE = "rew_file"
+    REW_API = "rew_api"
+    DEVICE = "device"
+    LOCAL_LIBRARY = "local_library"
+
+
 @dataclass
 class WizardState:
     """Internal state held by WizardController. Not persisted."""
@@ -121,8 +135,8 @@ class WizardState:
         """Comma-joined view of ``selected_sources``.
 
         Compatibility bridge for the Qt signal boundary and display sites:
-        SourcePage/QuickSetupDialog emit comma-joined strings, and summary
-        labels show the full selection. The setter parses back into
+        SourcePage emits comma-joined strings, and summary labels show the
+        full selection. The setter parses back into
         ``selected_sources``, so string assignment keeps working while the
         list stays the single authoritative store. Device operations must
         never consume this raw value -- use ``primary_source`` (single-source

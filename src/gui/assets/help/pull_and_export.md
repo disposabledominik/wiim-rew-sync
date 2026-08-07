@@ -5,8 +5,9 @@ REW-compatible files for analysis or backup.
 
 ## Pulling Filters from REW (API)
 
-Use "Pull from REW" in the sidebar to import filters directly from Room EQ
-Wizard without exporting a text file.
+On the Filters step of the wizard, choose **Pull from REW API** from the
+"Import source" dropdown to import filters directly from Room EQ Wizard
+without exporting a text file.
 
 ### Prerequisites
 
@@ -16,14 +17,16 @@ Wizard without exporting a text file.
 
 ### Workflow
 
-1. Click "Pull from REW" in the sidebar
-2. A measurement picker screen shows all available measurements in REW,
+1. On the Filters step, select **Pull from REW API** from the "Import
+   source" dropdown
+2. A measurement picker appears showing all available measurements in REW,
    with a **Stereo / L-R** toggle at the top
 3. Leave **Stereo** selected to pick one measurement, or switch to **L/R**
    to pick separate Left and Right measurements side by side
 4. Select your measurement(s) and click "Continue" (or double-click a
-   measurement in Stereo mode). "Back" leaves without loading anything.
-5. Filters are loaded into the Review step
+   measurement in Stereo mode). "Back" returns to File Import without
+   loading anything.
+5. Filters are loaded and you're advanced to the Review step
 
 If REW has many measurements loaded, start typing a measurement's name
 while its list has focus to jump straight to it.
@@ -58,27 +61,54 @@ enabled (localhost:4735)."
 
 ## Pulling Filters from Your Device
 
-Use "Presets on Device" in the sidebar to browse and pull configurations
-from your WiiM device.
+There are two places to work with configurations already on your WiiM
+device, depending on what you want to do:
 
-### PEQ Presets
+- To **load** a device configuration into the wizard, use the Filters step's
+  **Device** option (see below).
+- To **export, save locally, or copy** a device preset **without** going
+  through the wizard, use "Presets on Device" in the sidebar.
 
-The Presets on Device view lists all PEQ presets saved on your device. From
-here you can:
+### Loading from the Filters Step
 
-- **Load** — Bring the preset's filters into the Review step for editing
-  or re-pushing to a different source.
+On the Filters step, choose **Device** from the "Import source" dropdown.
+It shows one merged list combining every PEQ preset and RoomFit profile
+saved on the device, regardless of whether you chose PEQ or RoomFit on the
+EQ Type step (a RoomFit-saved profile can be loaded into a PEQ push and
+vice versa). Select a row and click "Load Preset."
+
+If the live PEQ config on your selected source doesn't match any saved
+preset, a **Custom** row appears at the top of the list, marked active —
+select it the same way to pull whatever PEQ bands are currently live
+instead of a saved preset. On a device that can't list saved presets at
+all, "Custom" is the only PEQ row shown, so it's still how you reach the
+live config there too. Note that a source that's never had a preset loaded
+onto it reports this same "no match" signal, so "Custom" can just as easily
+mean flat, default filters as genuinely hand-adjusted ones — pull it and
+check the Review step if you need to know which.
+
+A row marked "(active, PEQ off)" or "(active, RoomFit off)" instead of
+plain "(active)" means PEQ/RoomFit is currently switched off for that
+scope — you can still pull and push it the same way, it just isn't audible
+right now.
+
+Either way, filters are loaded and you're advanced straight to the Review
+step — no separate Stereo/L-R choice is needed for a saved preset/profile,
+since the channel mode comes from the preset itself.
+
+### Presets on Device (Sidebar) — Export, Save, Copy
+
+The "Presets on Device" sidebar view lists PEQ presets and (if your device
+supports it) RoomFit profiles in separate sections. From here you can:
+
 - **Export** — Save as a REW-compatible .txt file.
 - **Save locally** — Copy the preset into your local My Saved Presets
   library.
 - **Copy to another device** — Push the preset directly to one or more
   other WiiM devices on your network.
 
-### RoomFit Profiles
-
-If your device supports RoomFit, the Presets on Device view also lists
-RoomFit profiles in a separate section. The same actions (Load, Export,
-Save, Copy) are available.
+This page is for managing presets on the device itself, not for loading them
+into the wizard — use the Filters step's Device option for that instead.
 
 ## Exporting as REW File
 

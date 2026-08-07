@@ -148,16 +148,13 @@ The main window uses a wizard-based flow with a persistent sidebar for navigatio
 ├──────────┬──────────────────────────────────────────────────┤
 │ Sidebar  │  Wizard Content Area (QStackedWidget)            │
 │          │                                                  │
-│ • Resume │  Step Indicator (Connect → EQ Type → Source →    │
-│   Setup  │                   Filters → Review → Push)       │
+│ • Setup  │  Step Indicator (Connect → EQ Type → Source →    │
+│   Wizard │                   Filters → Review → Push)       │
 │ • Presets│  ┌──────────────────────────────────────────┐   │
 │   on Dev │  │ Active Wizard Page                       │   │
 │ • My     │  │ (one of 7 pages based on current step)   │   │
 │   Presets│  │                                          │   │
-│ • Pull   │  └──────────────────────────────────────────┘   │
-│   from   │                                                  │
-│   REW    │                                                  │
-│ • Settings│                                                 │
+│ • Settings│ └──────────────────────────────────────────┘   │
 │ • Help   │                                                  │
 ├──────────┴──────────────────────────────────────────────────┤
 │  Status Banner (operation feedback)                         │
@@ -171,7 +168,7 @@ The main window uses a wizard-based flow with a persistent sidebar for navigatio
 | Connect | ConnectPage | mDNS device discovery, device card selection |
 | EQ Type | EQTypePage | Choose PEQ or RoomFit (skipped for PEQ-only devices) |
 | Source | SourcePage | Multi-select audio sources via checkboxes (PEQ only, skipped for RoomFit) |
-| Filters | FiltersPage | Stereo/L/R mode toggle + REW file browse + import |
+| Filters | FiltersPage | Import-source dropdown (REW File, REW API, Device, Local Library), each with its own panel — REW File/API also offer a Stereo/L/R mode toggle; Device/Local Library carry channel mode on the selected preset itself |
 | Review | ReviewPage | Filter table, Dry Run toggle, Push/Export/Save actions |
 | Name Profile | NameProfilePage | RoomFit profile naming (RoomFit flow only) |
 | Push | PushPage | Progress stepper (Backup → Write → Verify), Undo/Export/Save on success |
@@ -180,10 +177,9 @@ The main window uses a wizard-based flow with a persistent sidebar for navigatio
 
 | View | Purpose |
 |------|---------|
-| Resume Setup | Returns to the wizard (nav key `home`) — jumps to the frontier (first incomplete) step if the user had browsed back to a completed one; no visible change if already viewing the frontier |
-| Presets on Device | Browse PEQ presets and RoomFit profiles on connected device; Export/Save/Load/Copy actions |
-| My Saved Presets | Local preset library with toolbar (Load/Copy to Another Device/Rename/Duplicate/Delete) |
-| Pull from REW | Embedded measurement picker (`RewPullView`) for a running REW session; also embedded in FiltersPage's "Pull from REW API" mode |
+| Setup Wizard | Returns to the wizard (nav key `home`) — jumps to the frontier (first incomplete) step if the user had browsed back to a completed one; no visible change if already viewing the frontier |
+| Presets on Device | Browse PEQ presets and RoomFit profiles on connected device; Export/Save/Copy/Delete actions (loading a preset into the wizard happens via the Filters step's Device option instead) |
+| My Saved Presets | Local preset library with toolbar (Copy to Another Device/Rename/Duplicate/Delete) (loading a preset into the wizard happens via the Filters step's Local Library option instead) |
 | Settings | Theme, paths, support bundle generation |
 | Help (User Guide) | In-app markdown help with searchable TOC |
 | Diagnostics | Raw API command browser, capability dump (developer tool, menu-accessible) |
@@ -193,14 +189,14 @@ The main window uses a wizard-based flow with a persistent sidebar for navigatio
 1. User connects to a device (ConnectPage) → capability probe runs.
 2. EQ Type page shown if device supports RoomFit; otherwise skipped (auto-PEQ).
 3. Source page: multi-select one or more audio inputs (checkboxes).
-4. Filters page: choose Stereo or L/R, browse REW file(s), click Next/Import.
+4. Filters page: pick a source from the dropdown (REW File, REW API, Device, or Local Library) and load filters from it.
 5. Review page: inspect filter table, toggle Dry Run, push/export/save.
 6. Push page: progress stepper, success with Undo/Export/Save.
 
 ### RoomFit Workflow
 
 Steps 1–2 same as PEQ. Source step is skipped.
-3. Filters page: choose Stereo or L/R, browse file(s).
+3. Filters page: pick a source from the dropdown and load filters from it.
 4. Review page: inspect and push.
 5. Name Profile page: enter profile name (warns on overwrite of existing/active).
 6. Push page: same safe write protocol.

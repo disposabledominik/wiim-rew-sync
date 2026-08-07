@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.adapters.rew_http_client import MeasurementSummary
 from src.adapters.safe_write import RoomFitSafeWrite, SafeWrite, WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
@@ -104,6 +103,18 @@ def _setup_device(window) -> MagicMock:
         return await mock_adapter.read_peq_preset_preview(source_name, preset_name)
 
     mock_adapter.read_preset_preview = AsyncMock(side_effect=_dispatch_preview)
+
+    async def _dispatch_preview_or_live(
+        preset_type: str, source_name: str, preset_name: str, *, is_custom: bool = False
+    ):
+        # Mirrors WiiMAdapter.read_preset_preview_or_live()'s real dispatch
+        # (#165c) -- a plain read_peq() for the synthetic "Custom" item,
+        # otherwise the same read_preset_preview() dispatch above.
+        if is_custom:
+            return await mock_adapter.read_peq(source_name)
+        return await _dispatch_preview(preset_type, source_name, preset_name)
+
+    mock_adapter.read_preset_preview_or_live = AsyncMock(side_effect=_dispatch_preview_or_live)
     window._wiim_adapter = mock_adapter
     window._primary_workflows.set_current_adapter(mock_adapter)
     # _do_undo_roomfit/_do_undo_multi_source now live on SecondaryWorkflowManager
@@ -1069,12 +1080,6 @@ class TestImportExport:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        # Set up wizard state as if we're past EQ_TYPE and SOURCE
-        state.completed_steps = {
-            WizardStep.CONNECT: "Connected",
-            WizardStep.EQ_TYPE: "PEQ",
-            WizardStep.SOURCE: "wifi",
-        }
         window._wizard_controller._flow_type = FlowType.PEQ
 
         profile = MagicMock()
@@ -1085,7 +1090,7 @@ class TestImportExport:
         profile.filters = None
 
         with patch.object(window._secondary_workflows, "recall_profile"):
-            window._on_profile_load_requested(profile)
+            window._on_local_profile_selected(profile)
 
         assert state.channel_mode == ChannelMode.LR
 
@@ -1094,11 +1099,6 @@ class TestImportExport:
         _setup_device(window)
         state = window._wizard_controller.state
         state.current_filters = [_make_filter()]
-        state.completed_steps = {
-            WizardStep.CONNECT: "Connected",
-            WizardStep.EQ_TYPE: "PEQ",
-            WizardStep.SOURCE: "wifi",
-        }
         window._wizard_controller._flow_type = FlowType.PEQ
 
         profile = MagicMock()
@@ -1107,7 +1107,7 @@ class TestImportExport:
         profile.filters = [_make_filter()]
 
         with patch.object(window._secondary_workflows, "recall_profile"):
-            window._on_profile_load_requested(profile)
+            window._on_local_profile_selected(profile)
 
         assert state.channel_mode == ChannelMode.STEREO
 
@@ -1134,6 +1134,9 @@ class TestPresets:
         """
         import asyncio
 
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
         mock_adapter = _setup_device(window)
         mock_adapter.list_peq_profiles = AsyncMock(
             return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
@@ -1141,6 +1144,16 @@ class TestPresets:
         mock_adapter.list_roomfit_profiles = AsyncMock(
             return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
         )
+        # Also mock the active-name reads -- without these, they raise on
+        # the plain (non-AsyncMock) adapter attribute, degrading to "",
+        # which would add a synthetic "Custom" row (#165c) and throw off
+        # this test's count assertions, which aren't about that behavior.
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi", channel_mode=ChannelMode.STEREO, name="Movie Night"
+            )
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
 
         def _run_now(coro: object) -> None:
             asyncio.run(coro)
@@ -1150,6 +1163,39 @@ class TestPresets:
 
         assert window._presets_device_view._peq_list.count() == 1
         assert window._presets_device_view._roomfit_list.count() == 1
+
+    # --- Code-review round (2026-08-06): unavailable/hidden forwarding ---
+
+    def test_peq_presets_unavailable_forwards_to_both_views(self, window) -> None:
+        """_on_peq_presets_unavailable must clear FiltersPage's Device panel
+        too, not just PresetsDeviceView -- both are consumers of
+        PrimaryWorkflowManager.peq_presets_unavailable, and before this fix
+        only PresetsDeviceView was kept in sync."""
+        window._filters_page.set_peq_presets(
+            [PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="Preset A",
+        )
+        assert window._filters_page._device_peq_items != []
+
+        window._on_peq_presets_unavailable()
+
+        assert window._filters_page._device_peq_items == []
+        assert window._presets_device_view._peq_items == []
+
+    def test_roomfit_profiles_hidden_forwards_to_both_views(self, window) -> None:
+        """_on_roomfit_profiles_hidden must clear FiltersPage's Device panel
+        too, not just PresetsDeviceView -- same gap as
+        test_peq_presets_unavailable_forwards_to_both_views, for RoomFit."""
+        window._filters_page.set_roomfit_profiles(
+            [PresetItem(name="Profile A", channel_mode="Stereo", preset_type="RoomFit")],
+            active_name="Profile A",
+        )
+        assert window._filters_page._device_roomfit_items != []
+
+        window._on_roomfit_profiles_hidden()
+
+        assert window._filters_page._device_roomfit_items == []
+        assert window._presets_device_view._roomfit_items == []
 
     # --- Issue #22: _do_list_presets fetches both PEQ + RoomFit ---
 
@@ -1206,7 +1252,12 @@ class TestPresets:
         self, window
     ) -> None:
         """A failed active-name read doesn't fail the whole preset list --
-        it just means no highlight for that section."""
+        it just means no highlight for that section.
+
+        The PEQ side degrades to None (unknown), not "" (confirmed no
+        active preset) -- "" would incorrectly show a synthetic "Custom"
+        row for a read that never actually confirmed anything. RoomFit has
+        no such row concept, so it keeps degrading to "" (no highlight)."""
         import asyncio
 
         mock_adapter = _setup_device(window)
@@ -1228,35 +1279,187 @@ class TestPresets:
 
         # Still populated with the real items, just no active-name highlight.
         assert len(mock_set_peq.call_args[0][0]) == 1
-        assert mock_set_peq.call_args[0][1] == ""
+        assert mock_set_peq.call_args[0][1] is None
         assert len(mock_set_roomfit.call_args[0][0]) == 1
         assert mock_set_roomfit.call_args[0][1] == ""
 
-    # --- Issue #23: _on_eq_type_selected("roomfit") triggers async fetch ---
+    # --- "Current configuration on device" button removal: the synthetic
+    # "Custom" row now covers devices without profile-enumeration support
+    # too, gated on supports_peq instead ---
 
-    def test_issue23_eq_type_roomfit_triggers_profile_fetch(self, window) -> None:
-        """#23: Selecting 'roomfit' enables RoomFit mode and fetches profiles."""
+    def test_no_peq_support_emits_unavailable_without_listing(self, window) -> None:
+        """supports_peq=False skips both list_peq_profiles() and the
+        active-config read entirely -- there's nothing to show."""
         import asyncio
 
         mock_adapter = _setup_device(window)
-        mock_adapter.capabilities.roomfit_level = 2
-        mock_adapter.list_roomfit_profiles = AsyncMock(
-            return_value=[{"Name": "Living Room"}, {"Name": "Office"}]
+        mock_adapter.capabilities.supports_peq = False
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock()
+        mock_adapter.list_roomfit_profiles = AsyncMock(return_value=[])
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(False, ""))
+
+        with patch.object(window._presets_device_view, "set_peq_unavailable") as mock_unavail:
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_unavail.assert_called_once()
+        mock_adapter.list_peq_profiles.assert_not_called()
+        mock_adapter.read_peq.assert_not_called()
+
+    def test_no_enumeration_but_peq_supported_shows_custom_row(self, window) -> None:
+        """supports_peq=True + supports_profile_enumeration=False: no named
+        list, but the live config still surfaces as a synthetic "Custom"
+        row via a plain read_peq() -- this is what replaces the old
+        dedicated "Current configuration on device" button for such
+        devices."""
+        import asyncio
+
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.supports_peq = True
+        mock_adapter.capabilities.supports_profile_enumeration = False
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(source_name="wifi", channel_mode=ChannelMode.LR, name="")
         )
 
-        def _run_now(coro: object) -> None:
-            asyncio.run(coro)
+        with patch.object(window._presets_device_view, "set_peq_presets") as mock_set_peq:
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_adapter.list_peq_profiles.assert_not_called()
+        mock_set_peq.assert_called_once()
+        assert mock_set_peq.call_args[0][0] == []
+        assert mock_set_peq.call_args[0][1] == ""
+        assert mock_set_peq.call_args[0][2] == "L/R"
+
+    def test_no_enumeration_and_read_fails_emits_unavailable(self, window) -> None:
+        """supports_peq=True + supports_profile_enumeration=False, but the
+        live-config read itself fails: nothing confirmed to show, same
+        outcome as no PEQ support at all -- not a "Custom" row with no
+        actual data behind it."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.supports_peq = True
+        mock_adapter.capabilities.supports_profile_enumeration = False
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock(side_effect=RuntimeError("boom"))
 
         with (
-            patch.object(window._bridge, "run_async", side_effect=_run_now) as mock_run,
-            patch.object(window._filters_page, "set_roomfit_profiles") as mock_set_profiles,
+            patch.object(window._presets_device_view, "set_peq_unavailable") as mock_unavail,
+            patch.object(window._presets_device_view, "set_peq_presets") as mock_set_peq,
         ):
-            window._on_eq_type_selected("roomfit")
+            asyncio.run(window._primary_workflows.refresh_presets())
 
-        assert window._wizard_controller.flow_type == FlowType.ROOMFIT
-        assert window._filters_page._roomfit_mode is True
-        mock_run.assert_called_once()
-        mock_set_profiles.assert_called_once_with(["Living Room", "Office"])
+        mock_adapter.list_peq_profiles.assert_not_called()
+        mock_unavail.assert_called_once()
+        mock_set_peq.assert_not_called()
+
+    def test_load_device_presets_fetches_roomfit_without_enumeration(self, window) -> None:
+        """_load_device_presets() must not skip the RoomFit fetch just
+        because PEQ profile enumeration is unsupported -- the two are
+        independent capabilities (a stale early-return used to bail out of
+        the whole method, silently dropping RoomFit too)."""
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.supports_profile_enumeration = False
+
+        with patch.object(window._primary_workflows, "list_presets") as mock_list:
+            window._load_device_presets()
+
+        mock_list.assert_called_once()
+
+    # --- EQ-off qualifier: "(active)" alone claims a config is actually
+    # being applied, but the device reports a Name/selected-profile
+    # independent of the PEQ/RoomFit on-off toggle for that scope ---
+
+    def test_peq_off_forwards_enabled_false_to_both_views(self, window) -> None:
+        """A source with PEQ toggled off (EQStat: Off) still has a Name, but
+        peq_presets_ready's enabled flag must reflect the real off state so
+        both views can qualify the active row as "(active, PEQ off)"."""
+        import asyncio
+
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(
+            return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
+        )
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi",
+                channel_mode=ChannelMode.STEREO,
+                name="Movie Night",
+                enabled=False,
+            )
+        )
+        mock_adapter.list_roomfit_profiles = AsyncMock(return_value=[])
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, ""))
+
+        with patch.object(window._presets_device_view, "set_peq_presets") as mock_set_peq:
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_set_peq.assert_called_once()
+        assert mock_set_peq.call_args[0][1] == "Movie Night"
+        assert mock_set_peq.call_args[0][3] is False
+
+    def test_roomfit_off_forwards_enabled_false_to_both_views(self, window) -> None:
+        """RoomFit toggled off globally (EQStat: Off) still reports a
+        selected profile name -- roomfit_profiles_ready's enabled flag must
+        carry the real off state through to the "(active, RoomFit off)"
+        qualifier."""
+        import asyncio
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock(side_effect=RuntimeError("no peq"))
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(False, "Living Room"))
+
+        with patch.object(window._presets_device_view, "set_roomfit_profiles") as mock_set_rf:
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        mock_set_rf.assert_called_once()
+        assert mock_set_rf.call_args[0][1] == "Living Room"
+        assert mock_set_rf.call_args[0][2] is False
+
+    def test_peq_and_roomfit_enabled_default_true(self, window) -> None:
+        """The common case (EQStat: On) forwards enabled=True through both
+        signals -- no qualifier shown, matching pre-existing behavior."""
+        import asyncio
+
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.list_peq_profiles = AsyncMock(
+            return_value=[{"Name": "Movie Night", "channelMode": "Stereo"}]
+        )
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi",
+                channel_mode=ChannelMode.STEREO,
+                name="Movie Night",
+                enabled=True,
+            )
+        )
+        mock_adapter.list_roomfit_profiles = AsyncMock(
+            return_value=[{"Name": "Living Room", "channelMode": "Stereo"}]
+        )
+        mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
+
+        with (
+            patch.object(window._presets_device_view, "set_peq_presets") as mock_set_peq,
+            patch.object(window._presets_device_view, "set_roomfit_profiles") as mock_set_rf,
+        ):
+            asyncio.run(window._primary_workflows.refresh_presets())
+
+        assert mock_set_peq.call_args[0][3] is True
+        assert mock_set_rf.call_args[0][2] is True
 
     # --- Issue #24: PresetsDeviceView signals connected in MainWindow ---
 
@@ -1274,18 +1477,16 @@ class TestPresets:
                 return_value=("/tmp/movie-night.txt", ""),
             ),
             patch.object(
-                window._primary_workflows, "_do_preset_export", return_value=object()
+                window._primary_workflows, "export_presets"
             ) as mock_export_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
-            patch.object(
-                window._bridge, "run_async", side_effect=close_coroutine_tree
-            ) as mock_run,
         ):
             window._presets_device_view.export_requested.emit([item])
 
         mock_progress.assert_called_once_with("Exporting 'Movie Night'...")
-        mock_export_workflow.assert_called_once_with("Movie Night", "PEQ", "/tmp/movie-night.txt")
-        mock_run.assert_called_once()
+        mock_export_workflow.assert_called_once_with(
+            [("Movie Night", "PEQ", "/tmp/movie-night.txt", False)]
+        )
 
     def test_preset_export_seeds_device_prefixed_filename(self, window) -> None:
         """Presets-on-Device stereo export seeds the save dialog with a
@@ -1321,18 +1522,265 @@ class TestPresets:
                 return_value=True,
             ),
             patch.object(
-                window._primary_workflows, "_do_preset_save", return_value=object()
+                window._primary_workflows, "save_presets"
             ) as mock_save_workflow,
             patch.object(window._status_banner, "show_progress") as mock_progress,
-            patch.object(
-                window._bridge, "run_async", side_effect=close_coroutine_tree
-            ) as mock_run,
         ):
             window._presets_device_view.save_to_my_presets.emit([item])
 
         mock_progress.assert_called_once_with("Saving 'Movie Night' to My Presets...")
-        mock_save_workflow.assert_called_once_with("Movie Night", "PEQ", "WiiM - Movie Night")
-        mock_run.assert_called_once()
+        mock_save_workflow.assert_called_once_with(
+            [("Movie Night", "PEQ", "WiiM - Movie Night", False)]
+        )
+
+    # --- #165c: Export/Save/Copy on the synthetic "Custom" row ---
+
+    def test_export_custom_item_reads_live_not_preview(self, window) -> None:
+        """Exporting the synthetic "Custom" row passes is_custom=True through
+        to export_presets -- and, since it's already live, skips the
+        "this will briefly change what's playing" preview-warning dialog
+        entirely (no WarningConfirmDialog call)."""
+        item = PresetItem(
+            name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
+        )
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+            ) as mock_warning,
+            patch(
+                "src.gui.main_window.QFileDialog.getSaveFileName",
+                return_value=("/tmp/custom.txt", ""),
+            ),
+            patch.object(
+                window._primary_workflows, "export_presets"
+            ) as mock_export_workflow,
+        ):
+            window._presets_device_view.export_requested.emit([item])
+
+        mock_warning.assert_not_called()
+        mock_export_workflow.assert_called_once_with(
+            [("Custom", "PEQ", "/tmp/custom.txt", True)]
+        )
+
+    def test_save_custom_item_reads_live_not_preview(self, window) -> None:
+        """Saving the synthetic "Custom" row passes is_custom=True through to
+        save_presets, and skips the preview-warning dialog the same way
+        export does."""
+        item = PresetItem(
+            name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
+        )
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm"
+            ) as mock_warning,
+            patch.object(
+                window._primary_workflows, "save_presets"
+            ) as mock_save_workflow,
+        ):
+            window._presets_device_view.save_to_my_presets.emit([item])
+
+        mock_warning.assert_not_called()
+        mock_save_workflow.assert_called_once_with(
+            [("Custom", "PEQ", "WiiM - Custom", True)]
+        )
+
+    # --- Multi-select Export/Save must process every item, not just the
+    # first (pre-#165c-follow-up gap: the button enabled for a multi-select
+    # but silently exported/saved only items[0]) ---
+
+    def test_export_multiple_presets_uses_folder_picker_and_processes_all(
+        self, window
+    ) -> None:
+        """Selecting 2+ presets and clicking Export picks one destination
+        folder (not a per-item filename dialog), then exports every
+        selected preset into it under its own device-prefixed filename."""
+        items = [
+            PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Preset B", channel_mode="L/R", preset_type="PEQ"),
+        ]
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch(
+                "src.gui.main_window.QFileDialog.getExistingDirectory",
+                return_value="/tmp/exports",
+            ) as mock_folder_dialog,
+            patch.object(window._primary_workflows, "export_presets") as mock_export,
+            patch.object(window._status_banner, "show_progress") as mock_progress,
+        ):
+            window._presets_device_view.export_requested.emit(items)
+
+        mock_folder_dialog.assert_called_once()
+        mock_progress.assert_called_once_with("Exporting 2 preset(s)...")
+        mock_export.assert_called_once()
+        requests = mock_export.call_args[0][0]
+        assert requests == [
+            ("Preset A", "PEQ", "/tmp/exports/WiiM - Preset A.txt", False),
+            ("Preset B", "PEQ", "/tmp/exports/WiiM - Preset B.txt", False),
+        ]
+
+    def test_export_multiple_presets_cancelled_folder_picker_aborts(self, window) -> None:
+        """Cancelling the destination-folder dialog aborts the whole batch
+        export -- no dispatch at all, not a partial export."""
+        items = [
+            PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Preset B", channel_mode="Stereo", preset_type="PEQ"),
+        ]
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch(
+                "src.gui.main_window.QFileDialog.getExistingDirectory",
+                return_value="",
+            ),
+            patch.object(window._primary_workflows, "export_presets") as mock_export,
+        ):
+            window._presets_device_view.export_requested.emit(items)
+
+        mock_export.assert_not_called()
+
+    def test_save_multiple_presets_processes_all(self, window) -> None:
+        """Selecting 2+ presets and clicking Save to My Presets saves every
+        one of them, not just the first -- no dialog needed, same as the
+        single-item case."""
+        items = [
+            PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ"),
+            PresetItem(name="Preset B", channel_mode="Stereo", preset_type="RoomFit"),
+        ]
+
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch.object(window._primary_workflows, "save_presets") as mock_save,
+            patch.object(window._status_banner, "show_progress") as mock_progress,
+        ):
+            window._presets_device_view.save_to_my_presets.emit(items)
+
+        mock_progress.assert_called_once_with("Saving 2 preset(s) to My Presets...")
+        mock_save.assert_called_once_with(
+            [
+                ("Preset A", "PEQ", "WiiM - Preset A", False),
+                ("Preset B", "RoomFit", "WiiM - Preset B", False),
+            ]
+        )
+
+    def test_presets_export_complete_shows_success_and_partial_failure(
+        self, window
+    ) -> None:
+        """_on_presets_export_complete forwards the batch result to the
+        status banner, success or partial-failure."""
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            window._on_presets_export_complete(2, 0)
+        mock_success.assert_called_once_with("2 preset(s) exported")
+
+        with patch.object(window._status_banner, "show_error") as mock_error:
+            window._on_presets_export_complete(1, 1)
+        mock_error.assert_called_once_with("Exported 1, 1 failed")
+
+    def test_presets_save_complete_shows_success_and_partial_failure(self, window) -> None:
+        """_on_presets_save_complete forwards the batch result to the
+        status banner, success or partial-failure."""
+        with patch.object(window._status_banner, "show_success") as mock_success:
+            window._on_presets_save_complete(2, 0)
+        mock_success.assert_called_once_with("2 preset(s) saved to My Presets")
+
+        with patch.object(window._status_banner, "show_error") as mock_error:
+            window._on_presets_save_complete(1, 1)
+        mock_error.assert_called_once_with("Saved 1, 1 failed")
+
+    def test_copy_custom_item_prompts_for_name_and_renames(self, window) -> None:
+        """Copying the synthetic "Custom" row prompts for a real name (it
+        isn't a device-assigned one, unlike every other copyable item) and
+        passes the renamed item -- is_custom still True, so the source-side
+        read stays a plain live read -- through to copy_presets_to_devices."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        item = PresetItem(
+            name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
+        )
+
+        with (
+            patch(
+                "src.gui.main_window.QInputDialog.getText",
+                return_value=("Living Room Snapshot", True),
+            ) as mock_prompt,
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=[MagicMock(ip="192.168.1.200")],
+            ),
+            patch.object(
+                window._secondary_workflows, "copy_presets_to_devices"
+            ) as mock_copy,
+        ):
+            window._on_copy_to_device_requested([item])
+
+        mock_prompt.assert_called_once()
+        mock_copy.assert_called_once()
+        copied_items = mock_copy.call_args[0][0]
+        assert len(copied_items) == 1
+        assert copied_items[0].name == "Living Room Snapshot"
+        assert copied_items[0].is_custom is True
+
+    def test_copy_custom_item_cancelled_prompt_aborts(self, window) -> None:
+        """Cancelling the name prompt aborts the whole copy -- no device
+        picker, no dispatch -- same "declined" contract as cancelling the
+        device picker itself (#166)."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        item = PresetItem(
+            name="Custom", channel_mode="Stereo", preset_type="PEQ", is_custom=True
+        )
+
+        with (
+            patch(
+                "src.gui.main_window.QInputDialog.getText", return_value=("", False)
+            ),
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices"
+            ) as mock_picker,
+            patch.object(window._secondary_workflows, "copy_presets_to_devices") as mock_copy,
+        ):
+            window._on_copy_to_device_requested([item])
+
+        mock_picker.assert_not_called()
+        mock_copy.assert_not_called()
+
+    def test_copy_named_presets_skip_name_prompt(self, window) -> None:
+        """Copying ordinary named presets (no "Custom" row involved) never
+        touches the name prompt -- regression guard for the #165c addition."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
+
+        with (
+            patch("src.gui.main_window.QInputDialog.getText") as mock_prompt,
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=[MagicMock(ip="192.168.1.200")],
+            ),
+            patch.object(window._secondary_workflows, "copy_presets_to_devices") as mock_copy,
+        ):
+            window._on_copy_to_device_requested([item])
+
+        mock_prompt.assert_not_called()
+        mock_copy.assert_called_once()
+        assert mock_copy.call_args[0][0] == [item]
 
     def test_do_preset_save_reads_device_with_unprefixed_name(self, window) -> None:
         """_do_preset_save must read the on-device preset using the raw
@@ -1367,8 +1815,13 @@ class TestPresets:
         saved_profile = mock_save.call_args[0][0]
         assert saved_profile.name == "WiiM - Movie Night"
 
-    def test_issue24_presets_device_load_connected(self, window) -> None:
-        """#24: Load signal triggers preset-load workflow."""
+    def test_issue24_filters_device_panel_load_connected(self, window) -> None:
+        """#24 (superseded): device_item_selected triggers preset-load workflow.
+
+        The old PresetsDeviceView "Load into Editor" signal this test used
+        to target is gone -- loading a device preset now happens via the
+        Filters step's merged Device panel, which emits device_item_selected
+        instead."""
         _setup_device(window)
         item = PresetItem(name="Movie Night", channel_mode="Stereo", preset_type="PEQ")
 
@@ -1377,7 +1830,6 @@ class TestPresets:
                 "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
                 return_value=True,
             ),
-            patch.object(window, "_ensure_wizard_state_for_load", return_value=True),
             patch.object(
                 window._primary_workflows, "_do_load_peq_preset", return_value=object()
             ) as mock_load_workflow,
@@ -1386,7 +1838,7 @@ class TestPresets:
                 window._bridge, "run_async", side_effect=close_coroutine_tree
             ) as mock_run,
         ):
-            window._presets_device_view.load_into_editor.emit(item)
+            window._filters_page.device_item_selected.emit(item)
 
         mock_progress.assert_called_once_with("Loading preset 'Movie Night'...")
         mock_load_workflow.assert_called_once_with("Movie Night")
@@ -1783,21 +2235,26 @@ class TestPresets:
     # --- Issue #27: RoomFit profile selection triggers read and advances ---
 
     def test_issue27_roomfit_profile_selected_triggers_pull(self, window) -> None:
-        """#27: Selecting a RoomFit profile stores state and schedules pull."""
+        """#27: Selecting a RoomFit profile from the Device panel's merged
+        list stores state and schedules a pull. Reached via
+        device_item_selected now (the old dedicated roomfit-dropdown signal
+        this test used to target was removed with the merged Device panel)."""
         _setup_device(window)
         scheduled: list[object] = []
 
         def _capture(coro: object) -> None:
             scheduled.append(coro)
 
+        item = PresetItem(name="My Profile", channel_mode="Stereo", preset_type="RoomFit")
+
         with (
             patch.object(window._bridge, "run_async", side_effect=_capture) as mock_run,
             patch.object(window._status_banner, "show_progress") as mock_progress,
         ):
-            window._on_roomfit_profile_selected("My Profile")
+            window._on_device_item_selected(item)
 
         assert window._wizard_controller.state.roomfit_profile_name == "My Profile"
-        mock_progress.assert_called_once_with("Loading RoomFit profile 'My Profile'...")
+        mock_progress.assert_called_once_with("Loading preset 'My Profile'...")
         mock_run.assert_called_once()
         assert len(scheduled) == 1
         close_coroutine_tree(scheduled[0])
@@ -2509,28 +2966,6 @@ class TestSettingsUIState:
         assert window._status_banner._message_label.isHidden() is False
 
 
-    # --- Issue #10: Measurement picker cancel shows info banner ---
-
-    def test_issue10_picker_cancel_shows_info(self, window) -> None:
-        """#10: Cancelling the REW picker shows 'Selection cancelled' info.
-
-        The picker is now the embedded RewPullView rather than a modal
-        dialog — cancellation happens via its back_requested signal once a
-        selection screen (not just the connecting placeholder) was shown.
-        """
-        measurements = [MeasurementSummary(uuid="uuid-1", name="M1", index=0)]
-        window._active_rew_pull_view = window._rew_pull_view
-        window._rew_pull_view.set_measurements(measurements)
-
-        with (
-            patch.object(window._status_banner, "show_info") as mock_info,
-            patch.object(window._bridge, "run_async") as mock_run_async,
-        ):
-            window._rew_pull_view.back_requested.emit()
-
-        mock_info.assert_called_once_with("Selection cancelled", auto_dismiss=3000)
-        mock_run_async.assert_not_called()
-
     # --- Issue #11: FiltersPage retry shows option cards ---
 
     def test_issue11_filters_page_has_retry_mechanism(self, window) -> None:
@@ -2977,7 +3412,6 @@ class TestSettingsUIState:
         view.set_presets([profile])
 
         assert view._toolbar.isVisible() is True
-        assert view._load_btn.isEnabled() is False
         assert view._rename_btn.isEnabled() is False
         assert view._duplicate_btn.isEnabled() is False
         assert view._delete_btn.isEnabled() is False
@@ -2985,20 +3419,16 @@ class TestSettingsUIState:
         view._list_widget.setCurrentRow(0)
         qtbot.wait(10)
 
-        assert view._load_btn.isEnabled() is True
         assert view._rename_btn.isEnabled() is True
         assert view._duplicate_btn.isEnabled() is True
         assert view._delete_btn.isEnabled() is True
 
-        load_calls: list[object] = []
         duplicate_calls: list[str] = []
         delete_calls: list[str] = []
 
-        view.load_requested.connect(lambda selected: load_calls.append(selected))
         view.duplicate_requested.connect(lambda name: duplicate_calls.append(name))
         view.delete_requested.connect(lambda name: delete_calls.append(name))
 
-        view._load_btn.click()
         view._duplicate_btn.click()
         with patch(
             "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
@@ -3006,7 +3436,6 @@ class TestSettingsUIState:
         ):
             view._delete_btn.click()
 
-        assert load_calls == [profile]
         assert duplicate_calls == ["Jazz Night"]
         assert delete_calls == ["Jazz Night"]
 

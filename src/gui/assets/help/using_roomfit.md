@@ -47,8 +47,11 @@ source selection step is skipped (since RoomFit is global).
 On the Filters page, choose Stereo or L/R mode and browse for your REW
 measurement file(s), just like the PEQ workflow.
 
-You can also load an existing RoomFit profile from the device via "Presets
-on Device" in the sidebar.
+You can also load an existing RoomFit profile from the device: choose
+**Device** from the "Import source" dropdown on the Filters step. It shows
+one merged list of PEQ presets and RoomFit profiles saved on the device — a
+profile saved under RoomFit shows up there too — so you can select it and
+click "Load Preset."
 
 ### 3. Review
 
@@ -100,14 +103,17 @@ actions here, though:
 
 - **Pushing a profile** (or copying one to another device) makes it the
   active one there and turns RoomFit on if it was off.
-- **Loading a profile** (via "Presets on Device" or the Filters page) briefly
+- **Loading a profile** (via the Filters step's **Device** option) briefly
   selects it on the device so its filters can be read, then restores whatever
   was previously active.
 
 The "Name Your Profile" step and "Presets on Device" both mark the
 currently-active RoomFit profile (and PEQ preset) with a bold, colored
 "(active)" label, so you can see what's live on your device before you name
-or overwrite anything.
+or overwrite anything. If RoomFit is currently switched off, that label
+reads "(active, RoomFit off)" instead — the profile is still selected, it
+just isn't being applied to your audio right now. Turn RoomFit back on via
+the WiiM Home app (see above) if you want it audible again.
 
 ## Tips
 

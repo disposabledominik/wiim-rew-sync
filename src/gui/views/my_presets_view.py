@@ -2,8 +2,10 @@
 
 Displays saved presets in a list with name, channel mode badge (Stereo/L/R),
 and active band count. Supports inline rename (double-click), right-click
-context menu (Load, Rename, Duplicate, Delete), and search/filter when more
-than 10 items are present.
+context menu (Copy to Another Device, Rename, Duplicate, Delete), and
+search/filter when more than 10 items are present. Loading a preset into
+the wizard now happens via the Filters step's Local Library option, not a
+button on this view.
 
 The view does NOT handle persistence. It receives data via :meth:`set_presets`
 and emits action signals for the controller to handle.
@@ -97,13 +99,11 @@ class MyPresetsView(QWidget):
     """Local preset library with CRUD operations.
 
     Signals:
-        load_requested: Emitted with the Profile when the user loads a preset.
         rename_requested: Emitted with (old_name, new_name) after inline rename.
         duplicate_requested: Emitted with the preset name to duplicate.
         delete_requested: Emitted with the preset name to delete.
     """
 
-    load_requested = Signal(object)  # Profile
     rename_requested = Signal(str, str)  # old_name, new_name
     duplicate_requested = Signal(str)  # preset name
     delete_requested = Signal(str)  # preset name
@@ -125,7 +125,6 @@ class MyPresetsView(QWidget):
     def action_buttons(self) -> list[QWidget]:
         """Return buttons that should be disabled while an operation is in progress."""
         return [
-            self._load_btn,
             self._copy_btn,
             self._rename_btn,
             self._duplicate_btn,
@@ -198,24 +197,15 @@ class MyPresetsView(QWidget):
         content_layout.addWidget(self._empty_label)
 
         # Action toolbar (visible when an item is selected), bottom-anchored
-        # below the list. Order: Load (primary recall action) first, then
-        # Copy to Another Device right after it -- grouping the two
-        # "send this preset somewhere" actions together -- then the local
-        # Rename/Duplicate edits, with the destructive Delete last.
+        # below the list. Order: Copy to Another Device first (the primary
+        # "send this preset somewhere" action -- loading a preset now
+        # happens via the Filters step's Local Library option instead of a
+        # toolbar button here), then the local Rename/Duplicate edits, with
+        # the destructive Delete last.
         self._toolbar = QWidget(content)
         toolbar_layout = QHBoxLayout(self._toolbar)
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(SPACING_SM)
-
-        self._load_btn = make_action_button(
-            "Load into Editor",
-            object_name="btn_load_into_editor",
-            style_class="secondary",
-            tooltip="Load preset into Review for push/export",
-            parent=self._toolbar,
-        )
-        self._load_btn.clicked.connect(self._on_load_clicked)
-        toolbar_layout.addWidget(self._load_btn)
 
         self._copy_btn = make_action_button(
             "Copy to Another Device",
@@ -249,7 +239,6 @@ class MyPresetsView(QWidget):
 
         toolbar_layout.addStretch()
         self._toolbar.setVisible(True)
-        self._load_btn.setEnabled(False)
         self._rename_btn.setEnabled(False)
         self._duplicate_btn.setEnabled(False)
         self._copy_btn.setEnabled(False)
@@ -408,10 +397,6 @@ class MyPresetsView(QWidget):
         menu = QMenu(self)
         menu.setObjectName("MyPresetsContextMenu")
 
-        load_action = QAction("Load", menu)
-        load_action.triggered.connect(lambda: self.load_requested.emit(profile))
-        menu.addAction(load_action)
-
         copy_action = QAction("Copy to Another Device", menu)
         copy_action.triggered.connect(
             lambda: self.copy_to_device_requested.emit(profile)
@@ -445,7 +430,6 @@ class MyPresetsView(QWidget):
     def _on_selection_changed(self, current: QListWidgetItem | None, _prev: object) -> None:
         """Enable/disable toolbar buttons based on selection state."""
         has_selection = current is not None
-        self._load_btn.setEnabled(has_selection)
         self._rename_btn.setEnabled(has_selection)
         self._duplicate_btn.setEnabled(has_selection)
         self._copy_btn.setEnabled(has_selection)
@@ -457,12 +441,6 @@ class MyPresetsView(QWidget):
         if item is None:
             return None
         return item.data(Qt.ItemDataRole.UserRole)  # type: ignore[no-any-return]
-
-    def _on_load_clicked(self) -> None:
-        """Handle Load button click."""
-        profile = self._get_selected_profile()
-        if profile:
-            self.load_requested.emit(profile)
 
     def _on_rename_clicked(self) -> None:
         """Handle Rename button click — start inline rename."""

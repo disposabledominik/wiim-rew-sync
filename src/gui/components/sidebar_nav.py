@@ -65,7 +65,8 @@ class _NavItem(QPushButton):
 
         The tooltip always shows the descriptive explanation (not just the
         label) regardless of collapsed state, since the label alone can be
-        ambiguous (e.g. "Resume Setup" doesn't say *what* it resumes).
+        ambiguous (e.g. "Presets on Device" doesn't say *which* actions --
+        browse, export, copy -- are available there).
         """
         if collapsed:
             self.setText(self._icon_char)
@@ -97,7 +98,7 @@ class SidebarNav(QWidget):
     _NAV_ITEMS: tuple[tuple[str, str, str, str], ...] = (
         (
             "home",
-            "Resume Setup",
+            "Setup Wizard",
             "\U0001F9D9",
             "Return to your current step in the setup wizard",
         ),
@@ -112,12 +113,6 @@ class SidebarNav(QWidget):
             "My Saved Presets",
             "\U0001F4BE",
             "Browse and load presets saved locally on this computer",
-        ),
-        (
-            "rew_api",
-            "Pull from REW",
-            "\U0001F4C8",
-            "Import filters directly from a running Room EQ Wizard (REW) session",
         ),
         (
             "settings",

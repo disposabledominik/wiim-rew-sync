@@ -2,8 +2,8 @@
 
 Displays two sections (PEQ Presets, RoomFit Profiles) fetched from the
 connected device. Supports multi-select for batch operations: export,
-save to local library, load into editor, and copy to another device.
-Shows an empty state when no device is connected.
+save to local library, and copy to another device. Shows an empty state
+when no device is connected.
 
 Requirements referenced: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8,
 15.9, 15.10, 15.11, 15.12, 8.5, 8.6, 10.9.
@@ -21,14 +21,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
-    QListWidgetItem,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from src.gui.components.action_button import make_action_button
-from src.gui.components.list_item_style import apply_active_item_style
+from src.gui.components.list_item_style import build_preset_list_item
 from src.gui.components.page_layout import (
     ICON_NO_CONNECTION,
     build_centered_content,
@@ -37,7 +36,6 @@ from src.gui.components.page_layout import (
     make_page_title,
 )
 from src.gui.constants import (
-    LIST_ITEM_HEIGHT,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
@@ -56,11 +54,86 @@ class PresetItem:
         name: Display name of the preset/profile.
         channel_mode: One of "Stereo", "L/R", or "Unknown".
         preset_type: Distinguishes PEQ presets from RoomFit profiles.
+        is_custom: True only for the synthetic "Custom" row (see
+            build_custom_peq_item) representing the device's live/unnamed
+            active PEQ config. Read at dispatch time to route actions that
+            need a real saved-preset name (e.g. Delete, or the source-side
+            read behind Export/Save/Copy) differently -- an intrinsic field
+            rather than a name comparison, so a real preset that happens to
+            also be named "Custom" is never confused with it.
     """
 
     name: str
     channel_mode: str = "Stereo"
     preset_type: Literal["PEQ", "RoomFit"] = "PEQ"
+    is_custom: bool = False
+
+
+CUSTOM_PEQ_NAME = "Custom"
+
+
+def build_custom_peq_item(channel_mode: str) -> PresetItem:
+    """Synthetic PresetItem for the device's live/unnamed active PEQ config.
+
+    Shown whenever a PEQ preset fetch resolves with active_name == "" -- the
+    hardware-confirmed signal that the live config on this source was written
+    directly (EQSetLV2SourceBand) rather than loaded from a saved preset,
+    orphaning the device's own name association (docs/corrections.md,
+    2026-07-05). Named "Custom" to match WiiM Home's own terminology for
+    this state. Shared by PresetsDeviceView and FiltersPage's merged Device
+    list so both surface it identically (#165c).
+    """
+    return PresetItem(
+        name=CUSTOM_PEQ_NAME, channel_mode=channel_mode, preset_type="PEQ", is_custom=True
+    )
+
+
+def build_peq_rows(
+    items: list[PresetItem],
+    active_name: str | None,
+    active_channel_mode: str,
+    active_enabled: bool = True,
+) -> list[tuple[PresetItem, bool, bool]]:
+    """PEQ items paired with (is_active, is_eq_off) flags, with a synthetic
+    Custom row prepended when active_name == "" (the PEQ fetch resolved and
+    found no active preset name -- see build_custom_peq_item). Shared by
+    PresetsDeviceView and FiltersPage's merged Device list so the "when does
+    Custom appear" rule can't drift between the two call sites (#165c).
+
+    active_enabled reflects the source's real-time PEQ on/off toggle
+    (EQStat) -- independent of which Name is stored, since a source can have
+    a saved or custom config selected while PEQ itself is switched off for
+    that source. Only the active row's is_eq_off can ever be True; every
+    other row is unaffected since it isn't what's currently loaded anyway.
+    """
+    rows: list[tuple[PresetItem, bool, bool]] = [
+        (item, item.name == active_name, item.name == active_name and not active_enabled)
+        for item in items
+    ]
+    if active_name == "":
+        rows.insert(0, (build_custom_peq_item(active_channel_mode), True, not active_enabled))
+    return rows
+
+
+def build_roomfit_rows(
+    items: list[PresetItem],
+    active_name: str,
+    active_enabled: bool = True,
+) -> list[tuple[PresetItem, bool, bool]]:
+    """RoomFit items paired with (is_active, is_eq_off) flags.
+
+    No synthetic row is ever prepended here, unlike build_peq_rows -- RoomFit
+    has no "live but unnamed" concept distinct from its named profiles, only
+    ever a currently-active one among them. active_enabled reflects
+    RoomFit's global on/off toggle, mirroring build_peq_rows's active_enabled
+    semantics. Shared by PresetsDeviceView and FiltersPage's merged Device
+    list so the active/eq-off rule can't drift between the two call sites,
+    same rationale as build_peq_rows (#165c).
+    """
+    return [
+        (item, item.name == active_name, item.name == active_name and not active_enabled)
+        for item in items
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +151,6 @@ class PresetsDeviceView(QWidget):
     Signals:
         export_requested(list): User wants to export selected items as REW files.
         save_to_my_presets(list): Save selected items to local preset library.
-        load_into_editor(object): Load a single item into the wizard editor.
         copy_to_device_requested(list): Copy selected items to another device.
         apply_to_sources_requested(str, list): Apply a PEQ preset to sources.
         delete_requested(list): User wants to permanently delete selected
@@ -87,7 +159,6 @@ class PresetsDeviceView(QWidget):
 
     export_requested = Signal(list)
     save_to_my_presets = Signal(list)
-    load_into_editor = Signal(object)
     copy_to_device_requested = Signal(list)
     apply_to_sources_requested = Signal(str, list)
     delete_requested = Signal(list)
@@ -98,8 +169,13 @@ class PresetsDeviceView(QWidget):
 
         self._peq_items: list[PresetItem] = []
         self._roomfit_items: list[PresetItem] = []
-        self._active_peq_name: str = ""
+        # None = not yet known (distinct from "" = confirmed no active
+        # preset name) -- only "" shows the synthetic "Custom" row.
+        self._active_peq_name: str | None = None
+        self._active_peq_channel_mode: str = "Stereo"
+        self._active_peq_enabled: bool = True
         self._active_roomfit_name: str = ""
+        self._active_roomfit_enabled: bool = True
 
         self._setup_ui()
         # Start in empty state
@@ -114,26 +190,46 @@ class PresetsDeviceView(QWidget):
         return [
             self._export_btn,
             self._save_btn,
-            self._load_btn,
             self._copy_btn,
             self._delete_btn,
         ]
 
-    def set_peq_presets(self, presets: list[PresetItem], active_name: str = "") -> None:
+    def set_peq_presets(
+        self,
+        presets: list[PresetItem],
+        active_name: str | None = None,
+        active_channel_mode: str = "Stereo",
+        active_enabled: bool = True,
+    ) -> None:
         """Populate the PEQ Presets section.
 
         Args:
             presets: List of PresetItem objects for PEQ presets.
             active_name: Name of the preset currently active on this source,
-                if any (#165c) -- highlighted distinctly from selection.
+                if known (#165c) -- highlighted distinctly from selection.
+                "" means the device confirmed the live config doesn't match
+                any saved preset -- shown as a synthetic "Custom" row
+                instead (see build_custom_peq_item). None (the default)
+                means this isn't known yet -- no highlight, no Custom row.
+            active_channel_mode: Channel mode of the live active config,
+                used only to label the synthetic "Custom" row when
+                active_name is "".
+            active_enabled: Whether PEQ (EQStat) is actually switched on for
+                this source right now -- independent of active_name/which
+                config is stored, since a source can have a name/custom
+                config selected while PEQ itself is toggled off. When False,
+                the active row's "(active)" suffix becomes
+                "(active, PEQ off)" instead (see build_peq_rows).
         """
         self._peq_items = list(presets)
         self._active_peq_name = active_name
+        self._active_peq_channel_mode = active_channel_mode
+        self._active_peq_enabled = active_enabled
         self._show_content_state()
         self._populate_peq_list()
 
     def set_roomfit_profiles(
-        self, profiles: list[PresetItem], active_name: str = ""
+        self, profiles: list[PresetItem], active_name: str = "", active_enabled: bool = True
     ) -> None:
         """Populate the RoomFit Profiles section.
 
@@ -141,9 +237,15 @@ class PresetsDeviceView(QWidget):
             profiles: List of PresetItem objects for RoomFit profiles.
             active_name: Name of the profile currently active on the device,
                 if any (#165c) -- highlighted distinctly from selection.
+            active_enabled: Whether RoomFit is actually switched on right
+                now -- independent of which profile is selected, since a
+                profile can be selected while RoomFit itself is toggled off.
+                When False, the active row's "(active)" suffix becomes
+                "(active, RoomFit off)" instead.
         """
         self._roomfit_items = list(profiles)
         self._active_roomfit_name = active_name
+        self._active_roomfit_enabled = active_enabled
         self._show_content_state()
         # Mirrors set_roomfit_hidden()'s setVisible(False) -- without this,
         # the section stays hidden forever after the first non-RoomFit device
@@ -161,7 +263,14 @@ class PresetsDeviceView(QWidget):
         self._update_action_buttons()
 
     def set_peq_unavailable(self) -> None:
-        """Show message when device doesn't support profile enumeration (Req 15.10)."""
+        """Show message when the device has no usable PEQ info at all (Req 15.10).
+
+        Emitted by PrimaryWorkflowManager.refresh_presets() when the device
+        doesn't support PEQ, or does but the live-config read that would
+        back a synthetic "Custom" row failed outright -- not merely because
+        named-preset enumeration is unsupported, since that case still
+        surfaces the live config as "Custom" via set_peq_presets().
+        """
         self._peq_items = []
         self._peq_unavailable_label.setVisible(True)
         self._peq_list.setVisible(False)
@@ -344,13 +453,6 @@ class PresetsDeviceView(QWidget):
         self._save_btn.clicked.connect(self._on_save_clicked)
         layout.addWidget(self._save_btn)
 
-        # Load into Editor
-        self._load_btn = make_action_button(
-            "Load into Editor", object_name="btn_load_editor", style_class="secondary"
-        )
-        self._load_btn.clicked.connect(self._on_load_clicked)
-        layout.addWidget(self._load_btn)
-
         # Copy to Another Device
         self._copy_btn = make_action_button(
             "Copy to Another Device", object_name="btn_copy_device", style_class="secondary"
@@ -376,6 +478,15 @@ class PresetsDeviceView(QWidget):
     def _populate_peq_list(self, filter_text: str = "") -> None:
         """Populate the PEQ list widget from stored items.
 
+        Prepends a synthetic "Custom" row (see build_custom_peq_item) when
+        the live PEQ config on this source has no saved-preset name.
+        Selectable like any other row -- Export/Save/Copy all work on it via
+        a plain live read instead of the named-preset preview/restore dance
+        (see WiiMAdapter.read_preset_preview_or_live). Delete is the
+        exception: _update_action_buttons() disables it whenever the
+        selection includes a custom item, since there's no saved preset to
+        delete (#165c).
+
         Args:
             filter_text: Optional filter string for search.
         """
@@ -386,10 +497,17 @@ class PresetsDeviceView(QWidget):
         # Show search field when > 10 items (Req 10.9)
         self._peq_search.setVisible(len(self._peq_items) > 10)
 
-        for item in self._peq_items:
+        rows = build_peq_rows(
+            self._peq_items,
+            self._active_peq_name,
+            self._active_peq_channel_mode,
+            self._active_peq_enabled,
+        )
+
+        for item, is_active, is_eq_off in rows:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            list_item = self._build_list_item(item, item.name == self._active_peq_name)
+            list_item = build_preset_list_item(item, is_active, is_eq_off)
             self._peq_list.addItem(list_item)
 
         self._update_action_buttons()
@@ -405,43 +523,16 @@ class PresetsDeviceView(QWidget):
         # Show search field when > 10 items (Req 10.9)
         self._roomfit_search.setVisible(len(self._roomfit_items) > 10)
 
-        for item in self._roomfit_items:
+        rows = build_roomfit_rows(
+            self._roomfit_items, self._active_roomfit_name, self._active_roomfit_enabled
+        )
+        for item, is_active, is_eq_off in rows:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            list_item = self._build_list_item(
-                item, item.name == self._active_roomfit_name
-            )
+            list_item = build_preset_list_item(item, is_active, is_eq_off)
             self._roomfit_list.addItem(list_item)
 
         self._update_action_buttons()
-
-    def _build_list_item(self, item: PresetItem, is_active: bool) -> QListWidgetItem:
-        """Build a QListWidgetItem for a preset/profile, optionally marked as
-        currently-active on the device (#165c).
-
-        The "(active)" text label is the primary signal (self-explanatory,
-        doesn't rely on color perception); bold/accent styling is
-        reinforcement, not the only cue -- matching NameProfilePage's
-        equivalent convention (#165a). This is visually distinct from
-        QListWidget's own click-selection highlighting (background color),
-        which is untouched and orthogonal.
-        """
-        text = self._format_item_text(item)
-        list_item = QListWidgetItem(f"{text}  (active)" if is_active else text)
-        apply_active_item_style(list_item, is_active)
-        list_item.setData(Qt.ItemDataRole.UserRole, item)
-        list_item.setSizeHint(list_item.sizeHint().expandedTo(
-            list_item.sizeHint().__class__(0, LIST_ITEM_HEIGHT)
-        ))
-        return list_item
-
-    @staticmethod
-    def _format_item_text(item: PresetItem) -> str:
-        """Format display text for a list item with badges.
-
-        Format: "Name  [ChannelMode]  [Type]"
-        """
-        return f"{item.name}  [{item.channel_mode}]  [{item.preset_type}]"
 
     # ------------------------------------------------------------------
     # State helpers
@@ -470,16 +561,21 @@ class PresetsDeviceView(QWidget):
 
     @Slot()
     def _update_action_buttons(self) -> None:
-        """Enable/disable action buttons based on current selection."""
+        """Enable/disable action buttons based on current selection.
+
+        Delete is disabled whenever the synthetic "Custom" row (#165c) is
+        part of the selection -- there's no saved preset on the device to
+        delete, unlike Export/Save/Copy, which all work on it via a plain
+        live read (see build_custom_peq_item).
+        """
         selected = self._get_all_selected_items()
         has_selection = len(selected) > 0
-        single_selected = len(selected) == 1
+        has_custom = any(item.is_custom for item in selected)
 
         self._export_btn.setEnabled(has_selection)
         self._save_btn.setEnabled(has_selection)
-        self._load_btn.setEnabled(single_selected)
         self._copy_btn.setEnabled(has_selection)
-        self._delete_btn.setEnabled(has_selection)
+        self._delete_btn.setEnabled(has_selection and not has_custom)
 
     # ------------------------------------------------------------------
     # Search/filter handlers
@@ -526,13 +622,6 @@ class PresetsDeviceView(QWidget):
         selected = self._get_all_selected_items()
         if selected:
             self.save_to_my_presets.emit(selected)
-
-    @Slot()
-    def _on_load_clicked(self) -> None:
-        """Emit load_into_editor with the single selected item."""
-        selected = self._get_all_selected_items()
-        if len(selected) == 1:
-            self.load_into_editor.emit(selected[0])
 
     @Slot()
     def _on_copy_clicked(self) -> None:

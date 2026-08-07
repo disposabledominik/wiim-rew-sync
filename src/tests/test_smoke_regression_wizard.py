@@ -328,23 +328,6 @@ class TestIssue16RoomfitDefaultSource:
 # ---------------------------------------------------------------------------
 
 
-class TestIssue19EqTypeRoomfitMode:
-    """Smoke #19: _on_eq_type_selected('roomfit') calls set_roomfit_mode(True)."""
-
-    def test_eq_type_roomfit_sets_roomfit_mode(self, window) -> None:
-        """Selecting 'roomfit' EQ type calls FiltersPage.set_roomfit_mode(True)."""
-        # Patch set_roomfit_mode to track calls
-        with patch.object(window._filters_page, "set_roomfit_mode") as mock_method:
-            window._on_eq_type_selected("roomfit")
-            mock_method.assert_called_once_with(True)
-
-    def test_eq_type_peq_sets_roomfit_mode_false(self, window) -> None:
-        """Selecting 'peq' EQ type calls FiltersPage.set_roomfit_mode(False)."""
-        with patch.object(window._filters_page, "set_roomfit_mode") as mock_method:
-            window._on_eq_type_selected("peq")
-            mock_method.assert_called_once_with(False)
-
-
 # ---------------------------------------------------------------------------
 # Issue #35: Source page shows all common sources (not filtered by model)
 # ---------------------------------------------------------------------------
@@ -484,6 +467,65 @@ class TestIssue41DeviceSelectResetsFlow:
         assert state.filters_l == []
         assert state.filters_r == []
         assert state.filters == []
+
+    def test_device_switch_clears_filters_page_device_cache(self, window) -> None:
+        """Code-review round (2026-08-06): FiltersPage's own Device-panel
+        cache (_device_peq_items/_device_roomfit_items/_device_active_*_name)
+        is separate from WizardState and wasn't cleared by
+        clear_device_scoped_state() -- browsing back to the Filters step's
+        Device panel after switching devices would keep showing (and let the
+        user load) the previous device's presets under names that may not
+        exist on the newly connected device."""
+        from src.gui.views.presets_device_view import PresetItem
+
+        window._on_device_selected("192.168.1.100")
+        window._filters_page.set_peq_presets(
+            [PresetItem(name="Old Preset", channel_mode="Stereo", preset_type="PEQ")],
+            active_name="Old Preset",
+        )
+        assert window._filters_page._device_peq_items != []
+
+        window._on_device_selected("192.168.1.200")
+
+        assert window._filters_page._device_peq_items == []
+        assert window._filters_page._device_active_peq_name is None
+
+    def test_capabilities_ready_refetches_device_presets_when_panel_active(
+        self, window
+    ) -> None:
+        """Round-2 code review, 2026-08-06 (BUG 1): clear_device_presets()
+        (called by _on_device_selected, before the new device's adapter
+        exists) deliberately does not refetch. _on_capabilities_ready must
+        pick that up once the new adapter is actually live, or the Device
+        panel would keep showing a device switch's brief empty state forever
+        if the user is already looking at it."""
+        from src.gui.pages.filters_page import _SOURCE_ORDER
+        from src.gui.wizard_controller import FiltersSource
+
+        window._on_device_selected("192.168.1.100")
+        window._filters_page._source_combo.setCurrentIndex(
+            _SOURCE_ORDER.index(FiltersSource.DEVICE)
+        )
+        assert window._filters_page.current_source == FiltersSource.DEVICE
+
+        window._primary_workflows.list_presets = MagicMock()
+        window._on_capabilities_ready(_make_caps())
+
+        window._primary_workflows.list_presets.assert_called_once()
+
+    def test_capabilities_ready_does_not_refetch_when_other_panel_active(
+        self, window
+    ) -> None:
+        """Counterpart to the refetch test above: no reason to fetch device
+        presets on every capabilities_ready if the user isn't even looking at
+        the Device panel."""
+        window._on_device_selected("192.168.1.100")
+        assert window._filters_page.current_source.value == "rew_file"
+
+        window._primary_workflows.list_presets = MagicMock()
+        window._on_capabilities_ready(_make_caps())
+
+        window._primary_workflows.list_presets.assert_not_called()
 
     def test_device_switch_resets_filters_page_channel_mode_radio(self, window) -> None:
         """PR #19 review follow-up: FiltersPage keeps its own Stereo/L-R radio
@@ -716,244 +758,38 @@ class TestIssue73StereoImportChannelMode:
 
 
 # ---------------------------------------------------------------------------
-# Issue #87: Sidebar preset load checks wizard completed_steps before navigating
-# ---------------------------------------------------------------------------
-
-
-class TestIssue87SidebarPresetLoadChecks:
-    """Smoke #87: Preset load from sidebar checks completed_steps."""
-
-    def test_load_without_device_shows_error(self, window) -> None:
-        """Loading preset with no device connected shows error, returns False."""
-        # Ensure no device is connected
-        window._wizard_controller.state.selected_device = None
-
-        result = window._ensure_wizard_state_for_load()
-
-        assert result is False
-
-    def test_load_with_connect_only_shows_quick_setup(self, window) -> None:
-        """With only CONNECT completed, _ensure_wizard_state_for_load shows dialog."""
-        # Select device so it's not None
-        window._on_device_selected("192.168.1.100")
-
-        # Mark only CONNECT as completed
-        state = window._wizard_controller.state
-        state.completed_steps = {WizardStep.CONNECT: "Connected"}
-
-        # Mock QuickSetupDialog.get_setup to return a result (simulating user choice)
-        with patch(
-            "src.gui.dialogs.quick_setup_dialog.QuickSetupDialog.get_setup",
-            return_value=("peq", ["wifi"]),
-        ):
-            result = window._ensure_wizard_state_for_load()
-
-        # Should succeed since QuickSetupDialog returned values
-        assert result is True
-        # The dialog's answers land in wizard *state* only -- steps are
-        # marked completed on load success (_jump_to_review), never before
-        # the async load resolves, so a failed load can't leave phantom
-        # checkmarks or move the frontier.
-        assert state.selected_sources == ["wifi"]
-        assert WizardStep.SOURCE not in state.completed_steps
-        assert WizardStep.FILTERS not in state.completed_steps
-
-    def test_load_with_all_steps_completed_skips_dialog(self, window) -> None:
-        """With all prior steps completed, no dialog shown — returns True directly."""
-        # Select device
-        window._on_device_selected("192.168.1.100")
-
-        # Mark all required prior steps as completed
-        state = window._wizard_controller.state
-        state.completed_steps = {
-            WizardStep.CONNECT: "Connected",
-            WizardStep.EQ_TYPE: "PEQ",
-            WizardStep.SOURCE: "wifi",
-            WizardStep.FILTERS: "Loaded",
-        }
-        state.selected_source = "wifi"
-
-        # No need to patch QuickSetupDialog — it shouldn't be called
-        result = window._ensure_wizard_state_for_load()
-        assert result is True
-
-    def test_load_gate_never_marks_steps_before_load_resolves(self, window) -> None:
-        """The load gate must not pre-mark steps completed: the load it
-        gates is async and can fail, and pre-marking would leave
-        completed_steps (and the derived frontier) claiming progress that
-        never happened -- e.g. "Resume Setup" jumping to Review after a
-        failed preset load. Steps are marked on success by _jump_to_review."""
-        window._on_device_selected("192.168.1.100")
-        state = window._wizard_controller.state
-        state.completed_steps = {WizardStep.CONNECT: "Connected"}
-        state.current_step = WizardStep.FILTERS  # at-FILTERS early return
-
-        assert window._ensure_wizard_state_for_load() is True
-
-        assert set(state.completed_steps) == {WizardStep.CONNECT}
-        assert window._wizard_controller.frontier_step == WizardStep.EQ_TYPE
-
-    def test_preview_items_merged_into_quick_setup_warning(self, window) -> None:
-        """When QuickSetupDialog is about to show, a preview-warning body is
-        passed into it as `warning=`, folding what used to be a separate
-        standalone confirmation into the same dialog."""
-        window._on_device_selected("192.168.1.100")
-        state = window._wizard_controller.state
-        state.completed_steps = {WizardStep.CONNECT: "Connected"}
-
-        item = MagicMock(name="Movie Night", preset_type="PEQ")
-        item.name = "Movie Night"
-
-        with patch(
-            "src.gui.dialogs.quick_setup_dialog.QuickSetupDialog.get_setup",
-            return_value=("peq", ["wifi"]),
-        ) as mock_get_setup:
-            result = window._ensure_wizard_state_for_load(preview_items=[item])
-
-        assert result is True
-        mock_get_setup.assert_called_once()
-        warning = mock_get_setup.call_args.kwargs["warning"]
-        assert warning is not None
-        assert "Movie Night" in warning[1]
-
-    def test_preview_items_confirmed_standalone_when_nothing_missing(self, window) -> None:
-        """When wizard state is already complete, the preview warning is
-        shown as its own standalone confirmation (QuickSetupDialog never
-        shows), matching the pre-existing single-dialog behavior."""
-        window._on_device_selected("192.168.1.100")
-        state = window._wizard_controller.state
-        state.completed_steps = {
-            WizardStep.CONNECT: "Connected",
-            WizardStep.EQ_TYPE: "PEQ",
-            WizardStep.SOURCE: "wifi",
-            WizardStep.FILTERS: "Loaded",
-        }
-        state.selected_source = "wifi"
-
-        item = MagicMock(name="Movie Night", preset_type="PEQ")
-        item.name = "Movie Night"
-
-        with patch.object(
-            window, "_confirm_preset_preview", return_value=False
-        ) as mock_confirm:
-            result = window._ensure_wizard_state_for_load(preview_items=[item])
-
-        mock_confirm.assert_called_once_with([item])
-        assert result is False
-
-# ---------------------------------------------------------------------------
-# Issue #95: Wizard state skips QuickSetupDialog if current step is FILTERS or beyond
-# ---------------------------------------------------------------------------
-
-
-class TestIssue95WizardStateSkipsDialog:
-    def test_ensure_wizard_state_skips_dialog_if_at_filters_step(self, window) -> None:
-        """#95: If current step is FILTERS or beyond, skip dialog and return True."""
-        # Select device
-        window._on_device_selected("192.168.1.100")
-
-        # Advance wizard to FILTERS step
-        window._wizard_controller.state.current_step = WizardStep.FILTERS
-
-        # Verify it returns True without triggering QuickSetupDialog
-        with patch("src.gui.dialogs.quick_setup_dialog.QuickSetupDialog.get_setup") as mock_dialog:
-            result = window._ensure_wizard_state_for_load()
-            assert result is True
-            mock_dialog.assert_not_called()
-
-    def test_ensure_wizard_state_at_filters_step_confirms_preview_items(
-        self, window
-    ) -> None:
-        """#200: the "already at/past FILTERS" early-return must still honor
-        `preview_items` -- it used to skip the "Preset Will Briefly Activate
-        on Device" warning entirely whenever the wizard was already on the
-        Review/Push step, unlike the "nothing missing" branch which always
-        checked it."""
-        window._on_device_selected("192.168.1.100")
-        window._wizard_controller.state.current_step = WizardStep.FILTERS
-
-        item = MagicMock(name="Movie Night", preset_type="PEQ")
-        item.name = "Movie Night"
-
-        with patch.object(
-            window, "_confirm_preset_preview", return_value=True
-        ) as mock_confirm:
-            result = window._ensure_wizard_state_for_load(preview_items=[item])
-
-        mock_confirm.assert_called_once_with([item])
-        assert result is True
-
-    def test_ensure_wizard_state_at_filters_step_declined_preview_returns_false(
-        self, window
-    ) -> None:
-        """#200: declining the folded-in preview warning at the FILTERS-step
-        early return must block the load, not silently proceed."""
-        window._on_device_selected("192.168.1.100")
-        window._wizard_controller.state.current_step = WizardStep.FILTERS
-
-        item = MagicMock(name="Movie Night", preset_type="PEQ")
-        item.name = "Movie Night"
-
-        with patch.object(window, "_confirm_preset_preview", return_value=False):
-            result = window._ensure_wizard_state_for_load(preview_items=[item])
-
-        assert result is False
-
-
-# ---------------------------------------------------------------------------
-# #162: identical step summaries regardless of which entry point completes
-# a step (normal flow, sidebar jump, QuickSetupDialog) -- these three paths
-# used to reimplement the same wording independently and had drifted
-# (e.g. "ROOMFIT" vs "RoomFit", "N filters" vs "Loaded from preset").
+# #162: step summary wording for the normal wizard flow -- every source is
+# now only ever reached via the Filters step's own dropdown, in wizard step
+# order, so there is exactly one completion path left to check (the old
+# sidebar-jump/QuickSetupDialog paths this regression test used to compare
+# against were removed along with those entry points).
 # ---------------------------------------------------------------------------
 
 
 class TestIssue162ConsistentStepSummaries:
-    """All three completion paths must agree on wording for the same input."""
+    """Step summary wording for the (now single) normal-flow completion path."""
 
-    def test_eq_type_summary_matches_normal_flow_and_sidebar_jump(self, window) -> None:
+    def test_eq_type_summary_wording(self, window) -> None:
         window._on_device_selected("192.168.1.100")
         window._on_capabilities_ready(_make_caps(roomfit_level=4))
 
-        # Path A: normal flow
         window._on_eq_type_selected("roomfit")
-        normal_summary = window._wizard_controller.state.completed_steps[WizardStep.EQ_TYPE]
 
-        # Path B: sidebar jump -- reset EQ_TYPE and let _mark_prior_steps_completed
-        # (used by the sidebar-jump and QuickSetupDialog paths) fill it back in.
-        state = window._wizard_controller.state
-        state.completed_steps.pop(WizardStep.EQ_TYPE, None)
-        window._mark_prior_steps_completed(state)
-        sidebar_summary = state.completed_steps[WizardStep.EQ_TYPE]
+        assert window._wizard_controller.state.completed_steps[WizardStep.EQ_TYPE] == "RoomFit"
 
-        assert normal_summary == sidebar_summary == "RoomFit"
-
-    def test_source_summary_and_tooltip_match_normal_flow_and_sidebar_jump(
-        self, window
-    ) -> None:
+    def test_source_summary_and_tooltip_wording(self, window) -> None:
         window._on_device_selected("192.168.1.100")
         window._on_capabilities_ready(
             _make_caps(roomfit_level=0, source_names=["wifi", "optical", "hdmi"])
         )
 
-        # Path A: normal flow
         window._on_source_selected("wifi,optical", "Stereo")
         state = window._wizard_controller.state
-        normal_summary = state.completed_steps[WizardStep.SOURCE]
-        normal_tooltip = state.completed_step_tooltips[WizardStep.SOURCE]
 
-        # Path B: sidebar jump / QuickSetupDialog (both delegate to
-        # _mark_prior_steps_completed -> _apply_source_summary)
-        state.completed_steps.pop(WizardStep.SOURCE, None)
-        state.completed_step_tooltips.pop(WizardStep.SOURCE, None)
-        window._mark_prior_steps_completed(state)
-        sidebar_summary = state.completed_steps[WizardStep.SOURCE]
-        sidebar_tooltip = state.completed_step_tooltips[WizardStep.SOURCE]
+        assert state.completed_steps[WizardStep.SOURCE] == "2 sources"
+        assert state.completed_step_tooltips[WizardStep.SOURCE] == "wifi, optical"
 
-        assert normal_summary == sidebar_summary == "2 sources"
-        assert normal_tooltip == sidebar_tooltip == "wifi, optical"
-
-    def test_filters_summary_matches_normal_flow_and_sidebar_jump(self, window) -> None:
+    def test_filters_summary_wording(self, window) -> None:
         window._on_device_selected("192.168.1.100")
         window._on_capabilities_ready(_make_caps(roomfit_level=0))
         window._on_source_selected("wifi", "Stereo")  # PEQ_ONLY: CONNECT->SOURCE->FILTERS
@@ -961,17 +797,10 @@ class TestIssue162ConsistentStepSummaries:
             MagicMock(), MagicMock(), MagicMock(),
         ]
 
-        # Path A: normal flow
         window._on_filters_accepted()
+
         state = window._wizard_controller.state
-        normal_summary = state.completed_steps[WizardStep.FILTERS]
-
-        # Path B: sidebar jump / QuickSetupDialog
-        state.completed_steps.pop(WizardStep.FILTERS, None)
-        window._mark_prior_steps_completed(state)
-        sidebar_summary = state.completed_steps[WizardStep.FILTERS]
-
-        assert normal_summary == sidebar_summary == "3 filters"
+        assert state.completed_steps[WizardStep.FILTERS] == "3 filters"
 
 
 # ---------------------------------------------------------------------------

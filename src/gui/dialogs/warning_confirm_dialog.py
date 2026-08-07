@@ -3,8 +3,7 @@
 Shared replacement for plain `QMessageBox.question()` confirmations that
 warn about a state-changing or destructive action -- gives every such
 confirmation the same `make_warning_box()` yellow-bordered treatment already
-used by DevicePickerDialog and QuickSetupDialog, instead of an unstyled
-native message box.
+used by DevicePickerDialog, instead of an unstyled native message box.
 """
 
 from __future__ import annotations

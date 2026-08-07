@@ -193,16 +193,80 @@ class TestPresetsDeviceViewActiveHighlight:
         assert not item2.font().bold()
 
     def test_no_active_name_no_item_styled(self, qtbot) -> None:
-        """An empty active_name (default) styles nothing."""
+        """Not specifying active_name (None default) styles nothing and
+        shows no synthetic "Custom" row -- distinct from active_name=""."""
         view = PresetsDeviceView()
         qtbot.addWidget(view)
 
         view.set_peq_presets(_make_peq_presets(3))
 
+        assert view._peq_list.count() == 3
         for i in range(view._peq_list.count()):
             item = view._peq_list.item(i)
             assert "(active)" not in item.text()
             assert not item.font().bold()
+
+    def test_empty_active_name_shows_custom_row(self, qtbot) -> None:
+        """active_name="" (the device confirmed no saved preset matches the
+        live config) prepends a synthetic "Custom" row, styled active and
+        selectable like any other row (#165c)."""
+        from PySide6.QtCore import Qt
+
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(
+            _make_peq_presets(2), active_name="", active_channel_mode="L/R"
+        )
+
+        assert view._peq_list.count() == 3
+        custom_item = view._peq_list.item(0)
+        assert custom_item.text().startswith("Custom")
+        assert "[L/R]" in custom_item.text()
+        assert "(active)" in custom_item.text()
+        assert custom_item.font().bold()
+        assert custom_item.flags() & Qt.ItemFlag.ItemIsSelectable
+        assert custom_item.data(Qt.ItemDataRole.UserRole).is_custom
+
+        # The real presets are unaffected -- neither is marked active or custom.
+        for i in (1, 2):
+            item = view._peq_list.item(i)
+            assert "(active)" not in item.text()
+            assert not item.data(Qt.ItemDataRole.UserRole).is_custom
+
+    def test_custom_row_selectable_but_disables_delete(self, qtbot) -> None:
+        """The synthetic "Custom" row is selectable -- Export/Save/Copy all
+        work on it via a plain live read (#165c) -- but Delete is disabled
+        whenever it's part of the selection, since there's no saved preset
+        on the device to delete."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(2), active_name="")
+        custom_item = view._peq_list.item(0)
+        assert custom_item.text().startswith("Custom")
+
+        custom_item.setSelected(True)
+
+        selected_items = view._get_all_selected_items()
+        assert len(selected_items) == 1
+        assert selected_items[0].is_custom
+        assert view._export_btn.isEnabled()
+        assert view._save_btn.isEnabled()
+        assert view._copy_btn.isEnabled()
+        assert not view._delete_btn.isEnabled()
+
+        # Selecting everything (Custom + the 2 real presets) still disables
+        # Delete -- a mixed batch delete can't operate on the custom item.
+        view._peq_list.selectAll()
+        assert len(view._get_all_selected_items()) == 3
+        assert not view._delete_btn.isEnabled()
+
+        # Deselecting Custom, leaving only real presets, re-enables Delete.
+        custom_item.setSelected(False)
+        assert all(not item.is_custom for item in view._get_all_selected_items())
+        assert view._delete_btn.isEnabled()
 
     def test_active_name_matching_nothing_styles_nothing(self, qtbot) -> None:
         """An active_name that doesn't match any item styles nothing (e.g. the
@@ -216,6 +280,68 @@ class TestPresetsDeviceViewActiveHighlight:
             item = view._peq_list.item(i)
             assert "(active)" not in item.text()
             assert not item.font().bold()
+
+    def test_active_peq_item_shows_eq_off_qualifier(self, qtbot) -> None:
+        """active_enabled=False on the active PEQ preset's own source shows
+        "(active, PEQ off)" instead of plain "(active)" -- the device
+        reports a Name independent of whether PEQ is actually toggled on
+        for that source."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        presets = _make_peq_presets(2)
+        view.set_peq_presets(presets, active_name="PEQ Preset 2", active_enabled=False)
+
+        item2 = view._peq_list.item(1)
+        assert "(active, PEQ off)" in item2.text()
+        assert "(active)" not in item2.text().replace("(active, PEQ off)", "")
+        # Still styled as active (bold/accent) -- off just qualifies the text.
+        assert item2.font().bold()
+
+        # Non-active items are unaffected.
+        item1 = view._peq_list.item(0)
+        assert "(active" not in item1.text()
+
+    def test_custom_row_shows_eq_off_qualifier(self, qtbot) -> None:
+        """The synthetic "Custom" row also gets the "PEQ off" qualifier when
+        the source it reflects has PEQ toggled off."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(
+            _make_peq_presets(1), active_name="", active_enabled=False
+        )
+
+        custom_item = view._peq_list.item(0)
+        assert custom_item.text().startswith("Custom")
+        assert "(active, PEQ off)" in custom_item.text()
+
+    def test_active_roomfit_item_shows_eq_off_qualifier(self, qtbot) -> None:
+        """Same qualifier convention applies to the RoomFit list, reading
+        "RoomFit off" instead of "PEQ off" (RoomFit's own toggle scope)."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        profiles = _make_roomfit_profiles(2)
+        view.set_roomfit_profiles(
+            profiles, active_name="RoomFit Profile 1", active_enabled=False
+        )
+
+        item1 = view._roomfit_list.item(0)
+        assert "(active, RoomFit off)" in item1.text()
+        item2 = view._roomfit_list.item(1)
+        assert "(active" not in item2.text()
+
+    def test_eq_off_qualifier_defaults_to_omitted(self, qtbot) -> None:
+        """active_enabled defaults to True (the pre-existing behavior) --
+        callers that don't know/care about EQStat get plain "(active)"."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(_make_peq_presets(2), active_name="PEQ Preset 1")
+        item1 = view._peq_list.item(0)
+        assert item1.text().endswith("(active)")
+        assert "PEQ off" not in item1.text()
 
 
 class TestPresetsDeviceViewSearch:
@@ -273,7 +399,6 @@ class TestPresetsDeviceViewSelection:
         view._peq_list.clearSelection()
         assert not view._export_btn.isEnabled()
         assert not view._save_btn.isEnabled()
-        assert not view._load_btn.isEnabled()
         assert not view._copy_btn.isEnabled()
         assert not view._delete_btn.isEnabled()
 
@@ -290,19 +415,6 @@ class TestPresetsDeviceViewSelection:
         assert view._save_btn.isEnabled()
         assert view._copy_btn.isEnabled()
         assert view._delete_btn.isEnabled()
-        # Load into Editor requires single selection
-        assert not view._load_btn.isEnabled()
-
-    def test_single_select_enables_load_button(self, qtbot) -> None:
-        """Selecting a single item enables the Load into Editor button."""
-        view = PresetsDeviceView()
-        qtbot.addWidget(view)
-        view.show()
-
-        view.set_peq_presets(_make_peq_presets(3))
-        view._peq_list.setCurrentRow(0)
-
-        assert view._load_btn.isEnabled()
 
 
 class TestPresetsDeviceViewSignals:
@@ -335,21 +447,6 @@ class TestPresetsDeviceViewSignals:
             view._save_btn.click()
 
         assert len(blocker.args[0]) == 1
-
-    def test_load_into_editor_signal(self, qtbot) -> None:
-        """Clicking Load emits load_into_editor with the single selected item."""
-        view = PresetsDeviceView()
-        qtbot.addWidget(view)
-        view.show()
-
-        presets = _make_peq_presets(3)
-        view.set_peq_presets(presets)
-        view._peq_list.setCurrentRow(1)
-
-        with qtbot.waitSignal(view.load_into_editor, timeout=1000) as blocker:
-            view._load_btn.click()
-
-        assert blocker.args[0].name == "PEQ Preset 2"
 
     def test_copy_to_device_requested_signal(self, qtbot) -> None:
         """Clicking Copy emits copy_to_device_requested with selected items."""
@@ -538,24 +635,6 @@ class TestMyPresetsViewRename:
 class TestMyPresetsViewContextMenu:
     """Tests for context menu actions and signal emission."""
 
-    def test_load_requested_signal(self, qtbot) -> None:
-        """load_requested signal emits with the Profile object."""
-        view = MyPresetsView()
-        qtbot.addWidget(view)
-        view.show()
-
-        profile = _make_profile("My EQ")
-        view.set_presets([profile])
-
-        view._list_widget.setCurrentRow(0)
-        item = view._list_widget.item(0)
-        stored_profile = item.data(Qt.ItemDataRole.UserRole)
-
-        with qtbot.waitSignal(view.load_requested, timeout=1000) as blocker:
-            view.load_requested.emit(stored_profile)
-
-        assert blocker.args[0].name == "My EQ"
-
     def test_delete_requested_signal(self, qtbot) -> None:
         """delete_requested signal emits with the correct preset name."""
         view = MyPresetsView()
@@ -640,11 +719,10 @@ class TestMyPresetsViewToolbarLayout:
         assert view._toolbar.y() > y_at_500
 
     def test_toolbar_button_order(self, qtbot) -> None:
-        """Toolbar buttons are ordered Load, Copy to Another Device, Rename,
-        Duplicate, Delete -- grouping the two "send this preset somewhere"
-        actions (Load into Editor, Copy to Another Device) together right
-        after each other, ahead of the local Rename/Duplicate edits, with
-        the destructive Delete last."""
+        """Toolbar buttons are ordered Copy to Another Device (the primary
+        "send this preset somewhere" action -- loading now happens via the
+        Filters step's Local Library option instead of a toolbar button
+        here), Rename, Duplicate, with the destructive Delete last."""
         view = MyPresetsView()
         qtbot.addWidget(view)
 
@@ -655,7 +733,6 @@ class TestMyPresetsViewToolbarLayout:
         buttons = [w for w in buttons if w is not None]
 
         assert buttons == [
-            view._load_btn,
             view._copy_btn,
             view._rename_btn,
             view._duplicate_btn,
@@ -663,10 +740,10 @@ class TestMyPresetsViewToolbarLayout:
         ]
 
     def test_context_menu_action_order_matches_toolbar(self, qtbot) -> None:
-        """Context menu action order matches the toolbar's: Load, Copy to
-        Another Device, Rename, Duplicate, Delete. Built via
-        _build_context_menu() directly (not _show_context_menu()) since
-        QMenu.exec()'s real modal popup isn't safely mockable headlessly."""
+        """Context menu action order matches the toolbar's: Copy to Another
+        Device, Rename, Duplicate, Delete. Built via _build_context_menu()
+        directly (not _show_context_menu()) since QMenu.exec()'s real modal
+        popup isn't safely mockable headlessly."""
         view = MyPresetsView()
         qtbot.addWidget(view)
 
@@ -677,7 +754,6 @@ class TestMyPresetsViewToolbarLayout:
 
         action_texts = [a.text() for a in menu.actions() if not a.isSeparator()]
         assert action_texts == [
-            "Load",
             "Copy to Another Device",
             "Rename",
             "Duplicate",
