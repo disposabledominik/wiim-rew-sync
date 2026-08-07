@@ -43,7 +43,7 @@ pip-audit                                            # dependency vulnerability 
 
 | Gate | Result | Notes |
 |------|--------|-------|
-| Full test suite (`pytest --no-header -q`) | ☑ Pass ☐ Fail | total / passed / failed: 1662 / 1662 / 0 |
+| Full test suite (`pytest --no-header -q`) | ☑ Pass ☐ Fail | total / passed / failed: 1715 / 1715 / 0 |
 | `src/translator/` coverage ≥ 90% | ☑ Pass ☐ Fail | actual %: 96.89% |
 | `ruff check src/` | ☑ Pass ☐ Fail | |
 | `mypy src/` | ☑ Pass ☐ Fail | |
@@ -52,12 +52,7 @@ pip-audit                                            # dependency vulnerability 
 
 Do not carry forward numbers from a previous sign-off — re-run every gate fresh.
 
-**Note:** the gate results above were recorded against commit `7cce614` (2026-08-02). PR #19's
-subsequent commits (`0d58373`, `ed0bcd7`) added ~8 new test cases and behavior changes on top of
-that; those were verified via the targeted + broader regression suite documented in the PR
-(`test_wizard_controller.py`, `test_smoke_regression_wizard.py`, and 8 other files — 375 passed),
-`ruff check`, and `mypy`, not by re-running the full 1662-test suite fresh. Re-run this table's
-gates fully before the next sign-off rather than carrying these numbers forward.
+**Note:** the gate results above were recorded against commit `5d3f373` (2026-08-07).
 
 ---
 
@@ -213,13 +208,16 @@ gates fully before the next sign-off rather than carrying these numbers forward.
 - [P] If the live PEQ config doesn't match any saved preset, a "Custom" row appears at the top of
   the list, marked "(active)"; selecting it and clicking "Load Preset" loads the live PEQ bands for
   the currently selected source(s) and advances to Review
-- [P] On a device without PEQ-profile-enumeration support (a capability-file or hardware limitation,
+- [F] On a device without PEQ-profile-enumeration support (a capability-file or hardware limitation,
   not a UI toggle — see a device with `supports_profile_enumeration: false`), "Custom" is the only
   PEQ row shown (RoomFit profiles, if any, still list normally) — confirm this by temporarily
   forcing that capability off via a capability-file override rather than real hardware if no such
   device is on hand
-- [P] Same "Custom"-only-row behavior confirmed in "Presets on Device" (sidebar) for the same
+- [F] Same "Custom"-only-row behavior confirmed in "Presets on Device" (sidebar) for the same
   device — previously this showed "Device presets not available on this model" instead
+  NOTE BY TESTER: I've added `supports_profile_enumeration: false` to the capability file of WiiM Mini 
+  and result is an empty preset list in "Presets on Device" view and "No presets found on device" in 
+  "Filters" view.
 
 ### Test 13: My Saved Presets
 - [P] Sidebar "My Saved Presets" navigates to presets library
@@ -247,17 +245,19 @@ gates fully before the next sign-off rather than carrying these numbers forward.
   visible change — this is by design, not a bug
 - [P] Help > User Guide opens help panel overlay; ✕ button and Escape both close it
 - [P] Step indicator: clicking a completed step navigates back to it
-- [ ] Browsing back to a completed step is non-destructive: checkmarks, summaries, and loaded
+- [P] Browsing back to a completed step is non-destructive: checkmarks, summaries, and loaded
   filters all survive; the browsed step's pill shows the outlined "viewing" style while the
   frontier step's pill stays filled/active and is clickable to jump forward again
-- [ ] Changing an answer invalidates only downstream steps: picking a different EQ type clears the
+- [F] Changing an answer invalidates only downstream steps: picking a different EQ type clears the
   checkmarks *and* the loaded filters of every step after it; changing the source selection or
   channel mode clears downstream checkmarks; re-picking the same answer clears nothing
-- [P] Selecting a new device (back to Connect) resets the flow steps (Connect, EQ Type, Source, Filters, Review, Push)
-- [ ] Selecting a different device while unpushed filter work is loaded (including work that exists
+  NOTE BY TESTER: When navigating back from "Push" page to "Filters", selecting a different filter and clicking "Continue" ste subsequent steps don't get reset.
+- [F] Selecting a new device (back to Connect) resets the flow steps (Connect, EQ Type, Source, Filters, Review, Push)
+  NOTE BY TESTER: After finishing a dry run in PEQ mode, then navigating back to Connect and choosing another device, "Source" step remained checked (with all others unchecked).
+- [P] Selecting a different device while unpushed filter work is loaded (including work that exists
   only in the L/R per-channel lists) shows a confirmation prompt first; declining keeps the current
   device and state untouched
-- [ ] Clicking the device name in the sidebar opens a read-only device-info dialog (name, model,
+- [P] Clicking the device name in the sidebar opens a read-only device-info dialog (name, model,
   IP, capability warning if any) — it does not navigate to the Connect step
 
 ### Test 15: Settings
@@ -377,9 +377,9 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 
 | Field | Value |
 |-------|-------|
-| Date | 02.08.2026. |
+| Date | 07.08.2026. |
 | Tester | disposabledominik |
-| App version (Help > About, or `wiim-rew-sync --version`) | v0.6.0 |
+| App version (Help > About, or `wiim-rew-sync --version`) | v0.8.0 |
 | Environment (OS, Python version) | Win11, Python 3.12.3 |
 | Devices tested against (model, firmware) | WiiM Sound 5.2.820956, WiiM Amp Ultra 5.2.820839, WiiM Mini 4.6.819436 |
 | REW available for testing? | ☑ Yes ☐ No |
@@ -389,17 +389,26 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 | Check | Status |
 |-------|--------|
 | All automated quality gates (§2) pass | ☑ |
-| All applicable manual tests (§4) pass, or failures logged with issue numbers | ☑ |
+| All applicable manual tests (§4) pass, or failures logged with issue numbers | ☐ |
 | Every scenario in the traceability matrix (§5) resolves to a passing test or a documented, waived gap | ☑ |
 | No open, unwaived scenario gaps | ☑ |
 
-**Overall: ☑ PASS — ready to release ☐ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
+**Overall: ☐ PASS — ready to release ☑ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
 
 Waived gaps / blockers:
-
+1) Highlighted entry styling in "Filters" page "Device" and "Local Library" tables doesn't match the rest of the app (e.g. REW API, Presets on Device, My Saved Presets). They should be aligned to the rest of the app.
+2) RoomFit flow "Push" page in "Dry run" mode shows stale sources from previous PEQ run. E.g. "Dry run complete: 20 bands validated for wifi, bluetooth, auxIn (L/R). No changes were written to device.". In case of initial run it will say "Dry run complete: 20 bands validated for wifi (L/R). No changes were written to device."
+So it always states a source, even though RoomFit isn't applied per source at all. This is misleading.
+3) "Presets on device" and "Filters" step "Device" list "Custom" entry looks at what preset is active on the source selected in the "Source" step, not what is on the currently active input on the device.
+4) The `supports_profile_enumeration: false` in the capability file result is an empty preset list in "Presets on Device" view and "No presets found on device" in "Filters" view. Not in line with the expectation set in test 12a.
+5) Named presets/profiles don't accept non-english alphabet letters (e.g. slavic languages). Wiim devices accept these in the WiiM Home app.
+6) There's no multi-select in "My Saved Presets" view.
+7) Pressing "Enter" close the "User Guide" window. It doesn't close the "Diagnostic" window.
+8) When navigating back from "Push" page to "Filters", selecting a different filter and clicking "Continue" the subsequent steps don't get reset.
+9) After finishing a dry run in PEQ mode, then navigating back to Connect and choosing another device, "Source" step remained checked (with all others unchecked).
 
 ---
 
 Signed off by: disposabledominik
 
-Date: 02.08.2026.
+Date: 07.08.2026.
