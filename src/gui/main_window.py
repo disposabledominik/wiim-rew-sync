@@ -1177,12 +1177,22 @@ class MainWindow(QMainWindow):
     def _on_device_item_selected(self, item: object) -> None:
         """Handle a Device-panel merged-list selection from FiltersPage.
 
-        Branches on the selected PresetItem's own preset_type -- not the
-        wizard's current flow_type -- since the merged list intentionally
-        offers both PEQ presets and RoomFit profiles regardless of which
-        flow is active (a saved preset's origin doesn't have to match the
-        flow pushing it; the Canonical Filter Model doesn't care which
-        device API wrote it).
+        Reads (which device API is called to fetch filters) branch on the
+        selected PresetItem's own preset_type -- not the wizard's current
+        flow_type -- since the merged list intentionally offers both PEQ
+        presets and RoomFit profiles regardless of which flow is active (a
+        saved preset's origin doesn't have to match the flow pushing it;
+        the Canonical Filter Model doesn't care which device API wrote it).
+
+        The eventual *write* path (_do_push) does key off flow_type, though
+        -- so picking an item whose type disagrees with the active flow
+        must sync flow_type to match, or Push would later write a RoomFit
+        profile through the PEQ path (or vice versa). Only touches flow_type
+        when it actually needs to change, and never downgrades PEQ_ONLY
+        (RoomFit-incapable devices) to plain PEQ: a RoomFit item can only
+        ever appear in this list when supports_roomfit is true, which is
+        mutually exclusive with PEQ_ONLY, so PEQ_ONLY only needs protecting
+        on the "PEQ item picked" branch.
 
         No wizard-state pre-check (EQ type / source chosen) needed here --
         with QuickSetupDialog gone, this handler is only reachable from the
@@ -1206,6 +1216,12 @@ class MainWindow(QMainWindow):
 
         if not self._confirm_preset_preview([item]):
             return
+
+        current_flow = self._wizard_controller.flow_type
+        if preset_type == "RoomFit" and current_flow != FlowType.ROOMFIT:
+            self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
+        elif preset_type != "RoomFit" and current_flow == FlowType.ROOMFIT:
+            self._wizard_controller.set_flow_type(FlowType.PEQ)
 
         self._apply_channel_mode_from_item(item)
         self._status_banner.show_progress(f"Loading preset '{name}'...")

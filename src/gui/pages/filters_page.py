@@ -57,7 +57,7 @@ from src.gui.constants import (
     SPACING_SM,
 )
 from src.gui.views.my_presets_view import _PresetItemWidget
-from src.gui.views.presets_device_view import PresetItem, build_peq_rows
+from src.gui.views.presets_device_view import PresetItem, build_peq_rows, build_roomfit_rows
 from src.gui.views.rew_pull_view import RewPullView
 from src.gui.wizard_controller import FiltersSource
 from src.models.profile import Profile
@@ -874,14 +874,12 @@ class FiltersPage(QWidget):
             for item, is_active, is_eq_off in peq_rows
         ]
         combined += [
-            (
-                item,
-                item.name == self._device_active_roomfit_name,
-                item.name == self._device_active_roomfit_name
-                and not self._device_active_roomfit_enabled,
-                item,
+            (item, is_active, is_eq_off, item)
+            for item, is_active, is_eq_off in build_roomfit_rows(
+                self._device_roomfit_items,
+                self._device_active_roomfit_name,
+                self._device_active_roomfit_enabled,
             )
-            for item in self._device_roomfit_items
         ]
         self._device_empty_label.setVisible(not combined)
         self._device_list.setVisible(bool(combined))

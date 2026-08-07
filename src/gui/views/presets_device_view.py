@@ -115,6 +115,27 @@ def build_peq_rows(
     return rows
 
 
+def build_roomfit_rows(
+    items: list[PresetItem],
+    active_name: str,
+    active_enabled: bool = True,
+) -> list[tuple[PresetItem, bool, bool]]:
+    """RoomFit items paired with (is_active, is_eq_off) flags.
+
+    No synthetic row is ever prepended here, unlike build_peq_rows -- RoomFit
+    has no "live but unnamed" concept distinct from its named profiles, only
+    ever a currently-active one among them. active_enabled reflects
+    RoomFit's global on/off toggle, mirroring build_peq_rows's active_enabled
+    semantics. Shared by PresetsDeviceView and FiltersPage's merged Device
+    list so the active/eq-off rule can't drift between the two call sites,
+    same rationale as build_peq_rows (#165c).
+    """
+    return [
+        (item, item.name == active_name, item.name == active_name and not active_enabled)
+        for item in items
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Main view widget
 # ---------------------------------------------------------------------------
@@ -502,11 +523,12 @@ class PresetsDeviceView(QWidget):
         # Show search field when > 10 items (Req 10.9)
         self._roomfit_search.setVisible(len(self._roomfit_items) > 10)
 
-        for item in self._roomfit_items:
+        rows = build_roomfit_rows(
+            self._roomfit_items, self._active_roomfit_name, self._active_roomfit_enabled
+        )
+        for item, is_active, is_eq_off in rows:
             if filter_text and filter_text.lower() not in item.name.lower():
                 continue
-            is_active = item.name == self._active_roomfit_name
-            is_eq_off = is_active and not self._active_roomfit_enabled
             list_item = build_preset_list_item(item, is_active, is_eq_off)
             self._roomfit_list.addItem(list_item)
 
