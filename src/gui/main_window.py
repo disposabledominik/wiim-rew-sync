@@ -926,6 +926,14 @@ class MainWindow(QMainWindow):
             # is never contaminated by device A's, until
             # populate_name_profiles() re-fetches device B's real status.
             self._roomfit_enabled = False
+            # _confirm_filters_selection()'s own change-detection cache:
+            # already harmless without this (the first filter load on
+            # device B always differs in value from whatever device A last
+            # confirmed, so invalidate_after(FILTERS) still fires
+            # correctly), but reset it explicitly anyway so the cache can
+            # never silently carry meaning across a device switch if its
+            # comparison logic changes later.
+            self._last_confirmed_filters_signature = None
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
         self._wiim_http_client = self._wiim_http_client_factory(device_ip)
@@ -1132,6 +1140,18 @@ class MainWindow(QMainWindow):
         trigger a truncation/clamping warning, i.e. almost all of them.
         """
         state = self._wizard_controller.state
+        # Value comparison, not identity: CanonicalFilter is an unfrozen
+        # pydantic BaseModel with no custom __eq__, so its auto-generated
+        # one compares fields, and tuple.__eq__ compares element-wise -- two
+        # distinct CanonicalFilter objects with identical field values (e.g.
+        # from re-importing the same file twice) already compare equal, so
+        # that case correctly does NOT invalidate. The one known imprecision
+        # is float exactness: a value that round-trips through JSON and
+        # comes back sub-epsilon different from the original would compare
+        # unequal here even though utils/fp_compare's tolerance would call
+        # it the same filter -- accepted as a safe-side false positive
+        # (an extra invalidation, never a missed one), not worth pulling in
+        # fp_compare's write-verification tolerance for this comparison.
         new_signature = (
             tuple(state.current_filters),
             tuple(state.filters_l),
@@ -3486,6 +3506,9 @@ class MainWindow(QMainWindow):
             except Exception:
                 logger.warning("Failed to delete local preset %r", name, exc_info=True)
 
+        # Refresh regardless of partial failure: succeeded deletes already
+        # changed repo state, and showing stale UI (presets that no longer
+        # exist still listed) is worse than one extra read.
         self._refresh_presets_view()
         failed = len(names) - succeeded
         if failed:

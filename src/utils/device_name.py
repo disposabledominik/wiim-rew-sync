@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import re
 
-# \w is Unicode-aware for `str` patterns (default in Python 3) -- matches
-# any Unicode letter/digit plus underscore, not just ASCII (docs/corrections.md,
-# 2026-08-07: the device accepts non-Latin-alphabet letters, e.g. Cyrillic).
-_ALLOWED_NAME_CHARS = re.compile(r"[^\w\- ]", re.UNICODE)
+# \w is Unicode-aware for `str` patterns (default in Python 3, re.UNICODE
+# is a no-op here and not worth passing) -- matches any Unicode letter/digit
+# plus underscore, not just ASCII (docs/corrections.md, 2026-08-07: the
+# device accepts non-Latin-alphabet letters, e.g. Cyrillic).
+_ALLOWED_NAME_CHARS = re.compile(r"[^\w\- ]")
 
 #: User-facing description of the allowed character set, for warning text.
 DEVICE_NAME_RULE_TEXT = "letters (any language), numbers, spaces, - and _"
