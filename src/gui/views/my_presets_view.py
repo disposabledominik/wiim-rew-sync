@@ -161,8 +161,15 @@ class MyPresetsView(QWidget):
         content_layout, content = build_centered_content(self)
         content_layout.setSpacing(SPACING_MD)
 
-        # Title
+        # Title — pinned to its sizeHint so it doesn't absorb leftover
+        # vertical space (same convention as PresetsDeviceView: QLabel's
+        # default vertical-center-eligible Preferred policy would otherwise
+        # let the title, the empty-state label, and the toolbar each grab
+        # an uneven, inflated share of any leftover space whenever the list
+        # is hidden -- smoke #267 follow-up, only became visible once the
+        # step indicator's height was reclaimed on this view).
         title = make_page_title("My Saved Presets", content, object_name="MyPresetsTitle")
+        title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         content_layout.addWidget(title)
 
         # Search/filter field (hidden until > 10 items)
@@ -191,21 +198,32 @@ class MyPresetsView(QWidget):
         self._list_widget.itemSelectionChanged.connect(self._on_selection_changed)
         content_layout.addWidget(self._list_widget, 1)
 
-        # Empty state label
+        # Empty state label — Expanding so it (not the title or toolbar)
+        # absorbs the leftover vertical space while it's the only content
+        # shown (list hidden), letting its AlignCenter treatment actually
+        # center the message in the available page area -- same convention
+        # as PresetsDeviceView's empty-state widget.
         self._empty_label = QLabel("No saved presets yet.", content)
         self._empty_label.setObjectName("MyPresetsEmpty")
         self._empty_label.setProperty("class", "secondary")
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
         self._empty_label.setVisible(False)
         content_layout.addWidget(self._empty_label)
 
         # Action toolbar (visible when an item is selected), bottom-anchored
-        # below the list. Order: Copy to Another Device first (the primary
-        # "send this preset somewhere" action -- loading a preset now
-        # happens via the Filters step's Local Library option instead of a
-        # toolbar button here), then the local Rename/Duplicate edits, with
-        # the destructive Delete last.
+        # below the list -- pinned to its sizeHint (like the title above)
+        # so it stays a single button row immediately below the list/empty
+        # state rather than also competing for leftover vertical space.
+        # Order: Copy to Another Device first (the primary "send this
+        # preset somewhere" action -- loading a preset now happens via the
+        # Filters step's Local Library option instead of a toolbar button
+        # here), then the local Rename/Duplicate edits, with the
+        # destructive Delete last.
         self._toolbar = QWidget(content)
+        self._toolbar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         toolbar_layout = QHBoxLayout(self._toolbar)
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
         toolbar_layout.setSpacing(SPACING_SM)

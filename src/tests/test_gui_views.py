@@ -762,6 +762,35 @@ class TestMyPresetsViewToolbarLayout:
 
         assert view._toolbar.y() > y_at_500
 
+    def test_toolbar_stays_at_bottom_with_empty_list(self, qtbot) -> None:
+        """The same bottom-anchoring must hold with no saved presets (list
+        hidden, empty-state label shown in its place) -- previously only
+        the list's own stretch factor claimed leftover vertical space, so
+        with the list hidden and no other widget explicitly claiming it,
+        Qt split the leftover space between the empty label and the
+        toolbar instead, inflating both and pushing the toolbar down the
+        page rather than pinning it to the bottom (smoke #267 follow-up:
+        the effect was small enough to go unnoticed until the wizard's
+        step-indicator row was reclaimed on this view, giving it enough
+        extra height to make the drift obvious)."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.resize(600, 500)
+        view.show()
+        view.set_presets([])
+        qtbot.wait(20)
+        y_at_500 = view._toolbar.y()
+        height_at_500 = view._toolbar.height()
+
+        view.resize(600, 900)
+        qtbot.wait(20)
+
+        assert view._toolbar.y() > y_at_500
+        # The toolbar must stay pinned to its natural height regardless of
+        # how much extra space the view is given -- only the empty label
+        # should grow.
+        assert view._toolbar.height() == height_at_500
+
     def test_toolbar_button_order(self, qtbot) -> None:
         """Toolbar buttons are ordered Copy to Another Device (the primary
         "send this preset somewhere" action -- loading now happens via the
