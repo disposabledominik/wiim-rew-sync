@@ -36,6 +36,9 @@ python3 -m ruff check src/
 python3 -m mypy src/translator src/models   # strict mode lives here
 python3 -m mypy src/   # complete type check — zero-error gate, run before calling a task done
 
+# Dead code scan (periodic/after a refactor, not a CI gate — see Code quality discipline below)
+python3 scripts/find_dead_code.py
+
 # Install deps (only if pyproject.toml changed)
 pip3 install -e ".[dev]"
 
@@ -108,6 +111,34 @@ code, actively guard against both:
 - **If a change alters a cross-cutting convention** (merge strategy, the wizard's invalidation
   model, a data contract, a naming pattern), `grep`/search `docs/`, `scripts/`, CI workflows, and
   tests for anything assuming the old behavior, and fix it in the same change — not a follow-up.
+
+### Dead code detection
+
+Run `python3 scripts/find_dead_code.py` (needs `vulture`, in the `dev` extra) periodically or
+after a refactor — **not** as a CI gate, since every hit needs a human to triage, not just a
+pass/fail check. A plain `vulture` run misses/mis-flags things in ways specific to this codebase;
+the script exists to correct for three found-in-practice blind spots (full detail in its own
+docstring):
+
+1. **Test-only reachable** — a method whose only real caller is its own unit test looks "used" to
+   any reference-counting tool. The script excludes `src/tests/` from the scan itself, not just
+   from counting as a use, which is what catches this.
+2. **Dynamic dispatch** — `MainWindow._forward_to_preset_views()` calls
+   `getattr(view, method_name)(*args)` with a string name, leaving no literal `.method_name(` for
+   `vulture` (or a plain grep) to find. The script also checks each flagged name against every
+   quoted string literal in the codebase before trusting a "no references" verdict.
+3. **Cross-class name collision** — `vulture` matches by attribute name only, not by receiver
+   type: one genuinely-used class's method clears the name for every other class that happens to
+   share it (this is exactly how `FiltersPage.show_error()` stayed invisible while
+   `StatusBanner.show_error()` — a different, real, everywhere-used method — existed). Can't be
+   fully automated without real type inference, so the script instead lists every method name
+   shared by 2+ GUI classes as a "verify each class's own call sites by hand" set.
+
+A clean run is not proof nothing is dead, and a flagged symbol is not proof it's safe to delete —
+before removing anything, check for a code comment or a `docs/backlog.md`/`docs/smoke_test_issues.md`
+entry documenting a deliberate keep (e.g. cheap fallback infra, backend support for a
+declined-for-now feature). If you confirm one, add it to the script's `_KNOWN_INTENTIONAL_KEEPS`
+with a citation so it stops being re-flagged, rather than deleting it or re-triaging it next time.
 
 ## Domain rules (non-negotiable)
 
