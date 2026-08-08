@@ -1166,6 +1166,9 @@ class MainWindow(QMainWindow):
     def _on_filters_accepted(self) -> None:
         """Handle user accepting filters (with or without warnings) — advance."""
         state = self._wizard_controller.state
+        # Order matters: invalidate first (may clear REVIEW/PUSH), then
+        # advance (re-marks FILTERS complete) -- same order at the other two
+        # _confirm_filters_selection() call sites.
         self._confirm_filters_selection()
 
         summary = self._resolve_filters_summary(len(state.current_filters))
@@ -3511,9 +3514,9 @@ class MainWindow(QMainWindow):
             except Exception:
                 logger.warning("Failed to delete local preset %r", name, exc_info=True)
 
-        # Refresh regardless of partial failure: succeeded deletes already
-        # changed repo state, and showing stale UI (presets that no longer
-        # exist still listed) is worse than one extra read.
+        # Refresh unconditionally: even on total failure the repo may have
+        # changed (e.g. a concurrent rename), and stale UI is worse than
+        # one extra read.
         self._refresh_presets_view()
         failed = len(names) - succeeded
         if failed:

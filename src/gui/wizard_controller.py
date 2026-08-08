@@ -478,11 +478,15 @@ class WizardController(QObject):
 
         old_sequence = self.get_steps()
         new_sequence = steps_for_flow(flow_type)
-        common_len = 0
-        for old_step, new_step in zip(old_sequence, new_sequence, strict=False):
+        # Default (loop runs to exhaustion, no break): the shorter of the two
+        # sequences matched in full -- min(), not len(old_sequence), so a
+        # new_sequence shorter than old_sequence still invalidates the extra
+        # old steps below via the `<` check, not just a longer-or-equal one.
+        common_len = min(len(old_sequence), len(new_sequence))
+        for i, (old_step, new_step) in enumerate(zip(old_sequence, new_sequence, strict=False)):
             if old_step != new_step:
+                common_len = i
                 break
-            common_len += 1
         if common_len < len(old_sequence):
             self.invalidate_from(old_sequence[common_len])
 

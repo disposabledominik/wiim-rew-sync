@@ -424,7 +424,7 @@ class MyPresetsView(QWidget):
         profile: Profile = item.data(Qt.ItemDataRole.UserRole)
         selected = self._list_widget.selectedItems()
         if item in selected and len(selected) > 1:
-            delete_targets = [i.data(Qt.ItemDataRole.UserRole) for i in selected]
+            delete_targets = self._get_selected_profiles()
         else:
             delete_targets = [profile]
         is_batch = len(delete_targets) > 1

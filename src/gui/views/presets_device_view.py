@@ -142,6 +142,11 @@ def build_peq_rows(
                 0,
                 (
                     build_custom_peq_item(active_channel_mode, active_name),
+                    # Always active: items is [] whenever enumeration_supported
+                    # is False, so this synthetic row is the only row and is
+                    # by definition the active one -- unlike the enumeration-
+                    # supported branch above, there's no other row to compare
+                    # active_name against.
                     True,
                     not active_enabled,
                 ),
