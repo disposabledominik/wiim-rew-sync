@@ -2607,6 +2607,15 @@ class MainWindow(QMainWindow):
     # thin pass-through into PresetsDeviceView that replaced this method's
     # direct widget writes.
 
+    def _forward_to_preset_views(self, method_name: str, *args: object) -> None:
+        """Call the same method with the same args on both views that mirror
+        device PEQ/RoomFit state -- PresetsDeviceView (the sidebar page) and
+        FiltersPage's Device panel -- shared by every
+        PrimaryWorkflowManager preset-fetch signal handler below so a third
+        consumer, if one is ever added, only needs wiring in one place."""
+        getattr(self._presets_device_view, method_name)(*args)
+        getattr(self._filters_page, method_name)(*args)
+
     @Slot(list, object, str, bool, str, bool)
     def _on_peq_presets_ready(
         self,
@@ -2618,15 +2627,8 @@ class MainWindow(QMainWindow):
         enumeration_supported: bool,
     ) -> None:
         """Forward PrimaryWorkflowManager.peq_presets_ready into both consuming views."""
-        self._presets_device_view.set_peq_presets(
-            items,
-            active_name,
-            active_channel_mode,
-            active_enabled,
-            source_name,
-            enumeration_supported,
-        )
-        self._filters_page.set_peq_presets(
+        self._forward_to_preset_views(
+            "set_peq_presets",
             items,
             active_name,
             active_channel_mode,
@@ -2638,22 +2640,19 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_peq_presets_unavailable(self) -> None:
         """Forward PrimaryWorkflowManager.peq_presets_unavailable into both consuming views."""
-        self._presets_device_view.set_peq_unavailable()
-        self._filters_page.set_peq_unavailable()
+        self._forward_to_preset_views("set_peq_unavailable")
 
     @Slot(list, str, bool)
     def _on_roomfit_profiles_ready(
         self, items: list[Any], active_name: str, active_enabled: bool
     ) -> None:
         """Forward PrimaryWorkflowManager.roomfit_profiles_ready into both consuming views."""
-        self._presets_device_view.set_roomfit_profiles(items, active_name, active_enabled)
-        self._filters_page.set_roomfit_profiles(items, active_name, active_enabled)
+        self._forward_to_preset_views("set_roomfit_profiles", items, active_name, active_enabled)
 
     @Slot()
     def _on_roomfit_profiles_hidden(self) -> None:
         """Forward PrimaryWorkflowManager.roomfit_profiles_hidden into both consuming views."""
-        self._presets_device_view.set_roomfit_hidden()
-        self._filters_page.set_roomfit_hidden()
+        self._forward_to_preset_views("set_roomfit_hidden")
 
     @Slot(list, str, bool)
     def _on_name_profiles_ready(
@@ -3577,12 +3576,23 @@ class MainWindow(QMainWindow):
         else:
             self._export_presets_to_folder(items)
 
+    def _preset_item_identity(self, item: object) -> tuple[str, str, bool]:
+        """Return (name, preset_type, is_custom) read off a PresetItem-like
+        object -- the three fields every export/save request tuple needs
+        regardless of how its destination path is computed, read the same
+        way by _export_one_preset_with_dialog, _export_presets_to_folder,
+        and _on_preset_save_requested so the three can't drift on which
+        getattr default they fall back to."""
+        return (
+            getattr(item, "name", ""),
+            getattr(item, "preset_type", "PEQ"),
+            getattr(item, "is_custom", False),
+        )
+
     def _export_one_preset_with_dialog(self, item: object) -> None:
         """Single-item export: existing per-file dialog, exact filename control."""
-        preset_name = getattr(item, "name", "")
-        preset_type = getattr(item, "preset_type", "PEQ")
+        preset_name, preset_type, is_custom = self._preset_item_identity(item)
         channel_mode = getattr(item, "channel_mode", "Stereo")
-        is_custom = getattr(item, "is_custom", False)
 
         # Device-prefixed only for the destination filename -- preset_name
         # itself stays exactly as the device reports it, since it's also the
@@ -3637,18 +3647,11 @@ class MainWindow(QMainWindow):
             logger.debug("Multi-preset export cancelled")
             return
 
-        requests = [
-            (
-                getattr(item, "name", ""),
-                getattr(item, "preset_type", "PEQ"),
-                str(
-                    Path(folder)
-                    / f"{self._device_prefixed_name(getattr(item, 'name', ''))}.txt"
-                ),
-                getattr(item, "is_custom", False),
-            )
-            for item in items
-        ]
+        requests = []
+        for item in items:
+            name, preset_type, is_custom = self._preset_item_identity(item)
+            path = str(Path(folder) / f"{self._device_prefixed_name(name)}.txt")
+            requests.append((name, preset_type, path, is_custom))
         self._status_banner.show_progress(f"Exporting {len(requests)} preset(s)...")
         self._primary_workflows.export_presets(requests)
         logger.info(
@@ -3674,18 +3677,14 @@ class MainWindow(QMainWindow):
         if not self._confirm_preset_preview(items):
             return
 
-        requests = [
-            (
-                getattr(item, "name", ""),
-                getattr(item, "preset_type", "PEQ"),
-                # Device-prefixed only for the locally-saved Profile's name --
-                # preset_name itself stays exactly as the device reports it,
-                # since it's also the on-device lookup key the read uses.
-                self._device_prefixed_name(getattr(item, "name", "")),
-                getattr(item, "is_custom", False),
-            )
-            for item in items
-        ]
+        requests = []
+        for item in items:
+            name, preset_type, is_custom = self._preset_item_identity(item)
+            # Device-prefixed only for the locally-saved Profile's name --
+            # `name` itself stays exactly as the device reports it, since
+            # it's also the on-device lookup key the read uses.
+            local_name = self._device_prefixed_name(name)
+            requests.append((name, preset_type, local_name, is_custom))
         if len(requests) == 1:
             self._status_banner.show_progress(f"Saving '{requests[0][0]}' to My Presets...")
         else:
