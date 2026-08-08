@@ -291,23 +291,26 @@ class TestProfileRecallInvalidatesStalePush:
     This used to be protected by ``_jump_to_review()``, which explicitly
     called ``invalidate_from(WizardStep.REVIEW)`` before jumping -- a
     behavior unique to the old sidebar-jump/QuickSetupDialog shortcuts.
-    ``_on_profile_recalled`` now uses the same plain ``advance()`` every
+    ``_on_profile_recalled`` moved to the same plain ``advance()`` every
     other filters producer (file import, device pull, REW API) already
-    used, and ``advance()`` does not invalidate downstream completions --
-    so a stale PUSH completion left over from lazy invalidation's
-    non-destructive back-browsing (#246) now survives a fresh recall here,
-    exactly as it already does for every other producer. This is a
-    pre-existing gap in the lazy-invalidation model, not something this
-    redesign introduced or is meant to fix -- this test documents the
-    actual (shared) behavior instead of asserting the old
-    sidebar-jump-specific protection that no longer applies to this path.
+    used, and for a while ``advance()`` alone did not invalidate downstream
+    completions -- so a stale PUSH completion left over from lazy
+    invalidation's non-destructive back-browsing (#246) survived a fresh
+    recall here, exactly as it did for every other producer at the time.
+    That gap (tracked as smoke_test_issues.md #268) is now closed:
+    ``_on_profile_recalled`` calls the shared ``_confirm_filters_selection()``
+    helper (also used by ``_on_peq_ready`` and ``_on_filters_accepted``)
+    before advancing, which invalidates downstream steps whenever the
+    recalled filters differ from what Review/Push last saw -- restoring the
+    original #238 invariant this class is named for.
     """
 
-    def test_recall_does_not_clear_stale_push_completion(self, make_window, qtbot) -> None:
-        """Recalling a Local Library profile still lands on Review, but a
-        stale PUSH completion from an earlier, unrelated push is NOT
-        cleared -- matching every other filters producer's plain advance()
-        behavior (see class docstring)."""
+    def test_recall_of_different_filters_clears_stale_push_completion(
+        self, make_window, qtbot
+    ) -> None:
+        """Recalling a Local Library profile with different filters lands on
+        Review AND clears a stale PUSH completion from an earlier, unrelated
+        push (#268) -- restoring the #238 invariant (see class docstring)."""
         window = make_window()
 
         # Simulate a previously completed push (as _on_write_complete would
@@ -322,5 +325,5 @@ class TestProfileRecallInvalidatesStalePush:
         profile = _make_profile(filters=filters, name="Different Profile")
         window._secondary_workflows.recall_profile(profile)
 
-        assert WizardStep.PUSH in window._wizard_controller.completed_steps
+        assert WizardStep.PUSH not in window._wizard_controller.completed_steps
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["review"]
