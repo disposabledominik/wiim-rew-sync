@@ -147,6 +147,26 @@ def _string_literal_hits(name: str) -> list[str]:
     return hits
 
 
+def _test_reference_hits(name: str) -> list[str]:
+    """Grep src/tests/ for `name` as a whole identifier (attribute or bare).
+
+    Tells you which test file:line(s) call a dead-code candidate directly —
+    exactly the repeated pattern this repo hit (show_error()/show_warnings()/
+    set_comparison()/set_error()/reset_to_defaults()/can_push()/etc. all had
+    zero production callers but a real, passing unit test calling them
+    directly). Deleting the production symbol without also touching these
+    lines leaves a NameError/AttributeError waiting in the test suite —
+    this is blind spot #1 from this module's docstring, made actionable.
+    """
+    pattern = re.compile(rf"\b{re.escape(name)}\b")
+    hits = []
+    for path in sorted(_TESTS_DIR.rglob("*.py")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            if pattern.search(line):
+                hits.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: {line.strip()}")
+    return hits
+
+
 def _collect_shared_method_names() -> dict[str, list[str]]:
     """Map every method name defined on 2+ different classes under src/gui.
 
@@ -175,7 +195,8 @@ def main() -> int:
     print("Running vulture against src/ (src/tests/ excluded from the scan)...\n")
     raw_lines = _run_vulture()
 
-    definite: list[str] = []
+    orphaned: list[str] = []
+    test_only: list[tuple[str, list[str]]] = []
     maybe_dynamic: list[tuple[str, list[str]]] = []
     known_keep: list[str] = []
 
@@ -186,15 +207,36 @@ def main() -> int:
         if name in _KNOWN_INTENTIONAL_KEEPS:
             known_keep.append(line)
             continue
-        hits = _string_literal_hits(name)
-        if hits:
-            maybe_dynamic.append((line, hits))
+        prod_hits = _string_literal_hits(name)
+        if prod_hits:
+            maybe_dynamic.append((line, prod_hits))
+            continue
+        test_hits = _test_reference_hits(name)
+        if test_hits:
+            test_only.append((line, test_hits))
         else:
-            definite.append(line)
+            orphaned.append(line)
 
-    print(f"=== {len(definite)} candidate(s) — no string-literal reference found ===")
-    for line in definite:
+    print(
+        f"=== {len(orphaned)} candidate(s) — orphaned everywhere, including "
+        "tests ==="
+    )
+    print("(no production caller, no test caller — safest to delete outright)")
+    for line in orphaned:
         print(line)
+
+    print(
+        f"\n=== {len(test_only)} candidate(s) — dead in production, but "
+        "still called by test(s) ==="
+    )
+    print(
+        "(deleting the production symbol also means removing/updating these "
+        "test lines, or the suite breaks)"
+    )
+    for line, hits in test_only:
+        print(line)
+        for h in hits:
+            print(f"    {h}")
 
     print(
         f"\n=== {len(maybe_dynamic)} candidate(s) — also appear as a string "
@@ -234,7 +276,10 @@ def main() -> int:
         "_KNOWN_INTENTIONAL_KEEPS if so), (4) for GUI page/view public "
         "methods specifically, whether it's a deliberate test-only seam "
         "(e.g. MainWindow's page/view properties) vs. a real orphaned "
-        "feature. See CLAUDE.md's 'Dead code detection' section."
+        "feature, (5) for the 'dead in production, still tested' group, "
+        "whether the test lines listed should be deleted with the symbol or "
+        "rewritten to exercise it a different way. See CLAUDE.md's 'Dead "
+        "code detection' section."
     )
     return 0
 
