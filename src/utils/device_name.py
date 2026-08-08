@@ -19,6 +19,7 @@ attempt fails on a rejected character.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # \w is Unicode-aware for `str` patterns (default in Python 3, re.UNICODE
 # is a no-op here and not worth passing) -- matches any Unicode letter/digit
@@ -30,6 +31,22 @@ _ALLOWED_NAME_CHARS = re.compile(r"[^\w\- ]")
 DEVICE_NAME_RULE_TEXT = "letters (any language), numbers, spaces, - and _"
 
 
+def _normalize(name: str) -> str:
+    """NFC-normalize *name* before matching against `_ALLOWED_NAME_CHARS`.
+
+    `\\w` matches a precomposed accented letter (one codepoint, Unicode
+    category Lu/Ll) but not a combining mark (category Mn) on its own -- an
+    NFD-decomposed name (base letter + separate combining accent, as
+    produced by some IMEs and by macOS's filesystem) would otherwise have
+    its accents silently stripped by `sanitize_device_name`, or be flagged
+    invalid by `has_invalid_device_name_chars`, even though the equivalent
+    NFC form of the same name is accepted untouched. Normalizing first
+    makes both functions agree on any Unicode representation of the same
+    name.
+    """
+    return unicodedata.normalize("NFC", name)
+
+
 def sanitize_device_name(name: str) -> str:
     """Strip characters not accepted by the WiiM device naming API.
 
@@ -38,9 +55,9 @@ def sanitize_device_name(name: str) -> str:
         or trim whitespace left behind by removal -- callers should
         `.strip()` the result themselves if needed.
     """
-    return _ALLOWED_NAME_CHARS.sub("", name)
+    return _ALLOWED_NAME_CHARS.sub("", _normalize(name))
 
 
 def has_invalid_device_name_chars(name: str) -> bool:
     """True if *name* contains a character the device naming API rejects."""
-    return bool(_ALLOWED_NAME_CHARS.search(name))
+    return bool(_ALLOWED_NAME_CHARS.search(_normalize(name)))

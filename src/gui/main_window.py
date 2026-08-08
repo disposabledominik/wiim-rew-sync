@@ -1701,6 +1701,11 @@ class MainWindow(QMainWindow):
         ``_on_capabilities_ready``, but skipping it here avoids the wasted
         network round-trip entirely -- smoke #266 investigation).
 
+        NOTE: this step-check is local to this handler, not a structural
+        guarantee like the capability probe's ``probe_generation`` counter --
+        a future consumer of this same discovery result would need its own
+        copy of this guard rather than inheriting one.
+
         Args:
             devices: List of device info dicts from discovery.
         """
