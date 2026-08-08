@@ -1251,11 +1251,11 @@ class TestPresets:
             [PresetItem(name="Preset A", channel_mode="Stereo", preset_type="PEQ")],
             active_name="Preset A",
         )
-        assert window._filters_page._device_peq_items != []
+        assert window._filters_page._device_peq.items != []
 
         window._on_peq_presets_unavailable()
 
-        assert window._filters_page._device_peq_items == []
+        assert window._filters_page._device_peq.items == []
         assert window._presets_device_view._peq_items == []
 
     def test_roomfit_profiles_hidden_forwards_to_both_views(self, window) -> None:
@@ -1266,11 +1266,11 @@ class TestPresets:
             [PresetItem(name="Profile A", channel_mode="Stereo", preset_type="RoomFit")],
             active_name="Profile A",
         )
-        assert window._filters_page._device_roomfit_items != []
+        assert window._filters_page._device_roomfit.items != []
 
         window._on_roomfit_profiles_hidden()
 
-        assert window._filters_page._device_roomfit_items == []
+        assert window._filters_page._device_roomfit.items == []
         assert window._presets_device_view._roomfit_items == []
 
     # --- Issue #22: _do_list_presets fetches both PEQ + RoomFit ---

@@ -471,8 +471,8 @@ class TestIssue41DeviceSelectResetsFlow:
 
     def test_device_switch_clears_filters_page_device_cache(self, window) -> None:
         """Code-review round (2026-08-06): FiltersPage's own Device-panel
-        cache (_device_peq_items/_device_roomfit_items/_device_active_*_name)
-        is separate from WizardState and wasn't cleared by
+        cache (_device_peq/_device_roomfit) is separate from WizardState
+        and wasn't cleared by
         clear_device_scoped_state() -- browsing back to the Filters step's
         Device panel after switching devices would keep showing (and let the
         user load) the previous device's presets under names that may not
@@ -484,12 +484,12 @@ class TestIssue41DeviceSelectResetsFlow:
             [PresetItem(name="Old Preset", channel_mode="Stereo", preset_type="PEQ")],
             active_name="Old Preset",
         )
-        assert window._filters_page._device_peq_items != []
+        assert window._filters_page._device_peq.items != []
 
         window._on_device_selected("192.168.1.200")
 
-        assert window._filters_page._device_peq_items == []
-        assert window._filters_page._device_active_peq_name is None
+        assert window._filters_page._device_peq.items == []
+        assert window._filters_page._device_peq.active_name is None
 
     def test_capabilities_ready_refetches_device_presets_when_panel_active(
         self, window

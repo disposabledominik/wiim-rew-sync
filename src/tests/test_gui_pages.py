@@ -787,8 +787,8 @@ class TestFiltersPage:
 
         page.set_peq_unavailable()
 
-        assert page._device_peq_items == []
-        assert page._device_active_peq_name is None
+        assert page._device_peq.items == []
+        assert page._device_peq.active_name is None
         assert page._device_list.count() == 0
 
     def test_set_roomfit_hidden_clears_roomfit_items(self, qtbot) -> None:
@@ -806,8 +806,8 @@ class TestFiltersPage:
 
         page.set_roomfit_hidden()
 
-        assert page._device_roomfit_items == []
-        assert page._device_active_roomfit_name == ""
+        assert page._device_roomfit.items == []
+        assert page._device_roomfit.active_name == ""
         assert page._device_list.count() == 0
 
     def test_clear_device_presets_empties_merged_list(self, qtbot) -> None:
@@ -829,10 +829,10 @@ class TestFiltersPage:
 
         page.clear_device_presets()
 
-        assert page._device_peq_items == []
-        assert page._device_roomfit_items == []
-        assert page._device_active_peq_name is None
-        assert page._device_active_roomfit_name == ""
+        assert page._device_peq.items == []
+        assert page._device_roomfit.items == []
+        assert page._device_peq.active_name is None
+        assert page._device_roomfit.active_name == ""
         assert page._device_list.count() == 0
 
     def test_clear_device_presets_never_refetches(self, qtbot) -> None:

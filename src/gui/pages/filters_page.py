@@ -28,6 +28,7 @@ Requirements referenced: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 9.3, 5.2, 5.7.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, Signal, Slot
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QRadioButton,
     QSizePolicy,
     QStackedWidget,
@@ -90,6 +92,37 @@ _SOURCE_SUBTITLES: dict[FiltersSource, str] = {
     FiltersSource.DEVICE: "Load a saved preset, or the device's current configuration.",
     FiltersSource.LOCAL_LIBRARY: "Load a preset saved locally on this computer.",
 }
+
+
+@dataclass
+class _DevicePeqState:
+    """Device panel's PEQ preset state -- see FiltersPage.set_peq_presets()
+    for field semantics. A single object (rather than four independent
+    attributes) so every reset site (set_peq_unavailable, clear_device_presets)
+    replaces the whole thing in one assignment -- no field can be forgotten
+    or left stale from a previous device the way four hand-maintained
+    attributes could drift out of sync with each other."""
+
+    items: list[PresetItem] = field(default_factory=list)
+    # None = PEQ fetch hasn't resolved yet (distinct from "" = it resolved
+    # and found no active preset name). The RoomFit fetch runs concurrently
+    # and can populate the list on its own first, so "not yet known" has to
+    # stay distinguishable from "confirmed empty" -- only the latter shows
+    # the synthetic "Custom" row.
+    active_name: str | None = None
+    active_channel_mode: str = "Stereo"
+    active_enabled: bool = True
+    enumeration_supported: bool = True
+
+
+@dataclass
+class _DeviceRoomfitState:
+    """Device panel's RoomFit profile state -- see
+    FiltersPage.set_roomfit_profiles() for field semantics."""
+
+    items: list[PresetItem] = field(default_factory=list)
+    active_name: str = ""
+    active_enabled: bool = True
 
 
 class FiltersPage(QWidget):
@@ -171,19 +204,8 @@ class FiltersPage(QWidget):
         # during this session overrides it for the rest of the session.
         self._default_import_dir: str = ""
         self._session_import_dir: str = ""
-        self._device_peq_items: list[PresetItem] = []
-        # None = PEQ fetch hasn't resolved yet (distinct from "" = it
-        # resolved and found no active preset name). The RoomFit fetch runs
-        # concurrently and can populate the list on its own first, so "not
-        # yet known" has to stay distinguishable from "confirmed empty" --
-        # only the latter shows the synthetic "Custom" row.
-        self._device_active_peq_name: str | None = None
-        self._device_active_peq_channel_mode: str = "Stereo"
-        self._device_active_peq_enabled: bool = True
-        self._device_peq_enumeration_supported: bool = True
-        self._device_roomfit_items: list[PresetItem] = []
-        self._device_active_roomfit_name: str = ""
-        self._device_active_roomfit_enabled: bool = True
+        self._device_peq = _DevicePeqState()
+        self._device_roomfit = _DeviceRoomfitState()
         self._local_profiles: list[Profile] = []
         self.rew_pull_view = RewPullView(
             show_title=False, show_header=False, embedded=True
@@ -302,11 +324,13 @@ class FiltersPage(QWidget):
                 the only PEQ information available, so it always gets a row
                 (see presets_device_view.build_peq_rows).
         """
-        self._device_peq_items = list(presets)
-        self._device_active_peq_name = active_name
-        self._device_active_peq_channel_mode = active_channel_mode
-        self._device_active_peq_enabled = active_enabled
-        self._device_peq_enumeration_supported = enumeration_supported
+        self._device_peq = _DevicePeqState(
+            items=list(presets),
+            active_name=active_name,
+            active_channel_mode=active_channel_mode,
+            active_enabled=active_enabled,
+            enumeration_supported=enumeration_supported,
+        )
         self._device_source_label.setText(f"Showing live PEQ status for source: {source_name}")
         self._device_source_label.setVisible(bool(source_name))
         self._populate_device_list()
@@ -325,9 +349,9 @@ class FiltersPage(QWidget):
                 the active row's "(active)" suffix becomes
                 "(active, RoomFit off)" instead.
         """
-        self._device_roomfit_items = list(profiles)
-        self._device_active_roomfit_name = active_name
-        self._device_active_roomfit_enabled = active_enabled
+        self._device_roomfit = _DeviceRoomfitState(
+            items=list(profiles), active_name=active_name, active_enabled=active_enabled
+        )
         self._populate_device_list()
 
     def set_local_profiles(self, profiles: list[Profile]) -> None:
@@ -358,9 +382,7 @@ class FiltersPage(QWidget):
         Deliberately not called just because named-preset enumeration is
         unsupported -- that case still gets a synthetic "Custom" row via
         set_peq_presets()."""
-        self._device_peq_items = []
-        self._device_active_peq_name = None
-        self._device_peq_enumeration_supported = True
+        self._device_peq = _DevicePeqState()
         self._device_source_label.setVisible(False)
         self._populate_device_list()
 
@@ -369,8 +391,7 @@ class FiltersPage(QWidget):
         RoomFit support -- mirrors PresetsDeviceView's set_roomfit_hidden()
         so both consumers of PrimaryWorkflowManager.roomfit_profiles_hidden
         stay in sync."""
-        self._device_roomfit_items = []
-        self._device_active_roomfit_name = ""
+        self._device_roomfit = _DeviceRoomfitState()
         self._populate_device_list()
 
     def clear_device_presets(self) -> None:
@@ -392,11 +413,8 @@ class FiltersPage(QWidget):
         would read presets from the *old* device. MainWindow re-triggers the
         fetch itself once the new adapter is live (_on_capabilities_ready).
         """
-        self._device_peq_items = []
-        self._device_active_peq_name = None
-        self._device_peq_enumeration_supported = True
-        self._device_roomfit_items = []
-        self._device_active_roomfit_name = ""
+        self._device_peq = _DevicePeqState()
+        self._device_roomfit = _DeviceRoomfitState()
         self._device_source_label.setVisible(False)
         self._populate_device_list()
 
@@ -670,7 +688,11 @@ class FiltersPage(QWidget):
         self._device_list = QListWidget()
         self._device_list.setObjectName("FiltersDeviceList")
         self._device_list.setProperty("class", "selectableList")
-        self._device_list.currentItemChanged.connect(self._on_device_selection_changed)
+        self._device_list.currentItemChanged.connect(
+            lambda current, _previous: self._on_list_selection_changed(
+                self._device_load_btn, current
+            )
+        )
         device_layout.addWidget(self._device_list, 1)
 
         self._device_empty_label = QLabel("No presets found on this device.")
@@ -680,7 +702,7 @@ class FiltersPage(QWidget):
 
         device_actions_row = QHBoxLayout()
         device_actions_row.addStretch()
-        self._device_load_btn = make_action_button(
+        self._device_load_btn: QPushButton = make_action_button(
             "Load Preset", object_name="filters_device_load", style_class="primary"
         )
         self._device_load_btn.setEnabled(False)
@@ -700,7 +722,11 @@ class FiltersPage(QWidget):
         self._local_list = QListWidget()
         self._local_list.setObjectName("FiltersLocalLibraryList")
         self._local_list.setProperty("class", "selectableList")
-        self._local_list.currentItemChanged.connect(self._on_local_selection_changed)
+        self._local_list.currentItemChanged.connect(
+            lambda current, _previous: self._on_list_selection_changed(
+                self._local_load_btn, current
+            )
+        )
         local_layout.addWidget(self._local_list, 1)
 
         self._local_empty_label = QLabel("No saved presets yet.")
@@ -710,7 +736,7 @@ class FiltersPage(QWidget):
 
         local_actions_row = QHBoxLayout()
         local_actions_row.addStretch()
-        self._local_load_btn = make_action_button(
+        self._local_load_btn: QPushButton = make_action_button(
             "Load Preset", object_name="filters_local_load", style_class="primary"
         )
         self._local_load_btn.setEnabled(False)
@@ -897,11 +923,11 @@ class FiltersPage(QWidget):
         """
         self._device_list.clear()
         peq_rows = build_peq_rows(
-            self._device_peq_items,
-            self._device_active_peq_name,
-            self._device_active_peq_channel_mode,
-            self._device_active_peq_enabled,
-            self._device_peq_enumeration_supported,
+            self._device_peq.items,
+            self._device_peq.active_name,
+            self._device_peq.active_channel_mode,
+            self._device_peq.active_enabled,
+            self._device_peq.enumeration_supported,
         )
         combined: list[tuple[PresetItem, bool, bool, object]] = [
             (item, is_active, is_eq_off, _CUSTOM_ROW_MARKER if item.is_custom else item)
@@ -910,9 +936,9 @@ class FiltersPage(QWidget):
         combined += [
             (item, is_active, is_eq_off, item)
             for item, is_active, is_eq_off in build_roomfit_rows(
-                self._device_roomfit_items,
-                self._device_active_roomfit_name,
-                self._device_active_roomfit_enabled,
+                self._device_roomfit.items,
+                self._device_roomfit.active_name,
+                self._device_roomfit.active_enabled,
             )
         ]
         self._device_empty_label.setVisible(not combined)
@@ -922,13 +948,6 @@ class FiltersPage(QWidget):
             list_item.setData(Qt.ItemDataRole.UserRole, user_data)
             self._device_list.addItem(list_item)
         self._device_load_btn.setEnabled(False)
-
-    @Slot(QListWidgetItem, QListWidgetItem)
-    def _on_device_selection_changed(
-        self, current: QListWidgetItem | None, _previous: QListWidgetItem | None
-    ) -> None:
-        """Enable the Load Preset button once a Device-list row is selected."""
-        self._device_load_btn.setEnabled(current is not None)
 
     @Slot()
     def _on_device_load_clicked(self) -> None:
@@ -966,12 +985,15 @@ class FiltersPage(QWidget):
             self._local_list.setItemWidget(item, item_widget)
         self._local_load_btn.setEnabled(False)
 
-    @Slot(QListWidgetItem, QListWidgetItem)
-    def _on_local_selection_changed(
-        self, current: QListWidgetItem | None, _previous: QListWidgetItem | None
+    def _on_list_selection_changed(
+        self, load_btn: QPushButton, current: QListWidgetItem | None
     ) -> None:
-        """Enable the Load Preset button once a Local Library row is selected."""
-        self._local_load_btn.setEnabled(current is not None)
+        """Enable a panel's Load Preset button once a list row is selected.
+
+        Shared by the Device and Local Library lists' currentItemChanged
+        connections (see _setup_ui/_build_*_panel), which otherwise
+        differed only in which button they touched."""
+        load_btn.setEnabled(current is not None)
 
     @Slot()
     def _on_local_load_clicked(self) -> None:
