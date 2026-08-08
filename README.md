@@ -1,6 +1,6 @@
 # WiiM ↔ REW PEQ Sync Tool
 
-*Built with AI (Claude Code), human-supervised and hardware-tested — see [docs/](docs/README.md) for the QA process.*
+*Built with AI, human-supervised and hardware-tested — see [docs/](docs/README.md) for the QA process.*
 
 A cross-platform, portable desktop application for transferring, synchronizing, and managing Parametric 
 EQ (PEQ) and RoomFit filter configurations between Room EQ Wizard (REW) and WiiM devices on your local 

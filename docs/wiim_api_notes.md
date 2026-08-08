@@ -674,3 +674,4 @@ one-off diagnostic/admin calls.
 2. [wiim-httpapi — community OpenAPI docs](https://github.com/cvdlinden/wiim-httpapi)
 3. [pywiim API Reference](https://github.com/mjcumming/pywiim/blob/main/docs/integration/API_REFERENCE.md)
 4. [pywiim peq.py source](https://github.com/mjcumming/pywiim/blob/main/pywiim/api/peq.py)
+5. [rustywiim project](https://github.com/ozbenh/rustywiim)
