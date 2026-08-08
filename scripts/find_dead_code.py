@@ -58,6 +58,13 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SRC = _REPO_ROOT / "src"
 _TESTS_DIR = _SRC / "tests"
 _GUI_DIR = _SRC / "gui"
+# The real GUI entry point (packaging/entry_gui.py) lives outside src/ and
+# does its src imports deferred/indented (inside main()), so it's easy to
+# forget when picking scan roots. Scanning src/ alone produced a real false
+# positive here once: configure_logging() looked unused because its only
+# production caller is entry_gui.py, invisible to a src/-only scan.
+_PACKAGING = _REPO_ROOT / "packaging"
+_SCAN_ROOTS = [_SRC, _PACKAGING]
 
 # Symbols already investigated and deliberately kept even though nothing
 # calls them today. Add a name here only alongside a citation of *why* —
@@ -97,11 +104,14 @@ _VULTURE_LINE_RE = re.compile(
 
 
 def _run_vulture() -> list[str]:
-    """Run vulture against src/, excluding tests, and return raw output lines.
+    """Run vulture against src/ + packaging/, excluding tests, and return raw
+    output lines.
 
     Excluding src/tests/ from the *scan* (not just treating a test call as
     "not a real use") is what surfaces methods only ever called by their own
-    unit test — see this module's docstring, blind spot #1.
+    unit test — see this module's docstring, blind spot #1. Scanning
+    packaging/ too (not just src/) avoids the false positive documented at
+    _PACKAGING's definition above.
     """
     if shutil.which("vulture") is None and subprocess.run(
         [sys.executable, "-m", "vulture", "--version"], capture_output=True
@@ -113,7 +123,7 @@ def _run_vulture() -> list[str]:
         sys.exit(2)
 
     cmd = [
-        sys.executable, "-m", "vulture", str(_SRC),
+        sys.executable, "-m", "vulture", *(str(root) for root in _SCAN_ROOTS),
         "--exclude", str(_TESTS_DIR),
         "--min-confidence", "60",
         "--ignore-names", ",".join(_FRAMEWORK_CALLBACK_NAMES),
@@ -139,11 +149,12 @@ def _string_literal_hits(name: str) -> list[str]:
     """
     needle = f'"{name}"'
     hits = []
-    for path in _SRC.rglob("*.py"):
-        if _TESTS_DIR in path.parents:
-            continue
-        if needle in path.read_text(encoding="utf-8"):
-            hits.append(str(path.relative_to(_REPO_ROOT)))
+    for root in _SCAN_ROOTS:
+        for path in root.rglob("*.py"):
+            if _TESTS_DIR in path.parents:
+                continue
+            if needle in path.read_text(encoding="utf-8"):
+                hits.append(str(path.relative_to(_REPO_ROOT)))
     return hits
 
 
