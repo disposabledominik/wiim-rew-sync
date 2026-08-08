@@ -11,6 +11,18 @@ code comments, docstrings, and `docs/smoke_test_issues.md` rows cite items by th
 list changes as priorities shift. Reordered 2026-08-02; no numbers changed, item 6 added. Item 7
 added 2026-08-05.
 
+**At a glance** (priority order; full detail in each item below):
+
+| # | Item | Status |
+|---|------|--------|
+| 3 | Multi-source push has no automatic rollback across sources on partial failure (manual per-source Undo exists) | Partially addressed |
+| 5 | Overlapping operations can race and restore the wrong button-state snapshot | Not started |
+| 6 | CI only tests Ubuntu/Python 3.12 while release builds ship Windows/macOS/Linux | Not started |
+| 4 | Backup files don't record which source they were taken from | Not started |
+| 1 | Hardware QA sign-off — full-flow validation against real devices | Ongoing (1 open issue: smoke #119) |
+| 2 | `DevicePickerDialog`/`DeviceInfoDialog` duplicate their optional-warning boilerplate | Not started |
+| 7 | No confirmation prompt when switching EQ type clears loaded filters | Not started |
+
 ---
 
 ## 3. Multi-Source Push: No Automatic Rollback on Partial Failure (Known Limitation)
