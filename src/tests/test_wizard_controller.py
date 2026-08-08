@@ -277,16 +277,17 @@ class TestWizardControllerNavigation:
         assert ctrl.frontier_step == WizardStep.PUSH
 
     def test_frontier_ignores_stale_off_sequence_entries(self, qtbot) -> None:
-        """Completed entries for steps not in the current flow's sequence
-        (transient leftovers across a flow-type switch, e.g. EQ_TYPE under
-        PEQ_ONLY) don't disturb the derivation -- it only walks the current
-        sequence."""
+        """A completed entry for a step that would fall outside the new
+        flow's sequence doesn't disturb frontier_step's derivation --
+        set_flow_type() invalidates it outright now (see
+        TestWizardControllerFlowTypeInvalidation; #266), so this is no
+        longer even a "stale but invisible" entry, just gone."""
         ctrl = WizardController()
         ctrl.advance("Connected")  # CONNECT done
         ctrl.advance("PEQ")  # EQ_TYPE done (PEQ flow)
         ctrl.set_flow_type(FlowType.PEQ_ONLY)  # sequence loses EQ_TYPE
 
-        # CONNECT completed, SOURCE not -- EQ_TYPE's stale entry is invisible
+        assert WizardStep.EQ_TYPE not in ctrl.completed_steps
         assert ctrl.frontier_step == WizardStep.SOURCE
 
     @pytest.mark.parametrize("flow_type", [FlowType.PEQ, FlowType.ROOMFIT, FlowType.PEQ_ONLY])
@@ -420,6 +421,143 @@ class TestWizardControllerNavigation:
             ctrl.reset()
 
         assert blocker.args == [WizardStep.CONNECT]
+
+
+# ---------------------------------------------------------------------------
+# TestWizardControllerFlowTypeInvalidation
+# ---------------------------------------------------------------------------
+
+
+class TestWizardControllerFlowTypeInvalidation:
+    """set_flow_type() invalidates whatever's orphaned by the switch on its
+    own (docs/smoke_test_issues.md #266's confirmed root cause: a call site
+    -- FiltersPage's Device-panel preset selection -- changed flow_type with
+    no invalidation at all, leaving SOURCE stale). This is a general
+    property of *any* flow_type change, derived from comparing the old and
+    new sequences rather than a hardcoded anchor step, so it covers every
+    step that's flow-specific -- SOURCE (PEQ-only), NAME_PROFILE
+    (RoomFit-only), and EQ_TYPE (absent from PEQ_ONLY) -- not just the one
+    that was reported, and protects every current and future call site
+    uniformly rather than requiring each one to remember."""
+
+    def test_peq_to_roomfit_invalidates_source(self, qtbot) -> None:
+        """SOURCE exists in PEQ's sequence but not RoomFit's -- switching
+        away from PEQ must invalidate it immediately, not leave it as an
+        orphaned entry invisible only until something makes it relevant
+        again (the exact #266 mechanism)."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        for step in ctrl.get_steps():
+            ctrl.set_step_summary(step, "done")
+        assert WizardStep.SOURCE in ctrl.completed_steps
+
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+
+        assert WizardStep.SOURCE not in ctrl.completed_steps
+        assert WizardStep.CONNECT in ctrl.completed_steps
+        assert WizardStep.EQ_TYPE in ctrl.completed_steps
+
+    def test_roomfit_to_peq_invalidates_name_profile(self, qtbot) -> None:
+        """The mirror image of the above: NAME_PROFILE exists only in
+        RoomFit's sequence, so switching away from RoomFit must invalidate
+        it too -- the same bug class the user asked about directly."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        for step in ctrl.get_steps():
+            ctrl.set_step_summary(step, "done")
+        assert WizardStep.NAME_PROFILE in ctrl.completed_steps
+
+        ctrl.set_flow_type(FlowType.PEQ)
+
+        assert WizardStep.NAME_PROFILE not in ctrl.completed_steps
+        assert WizardStep.CONNECT in ctrl.completed_steps
+        assert WizardStep.EQ_TYPE in ctrl.completed_steps
+
+    @pytest.mark.parametrize("from_flow", [FlowType.PEQ, FlowType.ROOMFIT])
+    def test_to_peq_only_invalidates_eq_type(self, qtbot, from_flow: FlowType) -> None:
+        """EQ_TYPE doesn't exist in PEQ_ONLY's sequence -- switching to it
+        from either PEQ or RoomFit must invalidate EQ_TYPE (and everything
+        after it), matching the real _on_capabilities_ready path (a
+        RoomFit-capable device's re-probe reporting PEQ-only support)."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(from_flow)
+        for step in ctrl.get_steps():
+            ctrl.set_step_summary(step, "done")
+
+        ctrl.set_flow_type(FlowType.PEQ_ONLY)
+
+        assert WizardStep.EQ_TYPE not in ctrl.completed_steps
+        assert WizardStep.CONNECT in ctrl.completed_steps
+
+    def test_no_stale_entry_resurfaces_after_a_later_switch_back(self, qtbot) -> None:
+        """The specific resurrection shape #266 reported: a step orphaned
+        by one flow_type switch must not come back as completed once a
+        later switch makes it part of the sequence again."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        for step in ctrl.get_steps():
+            ctrl.set_step_summary(step, "done")
+
+        ctrl.set_flow_type(FlowType.ROOMFIT)  # SOURCE invalidated here
+        ctrl.set_flow_type(FlowType.PEQ)  # SOURCE re-enters the sequence
+
+        assert WizardStep.SOURCE not in ctrl.completed_steps
+
+    def test_common_prefix_is_preserved(self, qtbot) -> None:
+        """Steps shared by both sequences at the same position (CONNECT,
+        and EQ_TYPE for a PEQ<->RoomFit switch) are untouched -- only the
+        point of divergence onward is invalidated."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        ctrl.set_step_summary(WizardStep.CONNECT, "WiiM Pro")
+        ctrl.set_step_summary(WizardStep.EQ_TYPE, "PEQ")
+
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+
+        assert ctrl.completed_steps[WizardStep.CONNECT] == "WiiM Pro"
+        assert ctrl.completed_steps[WizardStep.EQ_TYPE] == "PEQ"
+
+    def test_same_flow_type_invalidates_nothing(self, qtbot) -> None:
+        """Setting the flow_type to its current value is a no-op (existing
+        behavior) -- must not spuriously invalidate anything."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        for step in ctrl.get_steps():
+            ctrl.set_step_summary(step, "done")
+
+        emissions: list[bool] = []
+        ctrl.steps_invalidated.connect(lambda: emissions.append(True))
+        ctrl.set_flow_type(FlowType.PEQ)
+
+        assert emissions == []
+        for step in ctrl.get_steps():
+            assert step in ctrl.completed_steps
+
+    def test_emits_steps_invalidated_when_something_is_popped(self, qtbot) -> None:
+        """The consolidated invalidation still emits steps_invalidated, the
+        same signal views already resync off -- callers that dropped their
+        own invalidate_after() call in favor of this one don't lose the
+        re-render trigger."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        ctrl.set_step_summary(WizardStep.SOURCE, "wifi")
+
+        with qtbot.waitSignal(ctrl.steps_invalidated, timeout=1000):
+            ctrl.set_flow_type(FlowType.ROOMFIT)
+
+    def test_no_emission_when_nothing_to_invalidate(self, qtbot) -> None:
+        """A flow_type switch where the old sequence is fully a prefix of
+        the new one (nothing completed past the divergence point) must not
+        spuriously emit steps_invalidated."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        ctrl.set_step_summary(WizardStep.CONNECT, "WiiM Pro")
+
+        emissions: list[bool] = []
+        ctrl.steps_invalidated.connect(lambda: emissions.append(True))
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+
+        assert emissions == []
 
 
 # ---------------------------------------------------------------------------

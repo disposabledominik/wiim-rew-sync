@@ -2,25 +2,49 @@
 
 The WiiM Home app states its naming rule as "only letters, numbers, and
 underscore are allowed", but hardware testing found dash ("-") and space
-(" ") are also accepted by the device (see docs/corrections.md, 2026-07-12).
-This module encodes that broader, verified set so the GUI can warn and
-sanitize a name before a push attempt fails on a rejected character.
+(" ") are also accepted by the device, and that "letters" is not limited to
+ASCII -- non-Latin-alphabet letters (e.g. Cyrillic) are accepted too (see
+docs/corrections.md, 2026-07-12 and 2026-08-07). This module encodes that
+broader, verified set so the GUI can warn and sanitize a name before a push
+attempt fails on a rejected character.
 
 # ASSUMPTION: the exact device-side validation rule is not documented by
-# WiiM; this set is the WiiM Home app's stated rule plus the two additional
-# characters confirmed via hardware testing (docs/corrections.md,
-# 2026-07-12). If a push is ever rejected for a name that passes this
-# check, log the corrected rule in docs/corrections.md.
+# WiiM; this set is the WiiM Home app's stated rule (any Unicode letter,
+# not just ASCII) plus the two additional characters confirmed via hardware
+# testing (docs/corrections.md, 2026-07-12, 2026-08-07). If a push is ever
+# rejected for a name that passes this check, log the corrected rule in
+# docs/corrections.md.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 
-_ALLOWED_NAME_CHARS = re.compile(r"[^A-Za-z0-9_\- ]")
+# \w is Unicode-aware for `str` patterns (default in Python 3, re.UNICODE
+# is a no-op here and not worth passing) -- matches any Unicode letter/digit
+# plus underscore, not just ASCII (docs/corrections.md, 2026-08-07: the
+# device accepts non-Latin-alphabet letters, e.g. Cyrillic).
+_ALLOWED_NAME_CHARS = re.compile(r"[^\w\- ]")
 
 #: User-facing description of the allowed character set, for warning text.
-DEVICE_NAME_RULE_TEXT = "letters, numbers, spaces, - and _"
+DEVICE_NAME_RULE_TEXT = "letters (any language), numbers, spaces, - and _"
+
+
+def _normalize(name: str) -> str:
+    """NFC-normalize *name* before matching against `_ALLOWED_NAME_CHARS`.
+
+    `\\w` matches a precomposed accented letter (one codepoint, Unicode
+    category Lu/Ll) but not a combining mark (category Mn) on its own -- an
+    NFD-decomposed name (base letter + separate combining accent, as
+    produced by some IMEs and by macOS's filesystem) would otherwise have
+    its accents silently stripped by `sanitize_device_name`, or be flagged
+    invalid by `has_invalid_device_name_chars`, even though the equivalent
+    NFC form of the same name is accepted untouched. Normalizing first
+    makes both functions agree on any Unicode representation of the same
+    name.
+    """
+    return unicodedata.normalize("NFC", name)
 
 
 def sanitize_device_name(name: str) -> str:
@@ -31,9 +55,9 @@ def sanitize_device_name(name: str) -> str:
         or trim whitespace left behind by removal -- callers should
         `.strip()` the result themselves if needed.
     """
-    return _ALLOWED_NAME_CHARS.sub("", name)
+    return _ALLOWED_NAME_CHARS.sub("", _normalize(name))
 
 
 def has_invalid_device_name_chars(name: str) -> bool:
     """True if *name* contains a character the device naming API rejects."""
-    return bool(_ALLOWED_NAME_CHARS.search(name))
+    return bool(_ALLOWED_NAME_CHARS.search(_normalize(name)))

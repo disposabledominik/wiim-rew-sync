@@ -24,9 +24,9 @@ Give your preset a descriptive name (e.g., "Living Room Correction" or
 and displayed as a badge in the preset list.
 
 If you later push this preset to a device (directly, or via "Copy to
-another device"), only letters, numbers, spaces, `-`, and `_` survive —
-anything else is stripped from the name, since that's what the WiiM naming
-API accepts.
+another device"), only letters (any language), numbers, spaces, `-`, and `_`
+survive — anything else is stripped from the name, since that's what the
+WiiM naming API accepts.
 
 ## Loading a Preset
 

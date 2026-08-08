@@ -196,6 +196,55 @@ class TestPushWriteOperations:
 
         assert window._wizard_controller.state.current_step == WizardStep.REVIEW
 
+    def test_on_peq_ready_invalidates_stale_review_on_filter_change(
+        self, window
+    ) -> None:
+        """Regression: the FILTERS change-detection added for
+        _on_filters_accepted (browsing back and re-confirming a different
+        filter set clears stale Review/Push checkmarks) must also apply to
+        the device-pull/file-import path, which is the common case and
+        previously bypassed it entirely -- _on_peq_ready called advance()
+        directly with no invalidation, so this is the only test exercising
+        that path's checkmark behavior end to end."""
+        _setup_device(window)
+        wc = window._wizard_controller
+        state = wc.state
+        wc.state.current_step = WizardStep.FILTERS
+
+        state.current_filters = [_make_filter(100)]
+        state.channel_mode = ChannelMode.STEREO
+        peq_data_a = MagicMock(channel_mode="stereo", bands_l=None, bands_r=None)
+        window._on_peq_ready(peq_data_a)  # FILTERS done, at REVIEW
+        wc.advance(summary="Reviewed")  # REVIEW done, at PUSH
+
+        # Browse back, pull a DIFFERENT filter set -- Review must clear.
+        wc.go_to_step(WizardStep.FILTERS)
+        state.current_filters = [_make_filter(200)]
+        peq_data_b = MagicMock(channel_mode="stereo", bands_l=None, bands_r=None)
+        window._on_peq_ready(peq_data_b)
+
+        assert WizardStep.REVIEW not in wc.completed_steps
+        assert WizardStep.FILTERS in wc.completed_steps
+
+    def test_on_profile_recalled_invalidates_stale_review_on_filter_change(
+        self, window
+    ) -> None:
+        """Same regression as above, for the Local Library recall path
+        (_on_profile_recalled), which also called advance() directly with
+        no invalidation."""
+        _setup_device(window)
+        wc = window._wizard_controller
+        wc.state.current_step = WizardStep.FILTERS
+
+        window._on_profile_recalled([_make_filter(100)], "Preset A")
+        wc.advance(summary="Reviewed")  # REVIEW done, at PUSH
+
+        wc.go_to_step(WizardStep.FILTERS)
+        window._on_profile_recalled([_make_filter(200)], "Preset B")
+
+        assert WizardStep.REVIEW not in wc.completed_steps
+        assert WizardStep.FILTERS in wc.completed_steps
+
     # --- Issue #58: Multi-device push respects channel_mode (live equivalent) ---
 
     def test_issue58_copy_presets_batch_multi_peq_lr_uses_lr_channel_mode(
@@ -700,6 +749,33 @@ class TestPushWriteOperations:
             mock_dry.assert_called_once()
             # _bridge.run_async should NOT be called (no actual push)
             window._bridge.run_async.assert_not_called()
+
+    def test_roomfit_dry_run_summary_omits_stale_source(self, window) -> None:
+        """RoomFit dry-run summary must not name a source: RoomFit applies
+        globally, not per-source (CLAUDE.md), and selected_sources can still
+        hold values left over from an earlier PEQ run on the same session.
+        """
+        _setup_device(window)
+        state = window._wizard_controller.state
+        state.flow_type = FlowType.ROOMFIT
+        state.current_filters = [_make_filter()]
+        state.channel_mode = ChannelMode.STEREO
+        state.dry_run = True
+        # Stale sources left behind by a previous PEQ run in this session.
+        state.selected_sources = ["wifi", "bluetooth", "auxIn"]
+        window._wizard_controller.state.current_step = WizardStep.REVIEW
+
+        with (
+            patch.object(window._push_page, "set_dry_run_result") as mock_dry,
+            patch.object(window._wizard_controller, "advance"),
+        ):
+            window._on_push_requested()
+
+        summary = mock_dry.call_args[0][0]
+        assert "wifi" not in summary
+        assert "bluetooth" not in summary
+        assert "auxIn" not in summary
+        assert "bands validated" in summary
 
 
 # ===========================================================================
@@ -1356,6 +1432,40 @@ class TestPresets:
         mock_adapter.list_peq_profiles.assert_not_called()
         mock_unavail.assert_called_once()
         mock_set_peq.assert_not_called()
+
+    def test_no_enumeration_with_named_live_config_still_shows_a_row(self, window) -> None:
+        """QA-reported bug: a device without profile enumeration (e.g. WiiM
+        Mini with `supports_profile_enumeration: false`) whose live PEQ
+        config already has a real device-assigned Name (not "") produced an
+        empty preset list in both "Presets on Device" and the Filters
+        step's Device panel -- only active_name == "" ever produced a row,
+        so a *named* live config on such a device was invisible everywhere,
+        contradicting qa_signoff.md Test 12a ("Custom is the only PEQ row
+        shown" on an enumeration-unsupported device). The live config must
+        always surface as a row on such a device, real name included, since
+        there's no enumerated list to compare it against in the first
+        place."""
+        import asyncio
+
+        from src.models.channel_mode import ChannelMode
+        from src.models.peq import PEQSettings
+
+        mock_adapter = _setup_device(window)
+        mock_adapter.capabilities.supports_peq = True
+        mock_adapter.capabilities.supports_profile_enumeration = False
+        mock_adapter.list_peq_profiles = AsyncMock(return_value=[])
+        mock_adapter.read_peq = AsyncMock(
+            return_value=PEQSettings(
+                source_name="wifi", channel_mode=ChannelMode.STEREO, name="Movie Night"
+            )
+        )
+
+        asyncio.run(window._primary_workflows.refresh_presets())
+
+        assert window._presets_device_view._peq_list.count() == 1
+        assert window._presets_device_view._peq_list.item(0).text().startswith("Movie Night")
+        assert window._filters_page._device_list.count() == 1
+        assert window._filters_page._device_list.item(0).text().startswith("Movie Night")
 
     def test_load_device_presets_fetches_roomfit_without_enumeration(self, window) -> None:
         """_load_device_presets() must not skip the RoomFit fetch just
@@ -2213,7 +2323,7 @@ class TestPresets:
             patch.object(window, "_refresh_presets_view") as mock_refresh,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
-            window._on_profile_delete_requested("Movie Night")
+            window._on_profile_delete_requested(["Movie Night"])
 
         mock_delete.assert_called_once_with("Movie Night")
         mock_refresh.assert_called_once()
@@ -2228,9 +2338,53 @@ class TestPresets:
             ),
             patch.object(window._profile_repository, "delete") as mock_delete,
         ):
-            window._on_profile_delete_requested("Movie Night")
+            window._on_profile_delete_requested(["Movie Night"])
 
         mock_delete.assert_not_called()
+
+    def test_local_preset_batch_delete_deletes_all_and_refreshes_once(self, window) -> None:
+        """Multi-select local delete runs every item through the shared
+        _run_batch_profile_action helper and refreshes only once, not once
+        per item."""
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch.object(window._profile_repository, "delete") as mock_delete,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            window._on_profile_delete_requested(["Movie Night", "Late Night"])
+
+        assert mock_delete.call_count == 2
+        mock_delete.assert_any_call("Movie Night")
+        mock_delete.assert_any_call("Late Night")
+        mock_refresh.assert_called_once()
+        mock_success.assert_called_once_with("Deleted 2 presets")
+
+    def test_local_preset_batch_delete_partial_failure_reports_counts(self, window) -> None:
+        """One item failing (e.g. already removed by a concurrent change)
+        doesn't abort the rest -- the batch still deletes what it can and
+        reports succeeded/failed counts, refreshing regardless."""
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch.object(
+                window._profile_repository,
+                "delete",
+                side_effect=[None, KeyError("not found")],
+            ) as mock_delete,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            window._on_profile_delete_requested(["Movie Night", "Late Night"])
+
+        assert mock_delete.call_count == 2
+        mock_refresh.assert_called_once()
+        mock_error.assert_called_once_with("Deleted 1 preset(s), 1 failed.")
 
     # --- Issue #27: RoomFit profile selection triggers read and advances ---
 
@@ -3424,10 +3578,10 @@ class TestSettingsUIState:
         assert view._delete_btn.isEnabled() is True
 
         duplicate_calls: list[str] = []
-        delete_calls: list[str] = []
+        delete_calls: list[list[str]] = []
 
         view.duplicate_requested.connect(lambda name: duplicate_calls.append(name))
-        view.delete_requested.connect(lambda name: delete_calls.append(name))
+        view.delete_requested.connect(lambda names: delete_calls.append(names))
 
         view._duplicate_btn.click()
         with patch(
@@ -3437,7 +3591,7 @@ class TestSettingsUIState:
             view._delete_btn.click()
 
         assert duplicate_calls == ["Jazz Night"]
-        assert delete_calls == ["Jazz Night"]
+        assert delete_calls == [["Jazz Night"]]
 
     # --- Issue #39: L/R presets show "L/R" badge ---
 

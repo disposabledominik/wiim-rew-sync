@@ -13,6 +13,7 @@ from PySide6.QtGui import QShowEvent
 
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
+from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep, steps_for_flow
 from src.tests.conftest import close_coroutine_tree
 
@@ -646,6 +647,45 @@ class TestIssue57BackNavClearsCompletedSteps:
 
         assert WizardStep.FILTERS in wc.completed_steps
 
+    def test_filters_reselection_invalidates_downstream_same_selection_does_not(
+        self, window
+    ) -> None:
+        """QA-reported bug: browsing back from Push to Filters, picking a
+        DIFFERENT filter/preset, and clicking Continue left Review/Push's
+        checkmarks in place, letting a push proceed against stale reviewed
+        data. Unlike Source's own state field, `state.current_filters` is
+        already overwritten by the producer (file import/device pull/preset
+        load) well before Continue is clicked, so _on_filters_accepted
+        tracks its own "last confirmed" snapshot rather than comparing
+        against wizard state directly (see that method's docstring).
+        Re-confirming the SAME filters must not invalidate anything,
+        mirroring Source's own change-vs-no-change split."""
+        wc = window._wizard_controller
+        wc.set_flow_type(FlowType.PEQ_ONLY)
+
+        filters_a = [MagicMock()]
+        wc.state.selected_source = "wifi"
+        wc.advance(summary="Connected")  # CONNECT done, at SOURCE
+        wc.advance(summary="wifi")  # SOURCE done, at FILTERS
+        wc.state.current_filters = filters_a
+        window._on_filters_accepted()  # FILTERS done, at REVIEW
+        wc.advance(summary="Reviewed")  # REVIEW done, at PUSH
+
+        # Browse back, re-confirm the SAME filters -- nothing clears
+        wc.go_to_step(WizardStep.FILTERS)
+        wc.state.current_filters = filters_a
+        window._on_filters_accepted()
+        assert WizardStep.REVIEW in wc.completed_steps
+
+        # Browse back, load a DIFFERENT filter set, re-confirm -- Review/Push clear
+        wc.go_to_step(WizardStep.FILTERS)
+        wc.state.current_filters = [MagicMock()]
+        window._on_filters_accepted()
+        assert WizardStep.REVIEW not in wc.completed_steps
+        # FILTERS itself was just re-completed by the advance()
+        assert WizardStep.FILTERS in wc.completed_steps
+        assert WizardStep.SOURCE in wc.completed_steps
+
     def test_eq_type_change_invalidates_downstream_same_type_does_not(
         self, window
     ) -> None:
@@ -966,3 +1006,232 @@ class TestDeviceSwitchConfirmation:
 
         confirm.assert_not_called()
         assert window._wizard_controller.state.selected_device == "192.168.1.200"
+
+
+class TestIssue9SourceCheckmarkAfterDeviceSwitch:
+    """QA-reported: after finishing a PEQ dry run, navigating back to Connect
+    and choosing a different device left the Source step showing checked
+    while every other step correctly showed unchecked. Covers both the
+    WizardController's completed_steps data and the StepIndicator widget's
+    own rendered `_completed` flags, through the real handler chain
+    (_on_device_selected -> _on_capabilities_ready), for both a
+    RoomFit-capable device (PEQ chosen at EQ_TYPE) and a PEQ_ONLY device
+    (no EQ_TYPE step) -- could not reproduce a discrepancy in either case
+    via this exact click sequence; kept as a regression guard for it. The
+    actual root cause was later found to be a different trigger (a
+    late-arriving background discovery result, not a manual device
+    switch) -- see TestIssue9LateProbeAfterLeavingConnect below."""
+
+    def test_source_checkmark_clears_with_eq_type_step(self, window) -> None:
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))  # RoomFit-capable
+        window._on_eq_type_selected("peq")  # EQ_TYPE done, at SOURCE
+        window._on_source_selected("wifi", "Stereo")  # SOURCE done, at FILTERS
+        wc.advance(summary="Filters loaded")  # FILTERS done, at REVIEW
+        wc.advance(summary="Dry Run")  # REVIEW done, at PUSH -- PEQ dry run
+        assert WizardStep.SOURCE in wc.completed_steps
+
+        window._on_device_selected("192.168.1.200")
+
+        assert WizardStep.SOURCE not in wc.completed_steps
+        assert WizardStep.FILTERS not in wc.completed_steps
+        assert WizardStep.REVIEW not in wc.completed_steps
+
+        seq = wc.get_steps()
+        source_idx = seq.index(WizardStep.SOURCE)
+        assert window._step_indicator._completed[source_idx] is False
+
+    def test_source_checkmark_clears_without_eq_type_step(self, window) -> None:
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))  # PEQ_ONLY device
+        window._on_source_selected("wifi", "Stereo")  # SOURCE done, at FILTERS
+        wc.advance(summary="Filters loaded")  # FILTERS done, at REVIEW
+        wc.advance(summary="Dry Run")  # REVIEW done, at PUSH -- PEQ dry run
+        assert WizardStep.SOURCE in wc.completed_steps
+
+        window._on_device_selected("192.168.1.200")
+
+        assert WizardStep.SOURCE not in wc.completed_steps
+        seq = wc.get_steps()
+        source_idx = seq.index(WizardStep.SOURCE)
+        assert window._step_indicator._completed[source_idx] is False
+
+
+class TestIssue9LateProbeAfterLeavingConnect:
+    """Root cause for #9: the background discovery scan started when
+    Connect is entered/refreshed is a one-shot async task nothing cancels
+    once the user picks a device from progressive results and moves on.
+    If it completes later, ConnectPage.set_devices()'s auto-select
+    (Req 2.4: single discovered device auto-selects) re-emits
+    device_selected for the already-connected device, which
+    _on_device_selected's documented no-op-past-busy-check branch still
+    answers by creating fresh adapters and launching a new capability
+    probe. _on_capabilities_ready used to unconditionally call advance(),
+    which completes whatever step is *currently* active with no check
+    that it's the Connect step the probe was actually for -- so a probe
+    resolving after the user had already moved on to Source/Filters/...
+    would silently mark that step "completed" with a bogus device-name
+    summary and yank the wizard one step forward.
+
+    Fixed two ways: (1) _on_capabilities_ready only drives the wizard
+    (set_flow_type/advance) when Connect is still the active step: (2)
+    _on_discovery_complete discards results that arrive after the wizard
+    has left Connect, so the redundant probe is never even launched in
+    the first place.
+    """
+
+    def test_late_capabilities_probe_does_not_advance_past_connect(self, window) -> None:
+        """A capabilities-ready callback resolving while the wizard has
+        already moved to Source (simulating a redundant re-probe) must not
+        mark Source completed or move the wizard to Filters."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))  # PEQ_ONLY -> at SOURCE
+        assert wc.current_step == WizardStep.SOURCE
+        assert WizardStep.SOURCE not in wc.completed_steps
+
+        # Simulate the redundant probe's result resolving late, after the
+        # user is already sitting on Source.
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))
+
+        assert wc.current_step == WizardStep.SOURCE
+        assert WizardStep.SOURCE not in wc.completed_steps
+
+    def test_late_capabilities_probe_still_refreshes_device_data(self, window) -> None:
+        """The guard only skips the wizard-advancing side effects -- the
+        rest of the capability refresh (sidebar, source list, adapter)
+        must still happen even when it arrives late."""
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0, model="WiiM Pro"))
+
+        late_caps = _make_caps(
+            roomfit_level=0, model="WiiM Pro", source_names=["wifi", "optical", "hdmi", "aux"]
+        )
+        window._on_capabilities_ready(late_caps)
+
+        assert window._device_caps is late_caps
+        assert set(window._source_page._source_checkboxes.keys()) == {
+            "wifi",
+            "optical",
+            "hdmi",
+            "aux",
+        }
+
+    def test_late_discovery_complete_does_not_reselect_device(self, window) -> None:
+        """discovery_complete arriving after the wizard has left Connect
+        must not feed ConnectPage's auto-select and re-trigger a probe."""
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))  # at SOURCE
+        assert window._wizard_controller.current_step == WizardStep.SOURCE
+
+        with patch.object(window._connect_page, "set_devices") as set_devices:
+            window._on_discovery_complete(
+                [{"name": "Living Room", "ip": "192.168.1.100", "model": "WiiM Pro"}]
+            )
+
+        set_devices.assert_not_called()
+
+    def test_discovery_complete_still_populates_connect_page_on_connect(self, window) -> None:
+        """Sanity check the guard doesn't break the normal case: discovery
+        results arriving while still on Connect populate the page as usual."""
+        assert window._wizard_controller.current_step == WizardStep.CONNECT
+
+        with patch.object(window._connect_page, "set_devices") as set_devices:
+            window._on_discovery_complete(
+                [{"name": "Living Room", "ip": "192.168.1.100", "model": "WiiM Pro"}]
+            )
+
+        set_devices.assert_called_once()
+
+
+class TestIssue9DeviceItemFlowSwitchStaleSource:
+    """The precise, confirmed root cause for #9 (from a more detailed repro
+    description): loading a cross-type preset (a RoomFit profile while in
+    PEQ flow, or a PEQ preset while in RoomFit flow) from the Filters step's
+    merged Device list goes through `_on_device_item_selected`, which --
+    unlike every other flow-changing handler (_on_eq_type_selected,
+    _on_device_selected) -- called `set_flow_type()` with no invalidation
+    at all. `SOURCE` exists in PEQ's sequence but not RoomFit's, so it
+    survived as a stale `completed_steps` entry: invisible while on
+    RoomFit (WizardController.invalidate_from only pops steps that are
+    part of the *current* sequence, so a step outside it is silently
+    skipped either way), then resurrected the next time flow_type resets
+    back to PEQ -- e.g. a later device switch, which always resets to PEQ
+    -- reproducing exactly "all steps cleared except Source"."""
+
+    def test_loading_roomfit_preset_while_in_peq_clears_stale_source(self, window) -> None:
+        """Switching flow type via the Device-panel selection must
+        invalidate SOURCE immediately, the same as the EQ_TYPE page does."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))  # RoomFit-capable
+        window._on_eq_type_selected("peq")  # EQ_TYPE done, at SOURCE
+        window._on_source_selected("wifi", "Stereo")  # SOURCE done, at FILTERS
+        assert WizardStep.SOURCE in wc.completed_steps
+
+        item = PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")
+        window._on_device_item_selected(item)
+
+        assert wc.flow_type == FlowType.ROOMFIT
+        assert WizardStep.SOURCE not in wc.completed_steps
+
+    def test_stale_source_does_not_resurface_after_later_device_switch(self, window) -> None:
+        """End-to-end repro of the reported symptom: PEQ dry run up through
+        Filters, load a RoomFit preset from the Device panel, then switch to
+        a different device (always resets flow_type to PEQ) -- SOURCE must
+        not come back as completed."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))
+        window._on_eq_type_selected("peq")
+        window._on_source_selected("wifi", "Stereo")
+
+        item = PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")
+        window._on_device_item_selected(item)
+
+        window._on_device_selected("192.168.1.200")
+
+        assert WizardStep.SOURCE not in wc.completed_steps
+        seq = wc.get_steps()
+        source_idx = seq.index(WizardStep.SOURCE)
+        assert window._step_indicator._completed[source_idx] is False
+
+
+class TestIssue9ReprobeSameDeviceDifferentCapabilities:
+    """A third, previously-undetected instance of the same bug class: the
+    no-op branch in _on_device_selected (re-selecting the already-connected
+    device -- e.g. a deliberate manual re-click while genuinely browsing
+    back at Connect) intentionally skips invalidate_after/
+    clear_device_scoped_state/set_flow_type entirely ("nothing about the
+    session is invalid"), but still relaunches a capability probe
+    ("capabilities can change server-side"). Before the consolidated fix,
+    if that re-probe resolved with different RoomFit support than before,
+    _on_capabilities_ready's set_flow_type(PEQ_ONLY) branch changed
+    flow_type with no invalidation of its own -- leaving a completed
+    RoomFit-only NAME_PROFILE (and EQ_TYPE/FILTERS/REVIEW) stale in
+    completed_steps."""
+
+    def test_reprobe_losing_roomfit_support_clears_name_profile(self, window) -> None:
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))  # RoomFit-capable
+        window._on_eq_type_selected("roomfit")  # EQ_TYPE done, at FILTERS
+        wc.advance(summary="Filters loaded")  # FILTERS done, at REVIEW
+        wc.advance(summary="Ready")  # REVIEW done, at NAME_PROFILE
+        wc.advance(summary="My Profile")  # NAME_PROFILE done, at PUSH
+        assert WizardStep.NAME_PROFILE in wc.completed_steps
+
+        wc.go_to_step(WizardStep.CONNECT)  # browsing -- nothing invalidated
+        # Manual re-click of the *same* already-connected device: the
+        # documented no-op branch, skips all invalidation by design.
+        window._on_device_selected("192.168.1.100")
+        # The re-probe now reports the device as PEQ-only.
+        window._on_capabilities_ready(_make_caps(roomfit_level=0))
+
+        assert wc.flow_type == FlowType.PEQ_ONLY
+        assert WizardStep.NAME_PROFILE not in wc.completed_steps
+        assert WizardStep.EQ_TYPE not in wc.completed_steps
+        assert WizardStep.FILTERS not in wc.completed_steps
+        assert WizardStep.REVIEW not in wc.completed_steps

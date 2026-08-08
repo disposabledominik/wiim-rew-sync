@@ -356,6 +356,38 @@ class TestHelpViewSearch:
         # close_requested should NOT have been emitted
         assert not close_emitted
 
+    def test_enter_on_default_focus_does_not_close_dialog(self, qtbot) -> None:
+        """QA-reported bug: pressing Enter right after opening the "User
+        Guide" window closed it, unlike the Diagnostics window. Root cause:
+        MainWindow hosts HelpView inside a real QDialog (`_help_dialog`),
+        where QPushButton.autoDefault defaults to True -- Qt then silently
+        auto-picks the first-created autoDefault button (here, the "X"
+        close button, built before the search/TOC controls) as the dialog's
+        Enter-key target. The panel also opens with initial keyboard focus
+        already on that same close button, compounding it. The
+        `test_enter_does_not_close_dialog` test above never wrapped HelpView
+        in a QDialog, so autoDefault was never True there and it missed
+        this entirely -- this test reproduces the real hosting context."""
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QDialog, QVBoxLayout
+
+        dialog = QDialog()
+        qtbot.addWidget(dialog)
+        view = HelpView()
+        QVBoxLayout(dialog).addWidget(view)
+
+        closed: list[bool] = []
+        view.close_requested.connect(lambda: closed.append(True))
+
+        dialog.show()
+        qtbot.waitExposed(dialog)
+
+        # Default initial focus lands on the close button (first widget
+        # built) -- pressing Enter there must not trigger it.
+        QTest.keyClick(dialog.focusWidget() or view, _KEY_RETURN)
+
+        assert not closed
+
     def test_enter_key_navigates_search_hits(self, qtbot) -> None:
         """Pressing Enter in the search field advances the current search hit."""
         view = HelpView()

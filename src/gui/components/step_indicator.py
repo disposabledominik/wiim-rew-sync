@@ -366,6 +366,18 @@ class StepIndicator(QWidget):
     def set_dimmed(self, dimmed: bool) -> None:
         """Mute the viewed step's pill while a sidebar destination is shown.
 
+        NOT CALLED FROM PRODUCTION CODE as of smoke_test_issues.md #267:
+        MainWindow now hides the entire indicator (setVisible(False)) for
+        sidebar destinations instead of dimming it, since a dimmed-but-
+        still-visible breadcrumb wasted screen space those views could use
+        instead. Left in place intentionally, not an oversight -- it's the
+        cheaper fallback if hiding the indicator ever needs to be dialed
+        back to muting it (e.g. a future view that still wants a breadcrumb
+        visible, just de-emphasized). The *Dimmed QSS classes it drives
+        (fluent_light.qss/fluent_dark.qss) and its _StepWidget plumbing are
+        kept in sync for the same reason. See #267's row for the full
+        rationale before removing this.
+
         Args:
             dimmed: True while the user is on a non-wizard page (Presets on
                 Device, My Saved Presets, Settings) so the "you are here"

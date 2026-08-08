@@ -142,7 +142,7 @@ _STEP_TO_PAGE_KEY: dict[WizardStep, str] = {
 
 # Reverse lookups used by _sync_navigation_chrome (see its docstring for why
 # this single, signal-driven hook replaced a dozen hand-maintained
-# sidebar_nav.set_active_key()/step_indicator.set_dimmed()/set_view()
+# sidebar_nav.set_active_key()/step_indicator.setVisible()/set_view()
 # call sites scattered across every navigation handler in this class).
 _PAGE_INDEX_TO_KEY: dict[int, str] = {v: k for k, v in PAGE_INDICES.items()}
 _PAGE_KEY_TO_STEP: dict[str, WizardStep] = {v: k for k, v in _STEP_TO_PAGE_KEY.items()}
@@ -311,6 +311,16 @@ class MainWindow(QMainWindow):
         # --- Create controller ---
         self._wizard_controller = WizardController(self)
 
+        # Snapshot of (current_filters, filters_l, filters_r, channel_mode)
+        # as of the last time the Filters step was completed -- lets
+        # _on_filters_accepted() detect an actual change-of-selection the
+        # same way _on_source_changed() does for the Source step (see that
+        # method), so re-confirming Filters with a *different* filter set
+        # after navigating back invalidates the now-stale Review/Push
+        # checkmarks instead of leaving them in place (docs/smoke_test_issues.md,
+        # QA issue #8). None until the Filters step is completed once.
+        self._last_confirmed_filters_signature: tuple[object, ...] | None = None
+
         # --- Primary workflows (discovery, probing, file import, push) ---
         # Configured eagerly, unlike SecondaryWorkflowManager: only push()
         # needs a live device adapter, obtained the same way every other
@@ -436,7 +446,7 @@ class MainWindow(QMainWindow):
         shortcuts (#144, #147) — ends with
         QStackedWidget.setCurrentIndex(). Before this hook existed, every
         one of those handlers had to remember to separately call
-        sidebar_nav.set_active_key(), step_indicator.set_dimmed(), and
+        sidebar_nav.set_active_key(), step_indicator.setVisible(), and
         step_indicator.set_view() in the right combination, and several
         of them didn't (hence #138, #142, #144, #147, and the step-pill
         case reported after those: clicking a finished step pill while
@@ -445,6 +455,17 @@ class MainWindow(QMainWindow):
         became current, in one place wired to currentChanged, means a new
         navigation path can't reintroduce this bug class just by
         forgetting one of those calls — there's nothing left to forget.
+
+        A sidebar destination (Presets on Device, My Saved Presets,
+        Settings) has no entry point *into* the wizard of its own — the
+        user reaches the wizard again only via the sidebar's "Setup
+        Wizard" (home) entry, never by interacting with the breadcrumb —
+        so the step indicator is hidden entirely there rather than merely
+        dimmed: a still-visible, still-clickable wizard breadcrumb over an
+        unrelated page reads as "you're still in the wizard" and wastes
+        vertical space that page could use instead. Hiding it also frees
+        that row for the QStackedWidget (stretch=1 in the layout), so the
+        destination view grows to fill it automatically.
         """
         page_key = _PAGE_INDEX_TO_KEY.get(index)
         if page_key is None:
@@ -452,7 +473,7 @@ class MainWindow(QMainWindow):
 
         if page_key in _SIDEBAR_DESTINATION_KEYS:
             self._sidebar_nav.set_active_key(page_key)
-            self._step_indicator.set_dimmed(True)
+            self._step_indicator.setVisible(False)
             return
 
         step = _PAGE_KEY_TO_STEP.get(page_key)
@@ -460,7 +481,7 @@ class MainWindow(QMainWindow):
             return
 
         self._sidebar_nav.set_active_key("home")
-        self._step_indicator.set_dimmed(False)
+        self._step_indicator.setVisible(True)
         sequence = self._wizard_controller.get_steps()
         if step in sequence:
             frontier = self._wizard_controller.frontier_step
@@ -867,7 +888,16 @@ class MainWindow(QMainWindow):
                     "keep them. Switch anyway?",
                 ):
                     return
-            # Invalidate using the *old* (pre-switch) flow's sequence, before
+            # This explicit invalidate_after(CONNECT) stays even though
+            # set_flow_type() below now invalidates orphaned steps on its
+            # own (docs/smoke_test_issues.md #266) -- that only fires when
+            # flow_type actually *changes*, but a device switch must
+            # invalidate everything after CONNECT regardless, since it's
+            # the *device* that's invalid now, not the flow choice (e.g.
+            # switching between two RoomFit-capable devices leaves
+            # flow_type at PEQ both before and after, so set_flow_type()'s
+            # own check would see no change and invalidate nothing). Run
+            # using the *old* (pre-switch) flow's sequence, before
             # resetting flow_type below -- a step that only exists in the
             # old flow (e.g. NAME_PROFILE, RoomFit-only) would otherwise be
             # invisible to get_steps() once flow_type has already changed.
@@ -896,6 +926,14 @@ class MainWindow(QMainWindow):
             # is never contaminated by device A's, until
             # populate_name_profiles() re-fetches device B's real status.
             self._roomfit_enabled = False
+            # _confirm_filters_selection()'s own change-detection cache:
+            # already harmless without this (the first filter load on
+            # device B always differs in value from whatever device A last
+            # confirmed, so invalidate_after(FILTERS) still fires
+            # correctly), but reset it explicitly anyway so the cache can
+            # never silently carry meaning across a device switch if its
+            # comparison logic changes later.
+            self._last_confirmed_filters_signature = None
 
         # Lazily create device-specific adapters (Req 14.2, 14.3)
         self._wiim_http_client = self._wiim_http_client_factory(device_ip)
@@ -1024,11 +1062,10 @@ class MainWindow(QMainWindow):
 
         Change detection (lazy invalidation, #246): re-confirming the EQ
         type the wizard already has just advances, keeping every downstream
-        checkmark. Only an actual switch invalidates the steps after
-        EQ_TYPE — using the *old* flow's sequence, before ``set_flow_type``
-        runs, so a step that only exists in the flow being left (e.g.
-        NAME_PROFILE, RoomFit-only) is still visible to ``get_steps()`` at
-        invalidation time (same ordering rule as ``_on_device_selected``).
+        checkmark. An actual switch invalidates the steps after EQ_TYPE --
+        ``WizardController.set_flow_type()`` itself owns that invalidation
+        now (docs/smoke_test_issues.md #266), so this handler only needs to
+        clear the loaded filter payload, not re-derive which steps to pop.
 
         Args:
             eq_type: Either "peq" or "roomfit".
@@ -1036,9 +1073,6 @@ class MainWindow(QMainWindow):
         new_flow = FlowType.ROOMFIT if eq_type == "roomfit" else FlowType.PEQ
 
         if new_flow != self._wizard_controller.flow_type:
-            # invalidate_after runs before set_flow_type below, so it sees
-            # the *old* flow's sequence (the ordering rule documented above).
-            self._wizard_controller.invalidate_after(WizardStep.EQ_TYPE)
             # PEQ and RoomFit are different pipelines: the loaded filter
             # payload (and its origin/rows/notes) from the flow being left
             # must not carry into the new one (#162d/#173) -- same
@@ -1081,10 +1115,62 @@ class MainWindow(QMainWindow):
         summary, tooltip = self._compute_source_summary(source_name)
         self._wizard_controller.advance(summary=summary, tooltip=tooltip)
 
+    def _confirm_filters_selection(self) -> None:
+        """Invalidate REVIEW/PUSH if the filter selection changed since last seen.
+
+        Mirrors _on_source_selected's change-detection (see that method):
+        picking a different filter set (a different device/local preset, or
+        a fresh file import) than what Review/Push last saw invalidates
+        those downstream steps, so browsing back to Filters, changing the
+        selection, and advancing again can't leave a stale Review/Push
+        checkmark in place -- unlike Source's own state field, which still
+        holds the previous confirmed value at compare time,
+        `state.current_filters` is already overwritten by the producer
+        (file import/device pull/preset load) well before any advance-past-
+        FILTERS handler runs, so the "previous confirmed" value has to be
+        tracked separately in `_last_confirmed_filters_signature` rather
+        than read back off wizard state itself.
+
+        Called from every path that advances past FILTERS -- _on_peq_ready
+        (device pull / file import, the common case), _on_profile_recalled
+        (Local Library), and _on_filters_accepted (the warnings-
+        acknowledgment path) -- not just the last of those. A version of
+        this fix that only ran from _on_filters_accepted left Review/Push
+        staleness undetected for every filter change that didn't happen to
+        trigger a truncation/clamping warning, i.e. almost all of them.
+        """
+        state = self._wizard_controller.state
+        # Value comparison, not identity: CanonicalFilter is an unfrozen
+        # pydantic BaseModel with no custom __eq__, so its auto-generated
+        # one compares fields, and tuple.__eq__ compares element-wise -- two
+        # distinct CanonicalFilter objects with identical field values (e.g.
+        # from re-importing the same file twice) already compare equal, so
+        # that case correctly does NOT invalidate. The one known imprecision
+        # is float exactness: a value that round-trips through JSON and
+        # comes back sub-epsilon different from the original would compare
+        # unequal here even though utils/fp_compare's tolerance would call
+        # it the same filter -- accepted as a safe-side false positive
+        # (an extra invalidation, never a missed one), not worth pulling in
+        # fp_compare's write-verification tolerance for this comparison.
+        new_signature = (
+            tuple(state.current_filters),
+            tuple(state.filters_l),
+            tuple(state.filters_r),
+            state.channel_mode,
+        )
+        if new_signature != self._last_confirmed_filters_signature:
+            self._wizard_controller.invalidate_after(WizardStep.FILTERS)
+        self._last_confirmed_filters_signature = new_signature
+
     @Slot()
     def _on_filters_accepted(self) -> None:
         """Handle user accepting filters (with or without warnings) — advance."""
         state = self._wizard_controller.state
+        # Order matters: invalidate first (may clear REVIEW/PUSH), then
+        # advance (re-marks FILTERS complete) -- same order at the other two
+        # _confirm_filters_selection() call sites.
+        self._confirm_filters_selection()
+
         summary = self._resolve_filters_summary(len(state.current_filters))
         self._wizard_controller.advance(summary=summary, tooltip=state.filters_origin)
 
@@ -1217,6 +1303,12 @@ class MainWindow(QMainWindow):
         if not self._confirm_preset_preview([item]):
             return
 
+        # set_flow_type() itself invalidates whatever's orphaned by the
+        # switch (docs/smoke_test_issues.md #266's confirmed root cause was
+        # this exact call site changing flow_type with no invalidation at
+        # all -- SOURCE, PEQ-only, survived as a stale completed_steps
+        # entry across a load-a-RoomFit-preset-here switch). No hand-rolled
+        # invalidate_after needed here now; the shared path handles it.
         current_flow = self._wizard_controller.flow_type
         if preset_type == "RoomFit" and current_flow != FlowType.ROOMFIT:
             self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
@@ -1314,13 +1406,22 @@ class MainWindow(QMainWindow):
                 self._wizard_controller.advance(summary="Dry Run")
             filters = state.current_filters
             band_count = len(filters)
-            sources = state.selected_sources
-            source_info = ", ".join(sources) if sources else state.primary_source
             channel = state.channel_mode.display_value
-            self._push_page.set_dry_run_result(
-                f"Dry run complete: {band_count} bands validated for "
-                f"{source_info} ({channel}). No changes were written to device."
-            )
+            if flow_type == FlowType.ROOMFIT:
+                # RoomFit applies globally, not per-source (CLAUDE.md) — naming
+                # a source here would be misleading, and selected_sources may
+                # still hold stale values from an earlier PEQ run anyway.
+                self._push_page.set_dry_run_result(
+                    f"Dry run complete: {band_count} bands validated "
+                    f"({channel}). No changes were written to device."
+                )
+            else:
+                sources = state.selected_sources
+                source_info = ", ".join(sources) if sources else state.primary_source
+                self._push_page.set_dry_run_result(
+                    f"Dry run complete: {band_count} bands validated for "
+                    f"{source_info} ({channel}). No changes were written to device."
+                )
             return
 
         if flow_type == FlowType.ROOMFIT:
@@ -1456,8 +1557,8 @@ class MainWindow(QMainWindow):
             return
 
         # Switching the stacked widget's page fires currentChanged, which
-        # _sync_navigation_chrome handles centrally (undimming the step
-        # pill, setting its view/frontier indices, and resetting the
+        # _sync_navigation_chrome handles centrally (showing the step
+        # indicator, setting its view/frontier indices, and resetting the
         # sidebar highlight to "home") — no need to duplicate any of that
         # here.
         page_key = _STEP_TO_PAGE_KEY.get(step)
@@ -1592,10 +1693,33 @@ class MainWindow(QMainWindow):
         Implements auto-advance: if single device found, ConnectPage
         auto-selects it (emits device_selected internally).
 
+        The background scan that produces this result is a one-shot task
+        started when Connect was entered/refreshed -- nothing cancels it if
+        the user picks a device from progressive results and moves on
+        before it finishes. Discarding a result that arrives after the
+        wizard has left Connect avoids feeding a stale device list into an
+        invisible ConnectPage, whose auto-select would otherwise re-emit
+        ``device_selected`` for the already-connected device and trigger a
+        pointless re-probe (the probe itself is now also guarded in
+        ``_on_capabilities_ready``, but skipping it here avoids the wasted
+        network round-trip entirely -- smoke #266 investigation).
+
+        NOTE: this step-check is local to this handler, not a structural
+        guarantee like the capability probe's ``probe_generation`` counter --
+        a future consumer of this same discovery result would need its own
+        copy of this guard rather than inheriting one.
+
         Args:
             devices: List of device info dicts from discovery.
         """
         self._connect_page.set_scanning(False)
+        if self._wizard_controller.current_step != WizardStep.CONNECT:
+            logger.debug(
+                "Discovery completed after leaving Connect step (now %s); "
+                "discarding results",
+                self._wizard_controller.current_step,
+            )
+            return
         self._connect_page.set_devices(devices)
 
     @Slot(list)
@@ -1618,7 +1742,8 @@ class MainWindow(QMainWindow):
         1. Creates WiiMAdapter and SafeWrite (Req 14.2, 14.3)
         2. Checks for empty source_names (Req 2.7) — error if none
         3. Determines flow type based on RoomFit read support
-        4. Advances the wizard
+        4. Advances the wizard -- but only if the wizard is still actually
+           on the Connect step (see the guard below).
 
         Args:
             caps: DeviceCapabilities object from the probe.
@@ -1680,13 +1805,43 @@ class MainWindow(QMainWindow):
         # device_capabilities.json entry provides an explicit override for
         # that exact model, so there's no model-name special-casing to do
         # here.
-        if not roomfit_readable:
-            # PEQ-only device — skip EQ_TYPE step (Req 1.10)
-            self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
-            self._wizard_controller.advance(summary=device_name)
+        #
+        # advance() always completes *whatever step is currently active* --
+        # it has no notion of "the step this probe was for". A probe can
+        # resolve after the wizard has already moved past Connect (e.g. a
+        # late-arriving background discovery result re-selecting the
+        # already-connected device, smoke #266 investigation), and an
+        # unguarded advance() here would then silently mark the user's
+        # *current* step (Source, Filters, ...) completed with a bogus
+        # device-name summary and yank them forward one step. Only drive
+        # the wizard when Connect is still genuinely the active step;
+        # everything above this point (adapter, sidebar, source list,
+        # diagnostics) is safe/desirable to refresh unconditionally.
+        if self._wizard_controller.current_step == WizardStep.CONNECT:
+            if not roomfit_readable:
+                # PEQ-only device — skip EQ_TYPE step (Req 1.10). This
+                # call site has no explicit invalidation of its own -- the
+                # `current_step == CONNECT` guard above narrows the window,
+                # but doesn't rule out a *manual* re-probe of an
+                # already-connected device (the intentional no-op branch in
+                # _on_device_selected) reporting different RoomFit support
+                # than a prior, still-completed EQ_TYPE/NAME_PROFILE flow on
+                # the same device. set_flow_type() itself invalidates
+                # whatever's orphaned by that (docs/smoke_test_issues.md
+                # #266), so nothing extra is needed here.
+                self._wizard_controller.set_flow_type(FlowType.PEQ_ONLY)
+                self._wizard_controller.advance(summary=device_name)
+            else:
+                # Device supports RoomFit — show EQ_TYPE choice (Req 1.9)
+                self._wizard_controller.advance(summary=device_name)
         else:
-            # Device supports RoomFit — show EQ_TYPE choice (Req 1.9)
-            self._wizard_controller.advance(summary=device_name)
+            logger.info(
+                "Capabilities probe for %s resolved after the wizard left "
+                "Connect (now on %s); refreshing device data without "
+                "advancing",
+                device_name,
+                self._wizard_controller.current_step,
+            )
 
         # Update sidebar with device info, warning if displayed capabilities
         # aren't purely from live device probing (capability-file override
@@ -1858,6 +2013,7 @@ class MainWindow(QMainWindow):
                 return
             all_warnings, validated_count = result
 
+            self._confirm_filters_selection()
             self._wizard_controller.advance(
                 summary=self._resolve_filters_summary(validated_count),
                 tooltip=state.filters_origin,
@@ -2213,6 +2369,40 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._status_banner.show_error(f"{failure_verb} failed: {exc}")
 
+    def _run_batch_profile_action(
+        self, names: list[str], action: Callable[[str], object], failure_verb: str
+    ) -> tuple[int, int]:
+        """Run a synchronous ProfileRepository action per name in *names*,
+        refreshing once afterward. Sibling of `_run_profile_action` for the
+        one local-repository action that batches over a multi-select
+        (`_on_profile_delete_requested`) instead of running once -- kept
+        separate rather than folded into `_run_profile_action` since a
+        partial-failure batch needs a materially different interface
+        (per-item callable, (succeeded, failed) counts) than that method's
+        single callable mapped to one success/one failure outcome.
+
+        A per-item failure doesn't stop the batch; refreshing unconditionally
+        afterward (even if every item failed) matters because the repo may
+        have changed regardless (e.g. a concurrent rename), and stale UI is
+        worse than one extra read. Returns the (succeeded, failed) counts --
+        unlike `_run_profile_action`, the caller decides the status banner
+        wording, since that legitimately differs per action and per count.
+
+        Args:
+            names: Preset names to run *action* against.
+            action: Callable taking one name, performing the repository write.
+            failure_verb: Logged per item on failure, e.g. "Delete".
+        """
+        succeeded = 0
+        for name in names:
+            try:
+                action(name)
+                succeeded += 1
+            except Exception:
+                logger.warning("%s local preset %r failed", failure_verb, name, exc_info=True)
+        self._refresh_presets_view()
+        return succeeded, len(names) - succeeded
+
     def _save_filters_to_presets(
         self, name: str, filters: list[CanonicalFilter], channel_mode: str | ChannelMode
     ) -> None:
@@ -2417,20 +2607,32 @@ class MainWindow(QMainWindow):
     # thin pass-through into PresetsDeviceView that replaced this method's
     # direct widget writes.
 
-    @Slot(list, object, str, bool)
+    @Slot(list, object, str, bool, str, bool)
     def _on_peq_presets_ready(
         self,
         items: list[Any],
         active_name: str | None,
         active_channel_mode: str,
         active_enabled: bool,
+        source_name: str,
+        enumeration_supported: bool,
     ) -> None:
         """Forward PrimaryWorkflowManager.peq_presets_ready into both consuming views."""
         self._presets_device_view.set_peq_presets(
-            items, active_name, active_channel_mode, active_enabled
+            items,
+            active_name,
+            active_channel_mode,
+            active_enabled,
+            source_name,
+            enumeration_supported,
         )
         self._filters_page.set_peq_presets(
-            items, active_name, active_channel_mode, active_enabled
+            items,
+            active_name,
+            active_channel_mode,
+            active_enabled,
+            source_name,
+            enumeration_supported,
         )
 
     @Slot()
@@ -2536,9 +2738,9 @@ class MainWindow(QMainWindow):
             view_key: Navigation target key from SidebarNav.
         """
         logger.debug("Navigation requested: %s", view_key)
-        # Sidebar highlight + step-pill dimming are synced centrally by
-        # _sync_navigation_chrome (wired to currentChanged) — this handler
-        # only needs to decide which page to switch to.
+        # Sidebar highlight + step-indicator visibility are synced centrally
+        # by _sync_navigation_chrome (wired to currentChanged) — this
+        # handler only needs to decide which page to switch to.
         if view_key == "home":
             # "Setup Wizard" returns to the frontier -- where the user left
             # off. Two distinct cases:
@@ -2567,7 +2769,8 @@ class MainWindow(QMainWindow):
 
         if view_key == "help":
             # Open Help as a separate window (smoke #112). Doesn't replace
-            # the current page, so the step indicator isn't dimmed.
+            # the current page, so the step indicator's visibility is
+            # untouched.
             self._on_user_guide_triggered()
             return
 
@@ -3311,25 +3514,43 @@ class MainWindow(QMainWindow):
             "Duplicate",
         )
 
-    @Slot(str)
-    def _on_profile_delete_requested(self, name: str) -> None:
-        """Handle MyPresetsView delete action.
+    @Slot(list)
+    def _on_profile_delete_requested(self, names: list[str]) -> None:
+        """Handle MyPresetsView delete action -- single or multi-select batch.
 
         Confirms before deleting, matching the equivalent safety check on
         the device-side preset delete (`_on_preset_delete_requested`) --
         this one is a local, in-app-storage deletion, not a device write.
+        A partial failure (e.g. one preset already removed by a concurrent
+        change) still deletes the rest and reports a "X succeeded, Y failed"
+        status instead of aborting the whole batch, matching
+        `_on_preset_delete_requested`'s device-side convention.
         """
-        if not self._confirm_action(
-            "Delete Preset?",
-            f"Permanently delete '{name}' from My Presets?\n\nThis cannot be undone.",
-        ):
+        if not names:
             return
 
-        self._run_profile_action(
-            lambda: self._profile_repository.delete(name),
-            f"Deleted '{name}'",
-            "Delete",
+        if len(names) == 1:
+            message = f"Permanently delete '{names[0]}' from My Presets?\n\nThis cannot be undone."
+        else:
+            bullet_list = "\n".join(f"• {name}" for name in names)
+            message = (
+                f"Permanently delete the following {len(names)} presets from "
+                f"My Presets?\n\n{bullet_list}\n\nThis cannot be undone."
+            )
+        if not self._confirm_action("Delete Preset(s)", message):
+            return
+
+        succeeded, failed = self._run_batch_profile_action(
+            names, lambda name: self._profile_repository.delete(name), "Delete"
         )
+        if failed:
+            self._status_banner.show_error(
+                f"Deleted {succeeded} preset(s), {failed} failed."
+            )
+        elif succeeded == 1:
+            self._status_banner.show_success(f"Deleted '{names[0]}'")
+        else:
+            self._status_banner.show_success(f"Deleted {succeeded} presets")
 
     @Slot(list)
     def _on_preset_export_requested(self, items: list[Any]) -> None:
@@ -3676,6 +3897,7 @@ class MainWindow(QMainWindow):
 
         active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
 
+        self._confirm_filters_selection()
         self._wizard_controller.advance(
             summary=self._resolve_filters_summary(len(filters)),
             tooltip=state.filters_origin,

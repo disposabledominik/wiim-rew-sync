@@ -636,16 +636,16 @@ class TestMyPresetsViewContextMenu:
     """Tests for context menu actions and signal emission."""
 
     def test_delete_requested_signal(self, qtbot) -> None:
-        """delete_requested signal emits with the correct preset name."""
+        """delete_requested signal emits with the correct preset name list."""
         view = MyPresetsView()
         qtbot.addWidget(view)
 
         view.set_presets([_make_profile("To Delete")])
 
         with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
-            view.delete_requested.emit("To Delete")
+            view.delete_requested.emit(["To Delete"])
 
-        assert blocker.args == ["To Delete"]
+        assert blocker.args == [["To Delete"]]
 
     def test_duplicate_requested_signal(self, qtbot) -> None:
         """duplicate_requested signal emits with the correct preset name."""
@@ -685,6 +685,117 @@ class TestMyPresetsViewContextMenu:
         assert not view._copy_btn.isEnabled()
 
 
+class TestMyPresetsViewMultiSelect:
+    """QA-reported gap: My Saved Presets had no multi-select, unlike Presets
+    on Device / the Filters step's Device panel, which both use
+    ExtendedSelection. Delete now supports a multi-select batch, matching
+    that convention -- Rename/Duplicate/Copy stay single-item only, since
+    they're inherently one-name/one-Profile operations."""
+
+    def test_selection_mode_is_extended(self, qtbot) -> None:
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+
+        from PySide6.QtWidgets import QListWidget
+
+        assert view._list_widget.selectionMode() == QListWidget.SelectionMode.ExtendedSelection
+
+    def test_multi_select_enables_delete_but_not_single_item_actions(self, qtbot) -> None:
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
+
+        view._list_widget.item(0).setSelected(True)
+        view._list_widget.item(1).setSelected(True)
+
+        assert view._delete_btn.isEnabled()
+        assert not view._rename_btn.isEnabled()
+        assert not view._duplicate_btn.isEnabled()
+        assert not view._copy_btn.isEnabled()
+
+    def test_delete_clicked_with_multi_select_emits_all_selected_names(self, qtbot) -> None:
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets(
+            [_make_profile("A"), _make_profile("B"), _make_profile("C")]
+        )
+
+        view._list_widget.item(0).setSelected(True)
+        view._list_widget.item(2).setSelected(True)
+
+        with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
+            view._on_delete_clicked()
+
+        assert sorted(blocker.args[0]) == ["A", "C"]
+
+    def test_context_menu_delete_batches_full_selection(self, qtbot) -> None:
+        """Right-clicking a selected item within a multi-selection must batch
+        Delete over the whole selection, not just the item under the cursor
+        -- Qt's default right-click does not clear an existing selection, so
+        the toolbar and context-menu Delete must agree on what gets removed.
+        """
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
+
+        view._list_widget.item(0).setSelected(True)
+        view._list_widget.item(1).setSelected(True)
+
+        menu = view._build_context_menu(view._list_widget.item(1))
+        delete_action = next(a for a in menu.actions() if a.text() == "Delete")
+
+        with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
+            delete_action.trigger()
+
+        assert sorted(blocker.args[0]) == ["A", "B"]
+
+    def test_context_menu_delete_single_item_when_not_multi_selected(self, qtbot) -> None:
+        """Right-clicking an item outside the current selection still deletes
+        only that one item (no accidental batch over an unrelated selection).
+        """
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
+
+        view._list_widget.item(0).setSelected(True)
+
+        menu = view._build_context_menu(view._list_widget.item(2))
+        delete_action = next(a for a in menu.actions() if a.text() == "Delete")
+
+        with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
+            delete_action.trigger()
+
+        assert blocker.args[0] == ["C"]
+
+    def test_ctrl_click_deselect_leaves_current_item_stale(self, qtbot) -> None:
+        """Regression: _get_selected_profile() must read selectedItems(), not
+        currentItem() -- ctrl-clicking to deselect an item leaves Qt's
+        currentItem() pointing at that now-unselected item, which previously
+        made Rename/Duplicate/Copy silently act on the wrong preset.
+        """
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B")])
+
+        item_a = view._list_widget.item(0)
+        item_b = view._list_widget.item(1)
+
+        item_a.setSelected(True)
+        view._list_widget.setCurrentItem(item_a)
+        item_b.setSelected(True)
+        view._list_widget.setCurrentItem(item_b)
+        item_b.setSelected(False)
+
+        # currentItem() is stale (still B, the last-clicked item), while the
+        # actual selection is just A -- the two disagree.
+        assert view._list_widget.currentItem() is item_b
+        assert view._list_widget.selectedItems() == [item_a]
+
+        profile = view._get_selected_profile()
+        assert profile is not None
+        assert profile.name == "A"
+
+
 class TestMyPresetsViewToolbarLayout:
     """Tests for the toolbar's position and button order (smoke #227)."""
 
@@ -717,6 +828,35 @@ class TestMyPresetsViewToolbarLayout:
         qtbot.wait(20)
 
         assert view._toolbar.y() > y_at_500
+
+    def test_toolbar_stays_at_bottom_with_empty_list(self, qtbot) -> None:
+        """The same bottom-anchoring must hold with no saved presets (list
+        hidden, empty-state label shown in its place) -- previously only
+        the list's own stretch factor claimed leftover vertical space, so
+        with the list hidden and no other widget explicitly claiming it,
+        Qt split the leftover space between the empty label and the
+        toolbar instead, inflating both and pushing the toolbar down the
+        page rather than pinning it to the bottom (smoke #267 follow-up:
+        the effect was small enough to go unnoticed until the wizard's
+        step-indicator row was reclaimed on this view, giving it enough
+        extra height to make the drift obvious)."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.resize(600, 500)
+        view.show()
+        view.set_presets([])
+        qtbot.wait(20)
+        y_at_500 = view._toolbar.y()
+        height_at_500 = view._toolbar.height()
+
+        view.resize(600, 900)
+        qtbot.wait(20)
+
+        assert view._toolbar.y() > y_at_500
+        # The toolbar must stay pinned to its natural height regardless of
+        # how much extra space the view is given -- only the empty label
+        # should grow.
+        assert view._toolbar.height() == height_at_500
 
     def test_toolbar_button_order(self, qtbot) -> None:
         """Toolbar buttons are ordered Copy to Another Device (the primary
