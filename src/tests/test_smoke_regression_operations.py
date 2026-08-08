@@ -2342,6 +2342,50 @@ class TestPresets:
 
         mock_delete.assert_not_called()
 
+    def test_local_preset_batch_delete_deletes_all_and_refreshes_once(self, window) -> None:
+        """Multi-select local delete runs every item through the shared
+        _run_batch_profile_action helper and refreshes only once, not once
+        per item."""
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch.object(window._profile_repository, "delete") as mock_delete,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_success") as mock_success,
+        ):
+            window._on_profile_delete_requested(["Movie Night", "Late Night"])
+
+        assert mock_delete.call_count == 2
+        mock_delete.assert_any_call("Movie Night")
+        mock_delete.assert_any_call("Late Night")
+        mock_refresh.assert_called_once()
+        mock_success.assert_called_once_with("Deleted 2 presets")
+
+    def test_local_preset_batch_delete_partial_failure_reports_counts(self, window) -> None:
+        """One item failing (e.g. already removed by a concurrent change)
+        doesn't abort the rest -- the batch still deletes what it can and
+        reports succeeded/failed counts, refreshing regardless."""
+        with (
+            patch(
+                "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+                return_value=True,
+            ),
+            patch.object(
+                window._profile_repository,
+                "delete",
+                side_effect=[None, KeyError("not found")],
+            ) as mock_delete,
+            patch.object(window, "_refresh_presets_view") as mock_refresh,
+            patch.object(window._status_banner, "show_error") as mock_error,
+        ):
+            window._on_profile_delete_requested(["Movie Night", "Late Night"])
+
+        assert mock_delete.call_count == 2
+        mock_refresh.assert_called_once()
+        mock_error.assert_called_once_with("Deleted 1 preset(s), 1 failed.")
+
     # --- Issue #27: RoomFit profile selection triggers read and advances ---
 
     def test_issue27_roomfit_profile_selected_triggers_pull(self, window) -> None:

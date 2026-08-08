@@ -2369,6 +2369,40 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._status_banner.show_error(f"{failure_verb} failed: {exc}")
 
+    def _run_batch_profile_action(
+        self, names: list[str], action: Callable[[str], object], failure_verb: str
+    ) -> tuple[int, int]:
+        """Run a synchronous ProfileRepository action per name in *names*,
+        refreshing once afterward. Sibling of `_run_profile_action` for the
+        one local-repository action that batches over a multi-select
+        (`_on_profile_delete_requested`) instead of running once -- kept
+        separate rather than folded into `_run_profile_action` since a
+        partial-failure batch needs a materially different interface
+        (per-item callable, (succeeded, failed) counts) than that method's
+        single callable mapped to one success/one failure outcome.
+
+        A per-item failure doesn't stop the batch; refreshing unconditionally
+        afterward (even if every item failed) matters because the repo may
+        have changed regardless (e.g. a concurrent rename), and stale UI is
+        worse than one extra read. Returns the (succeeded, failed) counts --
+        unlike `_run_profile_action`, the caller decides the status banner
+        wording, since that legitimately differs per action and per count.
+
+        Args:
+            names: Preset names to run *action* against.
+            action: Callable taking one name, performing the repository write.
+            failure_verb: Logged per item on failure, e.g. "Delete".
+        """
+        succeeded = 0
+        for name in names:
+            try:
+                action(name)
+                succeeded += 1
+            except Exception:
+                logger.warning("%s local preset %r failed", failure_verb, name, exc_info=True)
+        self._refresh_presets_view()
+        return succeeded, len(names) - succeeded
+
     def _save_filters_to_presets(
         self, name: str, filters: list[CanonicalFilter], channel_mode: str | ChannelMode
     ) -> None:
@@ -3506,19 +3540,9 @@ class MainWindow(QMainWindow):
         if not self._confirm_action("Delete Preset(s)", message):
             return
 
-        succeeded = 0
-        for name in names:
-            try:
-                self._profile_repository.delete(name)
-                succeeded += 1
-            except Exception:
-                logger.warning("Failed to delete local preset %r", name, exc_info=True)
-
-        # Refresh unconditionally: even on total failure the repo may have
-        # changed (e.g. a concurrent rename), and stale UI is worse than
-        # one extra read.
-        self._refresh_presets_view()
-        failed = len(names) - succeeded
+        succeeded, failed = self._run_batch_profile_action(
+            names, lambda name: self._profile_repository.delete(name), "Delete"
+        )
         if failed:
             self._status_banner.show_error(
                 f"Deleted {succeeded} preset(s), {failed} failed."
