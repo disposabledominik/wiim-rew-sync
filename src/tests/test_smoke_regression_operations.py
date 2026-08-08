@@ -196,6 +196,55 @@ class TestPushWriteOperations:
 
         assert window._wizard_controller.state.current_step == WizardStep.REVIEW
 
+    def test_on_peq_ready_invalidates_stale_review_on_filter_change(
+        self, window
+    ) -> None:
+        """Regression: the FILTERS change-detection added for
+        _on_filters_accepted (browsing back and re-confirming a different
+        filter set clears stale Review/Push checkmarks) must also apply to
+        the device-pull/file-import path, which is the common case and
+        previously bypassed it entirely -- _on_peq_ready called advance()
+        directly with no invalidation, so this is the only test exercising
+        that path's checkmark behavior end to end."""
+        _setup_device(window)
+        wc = window._wizard_controller
+        state = wc.state
+        wc.state.current_step = WizardStep.FILTERS
+
+        state.current_filters = [_make_filter(100)]
+        state.channel_mode = ChannelMode.STEREO
+        peq_data_a = MagicMock(channel_mode="stereo", bands_l=None, bands_r=None)
+        window._on_peq_ready(peq_data_a)  # FILTERS done, at REVIEW
+        wc.advance(summary="Reviewed")  # REVIEW done, at PUSH
+
+        # Browse back, pull a DIFFERENT filter set -- Review must clear.
+        wc.go_to_step(WizardStep.FILTERS)
+        state.current_filters = [_make_filter(200)]
+        peq_data_b = MagicMock(channel_mode="stereo", bands_l=None, bands_r=None)
+        window._on_peq_ready(peq_data_b)
+
+        assert WizardStep.REVIEW not in wc.completed_steps
+        assert WizardStep.FILTERS in wc.completed_steps
+
+    def test_on_profile_recalled_invalidates_stale_review_on_filter_change(
+        self, window
+    ) -> None:
+        """Same regression as above, for the Local Library recall path
+        (_on_profile_recalled), which also called advance() directly with
+        no invalidation."""
+        _setup_device(window)
+        wc = window._wizard_controller
+        wc.state.current_step = WizardStep.FILTERS
+
+        window._on_profile_recalled([_make_filter(100)], "Preset A")
+        wc.advance(summary="Reviewed")  # REVIEW done, at PUSH
+
+        wc.go_to_step(WizardStep.FILTERS)
+        window._on_profile_recalled([_make_filter(200)], "Preset B")
+
+        assert WizardStep.REVIEW not in wc.completed_steps
+        assert WizardStep.FILTERS in wc.completed_steps
+
     # --- Issue #58: Multi-device push respects channel_mode (live equivalent) ---
 
     def test_issue58_copy_presets_batch_multi_peq_lr_uses_lr_channel_mode(

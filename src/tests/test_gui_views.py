@@ -728,6 +728,73 @@ class TestMyPresetsViewMultiSelect:
 
         assert sorted(blocker.args[0]) == ["A", "C"]
 
+    def test_context_menu_delete_batches_full_selection(self, qtbot) -> None:
+        """Right-clicking a selected item within a multi-selection must batch
+        Delete over the whole selection, not just the item under the cursor
+        -- Qt's default right-click does not clear an existing selection, so
+        the toolbar and context-menu Delete must agree on what gets removed.
+        """
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
+
+        view._list_widget.item(0).setSelected(True)
+        view._list_widget.item(1).setSelected(True)
+
+        menu = view._build_context_menu(view._list_widget.item(1))
+        delete_action = next(a for a in menu.actions() if a.text() == "Delete")
+
+        with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
+            delete_action.trigger()
+
+        assert sorted(blocker.args[0]) == ["A", "B"]
+
+    def test_context_menu_delete_single_item_when_not_multi_selected(self, qtbot) -> None:
+        """Right-clicking an item outside the current selection still deletes
+        only that one item (no accidental batch over an unrelated selection).
+        """
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
+
+        view._list_widget.item(0).setSelected(True)
+
+        menu = view._build_context_menu(view._list_widget.item(2))
+        delete_action = next(a for a in menu.actions() if a.text() == "Delete")
+
+        with qtbot.waitSignal(view.delete_requested, timeout=1000) as blocker:
+            delete_action.trigger()
+
+        assert blocker.args[0] == ["C"]
+
+    def test_ctrl_click_deselect_leaves_current_item_stale(self, qtbot) -> None:
+        """Regression: _get_selected_profile() must read selectedItems(), not
+        currentItem() -- ctrl-clicking to deselect an item leaves Qt's
+        currentItem() pointing at that now-unselected item, which previously
+        made Rename/Duplicate/Copy silently act on the wrong preset.
+        """
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B")])
+
+        item_a = view._list_widget.item(0)
+        item_b = view._list_widget.item(1)
+
+        item_a.setSelected(True)
+        view._list_widget.setCurrentItem(item_a)
+        item_b.setSelected(True)
+        view._list_widget.setCurrentItem(item_b)
+        item_b.setSelected(False)
+
+        # currentItem() is stale (still B, the last-clicked item), while the
+        # actual selection is just A -- the two disagree.
+        assert view._list_widget.currentItem() is item_b
+        assert view._list_widget.selectedItems() == [item_a]
+
+        profile = view._get_selected_profile()
+        assert profile is not None
+        assert profile.name == "A"
+
 
 class TestMyPresetsViewToolbarLayout:
     """Tests for the toolbar's position and button order (smoke #227)."""

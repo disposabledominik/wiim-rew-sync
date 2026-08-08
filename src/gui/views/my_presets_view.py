@@ -412,13 +412,28 @@ class MyPresetsView(QWidget):
 
         Action order matches the toolbar's: Load, Copy to Another Device,
         Rename, Duplicate, Delete.
+
+        Right-clicking in Qt does not clear an existing multi-selection, so
+        Delete must batch over the full selection when the right-clicked
+        item is part of one -- otherwise it silently drops every
+        selected item except the one under the cursor, contradicting the
+        toolbar Delete button's batch behavior on the same selection. The
+        other actions (Copy/Rename/Duplicate) stay single-item-only, same
+        as the toolbar, and are disabled when the selection is a batch.
         """
         profile: Profile = item.data(Qt.ItemDataRole.UserRole)
+        selected = self._list_widget.selectedItems()
+        if item in selected and len(selected) > 1:
+            delete_targets = [i.data(Qt.ItemDataRole.UserRole) for i in selected]
+        else:
+            delete_targets = [profile]
+        is_batch = len(delete_targets) > 1
 
         menu = QMenu(self)
         menu.setObjectName("MyPresetsContextMenu")
 
         copy_action = QAction("Copy to Another Device", menu)
+        copy_action.setEnabled(not is_batch)
         copy_action.triggered.connect(
             lambda: self.copy_to_device_requested.emit(profile)
         )
@@ -427,10 +442,12 @@ class MyPresetsView(QWidget):
         menu.addSeparator()
 
         rename_action = QAction("Rename", menu)
+        rename_action.setEnabled(not is_batch)
         rename_action.triggered.connect(lambda: self._start_rename(item))
         menu.addAction(rename_action)
 
         duplicate_action = QAction("Duplicate", menu)
+        duplicate_action.setEnabled(not is_batch)
         duplicate_action.triggered.connect(
             lambda: self.duplicate_requested.emit(profile.name)
         )
@@ -439,7 +456,9 @@ class MyPresetsView(QWidget):
         menu.addSeparator()
 
         delete_action = QAction("Delete", menu)
-        delete_action.triggered.connect(lambda: self.delete_requested.emit([profile.name]))
+        delete_action.triggered.connect(
+            lambda: self.delete_requested.emit([p.name for p in delete_targets])
+        )
         menu.addAction(delete_action)
 
         return menu
@@ -463,6 +482,20 @@ class MyPresetsView(QWidget):
         self._copy_btn.setEnabled(selected_count == 1)
         self._delete_btn.setEnabled(selected_count >= 1)
 
+    def _get_selected_item(self) -> QListWidgetItem | None:
+        """Return the sole selected QListWidgetItem, or None.
+
+        Deliberately reads selectedItems() rather than currentItem() --
+        under ExtendedSelection, ctrl-clicking to deselect an item leaves
+        currentItem() pointing at that (now unselected) item while
+        selectedItems() correctly drops it, so currentItem() can disagree
+        with the actual selection Rename/Duplicate/Copy are meant to act on.
+        """
+        selected = self._list_widget.selectedItems()
+        if len(selected) != 1:
+            return None
+        return selected[0]
+
     def _get_selected_profile(self) -> Profile | None:
         """Return the currently selected Profile, or None.
 
@@ -470,7 +503,7 @@ class MyPresetsView(QWidget):
         this are the single-item-only actions (Rename/Duplicate/Copy), whose
         toolbar buttons are disabled otherwise (see _on_selection_changed).
         """
-        item = self._list_widget.currentItem()
+        item = self._get_selected_item()
         if item is None:
             return None
         return item.data(Qt.ItemDataRole.UserRole)  # type: ignore[no-any-return]
@@ -483,7 +516,7 @@ class MyPresetsView(QWidget):
 
     def _on_rename_clicked(self) -> None:
         """Handle Rename button click — start inline rename."""
-        item = self._list_widget.currentItem()
+        item = self._get_selected_item()
         if item:
             self._start_rename(item)
 

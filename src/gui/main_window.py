@@ -1107,22 +1107,29 @@ class MainWindow(QMainWindow):
         summary, tooltip = self._compute_source_summary(source_name)
         self._wizard_controller.advance(summary=summary, tooltip=tooltip)
 
-    @Slot()
-    def _on_filters_accepted(self) -> None:
-        """Handle user accepting filters (with or without warnings) — advance.
+    def _confirm_filters_selection(self) -> None:
+        """Invalidate REVIEW/PUSH if the filter selection changed since last seen.
 
-        Mirrors _on_source_changed's change-detection (see that method):
+        Mirrors _on_source_selected's change-detection (see that method):
         picking a different filter set (a different device/local preset, or
         a fresh file import) than what Review/Push last saw invalidates
         those downstream steps, so browsing back to Filters, changing the
-        selection, and clicking Continue can't leave a stale Review/Push
+        selection, and advancing again can't leave a stale Review/Push
         checkmark in place -- unlike Source's own state field, which still
         holds the previous confirmed value at compare time,
         `state.current_filters` is already overwritten by the producer
-        (file import/device pull/preset load) well before this handler
-        runs, so the "previous confirmed" value has to be tracked
-        separately in `_last_confirmed_filters_signature` rather than read
-        back off wizard state itself.
+        (file import/device pull/preset load) well before any advance-past-
+        FILTERS handler runs, so the "previous confirmed" value has to be
+        tracked separately in `_last_confirmed_filters_signature` rather
+        than read back off wizard state itself.
+
+        Called from every path that advances past FILTERS -- _on_peq_ready
+        (device pull / file import, the common case), _on_profile_recalled
+        (Local Library), and _on_filters_accepted (the warnings-
+        acknowledgment path) -- not just the last of those. A version of
+        this fix that only ran from _on_filters_accepted left Review/Push
+        staleness undetected for every filter change that didn't happen to
+        trigger a truncation/clamping warning, i.e. almost all of them.
         """
         state = self._wizard_controller.state
         new_signature = (
@@ -1134,6 +1141,12 @@ class MainWindow(QMainWindow):
         if new_signature != self._last_confirmed_filters_signature:
             self._wizard_controller.invalidate_after(WizardStep.FILTERS)
         self._last_confirmed_filters_signature = new_signature
+
+    @Slot()
+    def _on_filters_accepted(self) -> None:
+        """Handle user accepting filters (with or without warnings) — advance."""
+        state = self._wizard_controller.state
+        self._confirm_filters_selection()
 
         summary = self._resolve_filters_summary(len(state.current_filters))
         self._wizard_controller.advance(summary=summary, tooltip=state.filters_origin)
@@ -1972,6 +1985,7 @@ class MainWindow(QMainWindow):
                 return
             all_warnings, validated_count = result
 
+            self._confirm_filters_selection()
             self._wizard_controller.advance(
                 summary=self._resolve_filters_summary(validated_count),
                 tooltip=state.filters_origin,
@@ -3828,6 +3842,7 @@ class MainWindow(QMainWindow):
 
         active_bands = sum(1 for f in filters if getattr(f, "enabled", True))
 
+        self._confirm_filters_selection()
         self._wizard_controller.advance(
             summary=self._resolve_filters_summary(len(filters)),
             tooltip=state.filters_origin,
