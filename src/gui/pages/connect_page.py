@@ -151,6 +151,43 @@ class ConnectPage(QWidget):
         self._devices_scroll.setVisible(False)
         self._scanning_widget.setVisible(True)
 
+    def mark_connecting(self, ip: str) -> None:
+        """Show the pulsing "connecting" animation on the card for *ip*.
+
+        Args:
+            ip: IP address of the device a capability probe was just
+                dispatched for. A no-op if no card matches (e.g. the page
+                was reset in between).
+        """
+        for card, card_ip, _sort_key in self._device_cards:
+            if card_ip == ip:
+                card.set_state("connecting")
+                break
+
+    def mark_connected(self, ip: str) -> None:
+        """Show the solid "connected" accent on the card for *ip*.
+
+        Args:
+            ip: IP address of the device whose capability probe just
+                succeeded.
+        """
+        for card, card_ip, _sort_key in self._device_cards:
+            if card_ip == ip:
+                card.set_state("connected")
+                break
+
+    def reset_connecting(self) -> None:
+        """Revert any card still showing "connecting" back to idle.
+
+        Called when a capability probe fails -- without this, the card the
+        user clicked would keep pulsing indefinitely with no indication the
+        attempt ended (the page itself isn't rebuilt on a probe failure the
+        way it is on a fresh scan, so nothing else would ever reset it).
+        """
+        for card, _ip, _sort_key in self._device_cards:
+            if card.property("state") == "connecting":
+                card.set_state("idle")
+
     def showEvent(self, event) -> None:  # noqa: ANN001
         """Auto-trigger discovery when the page becomes visible."""
         super().showEvent(event)

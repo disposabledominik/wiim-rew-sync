@@ -938,6 +938,7 @@ class MainWindow(QMainWindow):
         # selection is discarded instead of advancing the wizard out from
         # under the user (see _do_probe).
         generation = self._primary_workflows.bump_probe_generation()
+        self._connect_page.mark_connecting(device_ip)
         self._primary_workflows.probe(self._capability_prober, generation)
         logger.info("Device selected: %s", device_ip)
 
@@ -1743,6 +1744,10 @@ class MainWindow(QMainWindow):
         Args:
             caps: DeviceCapabilities object from the probe.
         """
+        selected_device = self._wizard_controller.state.selected_device
+        if selected_device is not None:
+            self._connect_page.mark_connected(selected_device)
+
         # Store capabilities (caps has supports_roomfit*, source_names, etc.)
         roomfit_readable = bool(getattr(caps, "supports_roomfit_read", False))
 
@@ -2119,6 +2124,14 @@ class MainWindow(QMainWindow):
 
         if self._active_rew_pull_view is not None:
             self._show_rew_pull_message(message, icon=ICON_NO_CONNECTION)
+
+        # A failed capability probe leaves the clicked card pulsing forever
+        # with no other reset path -- only relevant while Connect is still
+        # the active step (mirrors _on_capabilities_ready's own guard); a
+        # no-op otherwise since reset_connecting() only touches a card
+        # actually showing "connecting".
+        if self._wizard_controller.current_step == WizardStep.CONNECT:
+            self._connect_page.reset_connecting()
 
     @Slot(str)
     def _on_progress_update(self, message: str) -> None:
