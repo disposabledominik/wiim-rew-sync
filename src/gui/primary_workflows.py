@@ -70,6 +70,40 @@ class EmptyPresetFiltersError(Exception):
     """
 
 
+class _AbandonGuard:
+    """Tracks whether a cancellable ``_do_*`` coroutine reached its own
+    success emit, and fires *on_abandoned* in a ``finally`` if not.
+
+    Every cancellable workflow that leaves some UI element in a "waiting"
+    state (a pulsing device card, a scanning spinner, an embedded picker
+    showing "Connecting...") needs this: cancellation (``asyncio.CancelledError``)
+    and, for probe(), the pre-existing stale-generation-discard path both
+    exit without reaching the workflow's own success emit -- and neither is
+    caught by ``_bridge_wrapper``'s ``except Exception`` (``CancelledError``
+    is a ``BaseException``, not caught there). Without an explicit
+    abandonment signal, nothing would ever reset that UI element.
+
+    Usage::
+
+        async def _do_thing(self) -> None:
+            with _AbandonGuard(self._bridge.thing_abandoned.emit) as guard:
+                result = await ...
+                self._bridge.thing_ready.emit(result)
+                guard.succeeded = True
+    """
+
+    def __init__(self, on_abandoned: Callable[[], None]) -> None:
+        self._on_abandoned = on_abandoned
+        self.succeeded = False
+
+    def __enter__(self) -> _AbandonGuard:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if not self.succeeded:
+            self._on_abandoned()
+
+
 def _extract_profile_names(profiles: list[dict[str, Any]]) -> list[str]:
     """Extract non-empty "Name" values from a list_roomfit_profiles() result.
 
@@ -288,16 +322,29 @@ class PrimaryWorkflowManager(QObject):
         """
         return self._discovered_devices
 
-    def _dispatch(self, operation_name: str, coro: Coroutine[Any, Any, Any]) -> None:
+    def _dispatch(
+        self, operation_name: str, coro: Coroutine[Any, Any, Any], *, cancellable: bool = False
+    ) -> None:
         """Run a coroutine on the bridge, wrapped for error mapping.
 
         Shared by every fire-and-forget entry point below — each one used to
         repeat this same assert/assert/run_async line; consolidated here
         once enough of them existed to justify it.
+
+        Args:
+            operation_name: Log-context label for _bridge_wrapper.
+            coro: The awaitable adapter coroutine to execute.
+            cancellable: Whether the user can cancel this operation via
+                Escape or the Cancel button. Defaults to False (the safe
+                direction) -- only pass True for confirmed pure reads with
+                no device-write/SafeWrite side effect a cancellation could
+                leave half-done.
         """
         assert self._bridge is not None
         assert self._bridge_wrapper is not None
-        self._bridge.run_async(self._bridge_wrapper(operation_name, coro))
+        self._bridge.run_async(
+            self._bridge_wrapper(operation_name, coro), cancellable=cancellable
+        )
 
     def _require_adapter(self) -> WiiMAdapter:
         """Return the current device adapter, asserting it's set.
@@ -332,13 +379,18 @@ class PrimaryWorkflowManager(QObject):
 
     def discover(self) -> None:
         """Trigger device discovery; results arrive via the bridge's discovery signals."""
-        self._dispatch("discovery", self._do_discovery())
+        self._dispatch("discovery", self._do_discovery(), cancellable=True)
 
     async def _do_discovery(self) -> None:
         """Run device discovery and emit results via bridge signal.
 
         Uses progressive discovery — devices appear in the UI as soon as
         they're found rather than waiting for the full scan to complete.
+
+        discover() is dispatched as cancellable, but a cancelled/superseded
+        scan still needs to clear ConnectPage's scanning indicator -- see
+        _AbandonGuard's docstring for why a plain `finally` (or an
+        `except Exception`) isn't enough on its own.
         """
         assert self._bridge is not None
         assert self._discovery_module is not None
@@ -352,14 +404,16 @@ class PrimaryWorkflowManager(QObject):
             assert self._bridge is not None
             self._bridge.discovery_progress.emit(device_list)
 
-        devices = await self._discovery_module.discover(on_found=_on_found)
-        # Cache raw DeviceInfo objects for device picker dialogs
-        self._discovered_devices = devices
-        device_list = [
-            {"name": d.name, "ip": d.ip, "model": d.model}
-            for d in devices
-        ]
-        self._bridge.discovery_complete.emit(device_list)
+        with _AbandonGuard(self._bridge.discovery_abandoned.emit) as guard:
+            devices = await self._discovery_module.discover(on_found=_on_found)
+            # Cache raw DeviceInfo objects for device picker dialogs
+            self._discovered_devices = devices
+            device_list = [
+                {"name": d.name, "ip": d.ip, "model": d.model}
+                for d in devices
+            ]
+            self._bridge.discovery_complete.emit(device_list)
+            guard.succeeded = True
 
     # ------------------------------------------------------------------
     # Workflow: Capability Probing
@@ -376,17 +430,24 @@ class PrimaryWorkflowManager(QObject):
         self._probe_generation += 1
         return self._probe_generation
 
-    def probe(self, prober: CapabilityProber, generation: int) -> None:
+    def probe(self, prober: CapabilityProber, generation: int, device_ip: str) -> None:
         """Trigger capability probing for a just-selected device.
 
         Args:
             prober: The CapabilityProber for the device this probe targets.
             generation: Snapshot from bump_probe_generation() at selection
                 time, used by _do_probe to discard a stale result.
+            device_ip: IP of the device this probe targets, so _do_probe can
+                report back exactly which device's card to reset if the
+                probe never produces a result.
         """
-        self._dispatch("capability_probe", self._do_probe(prober, generation))
+        self._dispatch(
+            "capability_probe", self._do_probe(prober, generation, device_ip), cancellable=True
+        )
 
-    async def _do_probe(self, prober: CapabilityProber, generation: int) -> None:
+    async def _do_probe(
+        self, prober: CapabilityProber, generation: int, device_ip: str
+    ) -> None:
         """Run capability probing and emit results via bridge signal.
 
         Calls CapabilityProber.probe() and emits the DeviceCapabilities
@@ -401,20 +462,32 @@ class PrimaryWorkflowManager(QObject):
         device the user already navigated away from, corrupting the Connect
         step's completed/checkmark state.
 
+        Either way -- discarded as stale, or cancelled outright via
+        Escape/Cancel while the probe is cancellable -- ConnectPage's card
+        for *device_ip* was already left pulsing "connecting" by whoever
+        dispatched this probe, with nothing else to revert it. _AbandonGuard
+        emits `probe_abandoned` for exactly that device whenever this
+        coroutine exits without reaching `capabilities_ready`, so the card
+        for a superseded/cancelled probe doesn't pulse forever.
+
         Args:
             prober: The CapabilityProber for the device this probe targets.
             generation: Snapshot of the probe-generation counter at selection time.
+            device_ip: IP of the device this probe targets.
         """
-        assert self._bridge is not None
-        caps = await prober.probe()
-        if generation != self._probe_generation:
-            logger.debug(
-                "Discarding stale capability probe result (generation %d, current %d)",
-                generation,
-                self._probe_generation,
-            )
-            return
-        self._bridge.capabilities_ready.emit(caps)
+        bridge = self._bridge
+        assert bridge is not None
+        with _AbandonGuard(lambda: bridge.probe_abandoned.emit(device_ip)) as guard:
+            caps = await prober.probe()
+            if generation != self._probe_generation:
+                logger.debug(
+                    "Discarding stale capability probe result (generation %d, current %d)",
+                    generation,
+                    self._probe_generation,
+                )
+                return
+            bridge.capabilities_ready.emit(caps)
+            guard.succeeded = True
 
     # ------------------------------------------------------------------
     # Workflow: File Import
@@ -422,7 +495,11 @@ class PrimaryWorkflowManager(QObject):
 
     def import_file(self, path: str) -> None:
         """Trigger a single-file (stereo) REW import."""
-        self._dispatch("file_import", self._do_file_import(path))
+        # cancellable=False: _do_file_import has no await point (REWParser.
+        # parse_file_with_rows() is fully synchronous), so a mid-flight
+        # cancel could never actually interrupt it -- showing a Cancel
+        # button that silently does nothing would be misleading.
+        self._dispatch("file_import", self._do_file_import(path), cancellable=False)
 
     async def _do_file_import(self, path: str) -> None:
         """Parse a REW EQ text file and populate filters.
@@ -461,7 +538,11 @@ class PrimaryWorkflowManager(QObject):
 
     def import_file_lr(self, path_l: str, path_r: str) -> None:
         """Trigger an L/R (two-file) REW import."""
-        self._dispatch("file_import_lr", self._do_file_import_lr(path_l, path_r))
+        # cancellable=False: see import_file()'s comment -- _do_file_import_lr
+        # is also fully synchronous, no await point to cancel at.
+        self._dispatch(
+            "file_import_lr", self._do_file_import_lr(path_l, path_r), cancellable=False
+        )
 
     async def _do_file_import_lr(self, path_l: str, path_r: str) -> None:
         """Parse two REW EQ text files as L/R channels.
@@ -522,7 +603,7 @@ class PrimaryWorkflowManager(QObject):
         which needs to await the refresh inline as part of its own coroutine,
         calls refresh_presets() directly instead — see that method's docstring.
         """
-        self._dispatch("list_presets", self.refresh_presets())
+        self._dispatch("list_presets", self.refresh_presets(), cancellable=True)
 
     async def refresh_presets(self) -> None:
         """Fetch device PEQ preset list and RoomFit profiles, emit as signals.
@@ -667,7 +748,7 @@ class PrimaryWorkflowManager(QObject):
 
     def pull_device(self) -> None:
         """Trigger a pull-from-device; result arrives via peq_ready."""
-        self._dispatch("device_pull", self._do_device_pull())
+        self._dispatch("device_pull", self._do_device_pull(), cancellable=True)
 
     async def _do_device_pull(self) -> None:
         """Pull PEQ settings from the connected device.
@@ -776,7 +857,9 @@ class PrimaryWorkflowManager(QObject):
 
     def export_file(self, filters: list[CanonicalFilter], path: str) -> None:
         """Trigger a stereo REW file export; progress arrives via progress_update."""
-        self._dispatch("export", self._do_export(filters, path))
+        # cancellable=False: _do_export has no await point (REWGenerator.
+        # generate_file() is fully synchronous) -- see import_file()'s comment.
+        self._dispatch("export", self._do_export(filters, path), cancellable=False)
 
     async def _do_export(self, filters: list[CanonicalFilter], path: str) -> None:
         """Generate a REW EQ text file from current filters.
@@ -812,7 +895,13 @@ class PrimaryWorkflowManager(QObject):
         path_r: Path,
     ) -> None:
         """Trigger an L/R REW file export; progress arrives via progress_update."""
-        self._dispatch("export_lr", self._do_export_lr(filters_l, filters_r, path_l, path_r))
+        # cancellable=False: _do_export_lr is also fully synchronous -- see
+        # import_file()'s comment.
+        self._dispatch(
+            "export_lr",
+            self._do_export_lr(filters_l, filters_r, path_l, path_r),
+            cancellable=False,
+        )
 
     async def _do_export_lr(
         self,
@@ -855,32 +944,45 @@ class PrimaryWorkflowManager(QObject):
 
     def list_rew_measurements(self) -> None:
         """Trigger a REW measurement list fetch; results arrive via signals."""
-        self._dispatch("rew_list", self._do_rew_list_measurements())
+        self._dispatch("rew_list", self._do_rew_list_measurements(), cancellable=True)
 
     async def _do_rew_list_measurements(self) -> None:
         """List available measurements from REW API.
 
         Calls REWHttpApiClient.list_measurements() and emits the result.
         If empty, emits an info message instead of the measurement list.
+
+        list_rew_measurements() is dispatched as cancellable, but nothing
+        else clears the embedded RewPullView's "Connecting..." state for a
+        cancelled fetch -- _AbandonGuard emits `rew_list_abandoned` whenever
+        this coroutine exits without reaching one of its two terminal emits
+        below, so the picker doesn't stay stuck showing "Connecting..."
+        forever after Escape/Cancel.
         """
-        assert self._bridge is not None
+        bridge = self._bridge
+        assert bridge is not None
         rew_client = self._require_rew_client()
 
-        measurements = await rew_client.list_measurements()
+        with _AbandonGuard(bridge.rew_list_abandoned.emit) as guard:
+            measurements = await rew_client.list_measurements()
 
-        if not measurements:
-            self._bridge.progress_update.emit(
-                "__info__No measurements found in REW. "
-                "Load or import measurement(s) in REW's Measurements pane, then try again."
-            )
-            return
+            if not measurements:
+                bridge.progress_update.emit(
+                    "__info__No measurements found in REW. "
+                    "Load or import measurement(s) in REW's Measurements pane, then try again."
+                )
+                guard.succeeded = True
+                return
 
-        # Emit measurement list for the picker dialog
-        self._bridge.rew_measurements_ready.emit(measurements)
+            # Emit measurement list for the picker dialog
+            bridge.rew_measurements_ready.emit(measurements)
+            guard.succeeded = True
 
     def get_rew_filters(self, uuid: str, measurement_name: str = "") -> None:
         """Trigger a REW filter fetch for one measurement; result arrives via signal."""
-        self._dispatch("rew_filters", self._do_rew_get_filters(uuid, measurement_name))
+        self._dispatch(
+            "rew_filters", self._do_rew_get_filters(uuid, measurement_name), cancellable=True
+        )
 
     async def _do_rew_get_filters(self, uuid: str, measurement_name: str = "") -> None:
         """Fetch filters for a specific REW measurement.
@@ -921,6 +1023,7 @@ class PrimaryWorkflowManager(QObject):
         self._dispatch(
             "rew_filters_lr",
             self._do_rew_get_filters_lr(uuid_l, uuid_r, measurement_name_l, measurement_name_r),
+            cancellable=True,
         )
 
     async def _do_rew_get_filters_lr(
@@ -1107,11 +1210,10 @@ class PrimaryWorkflowManager(QObject):
                     f"Preset '{preset_name}' has no filters to export"
                 )
 
-            left_path = file_path.with_stem(file_path.stem + "_L")
-            right_path = file_path.with_stem(file_path.stem + "_R")
-            warnings_l = generator.generate_file(filters_l, left_path)
-            warnings_r = generator.generate_file(filters_r, right_path)
-            total_warnings = len(warnings_l) + len(warnings_r)
+            left_path, right_path, lr_warnings = generator.generate_lr_files(
+                filters_l, filters_r, file_path
+            )
+            total_warnings = len(lr_warnings)
 
             if total_warnings:
                 self._bridge.progress_update.emit(
@@ -1230,7 +1332,9 @@ class PrimaryWorkflowManager(QObject):
 
     def populate_name_profiles(self) -> None:
         """Trigger a NameProfilePage profile-list refresh; result arrives via signal."""
-        self._dispatch("list_roomfit_for_naming", self._do_populate_name_profiles())
+        self._dispatch(
+            "list_roomfit_for_naming", self._do_populate_name_profiles(), cancellable=True
+        )
 
     async def _do_populate_name_profiles(self) -> None:
         """Fetch RoomFit profiles and emit name_profiles_ready for NameProfilePage."""

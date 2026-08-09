@@ -96,6 +96,6 @@ the change if needed.
 | Shortcut | Action |
 |----------|--------|
 | `F1` | Open this User Guide |
-| `Escape` | Close the User Guide, or cancel the operation in progress |
+| `Escape` | Close the User Guide, or cancel the current operation (where cancellation is possible — not during a device write) |
 | `Ctrl+R` | Search for devices again |
 | `Ctrl+Q` | Quit the app |

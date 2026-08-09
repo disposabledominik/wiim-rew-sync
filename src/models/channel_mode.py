@@ -51,16 +51,6 @@ class ChannelMode(Enum):
         return self == ChannelMode.LR
 
     @classmethod
-    def from_wire(cls, value: str) -> ChannelMode:
-        """Parse a WiiM API channelMode value.
-
-        Accepts: "Stereo", "L/R".
-        """
-        if value == "L/R":
-            return cls.LR
-        return cls.STEREO
-
-    @classmethod
     def from_profile(cls, value: str) -> ChannelMode:
         """Parse a Profile JSON channel_mode value.
 

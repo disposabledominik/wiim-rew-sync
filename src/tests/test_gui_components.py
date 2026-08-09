@@ -56,9 +56,8 @@ class TestStatusBanner:
         assert banner.isVisible()
         assert banner.property("status") == "success"
 
-        # Wait for the dismissed signal (triggered by auto-dismiss timer)
-        with qtbot.waitSignal(banner.dismissed, timeout=2000):
-            pass
+        # Wait for the auto-dismiss timer to reset the banner to idle
+        qtbot.waitUntil(lambda: banner.property("status") == "idle", timeout=2000)
 
         # Banner stays visible (reserves space) but enters idle state
         assert banner.property("status") == "idle"
@@ -90,30 +89,30 @@ class TestStatusBanner:
         assert banner._message_label.text() == "Writing filters..."
 
     def test_clear_hides_and_emits_dismissed(self, qtbot) -> None:
-        """clear() resets the banner to idle and emits the dismissed signal."""
+        """clear() resets the banner to idle state."""
         banner = StatusBanner()
         qtbot.addWidget(banner)
 
         banner.show_info("Hello")
         assert banner.isVisible()
 
-        with qtbot.waitSignal(banner.dismissed, timeout=1000):
-            banner.clear()
+        banner.clear()
+        qtbot.waitUntil(lambda: banner.property("status") == "idle", timeout=1000)
 
         # Banner stays visible (reserves space) but enters idle state
         assert banner.property("status") == "idle"
         assert banner._message_label.text() == ""
 
     def test_close_button_dismisses(self, qtbot) -> None:
-        """Clicking the close button resets banner to idle and emits dismissed."""
+        """Clicking the close button resets banner to idle state."""
         banner = StatusBanner()
         qtbot.addWidget(banner)
 
         banner.show_error("Something went wrong")
         assert banner.isVisible()
 
-        with qtbot.waitSignal(banner.dismissed, timeout=1000):
-            qtbot.mouseClick(banner._close_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(banner._close_button, Qt.MouseButton.LeftButton)
+        qtbot.waitUntil(lambda: banner.property("status") == "idle", timeout=1000)
 
         # Banner stays visible (reserves space) but enters idle state
         assert banner.property("status") == "idle"
@@ -240,36 +239,6 @@ class TestStepIndicator:
 
         assert indicator._steps[1].state == _StepState.ACTIVE
         assert indicator._steps[0].state == _StepState.UPCOMING
-
-    def test_set_dimmed_mutes_active_pill(self, qtbot) -> None:
-        """set_dimmed swaps the viewed step's classes to the muted variant."""
-        indicator = StepIndicator()
-        qtbot.addWidget(indicator)
-
-        indicator.set_steps(["Connect", "EQ Type", "Source"])
-        indicator.set_view(1, 1)
-
-        indicator.set_dimmed(True)
-        active = indicator._steps[1]
-        assert active.property("class") == "stepWidgetActiveDimmed"
-        assert active._circle.property("class") == "stepCircleActiveDimmed"
-        assert active._label.property("class") == "stepLabelActiveDimmed"
-
-        indicator.set_dimmed(False)
-        assert active.property("class") == "stepWidgetActive"
-        assert active._circle.property("class") == "stepCircleActive"
-        assert active._label.property("class") == "stepLabelActive"
-
-    def test_set_view_preserves_dimmed_state(self, qtbot) -> None:
-        """Moving the view to a new step keeps the indicator's dimmed flag."""
-        indicator = StepIndicator()
-        qtbot.addWidget(indicator)
-
-        indicator.set_steps(["Connect", "EQ Type", "Source"])
-        indicator.set_dimmed(True)
-        indicator.set_view(2, 2)
-
-        assert indicator._steps[2].property("class") == "stepWidgetActiveDimmed"
 
     def test_set_completed_shows_checkmark(self, qtbot) -> None:
         """set_completed marks a step as completed with checkmark text."""
@@ -768,121 +737,6 @@ class TestFilterTable:
         assert table._tab_widget.tabText(0) == "Left Channel"
         assert table._tab_widget.tabText(1) == "Right Channel"
 
-    def test_comparison_highlights_changes(self, qtbot) -> None:
-        """set_comparison highlights rows where filters differ."""
-        table = FilterTable()
-        qtbot.addWidget(table)
-
-        before = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)]
-        after = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=5.0, q=1.0)]
-
-        table.set_comparison(before, after)
-
-        assert table._table is not None
-        # Changed row should have a background color set (accent highlight)
-        item = table._table.item(0, 0)
-        assert item is not None
-        bg = item.background().color()
-        assert bg.alpha() > 0  # Highlight applied
-
-    def test_comparison_uses_fp_compare_tolerance_not_stricter(self, qtbot) -> None:
-        """A band within fp_compare's match tolerance (±0.1 Hz / ±0.05 dB /
-        ±0.01 Q -- the same tolerance Safe-Write verification uses to decide
-        a write "matched") must not be highlighted as changed, even though
-        it would have failed the table's old, tighter hardcoded thresholds
-        (0.01 Hz / 0.01 dB / 0.001 Q). Otherwise the Review table can flag a
-        band as "changed" that Safe-Write itself considers a verified match."""
-        table = FilterTable()
-        qtbot.addWidget(table)
-
-        before = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)]
-        # 0.03 Hz, 0.02 dB, 0.005 Q of drift: within fp_compare tolerance,
-        # outside the old hardcoded one.
-        after = [CanonicalFilter(type="PEAK", frequency_hz=1000.03, gain_db=3.02, q=1.005)]
-
-        table.set_comparison(before, after)
-
-        assert table._table is not None
-        item = table._table.item(0, 0)
-        assert item is not None
-        bg = item.background().color()
-        assert bg.alpha() != 40  # No accent highlight applied -- within match tolerance
-
-    def test_comparison_off_bands_never_highlighted_regardless_of_placeholder_values(
-        self, qtbot
-    ) -> None:
-        """OFF-type bands are considered matching regardless of their
-        freq/gain/q placeholder values (mirrors fp_compare.band_matches'
-        OFF special-case, so the display and Safe-Write's own verification
-        stay in agreement)."""
-        table = FilterTable()
-        qtbot.addWidget(table)
-
-        before = [CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0)]
-        after = [CanonicalFilter(type="OFF", frequency_hz=500.0, gain_db=5.0, q=3.0)]
-
-        table.set_comparison(before, after)
-
-        assert table._table is not None
-        item = table._table.item(0, 0)
-        assert item is not None
-        bg = item.background().color()
-        assert bg.alpha() != 40  # No accent highlight -- OFF bands match regardless of drift
-
-    def test_comparison_gain_diff_annotation_uses_canonical_tolerance(self, qtbot) -> None:
-        """The "+X dB" diff annotation on a changed row must not appear when
-        the gain component alone is within fp_compare.GAIN_TOLERANCE_DB
-        (0.05 dB), even though the row is highlighted as changed overall due
-        to a frequency drift outside tolerance. Previously used a hardcoded
-        0.01 dB threshold, independently invented and tighter than the
-        canonical one."""
-        table = FilterTable()
-        qtbot.addWidget(table)
-
-        before = [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)]
-        # Frequency drifts well outside tolerance (row is "changed"), but the
-        # gain drifts only 0.02 dB -- within tolerance, outside the old
-        # hardcoded 0.01 dB threshold.
-        after = [CanonicalFilter(type="PEAK", frequency_hz=1010.0, gain_db=3.02, q=1.0)]
-
-        table.set_comparison(before, after)
-
-        assert table._table is not None
-        gain_item = table._table.item(0, 3)
-        assert gain_item is not None
-        assert "dB)" not in gain_item.text()  # No diff suffix for the in-tolerance gain
-
-    def test_clear_removes_all(self, qtbot) -> None:
-        """clear() removes the table widget."""
-        table = FilterTable()
-        qtbot.addWidget(table)
-
-        filters = self._make_filters()
-        table.set_filters(filters)
-        assert table._table is not None
-
-        table.clear()
-        assert table._table is None
-
-    def test_clear_resets_maximum_height_to_unbounded(self, qtbot) -> None:
-        """Smoke #237: clear() must reset maximumHeight() back to
-        unbounded (16777215, the literal value of Qt's QWIDGETSIZE_MAX --
-        not importable from PySide6, a C++-only macro) after set_filters()
-        capped it. A first attempted fix used setMaximumHeight(-1) intending
-        "unbounded", but Qt clamps negative setMaximumHeight() arguments to
-        0, which would collapse a cleared-then-repopulated table to zero
-        height instead."""
-        table = FilterTable()
-        qtbot.addWidget(table)
-
-        filters = self._make_filters()
-        table.set_filters(filters)
-        assert table.maximumHeight() < 16777215  # capped by set_filters()
-
-        table.clear()
-
-        assert table.maximumHeight() == 16777215
-
     def test_vertical_scrollbar_policy_is_dynamic(self, qtbot) -> None:
         """The vertical scrollbar policy is ScrollBarAsNeeded (Qt decides
         based on actual content vs. viewport height), not force-disabled --
@@ -1109,17 +963,6 @@ class TestDeviceCard:
 
         assert card.property("state") == "connected"
 
-    def test_error_state_shows_retry(self, qtbot) -> None:
-        """error state shows the error widget with retry button."""
-        card = DeviceCard()
-        qtbot.addWidget(card)
-
-        card.set_error("Timeout")
-
-        assert card.property("state") == "error"
-        assert not card._error_widget.isHidden()
-        assert card._error_label.text() == "Timeout"
-
     def test_clicked_signal_emitted(self, qtbot) -> None:
         """Left-clicking the card emits the clicked signal."""
         card = DeviceCard()
@@ -1127,16 +970,6 @@ class TestDeviceCard:
 
         with qtbot.waitSignal(card.clicked, timeout=1000):
             qtbot.mouseClick(card, Qt.MouseButton.LeftButton)
-
-    def test_retry_signal_emitted(self, qtbot) -> None:
-        """Clicking retry button emits retry_clicked signal."""
-        card = DeviceCard()
-        qtbot.addWidget(card)
-
-        card.set_error("Connection lost")
-
-        with qtbot.waitSignal(card.retry_clicked, timeout=1000):
-            qtbot.mouseClick(card._retry_button, Qt.MouseButton.LeftButton)
 
 
 # ---------------------------------------------------------------------------

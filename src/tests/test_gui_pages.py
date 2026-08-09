@@ -186,6 +186,41 @@ class TestConnectPage:
         page.set_scanning(False)
         assert page._rescan_btn.isEnabled()
 
+    def test_cancel_scanning_with_no_devices_shows_empty_state(self, qtbot) -> None:
+        """Cancelling a scan before any device was found must not leave the
+        page blank -- a bare set_scanning(False) only hides the spinner and
+        relies on a set_devices() call to show something else, which a
+        cancelled discovery never makes; cancel_scanning() must fall back to
+        the same empty/retry state a completed zero-result scan would show."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_scanning(True)
+
+        page.cancel_scanning()
+
+        assert page._empty_widget.isVisible()
+        assert not page._devices_scroll.isVisible()
+        assert not page._scanning_widget.isVisible()
+
+    def test_cancel_scanning_with_devices_keeps_them(self, qtbot) -> None:
+        """Cancelling a scan after progressive discovery already found some
+        devices must just hide the spinner -- not clear the cards already
+        shown via update_devices()."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.update_devices(
+            [{"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.10"}]
+        )
+        assert page._devices_scroll.isVisible()
+
+        page.cancel_scanning()
+
+        assert len(page._device_cards) == 1
+        assert page._devices_scroll.isVisible()
+        assert not page._scanning_widget.isVisible()
+
     def test_empty_state_causes_text_not_clipped_at_narrow_width(self, qtbot) -> None:
         """The "Common causes" bullet list isn't squeezed to near-zero height
         at a narrow window width (smoke #180 -- _build_empty_widget's layout
@@ -203,6 +238,64 @@ class TestConnectPage:
         assert causes_label is not None
         single_line_height = causes_label.fontMetrics().height()
         assert causes_label.height() > single_line_height * 2
+
+    def _two_device_page(self, qtbot) -> ConnectPage:
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_devices(
+            [
+                {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
+                {"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.10"},
+            ]
+        )
+        return page
+
+    def test_mark_connecting_pulses_only_the_matching_card(self, qtbot) -> None:
+        page = self._two_device_page(qtbot)
+
+        page.mark_connecting("192.168.1.10")
+
+        cards_by_ip = {ip: card for card, ip, _sort_key in page._device_cards}
+        assert cards_by_ip["192.168.1.10"].property("state") == "connecting"
+        assert cards_by_ip["192.168.1.11"].property("state") == "idle"
+
+    def test_mark_connected_shows_solid_accent_on_the_matching_card(self, qtbot) -> None:
+        page = self._two_device_page(qtbot)
+        page.mark_connecting("192.168.1.10")
+
+        page.mark_connected("192.168.1.10")
+
+        cards_by_ip = {ip: card for card, ip, _sort_key in page._device_cards}
+        assert cards_by_ip["192.168.1.10"].property("state") == "connected"
+
+    def test_reset_connecting_reverts_a_pulsing_card_to_idle(self, qtbot) -> None:
+        """Simulates a failed capability probe: the card the user clicked
+        must stop pulsing, not spin forever with no feedback."""
+        page = self._two_device_page(qtbot)
+        page.mark_connecting("192.168.1.10")
+
+        page.reset_connecting()
+
+        cards_by_ip = {ip: card for card, ip, _sort_key in page._device_cards}
+        assert cards_by_ip["192.168.1.10"].property("state") == "idle"
+
+    def test_reset_connecting_is_a_noop_when_nothing_is_connecting(self, qtbot) -> None:
+        page = self._two_device_page(qtbot)
+
+        page.reset_connecting()  # must not raise
+
+        cards_by_ip = {ip: card for card, ip, _sort_key in page._device_cards}
+        assert cards_by_ip["192.168.1.10"].property("state") == "idle"
+        assert cards_by_ip["192.168.1.11"].property("state") == "idle"
+
+    def test_mark_connecting_unknown_ip_is_a_noop(self, qtbot) -> None:
+        page = self._two_device_page(qtbot)
+
+        page.mark_connecting("10.0.0.99")  # no card has this IP -- must not raise
+
+        cards_by_ip = {ip: card for card, ip, _sort_key in page._device_cards}
+        assert all(card.property("state") == "idle" for card in cards_by_ip.values())
 
 
 # ---------------------------------------------------------------------------

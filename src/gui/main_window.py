@@ -529,11 +529,6 @@ class MainWindow(QMainWindow):
         return self._settings
 
     @property
-    def feedback_manager(self) -> OperationFeedbackManager:
-        """Access the operation feedback manager."""
-        return self._feedback_manager
-
-    @property
     def secondary_workflows(self) -> SecondaryWorkflowManager:
         """Access the secondary workflow manager."""
         return self._secondary_workflows
@@ -825,6 +820,9 @@ class MainWindow(QMainWindow):
         self._bridge.peq_ready.connect(self._on_peq_ready)
         self._bridge.write_complete.connect(self._on_write_complete)
         self._bridge.operation_error.connect(self._on_operation_error)
+        self._bridge.probe_abandoned.connect(self._on_probe_abandoned)
+        self._bridge.discovery_abandoned.connect(self._on_discovery_abandoned)
+        self._bridge.rew_list_abandoned.connect(self._on_rew_list_abandoned)
         self._bridge.progress_update.connect(self._on_progress_update)
         self._bridge.stage_changed.connect(self._on_stage_changed)
         self._bridge.push_round_changed.connect(self._on_push_round_changed)
@@ -943,7 +941,8 @@ class MainWindow(QMainWindow):
         # selection is discarded instead of advancing the wizard out from
         # under the user (see _do_probe).
         generation = self._primary_workflows.bump_probe_generation()
-        self._primary_workflows.probe(self._capability_prober, generation)
+        self._connect_page.mark_connecting(device_ip)
+        self._primary_workflows.probe(self._capability_prober, generation, device_ip)
         logger.info("Device selected: %s", device_ip)
 
     @Slot()
@@ -1748,6 +1747,10 @@ class MainWindow(QMainWindow):
         Args:
             caps: DeviceCapabilities object from the probe.
         """
+        selected_device = self._wizard_controller.state.selected_device
+        if selected_device is not None:
+            self._connect_page.mark_connected(selected_device)
+
         # Store capabilities (caps has supports_roomfit*, source_names, etc.)
         roomfit_readable = bool(getattr(caps, "supports_roomfit_read", False))
 
@@ -2124,6 +2127,61 @@ class MainWindow(QMainWindow):
 
         if self._active_rew_pull_view is not None:
             self._show_rew_pull_message(message, icon=ICON_NO_CONNECTION)
+
+        # A failed capability probe leaves the clicked card pulsing forever
+        # with no other reset path -- only relevant while Connect is still
+        # the active step (mirrors _on_capabilities_ready's own guard); a
+        # no-op otherwise since reset_connecting() only touches a card
+        # actually showing "connecting". A probe that ends *without* an
+        # error (cancelled, or superseded by a newer selection) doesn't
+        # reach this handler at all -- see _on_probe_abandoned below.
+        if self._wizard_controller.current_step == WizardStep.CONNECT:
+            self._connect_page.reset_connecting()
+
+    @Slot(str)
+    def _on_probe_abandoned(self, device_ip: str) -> None:
+        """Handle a capability probe that ended without a result.
+
+        Fires when a cancellable probe is cancelled (Escape/Cancel) or
+        discarded as stale (the user selected a different device before it
+        resolved) -- neither path emits capabilities_ready or
+        operation_error, so without this the clicked device's card would
+        keep pulsing "connecting" forever. Scoped to *device_ip* (rather
+        than reset_connecting()'s "every connecting card") so an unrelated
+        card that's still genuinely probing isn't touched.
+
+        Args:
+            device_ip: IP of the device whose probe was abandoned.
+        """
+        self._connect_page.reset_connecting_for(device_ip)
+
+    @Slot()
+    def _on_discovery_abandoned(self) -> None:
+        """Handle a discovery scan cancelled before it completed.
+
+        discovery_complete (the only other place that hides the scanning
+        indicator) never fires for a cancelled scan, so without this the
+        "Scanning for devices..." UI would stay shown indefinitely after
+        Escape/Cancel even though the operation has actually stopped.
+        Delegates to ConnectPage.cancel_scanning() rather than a bare
+        set_scanning(False) -- the latter is meant to always be paired with
+        a set_devices() call right after (which discovery_complete
+        provides but a cancellation never reaches), so calling it alone
+        here would leave the page blank when no devices were found yet.
+        """
+        self._connect_page.cancel_scanning()
+
+    @Slot()
+    def _on_rew_list_abandoned(self) -> None:
+        """Handle a REW measurement fetch cancelled before it completed.
+
+        Mirrors _on_probe_abandoned/_on_discovery_abandoned: neither
+        rew_measurements_ready nor the info-message branch of
+        _do_rew_list_measurements fires for a cancelled fetch, so without
+        this the embedded RewPullView would stay showing "Connecting..."
+        forever after Escape/Cancel.
+        """
+        self._show_rew_pull_message("Measurement fetch cancelled.")
 
     @Slot(str)
     def _on_progress_update(self, message: str) -> None:
@@ -2894,7 +2952,6 @@ class MainWindow(QMainWindow):
         self._onboarding_overlay.get_started_clicked.connect(
             self._on_onboarding_get_started
         )
-        self._onboarding_overlay.skip_clicked.connect(self._on_onboarding_skip)
 
     @Slot(str)
     def _on_theme_changed(self, theme: str) -> None:
@@ -2999,12 +3056,6 @@ class MainWindow(QMainWindow):
         self._wizard_controller.go_to_step(WizardStep.CONNECT)
 
     @Slot()
-    def _on_onboarding_skip(self) -> None:
-        """Handle onboarding Skip: mark complete and save settings."""
-        self._settings.first_run_complete = True
-        self._settings.save()
-
-    @Slot()
     def _on_user_guide_triggered(self) -> None:
         """Open the Help window (Help > User Guide or sidebar Help)."""
         self._help_dialog.show()
@@ -3062,11 +3113,17 @@ class MainWindow(QMainWindow):
         - Buttons are disabled immediately on operation start
         - Loading state is shown within 100ms
         - Long-operation message after 3s
-        - Cancel button after 2s
+        - Cancel button after 2s, for operations marked cancellable at their
+          _dispatch() call site (reads/local-file operations only -- never
+          device writes, see docs/architecture.md's "Why writes are never
+          user-cancellable")
         - Buttons re-enabled on finish
+        - Escape/Cancel-click requests actually stop a cancellable
+          operation's Future, via AsyncBridge.request_cancel()
         """
         self._bridge.operation_started.connect(self._on_bridge_operation_started)
         self._bridge.operation_finished.connect(self._on_bridge_operation_finished)
+        self._feedback_manager.cancel_requested.connect(self._bridge.request_cancel)
 
         # All pages/views are created once and persist for the app's
         # lifetime (see _create_pages/_register_pages), so their action
@@ -3088,14 +3145,38 @@ class MainWindow(QMainWindow):
             action_buttons.extend(page_or_view.action_buttons())
         self._feedback_manager.register_action_buttons(action_buttons)
 
-    @Slot()
-    def _on_bridge_operation_started(self) -> None:
-        """Handle bridge operation_started — activate feedback manager."""
-        self._feedback_manager.start_operation("Processing...")
+    @Slot(bool, int)
+    def _on_bridge_operation_started(self, cancellable: bool, token: int) -> None:
+        """Handle bridge operation_started — activate feedback manager.
 
-    @Slot()
-    def _on_bridge_operation_finished(self) -> None:
-        """Handle bridge operation_finished — deactivate feedback manager."""
+        *token* isn't needed here -- a start always represents the newest
+        dispatch by definition, so there's nothing to compare it against
+        (see _on_bridge_operation_finished, which does need it).
+        """
+        del token
+        self._feedback_manager.start_operation("Processing...", cancellable=cancellable)
+
+    @Slot(int)
+    def _on_bridge_operation_finished(self, token: int) -> None:
+        """Handle bridge operation_finished — deactivate feedback manager.
+
+        Ignores a stale *token*: a signal handler for one operation's own
+        result can synchronously dispatch a second, unrelated operation
+        before the first operation's own operation_finished has been
+        processed (e.g. _on_capabilities_ready dispatching list_presets()).
+        Qt delivers queued signals in emission order, so that second
+        dispatch supersedes AsyncBridge's tracking before this handler runs
+        for the first operation's finish -- acting on it here would
+        incorrectly tear down feedback-manager/UI state for the second,
+        still-running operation. See AsyncBridge._current's docstring.
+        """
+        if not self._bridge.is_current_operation(token):
+            logger.debug(
+                "Ignoring stale operation_finished (token %d, superseded by a "
+                "newer dispatch)",
+                token,
+            )
+            return
         self._feedback_manager.finish_operation()
 
     # ------------------------------------------------------------------
@@ -3170,14 +3251,18 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_shortcut_escape(self) -> None:
-        """Handle Escape — dismiss help dialog if visible, cancel active operation."""
+        """Handle Escape — dismiss help dialog if visible, cancel active operation.
+
+        request_cancel() is itself a no-op when the active operation isn't
+        cancellable (e.g. a device write), so Escape correctly does nothing
+        observable in that case rather than falsely claiming to cancel it.
+        """
         if self._help_dialog.isVisible():
             self._help_dialog.hide()
             logger.debug("Keyboard shortcut: Escape — Help dialog dismissed")
         elif self._feedback_manager.is_active:
-            # Cancel active operation
-            self._feedback_manager.cancel_requested.emit()
-            logger.debug("Keyboard shortcut: Escape — Operation cancelled")
+            self._feedback_manager.request_cancel()
+            logger.debug("Keyboard shortcut: Escape — Operation cancel requested")
 
     # ------------------------------------------------------------------
     # Primary Workflows — presets_ready signal wiring (Phase 1b)

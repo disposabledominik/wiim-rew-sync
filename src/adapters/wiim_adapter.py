@@ -10,7 +10,6 @@ Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 5.3, 5.4, 17.3
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -22,6 +21,7 @@ from src.adapters.wiim_commands import (
     expect_list_response,
 )
 from src.adapters.wiim_http import WiiMHttpClient
+from src.logging.setup import wiim_api_logger as logger
 from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceCapabilities
 from src.models.channel_mode import ChannelMode, coerce_channel_mode
@@ -38,8 +38,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from src.adapters.command_queue import WiiMCommandQueue
-
-logger = logging.getLogger("wiim_rew_sync.wiim_api")
 
 # Band letters a-l (up to 12 bands on newer firmware; older devices use a-j for 10)
 _BAND_LETTERS = "abcdefghijkl"
@@ -396,31 +394,11 @@ class WiiMAdapter:
             await self.disable_roomfit()
 
     async def _read_fx_status(self, source_name: str, eq_level: int) -> dict[str, Any]:
-        """Shared EQGetLV2SourceBandEx issuer for get_peq_enabled/get_roomfit_status/
-        read_roomfit."""
+        """Shared EQGetLV2SourceBandEx issuer for get_roomfit_status/read_roomfit."""
         response = await self._client.command(
             encode_wiim_command("EQGetLV2SourceBandEx", source_name=source_name, eq_level=eq_level)
         )
         return expect_dict_response(response, "EQGetLV2SourceBandEx")
-
-    async def get_peq_enabled(self, source_name: str) -> bool:
-        """Check whether PEQ is enabled on a specific source.
-
-        Issues ``EQGetLV2SourceBandEx`` with ``EQLevel: 1`` and reads the
-        ``EQStat`` field.
-
-        Args:
-            source_name: The audio input source (e.g. "wifi", "bluetooth").
-
-        Returns:
-            True if PEQ is enabled ("On"), False otherwise ("Off").
-
-        Raises:
-            WiiMResponseError: Response missing required fields or non-dict.
-            WiiMConnectionError: Device unreachable (propagated from http_client).
-        """
-        response = await self._read_fx_status(source_name, eq_level=1)
-        return bool(response.get("EQStat", "Off") == "On")
 
     # ------------------------------------------------------------------
     # PEQ Write
@@ -1189,13 +1167,13 @@ class WiiMAdapter:
             )
             eq_band_l = _flat_array_to_band_params(band_array_l, num_bands)
             eq_band_r = _flat_array_to_band_params(band_array_r, num_bands)
-            channel_mode_value = "L/R"
+            channel_mode_value = mode.wire_value
             band_payload = {"EQBandL": eq_band_l, "EQBandR": eq_band_r}
         else:
             # Stereo mode: single EQBand array
             band_array, _warnings = generate_wiim_band_array(filters, max_bands=num_bands)
             eq_band_params = _flat_array_to_band_params(band_array, num_bands)
-            channel_mode_value = "Stereo"
+            channel_mode_value = mode.wire_value
             band_payload = {"EQBand": eq_band_params}
 
         # Matches the WiiM app's own write traffic when present; does NOT

@@ -83,20 +83,6 @@ class TestHelpViewBasic:
 class TestHelpViewNavigation:
     """Tests for contextual navigation and section display."""
 
-    def test_navigate_to_section_emits_signal(self, qtbot) -> None:
-        """navigate_to_section emits section_changed with the section ID."""
-        view = HelpView()
-        qtbot.addWidget(view)
-
-        # Only test if we have more than one loaded section
-        if view.section_count > 1:
-            # Navigate to the second section (first is already selected on init)
-            section_ids = list(view._sections.keys())
-            target_id = section_ids[1]
-            with qtbot.waitSignal(view.section_changed, timeout=1000) as blocker:
-                view.navigate_to_section(target_id)
-            assert blocker.args == [target_id]
-
     def test_navigate_to_section_updates_current(self, qtbot) -> None:
         """navigate_to_section updates current_section property."""
         view = HelpView()

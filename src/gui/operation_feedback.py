@@ -41,8 +41,11 @@ class OperationFeedbackManager(QObject):
     - Providing Cancel button for operations > 2 seconds
 
     Signals:
-        cancel_requested: Emitted when the user clicks Cancel on a
-            long-running operation.
+        cancel_requested: Emitted when the user clicks Cancel (or presses
+            Escape) on a long-running operation that was started as
+            cancellable (see start_operation()). Connected in MainWindow to
+            AsyncBridge.request_cancel(), which actually cancels the
+            underlying Future.
     """
 
     cancel_requested = Signal()
@@ -75,6 +78,7 @@ class OperationFeedbackManager(QObject):
         self._prior_enabled: dict[int, bool] = {}
         self._is_active = False
         self._current_message = ""
+        self._cancellable = False
 
         # Timer for showing "This may take a moment..." after 3 seconds
         self._long_op_timer = QTimer(self)
@@ -140,7 +144,7 @@ class OperationFeedbackManager(QObject):
         if id(btn) in self._prior_enabled:
             self._prior_enabled[id(btn)] = btn.isEnabled()
 
-    def start_operation(self, message: str = "Working...") -> None:
+    def start_operation(self, message: str = "Working...", *, cancellable: bool = False) -> None:
         """Signal that an async operation has started.
 
         Disables registered action buttons immediately and shows a loading
@@ -148,9 +152,16 @@ class OperationFeedbackManager(QObject):
 
         Args:
             message: Description of the operation shown in the banner.
+            cancellable: Whether the Cancel button/Escape may actually
+                cancel this operation (see request_cancel()). Defaults to
+                False -- the Cancel button simply never appears for a
+                non-cancellable operation (e.g. a device write), rather
+                than appearing and offering a cancellation that can't
+                safely happen.
         """
         self._is_active = True
         self._current_message = message
+        self._cancellable = cancellable
 
         # Req 13.1: Disable buttons immediately (prevent double-submit)
         self._prior_enabled = {id(btn): btn.isEnabled() for btn in self._action_buttons}
@@ -160,12 +171,13 @@ class OperationFeedbackManager(QObject):
         # Req 13.2: Show loading state in banner
         self._status_banner.show_progress(message)
 
-        # Start timers for long-operation and cancel thresholds
+        # Start timers for long-operation and (if cancellable) cancel thresholds
         self._long_op_timer.start()
-        self._cancel_timer.start()
+        if cancellable:
+            self._cancel_timer.start()
         self._timeout_timer.start()
 
-        logger.debug("Operation started: %s", message)
+        logger.debug("Operation started: %s (cancellable=%s)", message, cancellable)
 
     def finish_operation(self) -> None:
         """Signal that the async operation has completed.
@@ -201,6 +213,32 @@ class OperationFeedbackManager(QObject):
     def is_active(self) -> bool:
         """Whether an operation is currently in progress."""
         return self._is_active
+
+    def request_cancel(self) -> None:
+        """Request cancellation of the active operation, if cancellable.
+
+        A no-op if no operation is active or the active one isn't
+        cancellable -- shared by both the Cancel button and the Escape
+        shortcut, so Escape during a non-cancellable operation (e.g. a
+        device write) is correctly a no-op too, without the caller needing
+        its own cancellable check.
+
+        Deliberately does NOT call finish_operation() here. finish_operation()
+        used to be called synchronously from this method (the old
+        _on_cancel_clicked), which re-enabled buttons immediately -- before
+        the actual cancelled coroutine's `finally` block had unwound and
+        fired the real operation_finished signal. That let a user start a
+        new operation in the gap, and the late operation_finished would
+        then call finish_operation() a second time, stomping the new
+        operation's button snapshot/timers. The real operation_finished
+        signal is now the single source of truth for resetting UI state;
+        the 30s hard timeout remains as the safety net if it never arrives.
+        """
+        if not self._is_active or not self._cancellable:
+            return
+        logger.info("Operation cancel requested by user")
+        self._hide_cancel_button()
+        self.cancel_requested.emit()
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -241,7 +279,7 @@ class OperationFeedbackManager(QObject):
             )
             self._cancel_button.setFixedHeight(28)
             self._cancel_button.setMinimumWidth(60)
-            self._cancel_button.clicked.connect(self._on_cancel_clicked)
+            self._cancel_button.clicked.connect(self.request_cancel)
 
         # Insert before the close button in the banner layout
         layout = self._status_banner.layout()
@@ -257,12 +295,6 @@ class OperationFeedbackManager(QObject):
         """Hide the Cancel button from the banner."""
         if self._cancel_button is not None:
             self._cancel_button.setVisible(False)
-
-    def _on_cancel_clicked(self) -> None:
-        """Handle Cancel button click."""
-        logger.info("Operation cancel requested by user")
-        self.cancel_requested.emit()
-        self.finish_operation()
 
     def _on_timeout(self) -> None:
         """Handle hard timeout (30s) -- force-finish with error message.

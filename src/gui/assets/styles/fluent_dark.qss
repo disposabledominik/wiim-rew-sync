@@ -1223,16 +1223,6 @@ QWidget[class="stepWidgetActive"] {
     border-radius: 10px;
 }
 
-/* "You are here, but currently viewing a side panel" -- same shape/weight
-   as the active pill so it's still clearly the current step, just in the
-   muted upcoming-step palette instead of the accent color, so it can't be
-   mistaken for "this is where you are right now" while a sidebar
-   destination is on screen. */
-QWidget[class="stepWidgetActiveDimmed"] {
-    background-color: rgba(110, 110, 110, 30);
-    border-radius: 10px;
-}
-
 /* "You are here, browsing" -- the page on screen when it is not the
    frontier (lazy-invalidation model). Outlined instead of filled so the
    two "you" markers can't be confused: filled accent pill = the frontier
@@ -1241,12 +1231,6 @@ QWidget[class="stepWidgetActiveDimmed"] {
 QWidget[class="stepWidgetViewing"] {
     background-color: transparent;
     border: 1px solid #00B4D8;
-    border-radius: 10px;
-}
-
-QWidget[class="stepWidgetViewingDimmed"] {
-    background-color: transparent;
-    border: 1px solid #6E6E6E;
     border-radius: 10px;
 }
 
@@ -1274,26 +1258,12 @@ QLabel[class="stepCircleUpcoming"] {
     color: #6E6E6E;
 }
 
-QLabel[class="stepCircleActiveDimmed"] {
-    background-color: transparent;
-    border: 2px solid #6E6E6E;
-    border-radius: 10px;
-    color: #6E6E6E;
-    font-weight: bold;
-    font-size: 12px;
-}
-
 QLabel[class="stepLabelCompleted"] {
     color: #00B4D8;
 }
 
 QLabel[class="stepLabelActive"] {
     color: #00B4D8;
-    font-weight: bold;
-}
-
-QLabel[class="stepLabelActiveDimmed"] {
-    color: #B0B0B0;
     font-weight: bold;
 }
 
@@ -1319,15 +1289,6 @@ QFrame#DeviceCard[state="connecting"] {
 
 QFrame#DeviceCard[state="connected"] {
     border-left: 3px solid #00B4D8;
-}
-
-QFrame#DeviceCard[state="error"] {
-    border-left: 3px solid #EF5350;
-}
-
-#DeviceCardError {
-    font-size: 12px;
-    color: #EF5350;
 }
 
 /* ---------------------------------------------------------------------------

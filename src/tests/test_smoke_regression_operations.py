@@ -1074,7 +1074,7 @@ class TestImportExport:
         path_l = tmp_path / "Movie Night_L.txt"
         path_r = tmp_path / "Movie Night_R.txt"
 
-        def _run_now(coro: object) -> None:
+        def _run_now(coro: object, **_kwargs: object) -> None:
             import asyncio
 
             asyncio.run(coro)
@@ -1231,7 +1231,7 @@ class TestPresets:
         )
         mock_adapter.get_roomfit_status = AsyncMock(return_value=(True, "Living Room"))
 
-        def _run_now(coro: object) -> None:
+        def _run_now(coro: object, **_kwargs: object) -> None:
             asyncio.run(coro)
 
         with patch.object(window._bridge, "run_async", side_effect=_run_now):
@@ -2396,7 +2396,7 @@ class TestPresets:
         _setup_device(window)
         scheduled: list[object] = []
 
-        def _capture(coro: object) -> None:
+        def _capture(coro: object, **_kwargs: object) -> None:
             scheduled.append(coro)
 
         item = PresetItem(name="My Profile", channel_mode="Stereo", preset_type="RoomFit")
@@ -2732,7 +2732,7 @@ class TestPresets:
             return_value=[{"Name": "Living Room"}, {"Name": "Office"}]
         )
 
-        def _run_now(coro: object) -> None:
+        def _run_now(coro: object, **_kwargs: object) -> None:
             asyncio.run(coro)
 
         with patch.object(window._bridge, "run_async", side_effect=_run_now) as mock_run:
@@ -3158,7 +3158,7 @@ class TestSettingsUIState:
         def _record_progress(message: str) -> None:
             call_order.append(f"progress:{message}")
 
-        def _record_async(coro: object) -> None:
+        def _record_async(coro: object, **_kwargs: object) -> None:
             call_order.append("run_async")
             close_coroutine_tree(coro)
 
@@ -4323,7 +4323,7 @@ class TestSettingsUIState:
         mock_adapter = _setup_device(window)
         mock_adapter.raw_command = AsyncMock(return_value={"foo": "bar"})
 
-        def _run_now(coro: object) -> None:
+        def _run_now(coro: object, **_kwargs: object) -> None:
             import asyncio
 
             asyncio.run(coro)

@@ -169,3 +169,161 @@ class TestMainWindowFactoryInjection:
 
             window._wizard_controller.state.current_filters = []
             window.close()
+
+
+def _card_for_ip(page, ip: str):
+    """Look up a ConnectPage device card by IP -- index 0 isn't reliable
+    once there's more than one device, since cards are kept sorted."""
+    for card, card_ip, _sort_key in page._device_cards:
+        if card_ip == ip:
+            return card
+    raise AssertionError(f"no device card for {ip!r}")
+
+
+def _make_window(qtbot) -> MainWindow:
+    """A MainWindow with a mocked bridge, ready to drive
+    _on_device_selected/_on_capabilities_ready/_on_operation_error directly
+    -- same pattern as TestMainWindowFactoryInjection above."""
+    mock_bridge = MagicMock()
+    mock_bridge.start = MagicMock()
+    mock_bridge.shutdown = MagicMock()
+    mock_bridge.capabilities_ready = MagicMock()
+    mock_bridge.run_async = MagicMock(side_effect=close_coroutine_tree)
+
+    app_settings = AppSettings(first_run_complete=True)
+    with (
+        patch("src.gui.app_settings.AppSettings.load", return_value=app_settings),
+        patch("src.gui.app_settings.AppSettings.save"),
+    ):
+        window = MainWindow(async_bridge=mock_bridge)
+    qtbot.addWidget(window)
+    return window
+
+
+class TestConnectPageCardStateWiring:
+    """DeviceCard's pulsing "connecting" animation only fires if something
+    actually calls set_state() -- previously nothing did (dead code found
+    during a round-2 dead-code audit). MainWindow now drives it through the
+    device-selection -> capability-probe lifecycle."""
+
+    def test_device_selected_marks_the_clicked_card_connecting(self, qtbot) -> None:
+        window = _make_window(qtbot)
+        window._connect_page.set_devices(
+            [
+                {"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.100"},
+                {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
+            ]
+        )
+        card = _card_for_ip(window._connect_page, "192.168.1.100")
+        assert card.property("state") == "idle"
+
+        window._on_device_selected("192.168.1.100")
+
+        assert card.property("state") == "connecting"
+        window._wizard_controller.state.current_filters = []
+        window.close()
+
+    def test_capabilities_ready_marks_the_card_connected(self, qtbot) -> None:
+        window = _make_window(qtbot)
+        window._connect_page.set_devices(
+            [
+                {"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.100"},
+                {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
+            ]
+        )
+        card = _card_for_ip(window._connect_page, "192.168.1.100")
+
+        window._on_device_selected("192.168.1.100")
+        assert card.property("state") == "connecting"
+
+        window._on_capabilities_ready(_make_caps())
+
+        assert card.property("state") == "connected"
+        window._wizard_controller.state.current_filters = []
+        window.close()
+
+    def test_operation_error_resets_a_connecting_card_while_on_connect_step(
+        self, qtbot
+    ) -> None:
+        """A failed capability probe must stop the card pulsing forever --
+        confirmed live bug class this session (Escape/Cancel had the same
+        "no reset path" shape)."""
+        window = _make_window(qtbot)
+        window._connect_page.set_devices(
+            [
+                {"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.100"},
+                {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
+            ]
+        )
+        card = _card_for_ip(window._connect_page, "192.168.1.100")
+
+        window._on_device_selected("192.168.1.100")
+        assert card.property("state") == "connecting"
+
+        window._on_operation_error("WiiMConnectionError", "Could not connect")
+
+        assert card.property("state") == "idle"
+        window._wizard_controller.state.current_filters = []
+        window.close()
+
+    def test_operation_error_does_not_touch_cards_once_past_connect_step(
+        self, qtbot
+    ) -> None:
+        """An unrelated error on a later wizard step (e.g. a REW fetch
+        failure on Filters) must not reach into ConnectPage's cards at all."""
+        window = _make_window(qtbot)
+        window._connect_page.set_devices(
+            [
+                {"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.100"},
+                {"name": "Bedroom", "model": "Pro", "ip": "192.168.1.11"},
+            ]
+        )
+        card = _card_for_ip(window._connect_page, "192.168.1.100")
+
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps())
+        assert card.property("state") == "connected"
+
+        window._on_operation_error("SomeOtherError", "Unrelated failure")
+
+        # Untouched -- current_step has moved past CONNECT by now.
+        assert card.property("state") == "connected"
+        window._wizard_controller.state.current_filters = []
+        window.close()
+
+
+class TestOperationFinishedTokenStaleness:
+    """MainWindow._on_bridge_operation_finished must ignore a stale token --
+    round-2 PR review finding: _on_capabilities_ready can synchronously
+    dispatch a second operation (list_presets()) before the probe's own
+    operation_finished has been processed. Qt delivers queued signals in
+    emission order, so that second dispatch supersedes AsyncBridge's
+    tracking before the probe's finish arrives; without the token check,
+    that stale finish would incorrectly deactivate the feedback manager
+    (hiding Cancel, re-enabling buttons) while the second operation is
+    still genuinely running."""
+
+    def test_stale_finished_does_not_deactivate_a_newer_operation(self, qtbot) -> None:
+        window = _make_window(qtbot)
+        # Fake AsyncBridge.is_current_operation(): token 1 (the "newer"
+        # operation) is current, mirroring a second run_async() dispatch
+        # having already superseded token 0's tracking.
+        window._bridge.is_current_operation = MagicMock(side_effect=lambda t: t == 1)
+
+        window._on_bridge_operation_started(True, 0)
+        assert window._feedback_manager.is_active
+
+        window._on_bridge_operation_started(False, 1)
+        assert window._feedback_manager.is_active
+
+        # Token 0's finish arrives late -- must be ignored, not tear down
+        # state for the still-running token-1 operation.
+        window._on_bridge_operation_finished(0)
+        assert window._feedback_manager.is_active
+
+        # Token 1's own finish must still work normally.
+        window._on_bridge_operation_finished(1)
+        assert not window._feedback_manager.is_active
+
+        window._wizard_controller.state.current_filters = []
+        window.close()

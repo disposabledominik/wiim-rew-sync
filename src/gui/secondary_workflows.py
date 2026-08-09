@@ -179,16 +179,29 @@ class SecondaryWorkflowManager(QObject):
         self._target_adapter_factory = target_adapter_factory
         logger.info("SecondaryWorkflowManager configured with adapter factories")
 
-    def _dispatch(self, operation_name: str, coro: Coroutine[Any, Any, Any]) -> None:
+    def _dispatch(
+        self, operation_name: str, coro: Coroutine[Any, Any, Any], *, cancellable: bool = False
+    ) -> None:
         """Run a coroutine on the bridge, wrapped for error mapping.
 
         Mirrors PrimaryWorkflowManager._dispatch -- shared so an exception
         that escapes a fire-and-forget workflow coroutine reaches a status
         banner instead of vanishing silently in run_async's un-awaited Future.
+
+        Args:
+            operation_name: Log-context label for _bridge_wrapper.
+            coro: The awaitable adapter coroutine to execute.
+            cancellable: Whether the user can cancel this operation via
+                Escape or the Cancel button. Defaults to False (the safe
+                direction) -- only pass True for confirmed pure reads with
+                no device-write/SafeWrite side effect a cancellation could
+                leave half-done.
         """
         assert self._bridge is not None
         assert self._bridge_wrapper is not None
-        self._bridge.run_async(self._bridge_wrapper(operation_name, coro))
+        self._bridge.run_async(
+            self._bridge_wrapper(operation_name, coro), cancellable=cancellable
+        )
 
     def set_current_adapter(self, adapter: WiiMAdapter | None) -> None:
         """Set the current device adapter for same-device workflows.
@@ -906,7 +919,9 @@ class SecondaryWorkflowManager(QObject):
             # would, instead of asserting out of this Qt slot.
             self.source_slots_error.emit("No device connected")
             return
-        self._dispatch("fetch_source_slots", self._do_fetch_source_slots())
+        self._dispatch(
+            "fetch_source_slots", self._do_fetch_source_slots(), cancellable=True
+        )
 
     async def _do_fetch_source_slots(self) -> None:
         if self._current_adapter is None:

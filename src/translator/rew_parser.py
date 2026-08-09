@@ -7,16 +7,14 @@ types, and duplicate measurement sections.
 
 from __future__ import annotations
 
-import logging
 import re
 from pathlib import Path
 
+from src.logging.setup import rew_api_logger as logger
 from src.models.canonical import CanonicalFilter
 from src.models.constants import FREQ_MAX, FREQ_MIN
 from src.models.errors import ParseError, ValidationError
 from src.translator._warnings import FilterRow, SkippedBand, ValidationWarning
-
-logger = logging.getLogger("wiim_rew_sync.rew_api")
 
 # ---------------------------------------------------------------------------
 # Filter line regex — matches the "Filter  N:" prefix and captures state

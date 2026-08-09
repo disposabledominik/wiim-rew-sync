@@ -189,7 +189,7 @@ class TestFullWizardFlow:
         caps = _make_caps(roomfit_level=0)
         window._capability_prober.probe = AsyncMock(return_value=caps)
         await window._primary_workflows._do_probe(
-            window._capability_prober, window._primary_workflows._probe_generation
+            window._capability_prober, window._primary_workflows._probe_generation, "192.168.1.100"
         )
 
         # Verify capabilities_ready emitted
@@ -305,7 +305,9 @@ class TestProbeError:
         await window._bridge_wrapper(
             "capability_probe",
             window._primary_workflows._do_probe(
-                window._capability_prober, window._primary_workflows._probe_generation
+                window._capability_prober,
+                window._primary_workflows._probe_generation,
+                "192.168.1.100",
             ),
         )
 

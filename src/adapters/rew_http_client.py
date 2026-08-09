@@ -12,19 +12,17 @@ Requirements: 8.1, 8.3, 8.4, 8.5, 8.6
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Self
 
 import httpx
 
+from src.logging.setup import rew_api_logger as logger
 from src.models.canonical import CanonicalFilter
 from src.models.errors import REWMeasurementNotFoundError, REWNotConnectedError
 from src.translator._warnings import FilterRow
 from src.translator.rew_parser import REWParser
-
-logger = logging.getLogger("wiim_rew_sync.rew_api")
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +64,7 @@ class REWHttpApiClient:
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
+        _exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
         await self.close()

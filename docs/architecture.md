@@ -111,6 +111,20 @@ existed before this write, so there are two distinct rollback shapes
 Both shapes still log CRITICAL and report `rollback_success=False` if the
 rollback action itself fails verification.
 
+### Why writes are never user-cancellable
+
+`AsyncBridge.run_async()`/`OperationFeedbackManager` support cancelling an in-flight operation
+(Cancel button after 2s, or Escape) — but only for operations explicitly marked `cancellable=True`
+at their `_dispatch()` call site in `primary_workflows.py`/`secondary_workflows.py`, and every
+`_do_*` coroutine that reaches `SafeWrite`/`RoomFitSafeWrite` (`push`, undo, RoomFit
+enable/disable, etc.) is deliberately left at the default `cancellable=False`. Cancelling
+mid-sequence would abandon the BACKUP→WRITE→READ BACK→VERIFY→COMMIT/ROLLBACK protocol above
+partway through — e.g. stopping after WRITE but before VERIFY would leave the device in an
+unverified state with no rollback ever attempted, exactly the "no exceptions" case this section
+opens with. Only pure reads and local-file operations (discovery, capability probing, REW
+file import/export, listing presets) are marked cancellable. See `src/gui/async_bridge.py`'s
+`request_cancel()` and `docs/backlog.md` item 5.
+
 ---
 
 ## Dry Run Mode

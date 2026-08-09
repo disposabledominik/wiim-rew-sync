@@ -11,6 +11,7 @@ docstring.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -83,6 +84,24 @@ class TestDiscovery:
             [{"name": "Living Room", "ip": "192.168.1.5", "model": "Amp Ultra"}]
         )
 
+    @pytest.mark.asyncio
+    async def test_cancelled_discovery_reports_itself_abandoned(self) -> None:
+        """A cancelled scan (Escape/Cancel while cancellable) must report
+        itself abandoned so ConnectPage's scanning indicator doesn't stay
+        shown forever -- discovery_complete never fires for a cancellation."""
+        manager = PrimaryWorkflowManager()
+        manager._discovery_module = MagicMock(
+            discover=AsyncMock(side_effect=asyncio.CancelledError())
+        )
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+
+        with pytest.raises(asyncio.CancelledError):
+            await manager._do_discovery()
+
+        mock_bridge.discovery_complete.emit.assert_not_called()
+        mock_bridge.discovery_abandoned.emit.assert_called_once_with()
+
 
 # ---------------------------------------------------------------------------
 # Capability probing
@@ -107,13 +126,16 @@ class TestProbe:
         caps = MagicMock()
         prober = MagicMock(probe=AsyncMock(return_value=caps))
 
-        await manager._do_probe(prober, generation)
+        await manager._do_probe(prober, generation, "192.168.1.100")
 
         mock_bridge.capabilities_ready.emit.assert_called_once_with(caps)
+        mock_bridge.probe_abandoned.emit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_stale_generation_discarded(self) -> None:
-        """A probe started for a superseded device selection must not emit."""
+        """A probe started for a superseded device selection must not emit
+        capabilities_ready -- and must report itself abandoned so the
+        stale device's card doesn't keep pulsing "connecting" forever."""
         manager = PrimaryWorkflowManager()
         mock_bridge = MagicMock()
         manager._bridge = mock_bridge
@@ -122,9 +144,28 @@ class TestProbe:
 
         prober = MagicMock(probe=AsyncMock(return_value=MagicMock()))
 
-        await manager._do_probe(prober, stale_generation)
+        await manager._do_probe(prober, stale_generation, "192.168.1.100")
 
         mock_bridge.capabilities_ready.emit.assert_not_called()
+        mock_bridge.probe_abandoned.emit.assert_called_once_with("192.168.1.100")
+
+    @pytest.mark.asyncio
+    async def test_cancelled_probe_reports_itself_abandoned(self) -> None:
+        """A cancelled probe (Escape/Cancel while cancellable) must also
+        report itself abandoned -- CancelledError propagates through the
+        `finally` block same as a normal exception would."""
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        generation = manager.bump_probe_generation()
+
+        prober = MagicMock(probe=AsyncMock(side_effect=asyncio.CancelledError()))
+
+        with pytest.raises(asyncio.CancelledError):
+            await manager._do_probe(prober, generation, "192.168.1.100")
+
+        mock_bridge.capabilities_ready.emit.assert_not_called()
+        mock_bridge.probe_abandoned.emit.assert_called_once_with("192.168.1.100")
 
 
 # ---------------------------------------------------------------------------
@@ -475,6 +516,7 @@ class TestRewListMeasurements:
 
         mock_bridge.rew_measurements_ready.emit.assert_called_once_with([measurement])
         mock_bridge.progress_update.emit.assert_not_called()
+        mock_bridge.rew_list_abandoned.emit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_empty_result_emits_info_progress_update(self) -> None:
@@ -488,6 +530,26 @@ class TestRewListMeasurements:
         mock_bridge.rew_measurements_ready.emit.assert_not_called()
         args, _ = mock_bridge.progress_update.emit.call_args
         assert args[0].startswith("__info__No measurements found in REW.")
+        mock_bridge.rew_list_abandoned.emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_fetch_reports_itself_abandoned(self) -> None:
+        """A cancelled fetch (Escape/Cancel while cancellable) must report
+        itself abandoned so the embedded RewPullView doesn't keep showing
+        "Connecting..." forever."""
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        manager._rew_client = MagicMock(
+            list_measurements=AsyncMock(side_effect=asyncio.CancelledError())
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await manager._do_rew_list_measurements()
+
+        mock_bridge.rew_measurements_ready.emit.assert_not_called()
+        mock_bridge.progress_update.emit.assert_not_called()
+        mock_bridge.rew_list_abandoned.emit.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------

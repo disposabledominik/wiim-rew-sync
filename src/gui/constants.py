@@ -12,8 +12,6 @@ add a color constant here if it is genuinely needed outside of QSS.
 
 from __future__ import annotations
 
-import platform
-
 # ---------------------------------------------------------------------------
 # Color Palette
 # ---------------------------------------------------------------------------
@@ -44,43 +42,8 @@ runtime rather than hardcoding one.
 # Typography
 # ---------------------------------------------------------------------------
 
-
-def _detect_font_family() -> str:
-    """Return platform-appropriate font family stack.
-
-    Windows: Segoe UI Variable (Windows 11) with Segoe UI fallback.
-    macOS: SF Pro with system-ui fallback.
-    Linux: system-ui sans-serif.
-    """
-    system = platform.system()
-    if system == "Windows":
-        return "Segoe UI Variable, Segoe UI, sans-serif"
-    if system == "Darwin":
-        return "SF Pro, -apple-system, system-ui, sans-serif"
-    # Linux and other platforms
-    return "system-ui, Ubuntu, Cantarell, sans-serif"
-
-
-FONT_FAMILY: str = _detect_font_family()
-"""Platform-detected font family stack for QSS font-family property."""
-
-FONT_SIZE_BODY: int = 14
-"""Body text size in pixels (minimum per Req 10.4)."""
-
-FONT_SIZE_HEADING: int = 20
-"""Section heading size in pixels."""
-
 FONT_SIZE_CAPTION: int = 12
 """Caption and secondary label size in pixels."""
-
-FONT_SIZE_TITLE: int = 26
-"""Page/view title size in pixels."""
-
-FONT_WEIGHT_NORMAL: int = 400
-"""Normal font weight."""
-
-FONT_WEIGHT_SEMIBOLD: int = 600
-"""Semibold font weight for emphasis."""
 
 # ---------------------------------------------------------------------------
 # Spacing
@@ -100,19 +63,6 @@ SPACING_LG: int = 24
 
 SPACING_XL: int = 32
 """Extra-large spacing in pixels (major section breaks)."""
-
-# ---------------------------------------------------------------------------
-# Border Radii
-# ---------------------------------------------------------------------------
-
-CARD_RADIUS: int = 8
-"""Card and panel corner radius in pixels."""
-
-BUTTON_RADIUS: int = 6
-"""Button corner radius in pixels."""
-
-INPUT_RADIUS: int = 4
-"""Input field corner radius in pixels."""
 
 # ---------------------------------------------------------------------------
 # Sizing
@@ -160,21 +110,6 @@ STATUS_BANNER_HEIGHT: int = 44
 # Filter Table Column Widths
 # ---------------------------------------------------------------------------
 
-FILTER_COL_BAND: int = 50
-"""Band number column width in pixels."""
-
-FILTER_COL_TYPE: int = 80
-"""Filter type column width in pixels."""
-
-FILTER_COL_FREQ: int = 120
-"""Frequency column width in pixels."""
-
-FILTER_COL_GAIN: int = 110
-"""Gain (dB) column width in pixels."""
-
-FILTER_COL_Q: int = 80
-"""Q factor column width in pixels."""
-
 FILTER_TABLE_MAX_WIDTH: int = 760
 """Maximum filter table width in pixels (matches MAX_CONTENT_WIDTH so the
 table fills the full content column)."""
@@ -183,17 +118,8 @@ table fills the full content column)."""
 # Animation Timing (milliseconds)
 # ---------------------------------------------------------------------------
 
-ANIMATION_FAST: int = 150
-"""Fast transitions (hover, focus)."""
-
 ANIMATION_NORMAL: int = 250
 """Normal transitions (expand, collapse)."""
 
-ANIMATION_SLOW: int = 400
-"""Slow transitions (page enter, overlay fade)."""
-
 AUTO_DISMISS_MS: int = 5000
 """Auto-dismiss delay for success status banners."""
-
-LONG_OPERATION_MS: int = 3000
-"""Threshold for showing supplementary "This may take a moment..." message."""

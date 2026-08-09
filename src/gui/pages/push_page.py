@@ -51,7 +51,6 @@ class _StageRow(QWidget):
 
     def __init__(self, stage_key: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._stage_key = stage_key
         self._status: str = "pending"  # pending | active | complete | failed
 
         layout = QHBoxLayout(self)

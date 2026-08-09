@@ -26,12 +26,12 @@ Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 from urllib.parse import quote
 
 from src.adapters.wiim_commands import PLUGIN_URI, encode_wiim_command
 from src.adapters.wiim_http import WiiMHttpClient
+from src.logging.setup import wiim_api_logger as logger
 from src.models.capabilities import DeviceCapabilities
 from src.models.device_capability_file import (
     find_entry,
@@ -39,8 +39,6 @@ from src.models.device_capability_file import (
     merge_into,
 )
 from src.utils.device_identity import is_wiim_device
-
-logger = logging.getLogger("wiim_rew_sync.wiim_api")
 
 
 class CapabilityProber:

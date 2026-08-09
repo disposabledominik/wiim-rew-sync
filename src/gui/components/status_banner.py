@@ -1,15 +1,14 @@
 """StatusBanner — color-coded contextual message area.
 
 Displays info, success, error, and progress messages at the bottom of the
-main content area. Uses the ``status`` dynamic property for QSS styling and
-emits a ``dismissed`` signal when the banner is hidden (by timer or close button).
+main content area. Uses the ``status`` dynamic property for QSS styling.
 
 Requirements referenced: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFontMetrics, QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -30,13 +29,7 @@ class StatusBanner(QFrame):
 
     Placed at the bottom of the main content area. Uses the ``status`` dynamic
     property (``info``, ``success``, ``error``, ``warning``) for QSS styling.
-
-    Signals:
-        dismissed: Emitted when the banner hides, either by auto-dismiss timer
-            or by the user clicking the close button.
     """
-
-    dismissed = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -145,10 +138,9 @@ class StatusBanner(QFrame):
         )
 
     def clear(self) -> None:
-        """Reset the banner to idle (empty) state and emit the dismissed signal."""
+        """Reset the banner to idle (empty) state."""
         self._auto_dismiss_timer.stop()
         self._set_idle()
-        self.dismissed.emit()
 
     def is_progress(self) -> bool:
         """Return True if the banner is currently showing a progress indicator.

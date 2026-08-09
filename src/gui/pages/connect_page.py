@@ -58,6 +58,12 @@ class ConnectPage(QWidget):
         # (card, ip, sort_key) triples, kept in the same order as the cards
         # appear in self._devices_layout so list index == layout index.
         self._device_cards: list[tuple[DeviceCard, str, str]] = []
+        # Mirrors _device_cards for O(1) lookup-by-ip (mark_connecting() etc.
+        # are on the device-select/probe-result hot path) -- kept in sync at
+        # _device_cards' only two mutation points, _add_device_card() and
+        # _clear_cards(). Order doesn't matter here, only _device_cards is
+        # used for anything layout/sort-order-dependent.
+        self._cards_by_ip: dict[str, DeviceCard] = {}
         self._setup_ui()
 
     # ------------------------------------------------------------------
@@ -85,6 +91,23 @@ class ConnectPage(QWidget):
         if active:
             self._devices_scroll.setVisible(False)
             self._empty_widget.setVisible(False)
+
+    def cancel_scanning(self) -> None:
+        """Handle a discovery scan cancelled/abandoned before completing.
+
+        If devices were already found via progressive discovery,
+        update_devices() already switched the page to the device-list view
+        for them -- just hide the scanning indicator. Otherwise, converge on
+        the same empty/retry state a completed scan with zero results would
+        show, rather than leaving the page blank: set_scanning(False) alone
+        is meant to always be paired with a set_devices() call right after
+        (which a normal discovery_complete provides but a cancellation never
+        reaches).
+        """
+        if self._device_cards:
+            self._scanning_widget.setVisible(False)
+        else:
+            self.set_devices([])
 
     def set_devices(self, devices: list[dict[str, Any]]) -> None:
         """Populate the page with discovered device cards (replaces all current cards).
@@ -150,6 +173,81 @@ class ConnectPage(QWidget):
         self._empty_widget.setVisible(False)
         self._devices_scroll.setVisible(False)
         self._scanning_widget.setVisible(True)
+
+    def _set_card_state(
+        self, ip: str, state: str, *, only_if_current: str | None = None
+    ) -> None:
+        """Set the card for *ip* to *state*; a no-op if no card matches *ip*
+        (e.g. the page was reset in between).
+
+        Shared by every method below that updates a single card's state by
+        IP -- factored out after a review noted the "look up by ip, then
+        set/check state" shape was hand-repeated 4 times with an
+        undocumented inconsistency in whether the transition was guarded.
+        *only_if_current* makes that guard explicit and intentional instead
+        of implicit: mark_connecting()/mark_connected() are unconditional
+        transitions (the user just clicked, or the probe just succeeded --
+        the card's prior state doesn't matter), while the reset_* methods
+        must only revert a card that's still actually showing the state
+        they're resetting *from*, so they don't clobber a card that's
+        already moved on (e.g. to "connected") by the time their signal
+        arrives.
+
+        Args:
+            ip: IP address of the device whose card to update.
+            state: The state to set ("idle" / "connecting" / "connected").
+            only_if_current: If given, only apply *state* when the card's
+                current state equals this value.
+        """
+        card = self._cards_by_ip.get(ip)
+        if card is None:
+            return
+        if only_if_current is not None and card.property("state") != only_if_current:
+            return
+        card.set_state(state)
+
+    def mark_connecting(self, ip: str) -> None:
+        """Show the pulsing "connecting" animation on the card for *ip*.
+
+        Args:
+            ip: IP address of the device a capability probe was just
+                dispatched for. A no-op if no card matches.
+        """
+        self._set_card_state(ip, "connecting")
+
+    def mark_connected(self, ip: str) -> None:
+        """Show the solid "connected" accent on the card for *ip*.
+
+        Args:
+            ip: IP address of the device whose capability probe just
+                succeeded.
+        """
+        self._set_card_state(ip, "connected")
+
+    def reset_connecting(self) -> None:
+        """Revert any card still showing "connecting" back to idle.
+
+        Called when a capability probe fails -- without this, the card the
+        user clicked would keep pulsing indefinitely with no indication the
+        attempt ended (the page itself isn't rebuilt on a probe failure the
+        way it is on a fresh scan, so nothing else would ever reset it).
+        """
+        for card in self._cards_by_ip.values():
+            if card.property("state") == "connecting":
+                card.set_state("idle")
+
+    def reset_connecting_for(self, ip: str) -> None:
+        """Revert the card for *ip* back to idle if it's still "connecting".
+
+        Used when a specific device's probe is abandoned (cancelled, or
+        superseded by a newer selection) -- scoped to one card, unlike
+        reset_connecting(), so an unrelated card that's still genuinely
+        probing isn't reset by a different device's stale cleanup.
+
+        Args:
+            ip: IP address of the device whose probe was abandoned.
+        """
+        self._set_card_state(ip, "idle", only_if_current="connecting")
 
     def showEvent(self, event) -> None:  # noqa: ANN001
         """Auto-trigger discovery when the page becomes visible."""
@@ -298,6 +396,7 @@ class ConnectPage(QWidget):
             self._devices_layout.removeWidget(card)
             card.deleteLater()
         self._device_cards.clear()
+        self._cards_by_ip.clear()
 
     @staticmethod
     def _device_display_name(device: dict[str, Any]) -> str:
@@ -349,6 +448,7 @@ class ConnectPage(QWidget):
             insert_index = len(self._device_cards)
         self._devices_layout.insertWidget(insert_index, card)
         self._device_cards.insert(insert_index, (card, device_ip, sort_key))
+        self._cards_by_ip[device_ip] = card
 
     @Slot(str)
     def _on_card_clicked(self, ip: str) -> None:
