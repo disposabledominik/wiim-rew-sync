@@ -80,6 +80,49 @@ error-state subsystem, OnboardingOverlay._on_skip(), WizardController.can_push()
    methods and matched by name repo-wide rather than per-class, so it
    carries blind spot #3's name-collision caveat doubled: verify by hand.
 
+6. Framework-invoked callbacks/validators: pydantic calls a
+   @field_validator/@model_validator-decorated method automatically on
+   every model construction/mutation — never by name from our own code, so
+   a reference-counting tool always sees it as orphaned. Same shape as the
+   Qt event-override callbacks already excluded via
+   _FRAMEWORK_CALLBACK_NAMES (closeEvent, etc.), except validator method
+   names vary per model rather than being a fixed set, so this one is
+   collected dynamically: _collect_validator_decorated_names() AST-walks
+   every class body for the two decorators and excludes any matching name
+   before it ever reaches the orphaned/test-only buckets. Concrete cases
+   found here: CanonicalFilter.frequency_in_range/q_must_be_positive,
+   PEQSettings.check_band_keys_match_channel_mode,
+   Profile.check_filter_keys_match_channel_mode.
+
+7. Trivial dead symbol with its literal(s) hand-duplicated inline
+   elsewhere: a property/method/module-level constant can be genuinely
+   unused *as a symbol* while the exact value(s) it exists to centralize
+   are hand-typed again at another call site instead of calling it — in
+   which case deleting it throws away the one place the logic was
+   centralized and leaves the duplicate behind, when the real fix is
+   making that call site use the symbol instead. Doesn't look like a
+   duplication problem from vulture's output alone (it just looks like
+   ordinary dead code), so nothing else here would catch it. Concrete
+   cases found here: ChannelMode.wire_value's "Stereo"/"L/R" return values
+   were hand-duplicated in WiiMAdapter.write_roomfit; wiim_api_logger/
+   rew_api_logger's logging.getLogger("wiim_rew_sync.wiim_api"/"...rew_api")
+   construction was hand-duplicated at 6 call sites across src/adapters/
+   and src/translator/. _defining_statement_literals() extracts the
+   literal(s) from a trivial dead symbol's single-return/if-else/simple-
+   Assign body; _inline_literal_duplicate_hits() then greps the rest of
+   the codebase for lines where those literals recur together (2+ shared
+   literals) or, for a single-literal definition, where that one literal
+   recurs verbatim elsewhere (only attempted if it's not a short/common
+   value, to keep noise down). A hit means "verify whether this should be
+   consolidated instead of deleted," not "this is definitely duplicated" —
+   coincidental shared literals happen; and a miss doesn't clear a
+   candidate either, since a *multi-statement* duplicate (found here:
+   REWGenerator.generate_lr_files()'s path-derivation + double-generate +
+   warning-merge sequence, hand-duplicated in primary_workflows.py) has no
+   single literal-bearing statement for this check to key off, and still
+   needs the human "does this dead symbol's logic shape recur elsewhere"
+   look this script's docstring already asks for.
+
 None of this proves a flagged symbol is safe to delete, including hits from
 blind spot #4/#5's mechanical checks — a signal with zero connect() sites
 today could still be part of a public API a plugin/future caller is meant
@@ -126,24 +169,12 @@ _SCAN_ROOTS = [_SRC, _PACKAGING]
 
 # Symbols already investigated and deliberately kept even though nothing
 # calls them today. Add a name here only alongside a citation of *why* —
-# never just to silence the tool.
-_KNOWN_INTENTIONAL_KEEPS: dict[str, str] = {
-    "set_dimmed": (
-        "StepIndicator — docs/smoke_test_issues.md #267: kept as the cheaper "
-        "fallback if hiding the step indicator for sidebar pages is ever "
-        "dialed back to muting it instead."
-    ),
-    "clear": (
-        "FilterTable.clear() — docs/smoke_test_issues.md #237: dormant today, "
-        "but its setMaximumHeight()-reset bug was fixed and kept correct for "
-        "whoever wires up a clear-then-repopulate path next."
-    ),
-    "get_peq_enabled": (
-        "WiiMAdapter — docs/backlog.md 'PEQ / RoomFit Enable/Disable Toggle "
-        "in GUI': backend kept available in case that explicitly-declined "
-        "GUI feature is reactivated."
-    ),
-}
+# never just to silence the tool. (Round 1's three entries -- set_dimmed,
+# FilterTable.clear(), get_peq_enabled -- were all reversed and removed in
+# round 2's dead-code pass; see docs/smoke_test_issues.md #267/#237 and
+# docs/backlog.md's PEQ/RoomFit toggle entry. A keep list is a snapshot of a
+# decision, not a permanent exemption -- see _stale_keep_names() below.)
+_KNOWN_INTENTIONAL_KEEPS: dict[str, str] = {}
 
 # Qt/pydantic hook names a framework calls by convention, never by name in
 # our own code — always false positives for a reference-counting tool.
@@ -260,6 +291,50 @@ def _collect_shared_method_names() -> dict[str, list[str]]:
     return {name: sorted(classes) for name, classes in owners.items() if len(classes) > 1}
 
 
+_VALIDATOR_DECORATOR_NAMES = {"field_validator", "model_validator"}
+
+
+def _decorator_base_name(dec: ast.expr) -> str | None:
+    """Bare decorator name, whether written as @name, @name(...), or
+    @module.name(...) -- handles the @classmethod-stacked-with-
+    @field_validator(...) shape pydantic validators actually use."""
+    if isinstance(dec, ast.Call):
+        dec = dec.func
+    if isinstance(dec, ast.Name):
+        return dec.id
+    if isinstance(dec, ast.Attribute):
+        return dec.attr
+    return None
+
+
+def _collect_validator_decorated_names() -> set[str]:
+    """Names of every method decorated with @field_validator/@model_validator.
+
+    Blind spot #6: pydantic calls these automatically, never by name from
+    our own code, so vulture always flags them as orphaned. Built
+    dynamically (unlike _FRAMEWORK_CALLBACK_NAMES's fixed Qt-event list)
+    since validator method names vary per model.
+    """
+    names: set[str] = set()
+    for root in _SCAN_ROOTS:
+        for path in root.rglob("*.py"):
+            if _TESTS_DIR in path.parents:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                for item in node.body:
+                    if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    if any(
+                        _decorator_base_name(dec) in _VALIDATOR_DECORATOR_NAMES
+                        for dec in item.decorator_list
+                    ):
+                        names.add(item.name)
+    return names
+
+
 def _collect_signal_definitions() -> dict[str, list[str]]:
     """Map every `name = Signal(...)` class attribute to its defining file:class.
 
@@ -314,10 +389,21 @@ def _signal_connect_sites(name: str, *, include_tests: bool) -> list[str]:
 
 
 def _find_function_node(path: Path, lineno: int) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    """Find the function/method whose `def` line matches vulture's reported line."""
+    """Find the function/method matching vulture's reported line.
+
+    Matches either the `def` line itself or any of its decorators' lines --
+    vulture reports a *decorated* function/property at its first decorator's
+    line (e.g. `@property` at line 29, `def wire_value` at line 30 reports
+    as line 29), not the `def` line, which a `node.lineno`-only match
+    silently misses. Found via ChannelMode.wire_value while adding blind
+    spot #7 -- pre-existing, also affects any decorated method looked up by
+    blind spot #4/#5's transitive checks below.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.lineno == lineno:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if node.lineno == lineno or any(dec.lineno == lineno for dec in node.decorator_list):
             return node
     return None
 
@@ -325,6 +411,301 @@ def _find_function_node(path: Path, lineno: int) -> ast.FunctionDef | ast.AsyncF
 def _method_line_range(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[int, int]:
     """Return (first_line, last_line) covering a function node's full body."""
     return node.lineno, node.end_lineno or node.lineno
+
+
+def _enclosing_function(path: Path, lineno: int) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Find the innermost function/method whose body range contains `lineno`.
+
+    Unlike _find_function_node() (which matches vulture's exact `def` line),
+    this locates the test function that *contains* an arbitrary reference
+    line, for _classify_test_impact() below.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    best: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        start, end = _method_line_range(node)
+        if start <= lineno <= end:
+            best_span = _method_line_range(best)[1] - _method_line_range(best)[0] if best else None
+            if best_span is None or (end - start) < best_span:
+                best = node
+    return best
+
+
+def _references_name(node: ast.AST, dead_name: str) -> bool:
+    """Whether `dead_name` appears as a bare name or attribute access anywhere in `node`."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Attribute) and n.attr == dead_name:
+            return True
+        if isinstance(n, ast.Name) and n.id == dead_name:
+            return True
+    return False
+
+
+def _mentions_tainted(expr: ast.expr, tainted: set[str]) -> bool:
+    """Whether `expr` reads any name in `tainted` (see _classify_test_impact)."""
+    return any(isinstance(n, ast.Name) and n.id in tainted for n in ast.walk(expr))
+
+
+def _assigned_names(target: ast.expr) -> list[str]:
+    """Names bound by an assignment target — handles plain `x = ...` and
+    tuple/list unpacking (`x, y = ...`)."""
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return [name for elt in target.elts for name in _assigned_names(elt)]
+    return []
+
+
+def _flatten_statements(stmts: list[ast.stmt]) -> list[ast.stmt]:
+    """Flatten a statement list in source order, descending into if/for/
+    while/with/try block bodies (not into nested function/class defs) —
+    enough to track assignment order through the control-flow shapes this
+    repo's tests actually use (most commonly `with pytest.raises(...):`).
+    """
+    out: list[ast.stmt] = []
+    for stmt in stmts:
+        out.append(stmt)
+        if isinstance(stmt, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+            out.extend(_flatten_statements(stmt.body))
+            out.extend(_flatten_statements(stmt.orelse))
+        elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+            out.extend(_flatten_statements(stmt.body))
+        elif isinstance(stmt, ast.Try):
+            out.extend(_flatten_statements(stmt.body))
+            for handler in stmt.handlers:
+                out.extend(_flatten_statements(handler.body))
+            out.extend(_flatten_statements(stmt.orelse))
+            out.extend(_flatten_statements(stmt.finalbody))
+    return out
+
+
+def _classify_test_impact(dead_name: str, test_file: Path, around_line: int) -> tuple[str, str]:
+    """Classify a test's relationship to a dead symbol as 'obsolete' (safe to
+    delete the whole test) or 'repair' (also covers other still-live
+    behaviour -- trim, don't delete).
+
+    Heuristic: walks the enclosing test function's statements in source
+    order, tracking which local variables are "tainted" by a value that
+    derives from an expression referencing dead_name (this codebase's
+    dominant test shape is `result = await x.dead_name(...); assert result
+    == ...`, where the assert itself never mentions dead_name by name — a
+    naive "does the assert's own text mention it" check misses this
+    entirely). 'obsolete' if every `assert` references dead_name directly
+    or via a tainted variable; 'repair' if at least one doesn't. If there
+    are no assert statements at all (e.g. a bare `with pytest.raises(...):
+    await x.dead_name(...)`), 'obsolete' only if dead_name was referenced
+    somewhere in the function, otherwise a conservative 'repair: verify by
+    hand'. Known limitation, found while validating this against round 2's
+    manual audit: a *void* dead method (e.g. FilterTable.set_comparison(),
+    called as a bare statement with no return value) taints nothing, so a
+    test that calls it and then asserts on a side effect elsewhere (e.g. a
+    row widget's styling property) always reads as 'repair' here even when
+    the whole test is really about that one call — there's no data-flow
+    signal to key off for a side-effecting call the way there is for
+    `result = await x.dead_name(...); assert result == ...`. Also fooled by
+    indirection through a helper function (not tracked) or name shadowing.
+    Like every other section this script prints, still needs a human look,
+    not a mechanical delete.
+    """
+    node = _enclosing_function(test_file, around_line)
+    if node is None:
+        return "repair", "could not locate enclosing test function -- verify by hand"
+
+    stmts = _flatten_statements(node.body)
+    tainted: set[str] = set()
+    references_dead_name = False
+    for stmt in stmts:
+        expr: ast.expr | None = None
+        if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
+            expr = stmt.value
+        elif isinstance(stmt, ast.Expr):
+            expr = stmt.value
+        if expr is None:
+            continue
+        if _references_name(expr, dead_name) or _mentions_tainted(expr, tainted):
+            references_dead_name = True
+            if isinstance(stmt, ast.Assign):
+                for target in stmt.targets:
+                    tainted.update(_assigned_names(target))
+            elif isinstance(stmt, ast.AnnAssign):
+                tainted.update(_assigned_names(stmt.target))
+
+    asserts = [s for s in stmts if isinstance(s, ast.Assert)]
+    if not asserts:
+        if references_dead_name:
+            return (
+                "obsolete",
+                "no plain assert, but the only meaningful statement(s) "
+                "reference the dead symbol (e.g. pytest.raises)",
+            )
+        return "repair", "no assert statements found -- verify by hand"
+
+    unrelated = sum(
+        1
+        for a in asserts
+        if not (_references_name(a.test, dead_name) or _mentions_tainted(a.test, tainted))
+    )
+    if unrelated == 0:
+        return "obsolete", "every assert references the dead symbol"
+    return (
+        "repair",
+        f"{unrelated} assert(s) unrelated to '{dead_name}' -- trim only the "
+        f"{dead_name}-specific lines",
+    )
+
+
+def _find_assign_node(path: Path, lineno: int) -> ast.Assign | ast.AnnAssign | None:
+    """Find a module-level (or class-level) Assign/AnnAssign whose line
+    matches vulture's reported line -- AnnAssign (`x: T = ...`) is this
+    codebase's actual shape for module-level convenience constants like
+    wiim_api_logger, found missing here until caught by running the script.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.lineno == lineno:
+            return node
+    return None
+
+
+def _dead_symbol_node(file: str, lineno: int, kind: str) -> ast.AST | None:
+    """Resolve a vulture hit to its AST node, dispatching on vulture's reported kind.
+
+    `property` is its own vulture kind, distinct from `method` (confirmed
+    via ChannelMode.wire_value, an `@property` — this was missed entirely
+    until caught by actually running the script against real candidates).
+    """
+    path = _REPO_ROOT / file
+    if kind in ("method", "function", "property"):
+        return _find_function_node(path, lineno)
+    if kind in ("variable", "attribute"):
+        return _find_assign_node(path, lineno)
+    return None
+
+
+def _defining_statement_literals(node: ast.AST) -> set[str] | None:
+    """Extract literal(s) from a trivial dead symbol's defining statement.
+
+    Blind spot #7. Targets three shapes: a property/method whose (docstring-
+    stripped) body is a single `return <expr>` where `<expr>` is a literal,
+    a ternary (`"a" if cond else "b"` — ChannelMode.wire_value's actual
+    shape), or a two-branch if/else *statement* both returning constants;
+    and a module-level `Assign`/`AnnAssign` whose RHS is a literal or a call
+    with only literal arguments (e.g. `logging.getLogger("...")`). Returns
+    None for anything else -- deliberately narrow, this is a duplicate-value
+    hint, not a general dead code check.
+
+    Known limitation, found while validating this against
+    wiim_api_logger/rew_api_logger (round 2's other blind-spot-#7 case): if
+    the RHS references a *named* constant instead of a literal directly
+    (`logging.getLogger(LOGGER_WIIM_API)`, not
+    `logging.getLogger("wiim_rew_sync.wiim_api")`), this returns None --
+    resolving one level of named-constant indirection would need tracking
+    module-level constant definitions across files, out of scope for what's
+    meant to be a narrow, mechanical hint. That case still needed (and got)
+    a by-hand check, same as every other section this script prints.
+    """
+    literals: set[str] = set()
+
+    def collect(expr: ast.expr | None) -> bool:
+        if expr is None:
+            return False
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, (str, int, float)):
+            literals.add(str(expr.value))
+            return True
+        if isinstance(expr, ast.IfExp):
+            return collect(expr.body) and collect(expr.orelse)
+        if isinstance(expr, ast.Call) and all(isinstance(a, ast.Constant) for a in expr.args):
+            found = False
+            for a in expr.args:
+                if isinstance(a, ast.Constant) and isinstance(a.value, (str, int, float)):
+                    literals.add(str(a.value))
+                    found = True
+            return found
+        return False
+
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]  # drop a leading docstring
+        if len(body) == 1 and isinstance(body[0], ast.Return):
+            return literals if collect(body[0].value) else None
+        if (
+            len(body) == 1
+            and isinstance(body[0], ast.If)
+            and len(body[0].body) == 1
+            and len(body[0].orelse) == 1
+            and isinstance(body[0].body[0], ast.Return)
+            and isinstance(body[0].orelse[0], ast.Return)
+        ):
+            ok = collect(body[0].body[0].value) and collect(body[0].orelse[0].value)
+            return literals if ok else None
+        return None
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        return literals if collect(node.value) else None
+    return None
+
+
+_LITERAL_DUP_WINDOW = 15  # lines
+
+
+def _inline_literal_duplicate_hits(literals: set[str], *, exclude_file: Path) -> list[str]:
+    """Grep production code (excluding `exclude_file`) for a hand-duplicated
+    copy of `literals` -- 2+ of them appearing within a
+    _LITERAL_DUP_WINDOW-line span of each other (e.g. one literal per
+    if/else branch, the shape ChannelMode.wire_value's duplicate actually
+    took -- same-line-only co-occurrence missed it entirely), or, for a
+    single-literal definition, that one literal recurring verbatim
+    elsewhere (skipped if it's short/common, to keep noise down). Heuristic
+    -- see blind spot #7; a hit isn't proof, a miss doesn't clear it either.
+    """
+    if not literals:
+        return []
+    min_hits = 1 if len(literals) == 1 else 2
+    if min_hits == 1 and len(next(iter(literals))) < 4:
+        return []
+    hits: list[str] = []
+    for root in _SCAN_ROOTS:
+        for path in root.rglob("*.py"):
+            if _TESTS_DIR in path.parents or path == exclude_file:
+                continue
+            lit_lines: dict[str, list[int]] = defaultdict(list)
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                for lit in literals:
+                    if f'"{lit}"' in line or f"'{lit}'" in line:
+                        lit_lines[lit].append(lineno)
+            if len(lit_lines) < min_hits:
+                continue
+            last_reported = -_LITERAL_DUP_WINDOW - 1
+            for anchor in sorted({ln for lns in lit_lines.values() for ln in lns}):
+                if anchor <= last_reported + _LITERAL_DUP_WINDOW:
+                    continue  # already covered by the previous window reported below
+                covered = {
+                    lit
+                    for lit, lns in lit_lines.items()
+                    if any(anchor <= ln <= anchor + _LITERAL_DUP_WINDOW for ln in lns)
+                }
+                if len(covered) >= min_hits:
+                    hits.append(f"{path.relative_to(_REPO_ROOT)}:{anchor}")
+                    last_reported = anchor
+    return hits
+
+
+def _stale_keep_names(raw_lines: list[str]) -> list[str]:
+    """Names in _KNOWN_INTENTIONAL_KEEPS that vulture no longer even flags --
+    i.e. the symbol became genuinely used, or was already deleted, since the
+    keep was recorded. Doesn't prove the keep is wrong on its own; a nudge
+    to re-verify it still applies (round 2 found all 3 of round 1's keeps
+    had become stale this way).
+    """
+    flagged_names = {_extract_name(line) for line in raw_lines}
+    return [name for name in _KNOWN_INTENTIONAL_KEEPS if name not in flagged_names]
 
 
 def _build_call_index() -> dict[str, list[tuple[str, int]]]:
@@ -481,6 +862,8 @@ def main() -> int:
     print("Running vulture against src/ (src/tests/ excluded from the scan)...\n")
     raw_lines = _run_vulture()
 
+    validator_names = _collect_validator_decorated_names()
+    framework_validators: list[str] = []
     orphaned: list[str] = []
     test_only: list[tuple[str, list[str]]] = []
     maybe_dynamic: list[tuple[str, list[str]]] = []
@@ -489,6 +872,9 @@ def main() -> int:
     for line in raw_lines:
         name = _extract_name(line)
         if name is None:
+            continue
+        if name in validator_names:
+            framework_validators.append(line)
             continue
         if name in _KNOWN_INTENTIONAL_KEEPS:
             known_keep.append(line)
@@ -502,6 +888,49 @@ def main() -> int:
             test_only.append((line, test_hits))
         else:
             orphaned.append(line)
+
+    if framework_validators:
+        print(
+            f"=== {len(framework_validators)} framework-invoked (pydantic "
+            "validator) — never flagged, do not delete ==="
+        )
+        print(
+            "(called automatically by pydantic on model construction/"
+            "mutation, not from our own code — see blind spot #6)"
+        )
+        for line in framework_validators:
+            print(line)
+        print()
+
+    literal_dup_hits: list[tuple[str, list[str]]] = []
+    for line in orphaned + [test_line for test_line, _hits in test_only]:
+        m = _VULTURE_LINE_RE.match(line)
+        if m is None:
+            continue
+        node = _dead_symbol_node(m.group("file"), int(m.group("line")), m.group("kind"))
+        if node is None:
+            continue
+        literals = _defining_statement_literals(node)
+        if not literals:
+            continue
+        hits = _inline_literal_duplicate_hits(literals, exclude_file=_REPO_ROOT / m.group("file"))
+        if hits:
+            literal_dup_hits.append((line, hits))
+    if literal_dup_hits:
+        print(
+            f"=== {len(literal_dup_hits)} trivial dead symbol(s) with matching "
+            "literals found elsewhere — check for an inline duplicate before "
+            "deleting ==="
+        )
+        print(
+            "(heuristic — see blind spot #7. A hit doesn't prove a duplicate; "
+            "a miss doesn't prove there isn't one)"
+        )
+        for line, hits in literal_dup_hits:
+            print(line)
+            for h in hits:
+                print(f"    possible inline duplicate at: {h}")
+        print()
 
     print(
         f"=== {len(orphaned)} candidate(s) — orphaned everywhere, including "
@@ -517,12 +946,18 @@ def main() -> int:
     )
     print(
         "(deleting the production symbol also means removing/updating these "
-        "test lines, or the suite breaks)"
+        "test lines, or the suite breaks — [OBSOLETE]/[REPAIR] below is a "
+        "heuristic classification of which, see _classify_test_impact())"
     )
     for line, hits in test_only:
         print(line)
+        dead_name = _extract_name(line) or ""
         for h in hits:
-            print(f"    {h}")
+            path_str, lineno_str, _content = h.split(":", 2)
+            hit_path = _REPO_ROOT / path_str
+            verdict, reason = _classify_test_impact(dead_name, hit_path, int(lineno_str))
+            tag = "[OBSOLETE]" if verdict == "obsolete" else f"[REPAIR: {reason}]"
+            print(f"    {h} {tag}")
 
     print(
         f"\n=== {len(maybe_dynamic)} candidate(s) — also appear as a string "
@@ -541,6 +976,16 @@ def main() -> int:
         )
         for line in known_keep:
             print(line)
+
+    stale_keeps = _stale_keep_names(raw_lines)
+    if stale_keeps:
+        print(
+            f"\n=== {len(stale_keeps)} entr(y/ies) in _KNOWN_INTENTIONAL_KEEPS "
+            "that vulture no longer flags ==="
+        )
+        print("(verify the keep reason still applies, or remove the stale entry)")
+        for name in stale_keeps:
+            print(f"  {name}: {_KNOWN_INTENTIONAL_KEEPS[name]}")
 
     shared = _collect_shared_method_names()
     if shared:
@@ -623,15 +1068,19 @@ def main() -> int:
         "methods specifically, whether it's a deliberate test-only seam "
         "(e.g. MainWindow's page/view properties) vs. a real orphaned "
         "feature, (5) for the 'dead in production, still tested' group, "
-        "whether the test lines listed should be deleted with the symbol or "
-        "rewritten to exercise it a different way, (6) for the signal "
+        "whether the [OBSOLETE]/[REPAIR] tag agrees with a real look at the "
+        "test (it's a heuristic, not a guarantee), (6) for the signal "
         "sections, whether the connected slot does something worth keeping "
         "reachable another way, (7) for the transitive-propagation section, "
         "whether the private helper's name collides with an unrelated "
-        "class's same-named method (same caveat as (2), doubled). This "
-        "script narrows down where to look, it does not decide for you — "
-        "nothing above should be deleted without that check. See CLAUDE.md's "
-        "'Dead code detection' section."
+        "class's same-named method (same caveat as (2), doubled), (8) for "
+        "the literal-duplicate section, whether the flagged symbol should "
+        "be consolidated into its inline duplicate instead of deleted (a "
+        "miss doesn't clear a candidate either — a multi-statement "
+        "duplicate has no single literal to key off, see blind spot #7). "
+        "This script narrows down where to look, it does not decide for "
+        "you — nothing above should be deleted without that check. See "
+        "CLAUDE.md's 'Dead code detection' section."
     )
     return 0
 
