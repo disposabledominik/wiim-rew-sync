@@ -279,7 +279,7 @@ class OperationFeedbackManager(QObject):
             )
             self._cancel_button.setFixedHeight(28)
             self._cancel_button.setMinimumWidth(60)
-            self._cancel_button.clicked.connect(self._on_cancel_clicked)
+            self._cancel_button.clicked.connect(self.request_cancel)
 
         # Insert before the close button in the banner layout
         layout = self._status_banner.layout()
@@ -295,10 +295,6 @@ class OperationFeedbackManager(QObject):
         """Hide the Cancel button from the banner."""
         if self._cancel_button is not None:
             self._cancel_button.setVisible(False)
-
-    def _on_cancel_clicked(self) -> None:
-        """Handle Cancel button click."""
-        self.request_cancel()
 
     def _on_timeout(self) -> None:
         """Handle hard timeout (30s) -- force-finish with error message.

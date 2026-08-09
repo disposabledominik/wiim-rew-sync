@@ -820,6 +820,8 @@ class MainWindow(QMainWindow):
         self._bridge.peq_ready.connect(self._on_peq_ready)
         self._bridge.write_complete.connect(self._on_write_complete)
         self._bridge.operation_error.connect(self._on_operation_error)
+        self._bridge.probe_abandoned.connect(self._on_probe_abandoned)
+        self._bridge.discovery_abandoned.connect(self._on_discovery_abandoned)
         self._bridge.progress_update.connect(self._on_progress_update)
         self._bridge.stage_changed.connect(self._on_stage_changed)
         self._bridge.push_round_changed.connect(self._on_push_round_changed)
@@ -939,7 +941,7 @@ class MainWindow(QMainWindow):
         # under the user (see _do_probe).
         generation = self._primary_workflows.bump_probe_generation()
         self._connect_page.mark_connecting(device_ip)
-        self._primary_workflows.probe(self._capability_prober, generation)
+        self._primary_workflows.probe(self._capability_prober, generation, device_ip)
         logger.info("Device selected: %s", device_ip)
 
     @Slot()
@@ -2129,9 +2131,39 @@ class MainWindow(QMainWindow):
         # with no other reset path -- only relevant while Connect is still
         # the active step (mirrors _on_capabilities_ready's own guard); a
         # no-op otherwise since reset_connecting() only touches a card
-        # actually showing "connecting".
+        # actually showing "connecting". A probe that ends *without* an
+        # error (cancelled, or superseded by a newer selection) doesn't
+        # reach this handler at all -- see _on_probe_abandoned below.
         if self._wizard_controller.current_step == WizardStep.CONNECT:
             self._connect_page.reset_connecting()
+
+    @Slot(str)
+    def _on_probe_abandoned(self, device_ip: str) -> None:
+        """Handle a capability probe that ended without a result.
+
+        Fires when a cancellable probe is cancelled (Escape/Cancel) or
+        discarded as stale (the user selected a different device before it
+        resolved) -- neither path emits capabilities_ready or
+        operation_error, so without this the clicked device's card would
+        keep pulsing "connecting" forever. Scoped to *device_ip* (rather
+        than reset_connecting()'s "every connecting card") so an unrelated
+        card that's still genuinely probing isn't touched.
+
+        Args:
+            device_ip: IP of the device whose probe was abandoned.
+        """
+        self._connect_page.reset_connecting_for(device_ip)
+
+    @Slot()
+    def _on_discovery_abandoned(self) -> None:
+        """Handle a discovery scan cancelled before it completed.
+
+        discovery_complete (the only other place that hides the scanning
+        indicator) never fires for a cancelled scan, so without this the
+        "Scanning for devices..." UI would stay shown indefinitely after
+        Escape/Cancel even though the operation has actually stopped.
+        """
+        self._connect_page.set_scanning(False)
 
     @Slot(str)
     def _on_progress_update(self, message: str) -> None:

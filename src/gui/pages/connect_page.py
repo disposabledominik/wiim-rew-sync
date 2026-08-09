@@ -151,18 +151,25 @@ class ConnectPage(QWidget):
         self._devices_scroll.setVisible(False)
         self._scanning_widget.setVisible(True)
 
+    def _find_card(self, ip: str) -> DeviceCard | None:
+        """Look up the device card for *ip*, or None if no card matches
+        (e.g. the page was reset in between). Shared by every method below
+        that updates a single card's state by IP."""
+        for card, card_ip, _sort_key in self._device_cards:
+            if card_ip == ip:
+                return card
+        return None
+
     def mark_connecting(self, ip: str) -> None:
         """Show the pulsing "connecting" animation on the card for *ip*.
 
         Args:
             ip: IP address of the device a capability probe was just
-                dispatched for. A no-op if no card matches (e.g. the page
-                was reset in between).
+                dispatched for. A no-op if no card matches.
         """
-        for card, card_ip, _sort_key in self._device_cards:
-            if card_ip == ip:
-                card.set_state("connecting")
-                break
+        card = self._find_card(ip)
+        if card is not None:
+            card.set_state("connecting")
 
     def mark_connected(self, ip: str) -> None:
         """Show the solid "connected" accent on the card for *ip*.
@@ -171,10 +178,9 @@ class ConnectPage(QWidget):
             ip: IP address of the device whose capability probe just
                 succeeded.
         """
-        for card, card_ip, _sort_key in self._device_cards:
-            if card_ip == ip:
-                card.set_state("connected")
-                break
+        card = self._find_card(ip)
+        if card is not None:
+            card.set_state("connected")
 
     def reset_connecting(self) -> None:
         """Revert any card still showing "connecting" back to idle.
@@ -187,6 +193,21 @@ class ConnectPage(QWidget):
         for card, _ip, _sort_key in self._device_cards:
             if card.property("state") == "connecting":
                 card.set_state("idle")
+
+    def reset_connecting_for(self, ip: str) -> None:
+        """Revert the card for *ip* back to idle if it's still "connecting".
+
+        Used when a specific device's probe is abandoned (cancelled, or
+        superseded by a newer selection) -- scoped to one card, unlike
+        reset_connecting(), so an unrelated card that's still genuinely
+        probing isn't reset by a different device's stale cleanup.
+
+        Args:
+            ip: IP address of the device whose probe was abandoned.
+        """
+        card = self._find_card(ip)
+        if card is not None and card.property("state") == "connecting":
+            card.set_state("idle")
 
     def showEvent(self, event) -> None:  # noqa: ANN001
         """Auto-trigger discovery when the page becomes visible."""

@@ -32,6 +32,8 @@ class AsyncBridge(QObject):
     rew_measurements_ready = Signal(list)  # list[MeasurementSummary]
     rew_filters_ready = Signal(list)       # list[CanonicalFilter]
     operation_error = Signal(str, str)     # (error_type, human_readable_message)
+    probe_abandoned = Signal(str)          # device_ip -- probe cancelled/superseded, no result
+    discovery_abandoned = Signal()         # discovery cancelled before completion
 
     # --- Signals for progress indication ---
     progress_update = Signal(str)          # Status message for progress indicator

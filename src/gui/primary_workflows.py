@@ -352,6 +352,13 @@ class PrimaryWorkflowManager(QObject):
 
         Uses progressive discovery — devices appear in the UI as soon as
         they're found rather than waiting for the full scan to complete.
+
+        discover() is dispatched as cancellable, but a cancelled/superseded
+        scan still needs to clear ConnectPage's scanning indicator -- the
+        `finally` below emits `discovery_abandoned` whenever this coroutine
+        exits without reaching `discovery_complete`, whatever the reason
+        (Escape/Cancel raising CancelledError, or any other early exit),
+        instead of only handling the cancellation case explicitly.
         """
         assert self._bridge is not None
         assert self._discovery_module is not None
@@ -365,14 +372,20 @@ class PrimaryWorkflowManager(QObject):
             assert self._bridge is not None
             self._bridge.discovery_progress.emit(device_list)
 
-        devices = await self._discovery_module.discover(on_found=_on_found)
-        # Cache raw DeviceInfo objects for device picker dialogs
-        self._discovered_devices = devices
-        device_list = [
-            {"name": d.name, "ip": d.ip, "model": d.model}
-            for d in devices
-        ]
-        self._bridge.discovery_complete.emit(device_list)
+        completed = False
+        try:
+            devices = await self._discovery_module.discover(on_found=_on_found)
+            # Cache raw DeviceInfo objects for device picker dialogs
+            self._discovered_devices = devices
+            device_list = [
+                {"name": d.name, "ip": d.ip, "model": d.model}
+                for d in devices
+            ]
+            self._bridge.discovery_complete.emit(device_list)
+            completed = True
+        finally:
+            if not completed:
+                self._bridge.discovery_abandoned.emit()
 
     # ------------------------------------------------------------------
     # Workflow: Capability Probing
@@ -389,17 +402,24 @@ class PrimaryWorkflowManager(QObject):
         self._probe_generation += 1
         return self._probe_generation
 
-    def probe(self, prober: CapabilityProber, generation: int) -> None:
+    def probe(self, prober: CapabilityProber, generation: int, device_ip: str) -> None:
         """Trigger capability probing for a just-selected device.
 
         Args:
             prober: The CapabilityProber for the device this probe targets.
             generation: Snapshot from bump_probe_generation() at selection
                 time, used by _do_probe to discard a stale result.
+            device_ip: IP of the device this probe targets, so _do_probe can
+                report back exactly which device's card to reset if the
+                probe never produces a result.
         """
-        self._dispatch("capability_probe", self._do_probe(prober, generation), cancellable=True)
+        self._dispatch(
+            "capability_probe", self._do_probe(prober, generation, device_ip), cancellable=True
+        )
 
-    async def _do_probe(self, prober: CapabilityProber, generation: int) -> None:
+    async def _do_probe(
+        self, prober: CapabilityProber, generation: int, device_ip: str
+    ) -> None:
         """Run capability probing and emit results via bridge signal.
 
         Calls CapabilityProber.probe() and emits the DeviceCapabilities
@@ -414,20 +434,35 @@ class PrimaryWorkflowManager(QObject):
         device the user already navigated away from, corrupting the Connect
         step's completed/checkmark state.
 
+        Either way -- discarded as stale, or cancelled outright via
+        Escape/Cancel while the probe is cancellable -- ConnectPage's card
+        for *device_ip* was already left pulsing "connecting" by whoever
+        dispatched this probe, with nothing else to revert it. The `finally`
+        below emits `probe_abandoned` for exactly that device whenever this
+        coroutine exits without reaching `capabilities_ready`, so the card
+        for a superseded/cancelled probe doesn't pulse forever.
+
         Args:
             prober: The CapabilityProber for the device this probe targets.
             generation: Snapshot of the probe-generation counter at selection time.
+            device_ip: IP of the device this probe targets.
         """
         assert self._bridge is not None
-        caps = await prober.probe()
-        if generation != self._probe_generation:
-            logger.debug(
-                "Discarding stale capability probe result (generation %d, current %d)",
-                generation,
-                self._probe_generation,
-            )
-            return
-        self._bridge.capabilities_ready.emit(caps)
+        succeeded = False
+        try:
+            caps = await prober.probe()
+            if generation != self._probe_generation:
+                logger.debug(
+                    "Discarding stale capability probe result (generation %d, current %d)",
+                    generation,
+                    self._probe_generation,
+                )
+                return
+            self._bridge.capabilities_ready.emit(caps)
+            succeeded = True
+        finally:
+            if not succeeded:
+                self._bridge.probe_abandoned.emit(device_ip)
 
     # ------------------------------------------------------------------
     # Workflow: File Import

@@ -612,6 +612,8 @@ async def test_stale_capability_probe_is_discarded():
         # simulates a newer _on_device_selected call
         window._primary_workflows.bump_probe_generation()
 
-        await window._primary_workflows._do_probe(cast(Any, stale_prober), stale_generation)
+        await window._primary_workflows._do_probe(
+            cast(Any, stale_prober), stale_generation, "192.168.1.100"
+        )
 
         mock_bridge.capabilities_ready.emit.assert_not_called()

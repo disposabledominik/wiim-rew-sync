@@ -859,6 +859,11 @@ def _signals_emitted_by_dead_methods(orphaned_lines: list[str]) -> dict[str, tup
 
 
 def main() -> int:
+    """Run vulture, bucket its findings by blind-spot category, and print a
+    human-triaged report. Returns 0 once the report has printed -- a genuine
+    vulture failure exits earlier via sys.exit() in _run_vulture(). This is
+    a report, not a pass/fail gate (see the module docstring for why it
+    isn't wired into CI)."""
     print("Running vulture against src/ (src/tests/ excluded from the scan)...\n")
     raw_lines = _run_vulture()
 
