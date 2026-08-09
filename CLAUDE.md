@@ -58,16 +58,14 @@ Read Back → Verify → Commit/Rollback. No exceptions.
    `src/gui/components/`. Reuse and consolidate code rather than reinvent.
 
 2. **Check the layer.** Logic that doesn't require Qt to test belongs in `translator/`,
-   `repository/`, `adapters/`, or `utils/` — not in `src/gui/`. GUI has zero business logic; it
-   calls through the bridge as a thin pass-through.
+   `repository/`, `adapters/`, or `utils/`, not `src/gui/` — GUI is a thin pass-through through
+   the bridge.
 
 3. **Read existing examples first.** For any new GUI element, read at least two existing examples
-   of the same type before writing a line — always find how existing pages handle the same
-   cross-cutting concern instead of hand-rolling it.
+   of the same type before writing a line.
 
 4. **When changing a cross-cutting convention, update everything that assumes the old one in the
-   same commit.** grep `docs/`, `scripts/`, CI workflows, tests. Recurring "fix stale docs" commits
-   are the symptom of not doing this.
+   same commit.** grep `docs/`, `scripts/`, CI workflows, tests.
 
 ## Before calling a task done
 
@@ -80,8 +78,6 @@ checkpoint for catching duplication, dead code, and over-engineered abstractions
 **After any non-trivial change, also ask:**
 - Did I fix the root cause, or a symptom? If the same class of bug could exist at another call
   site, grep for all of them and fix them now.
-- Did I over-generalize a finding? A pattern confirmed in one context may not hold in a
-  structurally similar one.
 - Does anything in `docs/`, tests, or other code now assume behavior I just changed?
 - Do any documents, including the in-app User Guide, need to be updated?
 
@@ -109,10 +105,8 @@ rules.
 
 ## Writing tests
 
-A test that only checks a function exists, doesn't raise, or accepts valid input without asserting
-on output is not a test.
-
-**Every test must** assert the specific output or side effect, and cover at least one failure path.
+A test must assert a specific output or side effect and cover at least one failure path — checking
+only that a function exists, doesn't raise, or accepts valid input isn't enough.
 
 **Regression tests** must reproduce the specific hardware-observed condition. A test that would
 have passed *before* the bug is not a regression test. For multi-path bugs, add a scan-based test
