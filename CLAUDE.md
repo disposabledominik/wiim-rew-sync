@@ -24,11 +24,6 @@ python3 -m pytest src/tests/test_<module>.py -v --no-cov     # targeted test, ~5
 python3 -m ruff check src/
 python3 -m mypy src/                        # zero-error gate
 python3 -m mypy src/translator src/models   # strict mode (pyproject.toml overrides)
-
-python3 scripts/find_dead_code.py           # periodic/after a refactor — not a CI gate, see below
-pip3 install -e ".[dev]"                    # only if pyproject.toml changed
-python packaging/entry_gui.py               # run the GUI
-wiim-rew-sync list-devices                  # run the CLI (see README for full command list)
 ```
 
 **Never pipe pytest/ruff/mypy output.** Full suite (`pytest --no-header -q`) takes 10-20 min on WSL
@@ -36,12 +31,6 @@ and will time out agent commands — run it only as a final, optional gate; abse
 means it passed. Qt-based tests show spurious `ERROR` during pytest-cov's SQLite combine step on
 WSL2's `/mnt/c/` filesystem — not real failures, don't investigate; they pass individually with
 `--no-cov`.
-
-**Dead code scan:** every hit needs human triage; a clean run isn't proof nothing's dead. It
-corrects for codebase-specific blind spots plain `vulture` misses — detail lives in the script's
-own module docstring. Before deleting a flagged symbol, check for a deliberate-keep note in
-`docs/backlog.md`/`docs/smoke_test_issues.md`; if found, add it to `_KNOWN_INTENTIONAL_KEEPS` with
-a citation instead of deleting or re-triaging it next time.
 
 ## Architecture
 
@@ -178,9 +167,6 @@ Assert the right thing:
   — no decompiled class/method names, smali paths, APK contents, or app UI/architecture. Findings
   go in as observed API behavior confirmed via hardware testing (`docs/corrections.md`), not as
   "found by decompiling X."
-- **`docs/wiim_api_notes.md` is a spec, not a lab notebook.** State the current command/rule only —
-  investigation history and hardware-test trails belong in `docs/corrections.md`; `wiim_api_notes.md`
-  should only ever point at it (`docs/corrections.md`, `<date>`), never restate it.
 
 ## Common pitfalls
 
