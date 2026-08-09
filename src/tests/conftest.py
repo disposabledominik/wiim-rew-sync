@@ -32,7 +32,9 @@ def iter_src_python_files() -> list[Path]:
     return sorted((repo_root / "src").rglob("*.py"))
 
 
-def close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
+def close_coroutine_tree(
+    value: object, seen: set[int] | None = None, **_kwargs: object
+) -> None:
     """Close a coroutine and any nested coroutine locals it captures.
 
     GUI handler tests mock ``AsyncBridge.run_async`` so the coroutine passed
@@ -43,6 +45,14 @@ def close_coroutine_tree(value: object, seen: set[int] | None = None) -> None:
     any inner coroutine it captured as a local, e.g. ``_bridge_wrapper``
     wrapping one of the ``_do_*`` workflow coroutines) the moment the mock
     is called.
+
+    ``**_kwargs`` absorbs and ignores any keyword arguments the real
+    ``run_async()`` accepts beyond the coroutine itself (e.g.
+    ``cancellable``) -- as a MagicMock side_effect, this is called with
+    whatever the production call site passes, and a signature mismatch here
+    raises a TypeError deep inside a Qt signal handler, which the app's
+    crash handler catches and shows as a blocking modal dialog, hanging the
+    test (found via a real hang, not by inspection -- see git history).
     """
     if not inspect.iscoroutine(value):
         return
