@@ -1,9 +1,8 @@
 """FilterTable - read-only filter display with stretch columns.
 
 Displays parametric EQ filter bands in a table that expands to fill
-available width. Supports stereo display, L/R tabbed display, and
-comparison (diff) mode with visual indicators for disabled bands and
-clamped values.
+available width. Supports stereo display and L/R tabbed display, with
+visual indicators for disabled bands and clamped values.
 
 Requirements referenced: 5.1, 5.2, 5.3, 5.5, 19.2, 19.3.
 """
@@ -29,12 +28,10 @@ from src.models.canonical import CanonicalFilter
 from src.models.constants import GAIN_MAX, GAIN_MIN, Q_MAX, Q_MIN
 from src.translator._warnings import FilterRow, SkippedBand
 from src.utils.clamping import clamp
-from src.utils.fp_compare import band_matches, gain_matches
 
 _HEADERS = ["Band", "Type", "Freq", "Gain", "Q"]
 
 _SKIPPED_OPACITY = 0.45
-_HIGHLIGHT_ALPHA = 40  # Accent background alpha for comparison highlights
 _NA_LABEL = "N/A"
 # QTabWidget::pane's QSS chrome (1px border + 8px padding on each side, see
 # fluent_dark.qss/fluent_light.qss) isn't reflected in tabBar().sizeHint() or
@@ -53,16 +50,15 @@ class FilterTable(QWidget):
     Displays CanonicalFilter bands with support for:
     - Simple stereo display with optional clamping indicators
     - L/R tabbed display via QTabWidget
-    - Comparison (diff) view highlighting changed bands
 
     Expands to fill its parent's available width (see
     `FILTER_TABLE_MAX_WIDTH` in `src/gui/constants.py` for the width cap
     the caller, `ReviewPage`, applies) rather than sizing to its content.
     Height is different: it grows only up to the natural height needed to
     show every row without internal scrolling (recomputed on every
-    set_filters/set_lr_filters/set_comparison call), then stops -- there's
-    no value in an empty-looking table stretching to fill a tall window
-    once all its rows are already visible.
+    set_filters/set_lr_filters call), then stops -- there's no value in an
+    empty-looking table stretching to fill a tall window once all its rows
+    are already visible.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -169,27 +165,6 @@ class FilterTable(QWidget):
         )
         tab_bar_height = tab_widget.tabBar().sizeHint().height()
         self.setMaximumHeight(tallest_table_height + tab_bar_height + _TAB_PANE_CHROME)
-
-    def set_comparison(
-        self,
-        before: list[CanonicalFilter],
-        after: list[CanonicalFilter],
-    ) -> None:
-        """Show diff view highlighting changed bands.
-
-        Changed rows get an accent background highlight. The gain column
-        shows the difference as "+X.X dB" or "-X.X dB".
-
-        Args:
-            before: Filters representing the current/device state.
-            after: Filters representing the incoming/new state.
-        """
-        self._clear_widgets()
-        table = self._create_table()
-        self._container_layout.addWidget(table)
-        self._table = table
-        self._populate_comparison(table, before, after)
-        self._apply_natural_max_height(table)
 
     def clear(self) -> None:
         """Remove all data and widgets."""
@@ -435,100 +410,6 @@ class FilterTable(QWidget):
 
         self._apply_skipped_style(table, row, skipped.reason)
 
-    def _populate_comparison(
-        self,
-        table: QTableWidget,
-        before: list[CanonicalFilter],
-        after: list[CanonicalFilter],
-    ) -> None:
-        """Fill table with comparison data, highlighting changes.
-
-        Args:
-            table: Target QTableWidget.
-            before: Current/device filters.
-            after: Incoming/new filters.
-        """
-        # Use the longer list length to handle mismatched sizes
-        row_count = max(len(before), len(after))
-        table.setRowCount(row_count)
-
-        for row in range(row_count):
-            before_filt = before[row] if row < len(before) else None
-            after_filt = after[row] if row < len(after) else None
-
-            # Determine if this row changed
-            changed = self._filters_differ(before_filt, after_filt)
-
-            # Use after filter for display (the incoming state)
-            display_filt = after_filt or before_filt
-            if display_filt is None:
-                continue
-
-            # Band number
-            band_item = QTableWidgetItem(str(row + 1))
-            band_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
-            )
-            table.setItem(row, 0, band_item)
-
-            # Type
-            type_item = QTableWidgetItem(self._format_type(display_filt))
-            type_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-            )
-            table.setItem(row, 1, type_item)
-
-            # Frequency
-            freq_item = QTableWidgetItem(self._format_frequency(display_filt.frequency_hz))
-            freq_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            table.setItem(row, 2, freq_item)
-
-            # Gain with diff indicator
-            gain_text = self._format_gain(display_filt.gain_db)
-            if (
-                changed
-                and before_filt is not None
-                and after_filt is not None
-                and not gain_matches(before_filt.gain_db, after_filt.gain_db)
-            ):
-                diff = after_filt.gain_db - before_filt.gain_db
-                diff_str = f"+{diff:.1f}" if diff > 0 else f"{diff:.1f}"
-                gain_text = f"{gain_text} ({diff_str} dB)"
-            gain_item = QTableWidgetItem(gain_text)
-            gain_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            table.setItem(row, 3, gain_item)
-
-            # Q
-            q_item = QTableWidgetItem(f"{display_filt.q:.2f}")
-            q_item.setTextAlignment(
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-            )
-            table.setItem(row, 4, q_item)
-
-            # Highlight changed rows
-            if changed:
-                self._apply_highlight_style(table, row)
-
-    def _filters_differ(
-        self,
-        a: CanonicalFilter | None,
-        b: CanonicalFilter | None,
-    ) -> bool:
-        """Check if two filters differ in any visible parameter.
-
-        Uses the same tolerances Safe-Write verification uses to decide a
-        write "matched" (src.utils.fp_compare.band_matches) so this display
-        can't flag a band as changed that Safe-Write itself already
-        considers a verified match.
-        """
-        if a is None or b is None:
-            return True
-        return not band_matches(a, b)
-
     @staticmethod
     def _warning_color() -> QColor:
         """Return the clamping-warning foreground color for the active theme."""
@@ -555,17 +436,6 @@ class FilterTable(QWidget):
             color.setAlphaF(_SKIPPED_OPACITY)
             item.setForeground(color)
             item.setToolTip(reason)
-
-    def _apply_highlight_style(self, table: QTableWidget, row: int) -> None:
-        """Apply accent background to a changed row in comparison mode."""
-        from src.gui.constants import ACCENT_COLOR
-
-        highlight = QColor(ACCENT_COLOR)
-        highlight.setAlpha(_HIGHLIGHT_ALPHA)
-        for col in range(table.columnCount()):
-            item = table.item(row, col)
-            if item is not None:
-                item.setBackground(highlight)
 
     @staticmethod
     def _format_type(filt: CanonicalFilter) -> str:

@@ -2889,7 +2889,6 @@ class MainWindow(QMainWindow):
         self._onboarding_overlay.get_started_clicked.connect(
             self._on_onboarding_get_started
         )
-        self._onboarding_overlay.skip_clicked.connect(self._on_onboarding_skip)
 
     @Slot(str)
     def _on_theme_changed(self, theme: str) -> None:
@@ -2992,12 +2991,6 @@ class MainWindow(QMainWindow):
         # frontier (go_to_step is purely navigational under lazy
         # invalidation, #246).
         self._wizard_controller.go_to_step(WizardStep.CONNECT)
-
-    @Slot()
-    def _on_onboarding_skip(self) -> None:
-        """Handle onboarding Skip: mark complete and save settings."""
-        self._settings.first_run_complete = True
-        self._settings.save()
 
     @Slot()
     def _on_user_guide_triggered(self) -> None:

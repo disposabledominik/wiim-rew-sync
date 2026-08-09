@@ -72,13 +72,11 @@ class OnboardingOverlay(QWidget):
 
     Signals:
         get_started_clicked: Emitted when user clicks "Get Started".
-        skip_clicked: Emitted for backward compatibility (not used).
 
     The overlay rebuilds its UI on each show to pick up the active theme.
     """
 
     get_started_clicked = Signal()
-    skip_clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         """Initialize the onboarding overlay.
@@ -269,11 +267,6 @@ class OnboardingOverlay(QWidget):
     def _on_get_started(self) -> None:
         """Handle 'Get Started' click - dismiss overlay and signal."""
         self.get_started_clicked.emit()
-        self._dismiss()
-
-    def _on_skip(self) -> None:
-        """Handle 'Skip' click - dismiss overlay and signal."""
-        self.skip_clicked.emit()
         self._dismiss()
 
     def _dismiss(self) -> None:

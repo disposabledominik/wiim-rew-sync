@@ -169,15 +169,6 @@ class TestOnboardingSignalWiring:
             window._onboarding_overlay.get_started_clicked.emit()
             assert window.stacked_widget.currentIndex() == PAGE_INDICES["connect"]
 
-    def test_skip_marks_first_run_complete(self, make_window) -> None:
-        """Skip sets first_run_complete=True and saves."""
-        settings = AppSettings(first_run_complete=False)
-        window = make_window(settings)
-        with patch.object(window._settings, "save") as mock_save:
-            window._onboarding_overlay.skip_clicked.emit()
-            assert window._settings.first_run_complete is True
-            mock_save.assert_called()
-
     def test_get_started_navigates_to_connect_preserving_steps(self, make_window) -> None:
         """Re-entering onboarding via Get Started lands on Connect without
         destroying session progress.

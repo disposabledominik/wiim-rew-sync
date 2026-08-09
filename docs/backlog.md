@@ -273,7 +273,11 @@ time) is already solved by `DeviceCapabilities.supported_filter_types`
 for a not-yet-catalogued no-HP/LP device remains undone — revisit if such a device appears.
 
 ### Profile Comparison & Diffing
-**Closed:** 2026-07-14. Future-phase feature, not MVP, no active demand. Revisit if requested.
+**Closed:** 2026-07-14. Future-phase feature, not MVP, no active demand. The dormant implementation
+(`FilterTable.set_comparison`/`_populate_comparison`/`_filters_differ`/`_apply_highlight_style`,
+plus its QSS/tests) was removed entirely in the 2026-08 dead-code pass — it was unreachable (no
+caller ever wired it up) and had been for a while. Revisiting means reimplementing from scratch,
+not reactivating dormant code.
 
 ### Advanced Filter Types
 **Closed:** 2026-07-14. All-Pass filters and specialized shelf variants are blocked on WiiM
