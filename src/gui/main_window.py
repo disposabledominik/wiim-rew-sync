@@ -3145,14 +3145,38 @@ class MainWindow(QMainWindow):
             action_buttons.extend(page_or_view.action_buttons())
         self._feedback_manager.register_action_buttons(action_buttons)
 
-    @Slot(bool)
-    def _on_bridge_operation_started(self, cancellable: bool) -> None:
-        """Handle bridge operation_started — activate feedback manager."""
+    @Slot(bool, int)
+    def _on_bridge_operation_started(self, cancellable: bool, token: int) -> None:
+        """Handle bridge operation_started — activate feedback manager.
+
+        *token* isn't needed here -- a start always represents the newest
+        dispatch by definition, so there's nothing to compare it against
+        (see _on_bridge_operation_finished, which does need it).
+        """
+        del token
         self._feedback_manager.start_operation("Processing...", cancellable=cancellable)
 
-    @Slot()
-    def _on_bridge_operation_finished(self) -> None:
-        """Handle bridge operation_finished — deactivate feedback manager."""
+    @Slot(int)
+    def _on_bridge_operation_finished(self, token: int) -> None:
+        """Handle bridge operation_finished — deactivate feedback manager.
+
+        Ignores a stale *token*: a signal handler for one operation's own
+        result can synchronously dispatch a second, unrelated operation
+        before the first operation's own operation_finished has been
+        processed (e.g. _on_capabilities_ready dispatching list_presets()).
+        Qt delivers queued signals in emission order, so that second
+        dispatch supersedes AsyncBridge's tracking before this handler runs
+        for the first operation's finish -- acting on it here would
+        incorrectly tear down feedback-manager/UI state for the second,
+        still-running operation. See AsyncBridge._current's docstring.
+        """
+        if not self._bridge.is_current_operation(token):
+            logger.debug(
+                "Ignoring stale operation_finished (token %d, superseded by a "
+                "newer dispatch)",
+                token,
+            )
+            return
         self._feedback_manager.finish_operation()
 
     # ------------------------------------------------------------------

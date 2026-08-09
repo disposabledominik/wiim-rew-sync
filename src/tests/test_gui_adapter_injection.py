@@ -290,3 +290,40 @@ class TestConnectPageCardStateWiring:
         assert card.property("state") == "connected"
         window._wizard_controller.state.current_filters = []
         window.close()
+
+
+class TestOperationFinishedTokenStaleness:
+    """MainWindow._on_bridge_operation_finished must ignore a stale token --
+    round-2 PR review finding: _on_capabilities_ready can synchronously
+    dispatch a second operation (list_presets()) before the probe's own
+    operation_finished has been processed. Qt delivers queued signals in
+    emission order, so that second dispatch supersedes AsyncBridge's
+    tracking before the probe's finish arrives; without the token check,
+    that stale finish would incorrectly deactivate the feedback manager
+    (hiding Cancel, re-enabling buttons) while the second operation is
+    still genuinely running."""
+
+    def test_stale_finished_does_not_deactivate_a_newer_operation(self, qtbot) -> None:
+        window = _make_window(qtbot)
+        # Fake AsyncBridge.is_current_operation(): token 1 (the "newer"
+        # operation) is current, mirroring a second run_async() dispatch
+        # having already superseded token 0's tracking.
+        window._bridge.is_current_operation = MagicMock(side_effect=lambda t: t == 1)
+
+        window._on_bridge_operation_started(True, 0)
+        assert window._feedback_manager.is_active
+
+        window._on_bridge_operation_started(False, 1)
+        assert window._feedback_manager.is_active
+
+        # Token 0's finish arrives late -- must be ignored, not tear down
+        # state for the still-running token-1 operation.
+        window._on_bridge_operation_finished(0)
+        assert window._feedback_manager.is_active
+
+        # Token 1's own finish must still work normally.
+        window._on_bridge_operation_finished(1)
+        assert not window._feedback_manager.is_active
+
+        window._wizard_controller.state.current_filters = []
+        window.close()

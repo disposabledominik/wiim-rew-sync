@@ -11,9 +11,20 @@ import asyncio
 import concurrent.futures
 import threading
 from collections.abc import Coroutine
-from typing import Any
+from typing import Any, NamedTuple
 
 from PySide6.QtCore import QObject, Signal
+
+
+class _ActiveOperation(NamedTuple):
+    """The one operation AsyncBridge currently considers "current" -- see
+    the class docstring's "single active operation" note for why one slot
+    (not a collection) is enough, and run_async()'s *token* for why a plain
+    Future/bool pair isn't."""
+
+    future: concurrent.futures.Future[object]
+    cancellable: bool
+    token: int
 
 
 class AsyncBridge(QObject):
@@ -40,8 +51,8 @@ class AsyncBridge(QObject):
     progress_update = Signal(str)          # Status message for progress indicator
     stage_changed = Signal(str)            # Safe-write stage key (see push_page._STAGES)
     push_round_changed = Signal(str, int, int)  # (source_name, index, total); push or undo
-    operation_started = Signal(bool)       # Triggers progress spinner; arg is cancellable
-    operation_finished = Signal()          # Hides progress spinner
+    operation_started = Signal(bool, int)  # (cancellable, token) -- see run_async()'s *token*
+    operation_finished = Signal(int)       # token -- see run_async()'s *token*
 
     def __init__(self, parent: QObject | None = None) -> None:
         """Initialize the async bridge.
@@ -52,14 +63,39 @@ class AsyncBridge(QObject):
         super().__init__(parent)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        # Both only ever set/read on the GUI thread (run_async() is called
-        # synchronously from the GUI thread; the worker thread never touches
-        # these), so no locking is needed. The feedback-manager model this
-        # backs assumes a single active operation at a time (buttons are
-        # disabled for the duration), so tracking just the current one is
-        # sufficient -- see request_cancel().
-        self._current_future: concurrent.futures.Future[object] | None = None
-        self._current_cancellable: bool = False
+        # Only ever set/read on the GUI thread (run_async() is called
+        # synchronously from the GUI thread; _on_own_operation_finished()
+        # below, which is the only thing that clears it, runs on the GUI
+        # thread too -- it's invoked through operation_finished's queued
+        # cross-thread connection, not called directly from the worker
+        # thread), so no locking is needed. The feedback-manager model this
+        # backs assumes a single active *displayed* operation at a time
+        # (buttons are disabled for the duration), so tracking just the most
+        # recently dispatched one is sufficient -- see request_cancel().
+        #
+        # *token* exists because "most recently dispatched" can still race a
+        # still-unwinding earlier operation: a signal handler for one
+        # operation's own result (e.g. MainWindow._on_capabilities_ready)
+        # can synchronously dispatch a second, unrelated operation (e.g.
+        # list_presets()) *before* the first operation's own
+        # operation_finished has been processed -- Qt delivers queued
+        # signals in emission order, and capabilities_ready was queued
+        # before operation_finished in the same _wrapped() call. Without a
+        # token, that second dispatch overwrites this tracking, and the
+        # first operation's *own* operation_finished then arrives, is
+        # indistinguishable from the second operation's, and would
+        # incorrectly tear down feedback-manager/UI state for the second
+        # operation while it's still genuinely running. Each dispatch gets
+        # a unique, monotonically increasing token; listeners that track
+        # per-operation UI state (see MainWindow._on_bridge_operation_finished)
+        # use is_current_operation() to recognize and ignore a stale one.
+        self._current: _ActiveOperation | None = None
+        self._next_token: int = 0
+        # Runs on the GUI thread (queued connection) once *this* bridge's
+        # own operation_finished fires -- clears _current, but only if
+        # *token* still matches (a newer dispatch may have already
+        # superseded it, per the token comment above).
+        self.operation_finished.connect(self._on_own_operation_finished)
 
     def start(self) -> None:
         """Start the background asyncio event loop thread."""
@@ -83,7 +119,9 @@ class AsyncBridge(QObject):
         """Submit a coroutine to the background loop.
 
         The coroutine is wrapped to emit operation_started before execution
-        and operation_finished after completion (success or failure).
+        and operation_finished after completion (success or failure), each
+        carrying this dispatch's unique *token* -- see the _current
+        attribute's comment in __init__ for why.
 
         Args:
             coro: An awaitable coroutine to run on the async worker thread.
@@ -101,17 +139,38 @@ class AsyncBridge(QObject):
         if self._loop is None:
             raise RuntimeError("AsyncBridge has not been started. Call start() first.")
 
+        token = self._next_token
+        self._next_token += 1
+
         async def _wrapped() -> object:
-            self.operation_started.emit(cancellable)
+            self.operation_started.emit(cancellable, token)
             try:
                 return await coro
             finally:
-                self.operation_finished.emit()
+                self.operation_finished.emit(token)
 
         future = asyncio.run_coroutine_threadsafe(_wrapped(), self._loop)
-        self._current_future = future
-        self._current_cancellable = cancellable
+        self._current = _ActiveOperation(future=future, cancellable=cancellable, token=token)
         return future
+
+    def is_current_operation(self, token: int) -> bool:
+        """Whether *token* still refers to the most recently dispatched
+        operation -- False if a newer run_async() call has since superseded
+        it. Lets a listener that tracks UI state per-operation (see
+        MainWindow._on_bridge_operation_finished) recognize and ignore a
+        stale operation_started/operation_finished delivered after a newer
+        dispatch already took over.
+        """
+        return self._current is not None and self._current.token == token
+
+    def _on_own_operation_finished(self, token: int) -> None:
+        """Clear _current once its operation truly finishes -- but only if
+        *token* is still the current one; a newer dispatch may have already
+        superseded it (see the _current attribute's comment in __init__),
+        in which case that newer operation's tracking must be left alone.
+        """
+        if self._current is not None and self._current.token == token:
+            self._current = None
 
     def request_cancel(self) -> None:
         """Cancel the current operation, if one is active and cancellable.
@@ -121,8 +180,8 @@ class AsyncBridge(QObject):
         returns False in that case rather than raising). GUI-thread only,
         same as run_async().
         """
-        if self._current_future is not None and self._current_cancellable:
-            self._current_future.cancel()
+        if self._current is not None and self._current.cancellable:
+            self._current.future.cancel()
 
     def shutdown(self) -> None:
         """Stop the event loop, join the thread.

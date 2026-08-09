@@ -58,7 +58,7 @@ class TestRunAsyncCancellableTracking:
 
         with qtbot.waitSignal(bridge.operation_started, timeout=1000) as blocker:
             bridge.run_async(_noop(), cancellable=True)
-        assert blocker.args == [True]
+        assert blocker.args[0] is True
 
     def test_operation_started_emits_cancellable_false_by_default(self, qtbot, bridge) -> None:
         async def _noop() -> None:
@@ -66,7 +66,80 @@ class TestRunAsyncCancellableTracking:
 
         with qtbot.waitSignal(bridge.operation_started, timeout=1000) as blocker:
             bridge.run_async(_noop())
-        assert blocker.args == [False]
+        assert blocker.args[0] is False
+
+    def test_successive_dispatches_get_distinct_tokens(self, qtbot, bridge) -> None:
+        async def _noop() -> None:
+            pass
+
+        with qtbot.waitSignal(bridge.operation_started, timeout=1000) as first:
+            bridge.run_async(_noop())
+        with qtbot.waitSignal(bridge.operation_started, timeout=1000) as second:
+            bridge.run_async(_noop())
+
+        assert first.args[1] != second.args[1]
+
+
+class TestIsCurrentOperation:
+    """is_current_operation() -- the staleness check
+    MainWindow._on_bridge_operation_finished relies on to avoid tearing
+    down UI state for an operation a newer dispatch has already superseded
+    (round-2 review finding: a signal handler for one operation's result,
+    e.g. _on_capabilities_ready, can synchronously dispatch a second
+    operation, e.g. list_presets(), before the first's own
+    operation_finished has been processed)."""
+
+    def test_true_immediately_after_dispatch(self, qtbot, bridge) -> None:
+        """Uses _slow_op (not a no-op) so the operation is still genuinely
+        in flight when asserting -- a coroutine that finishes instantly
+        could already be cleared by the time control returns here."""
+        started = threading.Event()
+        with qtbot.waitSignal(bridge.operation_started, timeout=1000) as blocker:
+            future = bridge.run_async(_slow_op(started), cancellable=True)
+        token = blocker.args[1]
+        qtbot.waitUntil(started.is_set, timeout=1000)
+
+        assert bridge.is_current_operation(token)
+
+        future.cancel()  # cleanup
+        qtbot.waitUntil(lambda: future.cancelled() or future.done(), timeout=1000)
+
+    def test_false_for_a_token_superseded_by_a_newer_dispatch(self, qtbot, bridge) -> None:
+        """The exact scenario the token exists for: a second run_async()
+        call before the first operation's own completion is processed."""
+        started = threading.Event()
+        with qtbot.waitSignal(bridge.operation_started, timeout=1000) as first_blocker:
+            future = bridge.run_async(_slow_op(started), cancellable=True)
+        first_token = first_blocker.args[1]
+        qtbot.waitUntil(started.is_set, timeout=1000)
+
+        async def _noop() -> None:
+            pass
+
+        bridge.run_async(_noop())
+
+        assert not bridge.is_current_operation(first_token)
+        # Cleanup: cancel the still-running slow op directly (it's no longer
+        # AsyncBridge's tracked "current" operation, so request_cancel()
+        # would target the _noop() dispatch instead).
+        future.cancel()
+        qtbot.waitUntil(lambda: future.cancelled() or future.done(), timeout=1000)
+
+    def test_false_once_the_operation_completes(self, qtbot, bridge) -> None:
+        """_current is cleared once its own operation genuinely finishes
+        (not just overwritten by whatever the next dispatch happens to be),
+        so a token from a completed operation doesn't linger as "current"."""
+        async def _noop() -> None:
+            pass
+
+        with qtbot.waitSignal(bridge.operation_finished, timeout=1000) as blocker:
+            bridge.run_async(_noop())
+        token = blocker.args[0]
+
+        assert not bridge.is_current_operation(token)
+
+    def test_false_with_no_operation_dispatched(self, bridge) -> None:
+        assert not bridge.is_current_operation(0)
 
 
 class TestRequestCancel:
