@@ -51,7 +51,6 @@ class _StepWidget(QWidget):
         self._index = index
         self._state = _StepState.UPCOMING
         self._label_text = label
-        self._dimmed = False
         self._completed = False
         self._clickable = False
         self._summary_text = ""
@@ -105,12 +104,11 @@ class _StepWidget(QWidget):
         *,
         completed: bool,
         clickable: bool,
-        dimmed: bool,
     ) -> None:
         """Apply the full visual state in one pass.
 
         The only mutation entry point besides the summary setters: storing
-        all four facts before a single ``_apply_state()`` call keeps the
+        all three facts before a single ``_apply_state()`` call keeps the
         widget from re-polishing its stylesheet once per field
         (``set_qss_property`` forces a style re-evaluation each time).
 
@@ -120,13 +118,10 @@ class _StepWidget(QWidget):
                 distinct from ``state``: a VIEWING step renders its checkmark
                 and summary only when this flag is set.
             clickable: Whether clicking navigates (and the hand cursor shows).
-            dimmed: Whether to mute the ACTIVE/VIEWING pill's accent color
-                (used while a sidebar destination is on screen).
         """
         self._state = state
         self._completed = completed
         self._clickable = clickable
-        self._dimmed = dimmed
         self._apply_state()
 
     def set_summary(self, text: str, tooltip: str = "") -> None:
@@ -187,13 +182,9 @@ class _StepWidget(QWidget):
         # VIEWING (browsed-to) step -- distinct from the completed
         # checkmark and the plain upcoming style.
         if self._state == _StepState.ACTIVE:
-            set_qss_property(
-                self, "class", "stepWidgetActiveDimmed" if self._dimmed else "stepWidgetActive"
-            )
+            set_qss_property(self, "class", "stepWidgetActive")
         elif self._state == _StepState.VIEWING:
-            set_qss_property(
-                self, "class", "stepWidgetViewingDimmed" if self._dimmed else "stepWidgetViewing"
-            )
+            set_qss_property(self, "class", "stepWidgetViewing")
         else:
             set_qss_property(self, "class", "")
 
@@ -207,13 +198,9 @@ class _StepWidget(QWidget):
         )
 
         if self._state == _StepState.ACTIVE:
-            self._set_class(
-                self._circle, "stepCircleActiveDimmed" if self._dimmed else "stepCircleActive"
-            )
+            self._set_class(self._circle, "stepCircleActive")
             self._circle.setText("")
-            self._set_class(
-                self._label, "stepLabelActiveDimmed" if self._dimmed else "stepLabelActive"
-            )
+            self._set_class(self._label, "stepLabelActive")
         else:
             self._apply_circle_and_label(checked)
 
@@ -279,7 +266,6 @@ class StepIndicator(QWidget):
         self._completed: list[bool] = []
         self._view_index: int = 0
         self._frontier_index: int = 0
-        self._dimmed: bool = False
 
     def set_steps(self, labels: list[str]) -> None:
         """Set the step labels, rebuilding the indicator layout.
@@ -427,12 +413,7 @@ class StepIndicator(QWidget):
                 state = _StepState.UPCOMING
                 clickable = False
 
-            step.apply(
-                state,
-                completed=completed,
-                clickable=clickable,
-                dimmed=self._dimmed if i == view else False,
-            )
+            step.apply(state, completed=completed, clickable=clickable)
 
         for i, connector in enumerate(self._connectors):
             connector.set_active(self._completed[i])
