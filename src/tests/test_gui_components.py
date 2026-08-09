@@ -240,36 +240,6 @@ class TestStepIndicator:
         assert indicator._steps[1].state == _StepState.ACTIVE
         assert indicator._steps[0].state == _StepState.UPCOMING
 
-    def test_set_dimmed_mutes_active_pill(self, qtbot) -> None:
-        """set_dimmed swaps the viewed step's classes to the muted variant."""
-        indicator = StepIndicator()
-        qtbot.addWidget(indicator)
-
-        indicator.set_steps(["Connect", "EQ Type", "Source"])
-        indicator.set_view(1, 1)
-
-        indicator.set_dimmed(True)
-        active = indicator._steps[1]
-        assert active.property("class") == "stepWidgetActiveDimmed"
-        assert active._circle.property("class") == "stepCircleActiveDimmed"
-        assert active._label.property("class") == "stepLabelActiveDimmed"
-
-        indicator.set_dimmed(False)
-        assert active.property("class") == "stepWidgetActive"
-        assert active._circle.property("class") == "stepCircleActive"
-        assert active._label.property("class") == "stepLabelActive"
-
-    def test_set_view_preserves_dimmed_state(self, qtbot) -> None:
-        """Moving the view to a new step keeps the indicator's dimmed flag."""
-        indicator = StepIndicator()
-        qtbot.addWidget(indicator)
-
-        indicator.set_steps(["Connect", "EQ Type", "Source"])
-        indicator.set_dimmed(True)
-        indicator.set_view(2, 2)
-
-        assert indicator._steps[2].property("class") == "stepWidgetActiveDimmed"
-
     def test_set_completed_shows_checkmark(self, qtbot) -> None:
         """set_completed marks a step as completed with checkmark text."""
         from src.gui.components.step_indicator import _StepState
@@ -766,37 +736,6 @@ class TestFilterTable:
         assert table._tab_widget.count() == 2
         assert table._tab_widget.tabText(0) == "Left Channel"
         assert table._tab_widget.tabText(1) == "Right Channel"
-
-    def test_clear_removes_all(self, qtbot) -> None:
-        """clear() removes the table widget."""
-        table = FilterTable()
-        qtbot.addWidget(table)
-
-        filters = self._make_filters()
-        table.set_filters(filters)
-        assert table._table is not None
-
-        table.clear()
-        assert table._table is None
-
-    def test_clear_resets_maximum_height_to_unbounded(self, qtbot) -> None:
-        """Smoke #237: clear() must reset maximumHeight() back to
-        unbounded (16777215, the literal value of Qt's QWIDGETSIZE_MAX --
-        not importable from PySide6, a C++-only macro) after set_filters()
-        capped it. A first attempted fix used setMaximumHeight(-1) intending
-        "unbounded", but Qt clamps negative setMaximumHeight() arguments to
-        0, which would collapse a cleared-then-repopulated table to zero
-        height instead."""
-        table = FilterTable()
-        qtbot.addWidget(table)
-
-        filters = self._make_filters()
-        table.set_filters(filters)
-        assert table.maximumHeight() < 16777215  # capped by set_filters()
-
-        table.clear()
-
-        assert table.maximumHeight() == 16777215
 
     def test_vertical_scrollbar_policy_is_dynamic(self, qtbot) -> None:
         """The vertical scrollbar policy is ScrollBarAsNeeded (Qt decides

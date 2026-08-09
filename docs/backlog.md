@@ -262,9 +262,12 @@ instantiates these classes directly.
 ### PEQ / RoomFit Enable/Disable Toggle in GUI
 **Closed:** 2026-07-14. Explicit product decision (2026-07-02) not to build it — the WiiM Home app
 already covers this. Backend support remains available if reactivated:
-`WiiMAdapter.enable_peq()`/`disable_peq()`/`get_peq_enabled()` and CLI `peq-toggle` are
-implemented; the RoomFit DSP toggle (`EQChangeSourceFX`/`EQSourceOff` at `EQLevel:2`, empty
-`source_name`) is hardware-confirmed but not wired into `WiiMAdapter`/GUI.
+`WiiMAdapter.enable_peq()`/`disable_peq()` and CLI `peq-toggle` are implemented; the RoomFit DSP
+toggle (`EQChangeSourceFX`/`EQSourceOff` at `EQLevel:2`, empty `source_name`) is hardware-confirmed
+but not wired into `WiiMAdapter`/GUI. (`get_peq_enabled()` itself was removed in the 2026-08
+dead-code pass — confirmed a genuine duplicate of the `EQStat == "On"` check `read_peq()` already
+does via the same `EQGetLV2SourceBandEx` call, not a unique capability; re-add it directly from that
+pattern if this ever gets reactivated.)
 
 ### HP/LP Capability Detection and Write-Time Validation
 **Closed:** 2026-07-14. The functional problem (warning/skipping unsupported filter types at write

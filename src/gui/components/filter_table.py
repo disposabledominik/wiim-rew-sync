@@ -166,14 +166,6 @@ class FilterTable(QWidget):
         tab_bar_height = tab_widget.tabBar().sizeHint().height()
         self.setMaximumHeight(tallest_table_height + tab_bar_height + _TAB_PANE_CHROME)
 
-    def clear(self) -> None:
-        """Remove all data and widgets."""
-        self._clear_widgets()
-        # Qt clamps negative setMaximumHeight() args to 0 (not "unbounded"),
-        # so the reset value must be the real QWIDGETSIZE_MAX -- not
-        # importable from PySide6 (it's a C++-only macro), so hardcoded here.
-        self.setMaximumHeight(16777215)
-
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------

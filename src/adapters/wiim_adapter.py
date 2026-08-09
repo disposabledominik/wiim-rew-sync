@@ -394,31 +394,11 @@ class WiiMAdapter:
             await self.disable_roomfit()
 
     async def _read_fx_status(self, source_name: str, eq_level: int) -> dict[str, Any]:
-        """Shared EQGetLV2SourceBandEx issuer for get_peq_enabled/get_roomfit_status/
-        read_roomfit."""
+        """Shared EQGetLV2SourceBandEx issuer for get_roomfit_status/read_roomfit."""
         response = await self._client.command(
             encode_wiim_command("EQGetLV2SourceBandEx", source_name=source_name, eq_level=eq_level)
         )
         return expect_dict_response(response, "EQGetLV2SourceBandEx")
-
-    async def get_peq_enabled(self, source_name: str) -> bool:
-        """Check whether PEQ is enabled on a specific source.
-
-        Issues ``EQGetLV2SourceBandEx`` with ``EQLevel: 1`` and reads the
-        ``EQStat`` field.
-
-        Args:
-            source_name: The audio input source (e.g. "wifi", "bluetooth").
-
-        Returns:
-            True if PEQ is enabled ("On"), False otherwise ("Off").
-
-        Raises:
-            WiiMResponseError: Response missing required fields or non-dict.
-            WiiMConnectionError: Device unreachable (propagated from http_client).
-        """
-        response = await self._read_fx_status(source_name, eq_level=1)
-        return bool(response.get("EQStat", "Off") == "On")
 
     # ------------------------------------------------------------------
     # PEQ Write
