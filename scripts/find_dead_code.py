@@ -57,14 +57,38 @@ error-state subsystem, OnboardingOverlay._on_skip(), WizardController.can_push()
        what's connected to it); it does not chase further, e.g. whether
        that connected slot is itself otherwise reachable.
 
+5. Transitive dead-code chains: if dead method A is the ONLY caller of
+   private helper B, then B is unreachable too — but B still has a real,
+   literal `self.B(...)` reference sitting in A's source, so vulture (which
+   only checks "does a reference exist," not "does the code containing that
+   reference ever run") will never flag B on its own. Concrete case found
+   here: FilterTable.set_comparison() (already flagged dead-but-tested) is
+   the sole caller of _populate_comparison(), which is in turn the sole
+   caller of _filters_differ() and _apply_highlight_style() — a whole
+   3-method dead subtree behind one flagged entry point, all belonging to
+   the shelved "Profile Comparison & Diffing" feature (docs/backlog.md).
+   _propagate_transitive_deadness() below builds a repo-wide call index
+   once (_build_call_index()), then fixed-point-iterates: for every private
+   (_-prefixed) method, if literally every call site of it falls inside an
+   already-confirmed-dead method's body range, it's dead too, and joins the
+   dead set for the next iteration — which is what catches multi-level
+   chains (A -> B -> C), not just one hop. A method with even one call site
+   outside a dead range is correctly left alone (FilterTable.clear()'s own
+   sibling OnboardingOverlay._dismiss() has two callers, one dead
+   (_on_skip) and one live (_on_get_started) — verified NOT to be flagged,
+   since it's still reachable through the live path). Scoped to private
+   methods and matched by name repo-wide rather than per-class, so it
+   carries blind spot #3's name-collision caveat doubled: verify by hand.
+
 None of this proves a flagged symbol is safe to delete, including hits from
-blind spot #4's mechanical checks — a signal with zero connect() sites
+blind spot #4/#5's mechanical checks — a signal with zero connect() sites
 today could still be part of a public API a plugin/future caller is meant
-to use, and "emitted only by dead code" is exactly the propagation this
-script does, not independent confirmation. Every single candidate this
-script prints, in every section, needs a human to actually look at the
-call site before anything is removed — this script narrows down where to
-look, it does not decide for you. Before deleting anything, also check: is
+to use, and "reachable only from already-dead code" is exactly the
+propagation this script does, not independent confirmation. Every single
+candidate this script prints, in every section, needs a human to actually
+look at the call site before anything is removed — this script narrows
+down where to look, it does not decide for you. Before deleting anything,
+also check: is
 there a code comment or docs/backlog.md / docs/smoke_test_issues.md entry
 documenting a deliberate keep (a cheap fallback, dormant infra for a
 feature that might return)? If so, add it to _KNOWN_INTENTIONAL_KEEPS below
@@ -298,6 +322,115 @@ def _find_function_node(path: Path, lineno: int) -> ast.FunctionDef | ast.AsyncF
     return None
 
 
+def _method_line_range(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[int, int]:
+    """Return (first_line, last_line) covering a function node's full body."""
+    return node.lineno, node.end_lineno or node.lineno
+
+
+def _build_call_index() -> dict[str, list[tuple[str, int]]]:
+    """Single repo pass: map every identifier appearing as `.identifier(`
+    anywhere (scan roots + tests) to its (file, lineno) occurrences.
+
+    Built once and reused by _propagate_transitive_deadness() below instead
+    of re-scanning per candidate — with several hundred private methods in
+    this codebase, a fresh repo scan per candidate would be far slower for
+    no benefit.
+    """
+    call_re = re.compile(r"\.(\w+)\(")
+    index: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for root in [*_SCAN_ROOTS, _TESTS_DIR]:
+        for path in root.rglob("*.py"):
+            rel = str(path.relative_to(_REPO_ROOT))
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                for match in call_re.finditer(line):
+                    index[match.group(1)].append((rel, lineno))
+    return index
+
+
+def _collect_private_method_defs() -> dict[str, list[tuple[str, str, int, int]]]:
+    """Map every private (_-prefixed, non-dunder) method name to its
+    [(file, class, start_line, end_line), ...] definitions under the scan
+    roots (production only — a helper only ever *defined* in a test isn't
+    the shape this check is for).
+    """
+    defs: dict[str, list[tuple[str, str, int, int]]] = defaultdict(list)
+    for root in _SCAN_ROOTS:
+        for path in root.rglob("*.py"):
+            if _TESTS_DIR in path.parents:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            rel = str(path.relative_to(_REPO_ROOT))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                for item in node.body:
+                    if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    name = item.name
+                    if name.startswith("__") or not name.startswith("_"):
+                        continue
+                    start, end = _method_line_range(item)
+                    defs[name].append((rel, node.name, start, end))
+    return defs
+
+
+def _propagate_transitive_deadness(
+    seed_lines: list[str], call_index: dict[str, list[tuple[str, int]]]
+) -> list[tuple[str, list[str], str]]:
+    """Fixed-point pass: a private helper whose EVERY call site falls inside
+    an already-confirmed-dead method's body is dead too, even though it has
+    a real syntactic reference (from inside that dead method) that keeps
+    vulture from ever flagging it directly on its own. Multi-level chains
+    (A dead -> B dead because only A calls it -> C dead because only B
+    calls it) are caught by iterating to a fixed point, not just one hop.
+
+    Scoped to private (_-prefixed) methods, matched by name across the whole
+    repo rather than per-class — carries the identical name-collision
+    caveat as blind spot #3 (two unrelated classes' same-named private
+    helper would be conflated: if either class's copy has ANY live call
+    site, neither copy propagates, which is the safe failure direction, but
+    a false "still alive" is possible this way too — same as blind spot #3,
+    results here need the same by-hand verification, doubly so).
+    """
+    dead_ranges: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    dead_keys: set[tuple[str, str]] = set()
+    for line in seed_lines:
+        m = _VULTURE_LINE_RE.match(line)
+        if m is None or m.group("kind") not in ("method", "function"):
+            continue
+        path = _REPO_ROOT / m.group("file")
+        node = _find_function_node(path, int(m.group("line")))
+        if node is None:
+            continue
+        dead_ranges[m.group("file")].append(_method_line_range(node))
+        dead_keys.add((m.group("file"), m.group("name")))
+
+    private_defs = _collect_private_method_defs()
+    found: list[tuple[str, list[str], str]] = []
+    changed = True
+    while changed:
+        changed = False
+        for name, defs in private_defs.items():
+            sites = call_index.get(name, [])
+            if not sites:
+                continue  # vulture's base pass already covers zero-reference names
+            for file, cls, start, end in defs:
+                key = (file, name)
+                if key in dead_keys:
+                    continue
+                if all(
+                    any(s <= lineno <= e for s, e in dead_ranges.get(f, []))
+                    for f, lineno in sites
+                ):
+                    location = f"{file}:{start}: transitively dead method '{name}' ({cls})"
+                    call_site_strs = [f"{f}:{lineno}" for f, lineno in sites]
+                    found.append((location, call_site_strs, f"{file}:{cls}"))
+                    dead_keys.add(key)
+                    dead_ranges[file].append((start, end))
+                    changed = True
+    return found
+
+
 def _emitted_signal_names(node: ast.AST) -> set[str]:
     """Walk a function body for `self.<name>.emit(...)` calls, return the names."""
     names = set()
@@ -462,6 +595,26 @@ def main() -> int:
             for site in connect_sites:
                 print(f"    connected at: {site}")
 
+    print("\nBuilding a repo-wide call index for transitive dead-code propagation...")
+    call_index = _build_call_index()
+    seed_lines = orphaned + [line for line, _hits in test_only] + known_keep
+    transitive = _propagate_transitive_deadness(seed_lines, call_index)
+    if transitive:
+        print(
+            f"\n=== {len(transitive)} private method(s) — dead only because "
+            "their sole caller(s) are dead code ==="
+        )
+        print(
+            "(every call site of these falls inside an already-dead method's "
+            "body -- see blind spot #5 in this module's docstring. A real "
+            "reference exists, from inside code that never runs, so vulture "
+            "won't flag these on its own)"
+        )
+        for location, call_sites, _cls in transitive:
+            print(location)
+            for site in call_sites:
+                print(f"    called only from (dead): {site}")
+
     print(
         "\nEvery hit above still needs a human to check: (1) getattr()/string "
         "dispatch, (2) a same-named sibling class masking it, (3) a comment or "
@@ -473,9 +626,12 @@ def main() -> int:
         "whether the test lines listed should be deleted with the symbol or "
         "rewritten to exercise it a different way, (6) for the signal "
         "sections, whether the connected slot does something worth keeping "
-        "reachable another way. This script narrows down where to look, it "
-        "does not decide for you — nothing above should be deleted without "
-        "that check. See CLAUDE.md's 'Dead code detection' section."
+        "reachable another way, (7) for the transitive-propagation section, "
+        "whether the private helper's name collides with an unrelated "
+        "class's same-named method (same caveat as (2), doubled). This "
+        "script narrows down where to look, it does not decide for you — "
+        "nothing above should be deleted without that check. See CLAUDE.md's "
+        "'Dead code detection' section."
     )
     return 0
 

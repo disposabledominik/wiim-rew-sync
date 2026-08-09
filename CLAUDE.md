@@ -117,7 +117,7 @@ code, actively guard against both:
 Run `python3 scripts/find_dead_code.py` (needs `vulture`, in the `dev` extra) periodically or
 after a refactor — **not** as a CI gate, since every hit needs a human to triage, not just a
 pass/fail check. A plain `vulture` run misses/mis-flags things in ways specific to this codebase;
-the script exists to correct for three found-in-practice blind spots (full detail in its own
+the script exists to correct for five found-in-practice blind spots (full detail in its own
 docstring):
 
 1. **Test-only reachable** — a method whose only real caller is its own unit test looks "used" to
@@ -143,6 +143,20 @@ docstring):
    (`OnboardingOverlay.skip_clicked` — connected to a real `MainWindow` slot, but the only thing
    that ever emits it is `_on_skip()`, which nothing calls). The second check only propagates one
    hop (dead method → its signal → what's connected to it); it doesn't chase further from there.
+5. **Transitive dead-code chains** — if dead method A is the only caller of private helper B, B is
+   unreachable too, but B still has a real, literal `self.B(...)` reference sitting in A's source,
+   so `vulture` (which checks whether a reference exists, not whether the code containing it ever
+   runs) never flags B on its own. Found in practice: `FilterTable.set_comparison()` (already
+   flagged dead-but-tested) is the sole caller of `_populate_comparison()`, itself the sole caller
+   of `_filters_differ()` and `_apply_highlight_style()` — a 3-method dead subtree behind one
+   flagged entry point, all belonging to the shelved "Profile Comparison & Diffing" feature. The
+   script builds a repo-wide call index once, then fixed-point-iterates: a private method whose
+   *every* call site falls inside an already-confirmed-dead method's body joins the dead set, which
+   is what catches multi-level chains (A → B → C) rather than just one hop. A method with even one
+   call site outside a dead range is correctly left alone — verified against
+   `OnboardingOverlay._dismiss()`, which has one dead caller (`_on_skip`) and one live caller
+   (`_on_get_started`) and is *not* flagged. Carries blind spot #3's name-collision caveat doubled
+   (matched by name repo-wide, not per-class), so treat hits here as needing extra verification.
 
 A clean run is not proof nothing is dead, and a flagged symbol is not proof it's safe to delete —
 **every candidate in every section, including the signal-chain ones, needs a human to actually
