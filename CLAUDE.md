@@ -114,58 +114,15 @@ code, actively guard against both:
 
 ### Dead code detection
 
-Run `python3 scripts/find_dead_code.py` (needs `vulture`, in the `dev` extra) periodically or
-after a refactor — **not** as a CI gate, since every hit needs a human to triage, not just a
-pass/fail check. A plain `vulture` run misses/mis-flags things in ways specific to this codebase;
-the script exists to correct for five found-in-practice blind spots (full detail in its own
-docstring):
+`python3 scripts/find_dead_code.py` (needs `vulture`, `dev` extra) — run periodically/after a
+refactor, not a CI gate; every hit needs human triage, and a clean run isn't proof nothing's dead.
+It corrects for several codebase-specific blind spots plain `vulture` misses — detail lives in the
+script's own module docstring, not here (same "state once, point at it" rule as
+`wiim_api_notes.md`/`corrections.md`).
 
-1. **Test-only reachable** — a method whose only real caller is its own unit test looks "used" to
-   any reference-counting tool. The script excludes `src/tests/` from the scan itself, not just
-   from counting as a use, which is what catches this.
-2. **Dynamic dispatch** — `MainWindow._forward_to_preset_views()` calls
-   `getattr(view, method_name)(*args)` with a string name, leaving no literal `.method_name(` for
-   `vulture` (or a plain grep) to find. The script also checks each flagged name against every
-   quoted string literal in the codebase before trusting a "no references" verdict.
-3. **Cross-class name collision** — `vulture` matches by attribute name only, not by receiver
-   type: one genuinely-used class's method clears the name for every other class that happens to
-   share it (this is exactly how `FiltersPage.show_error()` stayed invisible while
-   `StatusBanner.show_error()` — a different, real, everywhere-used method — existed). Can't be
-   fully automated without real type inference, so the script instead lists every method name
-   shared by 2+ GUI classes as a "verify each class's own call sites by hand" set.
-4. **Orphaned Qt signal chains** — a signal can be defined, emitted, and even connected to a real
-   slot, with every individual link "referenced," and still be entirely unreachable, because a
-   signal's reachability depends on whether anything ever triggers the code that emits it — a
-   control-flow question, not a reference-count one. The script mechanically catches both shapes
-   found in practice: a signal with **zero** `.connect()` sites anywhere in production
-   (`DeviceCard.retry_clicked` — emitted internally, tested, but nothing outside the class ever
-   subscribes), and a signal emitted only by a method the script *already* flagged as orphaned
-   (`OnboardingOverlay.skip_clicked` — connected to a real `MainWindow` slot, but the only thing
-   that ever emits it is `_on_skip()`, which nothing calls). The second check only propagates one
-   hop (dead method → its signal → what's connected to it); it doesn't chase further from there.
-5. **Transitive dead-code chains** — if dead method A is the only caller of private helper B, B is
-   unreachable too, but B still has a real, literal `self.B(...)` reference sitting in A's source,
-   so `vulture` (which checks whether a reference exists, not whether the code containing it ever
-   runs) never flags B on its own. Found in practice: `FilterTable.set_comparison()` (already
-   flagged dead-but-tested) is the sole caller of `_populate_comparison()`, itself the sole caller
-   of `_filters_differ()` and `_apply_highlight_style()` — a 3-method dead subtree behind one
-   flagged entry point, all belonging to the shelved "Profile Comparison & Diffing" feature. The
-   script builds a repo-wide call index once, then fixed-point-iterates: a private method whose
-   *every* call site falls inside an already-confirmed-dead method's body joins the dead set, which
-   is what catches multi-level chains (A → B → C) rather than just one hop. A method with even one
-   call site outside a dead range is correctly left alone — verified against
-   `OnboardingOverlay._dismiss()`, which has one dead caller (`_on_skip`) and one live caller
-   (`_on_get_started`) and is *not* flagged. Carries blind spot #3's name-collision caveat doubled
-   (matched by name repo-wide, not per-class), so treat hits here as needing extra verification.
-
-A clean run is not proof nothing is dead, and a flagged symbol is not proof it's safe to delete —
-**every candidate in every section, including the signal-chain ones, needs a human to actually
-look at the call site before anything is removed.** The script narrows down where to look; it
-does not decide for you. Before removing anything, check for a code comment or a
-`docs/backlog.md`/`docs/smoke_test_issues.md` entry documenting a deliberate keep (e.g. cheap
-fallback infra, backend support for a declined-for-now feature). If you confirm one, add it to the
-script's `_KNOWN_INTENTIONAL_KEEPS` with a citation so it stops being re-flagged, rather than
-deleting it or re-triaging it next time.
+Before deleting a flagged symbol, check for a deliberate-keep note in
+`docs/backlog.md`/`docs/smoke_test_issues.md`; if found, add it to the script's
+`_KNOWN_INTENTIONAL_KEEPS` with a citation instead of deleting or re-triaging it next time.
 
 ## Domain rules (non-negotiable)
 
