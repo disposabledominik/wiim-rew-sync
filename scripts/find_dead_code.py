@@ -148,10 +148,12 @@ Requires vulture (dev dependency, see pyproject.toml). Install once with:
 from __future__ import annotations
 
 import ast
+import io
 import re
 import shutil
 import subprocess
 import sys
+import tokenize
 from collections import defaultdict
 from pathlib import Path
 
@@ -236,13 +238,15 @@ def _string_literal_hits(name: str) -> list[str]:
     a method invoked only via getattr(obj, "name") has no literal `.name(`
     for vulture or a plain grep to find.
     """
-    needle = f'"{name}"'
+    double = f'"{name}"'
+    single = f"'{name}'"
     hits = []
     for root in _SCAN_ROOTS:
         for path in root.rglob("*.py"):
             if _TESTS_DIR in path.parents:
                 continue
-            if needle in path.read_text(encoding="utf-8"):
+            text = path.read_text(encoding="utf-8")
+            if double in text or single in text:
                 hits.append(str(path.relative_to(_REPO_ROOT)))
     return hits
 
@@ -341,6 +345,9 @@ def _collect_signal_definitions() -> dict[str, list[str]]:
     Only looks at `ClassDef` bodies (not e.g. module-level Signal() calls,
     which don't occur in this codebase) across the scan roots, tests
     excluded — a signal's own definition being test-only isn't a thing.
+    Handles both plain (`name = Signal(...)`) and annotated
+    (`name: Signal = Signal(...)`) assignment forms — only the former occurs
+    in this codebase today, but nothing here should silently miss the latter.
     """
     owners: dict[str, list[str]] = defaultdict(list)
     for root in _SCAN_ROOTS:
@@ -352,9 +359,15 @@ def _collect_signal_definitions() -> dict[str, list[str]]:
                 if not isinstance(node, ast.ClassDef):
                     continue
                 for item in node.body:
-                    if not isinstance(item, ast.Assign):
+                    call: ast.expr | None
+                    if isinstance(item, ast.Assign):
+                        call = item.value
+                        targets: list[ast.expr] = list(item.targets)
+                    elif isinstance(item, ast.AnnAssign):
+                        call = item.value
+                        targets = [item.target] if call is not None else []
+                    else:
                         continue
-                    call = item.value
                     if not isinstance(call, ast.Call):
                         continue
                     func = call.func
@@ -363,7 +376,7 @@ def _collect_signal_definitions() -> dict[str, list[str]]:
                     )
                     if func_name != "Signal":
                         continue
-                    for target in item.targets:
+                    for target in targets:
                         if isinstance(target, ast.Name):
                             owners[target.id].append(f"{path.relative_to(_REPO_ROOT)}:{node.name}")
     return owners
@@ -385,6 +398,25 @@ def _signal_connect_sites(name: str, *, include_tests: bool) -> list[str]:
             for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
                 if pattern.search(line):
                     hits.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}")
+    return hits
+
+
+def _signal_emit_sites(name: str) -> list[tuple[str, int]]:
+    """Find `.<name>.emit(` call sites in production code, as (file, lineno).
+
+    Used by _signals_emitted_by_dead_methods() to check whether a signal is
+    ALSO emitted by some other, still-live method — not just the
+    already-orphaned one being propagated from.
+    """
+    pattern = re.compile(rf"\.{re.escape(name)}\.emit\(")
+    hits = []
+    for root in _SCAN_ROOTS:
+        for path in root.rglob("*.py"):
+            if _TESTS_DIR in path.parents:
+                continue
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                if pattern.search(line):
+                    hits.append((str(path.relative_to(_REPO_ROOT)), lineno))
     return hits
 
 
@@ -716,15 +748,40 @@ def _build_call_index() -> dict[str, list[tuple[str, int]]]:
     of re-scanning per candidate — with several hundred private methods in
     this codebase, a fresh repo scan per candidate would be far slower for
     no benefit.
+
+    Uses tokenize, not a raw-text regex, specifically so a comment or
+    docstring mentioning `.method_name(` (e.g. "# see obj._old_helper() for
+    context") is never counted as a real call site — a phantom call site
+    from a comment would silently keep a genuinely dead private method out
+    of _propagate_transitive_deadness()'s all-call-sites-are-dead check
+    (found in review). Falls back to skipping a file entirely if it fails to
+    tokenize (should not happen for valid Python, but a corrupt/non-UTF8
+    file must not crash the whole scan).
     """
-    call_re = re.compile(r"\.(\w+)\(")
     index: dict[str, list[tuple[str, int]]] = defaultdict(list)
     for root in [*_SCAN_ROOTS, _TESTS_DIR]:
         for path in root.rglob("*.py"):
             rel = str(path.relative_to(_REPO_ROOT))
-            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                for match in call_re.finditer(line):
-                    index[match.group(1)].append((rel, lineno))
+            source = path.read_text(encoding="utf-8")
+            try:
+                tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+            except (tokenize.TokenError, SyntaxError, IndentationError):
+                continue
+            code_tokens = [
+                t
+                for t in tokens
+                if t.type not in (tokenize.COMMENT, tokenize.STRING, tokenize.NL, tokenize.NEWLINE)
+            ]
+            for i in range(len(code_tokens) - 2):
+                dot, name, paren = code_tokens[i], code_tokens[i + 1], code_tokens[i + 2]
+                if (
+                    dot.type == tokenize.OP
+                    and dot.string == "."
+                    and name.type == tokenize.NAME
+                    and paren.type == tokenize.OP
+                    and paren.string == "("
+                ):
+                    index[name.string].append((rel, name.start[0]))
     return index
 
 
@@ -827,20 +884,29 @@ def _emitted_signal_names(node: ast.AST) -> set[str]:
 
 
 def _signals_emitted_by_dead_methods(orphaned_lines: list[str]) -> dict[str, tuple[str, list[str]]]:
-    """For each already-orphaned method, find signals it emits, and what's
-    connected to those signals elsewhere.
+    """For each already-orphaned method, find signals it emits ONLY it emits,
+    and what's connected to those signals elsewhere.
 
     Second half of blind spot #4: propagates "this method is unreachable"
     one hop forward to "so is any signal only it ever emits, and so is
     whatever's connected to that signal" — the OnboardingOverlay.skip_clicked
     case. Only propagates one hop; doesn't chase further from there.
 
+    "Only it emits" is checked, not assumed: a signal is exclusion-listed
+    unless EVERY `.<name>.emit(` call site in production falls inside an
+    already-orphaned method's body range. Missing this check was a real bug
+    (found in review) — a signal emitted by both a dead method and a live
+    one elsewhere would still get reported as "only emitted by the dead
+    method", which could lead to deleting a signal/slot pair a live call
+    site still genuinely fires.
+
     Returns {signal_name: (emitting_method_location, [connect_site, ...])},
     limited to signals with at least one real connect() site (otherwise
     blind spot #4's other half, _collect_signal_definitions(), already
     covers it as a zero-connect signal).
     """
-    result: dict[str, tuple[str, list[str]]] = {}
+    dead_ranges: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    emitters: list[tuple[str, int, str]] = []
     for line in orphaned_lines:
         m = _VULTURE_LINE_RE.match(line)
         if m is None or m.group("kind") not in ("method", "function"):
@@ -850,11 +916,27 @@ def _signals_emitted_by_dead_methods(orphaned_lines: list[str]) -> dict[str, tup
         node = _find_function_node(path, lineno)
         if node is None:
             continue
+        dead_ranges[m.group("file")].append(_method_line_range(node))
+        emitters.append((m.group("file"), lineno, m.group("name")))
+
+    result: dict[str, tuple[str, list[str]]] = {}
+    for file, lineno, name in emitters:
+        node = _find_function_node(_REPO_ROOT / file, lineno)
+        if node is None:
+            continue
         for signal_name in _emitted_signal_names(node):
             connect_sites = _signal_connect_sites(signal_name, include_tests=False)
-            if connect_sites:
-                emitter = f"{m.group('file')}:{lineno} ({m.group('name')})"
-                result[signal_name] = (emitter, connect_sites)
+            if not connect_sites:
+                continue
+            emit_sites = _signal_emit_sites(signal_name)
+            emitted_outside_dead_methods = any(
+                not any(s <= eline <= e for s, e in dead_ranges.get(efile, []))
+                for efile, eline in emit_sites
+            )
+            if emitted_outside_dead_methods:
+                continue
+            emitter = f"{file}:{lineno} ({name})"
+            result[signal_name] = (emitter, connect_sites)
     return result
 
 

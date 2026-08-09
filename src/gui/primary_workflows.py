@@ -495,7 +495,11 @@ class PrimaryWorkflowManager(QObject):
 
     def import_file(self, path: str) -> None:
         """Trigger a single-file (stereo) REW import."""
-        self._dispatch("file_import", self._do_file_import(path), cancellable=True)
+        # cancellable=False: _do_file_import has no await point (REWParser.
+        # parse_file_with_rows() is fully synchronous), so a mid-flight
+        # cancel could never actually interrupt it -- showing a Cancel
+        # button that silently does nothing would be misleading.
+        self._dispatch("file_import", self._do_file_import(path), cancellable=False)
 
     async def _do_file_import(self, path: str) -> None:
         """Parse a REW EQ text file and populate filters.
@@ -534,8 +538,10 @@ class PrimaryWorkflowManager(QObject):
 
     def import_file_lr(self, path_l: str, path_r: str) -> None:
         """Trigger an L/R (two-file) REW import."""
+        # cancellable=False: see import_file()'s comment -- _do_file_import_lr
+        # is also fully synchronous, no await point to cancel at.
         self._dispatch(
-            "file_import_lr", self._do_file_import_lr(path_l, path_r), cancellable=True
+            "file_import_lr", self._do_file_import_lr(path_l, path_r), cancellable=False
         )
 
     async def _do_file_import_lr(self, path_l: str, path_r: str) -> None:
@@ -851,7 +857,9 @@ class PrimaryWorkflowManager(QObject):
 
     def export_file(self, filters: list[CanonicalFilter], path: str) -> None:
         """Trigger a stereo REW file export; progress arrives via progress_update."""
-        self._dispatch("export", self._do_export(filters, path), cancellable=True)
+        # cancellable=False: _do_export has no await point (REWGenerator.
+        # generate_file() is fully synchronous) -- see import_file()'s comment.
+        self._dispatch("export", self._do_export(filters, path), cancellable=False)
 
     async def _do_export(self, filters: list[CanonicalFilter], path: str) -> None:
         """Generate a REW EQ text file from current filters.
@@ -887,10 +895,12 @@ class PrimaryWorkflowManager(QObject):
         path_r: Path,
     ) -> None:
         """Trigger an L/R REW file export; progress arrives via progress_update."""
+        # cancellable=False: _do_export_lr is also fully synchronous -- see
+        # import_file()'s comment.
         self._dispatch(
             "export_lr",
             self._do_export_lr(filters_l, filters_r, path_l, path_r),
-            cancellable=True,
+            cancellable=False,
         )
 
     async def _do_export_lr(
