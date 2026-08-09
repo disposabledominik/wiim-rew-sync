@@ -145,11 +145,6 @@ class _StepWidget(QWidget):
         self._summary_text = ""
         self._summary_tooltip = ""
 
-    def set_label(self, text: str) -> None:
-        """Update the step label text."""
-        self._label_text = text
-        self._label.setText(text)
-
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Emit clicked signal when this step is a navigation target."""
         if self._clickable:

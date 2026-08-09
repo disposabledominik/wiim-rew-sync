@@ -529,11 +529,6 @@ class MainWindow(QMainWindow):
         return self._settings
 
     @property
-    def feedback_manager(self) -> OperationFeedbackManager:
-        """Access the operation feedback manager."""
-        return self._feedback_manager
-
-    @property
     def secondary_workflows(self) -> SecondaryWorkflowManager:
         """Access the secondary workflow manager."""
         return self._secondary_workflows

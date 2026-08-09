@@ -1107,11 +1107,10 @@ class PrimaryWorkflowManager(QObject):
                     f"Preset '{preset_name}' has no filters to export"
                 )
 
-            left_path = file_path.with_stem(file_path.stem + "_L")
-            right_path = file_path.with_stem(file_path.stem + "_R")
-            warnings_l = generator.generate_file(filters_l, left_path)
-            warnings_r = generator.generate_file(filters_r, right_path)
-            total_warnings = len(warnings_l) + len(warnings_r)
+            left_path, right_path, lr_warnings = generator.generate_lr_files(
+                filters_l, filters_r, file_path
+            )
+            total_warnings = len(lr_warnings)
 
             if total_warnings:
                 self._bridge.progress_update.emit(

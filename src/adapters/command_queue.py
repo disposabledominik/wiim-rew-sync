@@ -10,13 +10,11 @@ Requirements: 5.4, 18.1
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import Any
 
 from src.adapters.wiim_http import WiiMHttpClient
+from src.logging.setup import wiim_api_logger as logger
 from src.models.errors import WiiMConnectionError, WiiMTimeoutError
-
-logger = logging.getLogger("wiim_rew_sync.wiim_api")
 
 
 class WiiMCommandQueue:

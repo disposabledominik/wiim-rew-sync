@@ -94,22 +94,11 @@ class RewPullView(QWidget):
         self._setup_ui(embedded)
         self._title.setVisible(show_title)
         self._header.setVisible(show_header)
-        self._showing_picker = False
         self.set_connecting()
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
-    @property
-    def showing_picker(self) -> bool:
-        """Whether the Stereo/L-R picker is currently shown (vs. a placeholder).
-
-        Tracked as explicit state rather than QWidget.isVisible(), since the
-        latter is always False until the view's whole ancestor chain has
-        actually been shown (e.g. in headless tests).
-        """
-        return self._showing_picker
 
     def action_buttons(self) -> list[QWidget]:
         """Return buttons that should be disabled while an operation is in progress."""
@@ -132,7 +121,6 @@ class RewPullView(QWidget):
                 Omit for transient states like "Connecting..." where an
                 icon would just flash briefly.
         """
-        self._showing_picker = False
         self._message_label.setText(text)
         self._icon_label.setText(icon)
         self._icon_label.setVisible(bool(icon))
@@ -145,7 +133,6 @@ class RewPullView(QWidget):
         Args:
             measurements: List of available REW measurements.
         """
-        self._showing_picker = True
         self._stereo_radio.setChecked(True)
         self._list_widget.clear()
         self._list_left.clear()

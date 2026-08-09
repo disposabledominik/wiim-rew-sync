@@ -107,38 +107,6 @@ class SettingsView(QWidget):
         self._dry_run_check.setChecked(settings.get("dry_run_default", False))
         self._dry_run_check.blockSignals(False)
 
-    def set_log_files(self, log_files: list[dict[str, str]]) -> None:
-        """Populate the log file list.
-
-        Each dict should have: name, size, modified.
-
-        Args:
-            log_files: List of dicts with log file info.
-        """
-        # Clear existing items
-        while self._log_list_layout.count():
-            item = self._log_list_layout.takeAt(0)
-            if item is not None:
-                w = item.widget()
-                if w is not None:
-                    w.deleteLater()
-
-        for log_info in log_files:
-            row = QWidget(self._log_list_widget)
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 2, 0, 2)
-            row_layout.setSpacing(SPACING_SM)
-
-            name_label = QLabel(log_info.get("name", ""), row)
-            row_layout.addWidget(name_label)
-
-            size_label = QLabel(log_info.get("size", ""), row)
-            size_label.setProperty("class", "caption")
-            row_layout.addWidget(size_label)
-
-            row_layout.addStretch()
-            self._log_list_layout.addWidget(row)
-
     def get_current_settings(self) -> dict[str, Any]:
         """Return a dict of all current control values."""
         return {

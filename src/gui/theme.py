@@ -58,12 +58,6 @@ class ThemeManager:
 
     def __init__(self, app: QApplication) -> None:
         self._app = app
-        self._current_mode: ThemeMode = "system"
-
-    @property
-    def current_mode(self) -> ThemeMode:
-        """Return the currently active theme mode."""
-        return self._current_mode
 
     def apply_theme(self, mode: ThemeMode) -> None:
         """Load and apply the appropriate QSS stylesheet.
@@ -76,8 +70,6 @@ class ThemeManager:
             automatically via :meth:`detect_system_theme`.
 
         """
-        self._current_mode = mode
-
         if mode == "system":
             resolved = self.detect_system_theme()
         else:

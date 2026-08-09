@@ -13,15 +13,13 @@ Requirements: 4.6, 8.6, 14.7, 15.4
 from __future__ import annotations
 
 import json
-import logging
 from types import TracebackType
 from typing import Any, Self
 
 import httpx
 
+from src.logging.setup import wiim_api_logger as logger
 from src.models.errors import WiiMConnectionError, WiiMResponseError, WiiMTimeoutError
-
-logger = logging.getLogger("wiim_rew_sync.wiim_api")
 
 
 class WiiMHttpClient:
@@ -57,7 +55,7 @@ class WiiMHttpClient:
     async def __aexit__(
         self,
         exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
+        _exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
         await self.close()

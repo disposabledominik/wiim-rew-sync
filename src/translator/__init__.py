@@ -7,7 +7,6 @@ from pathlib import Path
 from src.models.canonical import CanonicalFilter
 from src.models.constants import DEFAULT_MAX_BANDS
 from src.translator._warnings import ValidationWarning
-from src.translator.rew_generator import REWGenerator
 from src.translator.rew_parser import REWParser
 from src.translator.schema_migrator import migrate_profile as migrate_profile_fn
 from src.translator.wiim_generator import generate_wiim_band_array as generate_wiim_band_array_fn
@@ -23,40 +22,6 @@ class TranslationEngine:
     def parse_rew_file(path: Path) -> list[CanonicalFilter]:
         """Parse a REW EQ text file."""
         return REWParser().parse_file(path)
-
-    @staticmethod
-    def parse_rew_filter_settings(
-        settings: list[dict[str, object]],
-    ) -> list[CanonicalFilter]:
-        """Parse REW HTTP API FilterSetting objects."""
-        return REWParser().parse_filter_settings(settings)
-
-    @staticmethod
-    def generate_rew_file(
-        filters: list[CanonicalFilter], path: Path, max_filters: int = DEFAULT_MAX_BANDS
-    ) -> list[ValidationWarning]:
-        """Generate a REW EQ text file.
-
-        Returns:
-            List of ValidationWarning for each skipped UNKNOWN band.
-        """
-        return REWGenerator().generate_file(filters, path, max_filters=max_filters)
-
-    @staticmethod
-    def generate_rew_lr_files(
-        filters_l: list[CanonicalFilter],
-        filters_r: list[CanonicalFilter],
-        base_path: Path,
-        max_filters: int = DEFAULT_MAX_BANDS,
-    ) -> tuple[Path, Path, list[ValidationWarning]]:
-        """Generate L/R REW text files.
-
-        Returns:
-            Tuple of (left_path, right_path, warnings).
-        """
-        return REWGenerator().generate_lr_files(
-            filters_l, filters_r, base_path, max_filters=max_filters
-        )
 
     @staticmethod
     def parse_wiim_band_array(

@@ -50,7 +50,6 @@ class SourcePage(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._active_source: str = ""
         self._source_checkboxes: dict[str, QCheckBox] = {}
 
         self._setup_ui()
@@ -82,8 +81,6 @@ class SourcePage(QWidget):
             active_source: The currently active source on the device (if known).
                 If empty, defaults to "wifi" as the recommended pre-selection.
         """
-        self._active_source = active_source
-
         # Default to "wifi" if no active source detected (most common use case)
         default_source = active_source if active_source else DEFAULT_SOURCE
 
@@ -118,15 +115,6 @@ class SourcePage(QWidget):
             self._source_checkboxes[source] = checkbox
 
         self._update_continue_enabled()
-
-    def set_channel_modes_visible(self, visible: bool) -> None:
-        """Show or hide the channel mode selector section.
-
-        Args:
-            visible: True to show channel mode options, False to hide.
-                When hidden, Stereo mode is used implicitly.
-        """
-        self._channel_section.setVisible(visible)
 
     # ------------------------------------------------------------------
     # Private setup
