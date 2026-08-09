@@ -280,3 +280,108 @@ class TestFinishRestoresPriorButtonState:
         # Restored to the button's actual pre-operation state (True), not
         # anything the earlier no-op call could have poisoned.
         assert btn.isEnabled()
+
+
+class TestCancellable:
+    """start_operation(cancellable=...) gates whether the Cancel button/timer
+    ever becomes reachable, and request_cancel() is the single entry point
+    both the button and Escape use."""
+
+    def test_cancel_timer_not_started_when_not_cancellable(self, feedback_env) -> None:
+        """Default (cancellable=False, e.g. a device write) -- the Cancel
+        button must never become reachable, not just hidden."""
+        manager, _banner, _container = feedback_env
+        manager.start_operation("Pushing filters...")
+        assert not manager._cancel_timer.isActive()
+
+    def test_cancel_timer_started_when_cancellable(self, feedback_env) -> None:
+        manager, _banner, _container = feedback_env
+        manager.start_operation("Scanning...", cancellable=True)
+        assert manager._cancel_timer.isActive()
+
+    def test_request_cancel_noop_when_not_cancellable(self, feedback_env) -> None:
+        """Reproduces Escape during a push: is_active but not cancellable --
+        request_cancel() must not emit cancel_requested or touch state."""
+        manager, _banner, _container = feedback_env
+        received: list[None] = []
+        manager.cancel_requested.connect(lambda: received.append(None))
+
+        manager.start_operation("Pushing filters...")
+        manager.request_cancel()
+
+        assert received == []
+        assert manager.is_active  # untouched -- still "in progress"
+
+    def test_request_cancel_noop_when_no_operation_active(self, feedback_env) -> None:
+        manager, _banner, _container = feedback_env
+        received: list[None] = []
+        manager.cancel_requested.connect(lambda: received.append(None))
+
+        manager.request_cancel()  # no start_operation() call at all
+
+        assert received == []
+
+    def test_request_cancel_emits_signal_when_cancellable(self, feedback_env) -> None:
+        manager, _banner, _container = feedback_env
+        received: list[None] = []
+        manager.cancel_requested.connect(lambda: received.append(None))
+
+        manager.start_operation("Scanning...", cancellable=True)
+        manager.request_cancel()
+
+        assert len(received) == 1
+
+    def test_request_cancel_hides_the_cancel_button_immediately(self, feedback_env) -> None:
+        """Immediate visual feedback on Cancel click, even though the
+        operation itself isn't finished yet (see next test)."""
+        manager, _banner, _container = feedback_env
+        manager.start_operation("Scanning...", cancellable=True)
+        manager._show_cancel_button()
+        assert manager._cancel_button is not None
+        assert manager._cancel_button.isVisible()
+
+        manager.request_cancel()
+
+        assert not manager._cancel_button.isVisible()
+
+    def test_request_cancel_does_not_finish_the_operation(self, feedback_env) -> None:
+        """The double-finish-race regression check: request_cancel() must
+        NOT call finish_operation() itself -- buttons must stay disabled
+        and is_active must stay True until the real operation_finished
+        signal (simulated here by an explicit finish_operation() call)
+        arrives. The old behavior (finish_operation() called synchronously
+        from the Cancel click) re-enabled buttons immediately, opening a
+        window for a second operation to start before the first coroutine's
+        `finally` block had actually unwound -- see docs/backlog.md item 5."""
+        manager, _banner, _container = feedback_env
+        btn = QPushButton("Rescan")
+        manager.register_action_buttons([btn])
+
+        manager.start_operation("Scanning...", cancellable=True)
+        assert not btn.isEnabled()
+
+        manager.request_cancel()
+
+        # Still "in progress" -- the real completion hasn't arrived yet.
+        assert manager.is_active
+        assert not btn.isEnabled()
+
+        # Simulates the real operation_finished signal firing once the
+        # cancelled coroutine's `finally` block actually unwinds.
+        manager.finish_operation()
+        assert not manager.is_active
+        assert btn.isEnabled()
+
+    def test_cancellable_flag_does_not_leak_into_the_next_operation(
+        self, feedback_env
+    ) -> None:
+        """Each start_operation() call sets its own cancellable flag --
+        a cancellable op followed by a non-cancellable one must not leave
+        the timer armed for the second (and vice versa)."""
+        manager, _banner, _container = feedback_env
+
+        manager.start_operation("Scanning...", cancellable=True)
+        manager.finish_operation()
+
+        manager.start_operation("Pushing filters...")  # cancellable defaults False
+        assert not manager._cancel_timer.isActive()

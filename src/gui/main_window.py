@@ -3050,11 +3050,17 @@ class MainWindow(QMainWindow):
         - Buttons are disabled immediately on operation start
         - Loading state is shown within 100ms
         - Long-operation message after 3s
-        - Cancel button after 2s
+        - Cancel button after 2s, for operations marked cancellable at their
+          _dispatch() call site (reads/local-file operations only -- never
+          device writes, see docs/architecture.md's "Why writes are never
+          user-cancellable")
         - Buttons re-enabled on finish
+        - Escape/Cancel-click requests actually stop a cancellable
+          operation's Future, via AsyncBridge.request_cancel()
         """
         self._bridge.operation_started.connect(self._on_bridge_operation_started)
         self._bridge.operation_finished.connect(self._on_bridge_operation_finished)
+        self._feedback_manager.cancel_requested.connect(self._bridge.request_cancel)
 
         # All pages/views are created once and persist for the app's
         # lifetime (see _create_pages/_register_pages), so their action
@@ -3076,10 +3082,10 @@ class MainWindow(QMainWindow):
             action_buttons.extend(page_or_view.action_buttons())
         self._feedback_manager.register_action_buttons(action_buttons)
 
-    @Slot()
-    def _on_bridge_operation_started(self) -> None:
+    @Slot(bool)
+    def _on_bridge_operation_started(self, cancellable: bool) -> None:
         """Handle bridge operation_started — activate feedback manager."""
-        self._feedback_manager.start_operation("Processing...")
+        self._feedback_manager.start_operation("Processing...", cancellable=cancellable)
 
     @Slot()
     def _on_bridge_operation_finished(self) -> None:
@@ -3158,14 +3164,18 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_shortcut_escape(self) -> None:
-        """Handle Escape — dismiss help dialog if visible, cancel active operation."""
+        """Handle Escape — dismiss help dialog if visible, cancel active operation.
+
+        request_cancel() is itself a no-op when the active operation isn't
+        cancellable (e.g. a device write), so Escape correctly does nothing
+        observable in that case rather than falsely claiming to cancel it.
+        """
         if self._help_dialog.isVisible():
             self._help_dialog.hide()
             logger.debug("Keyboard shortcut: Escape — Help dialog dismissed")
         elif self._feedback_manager.is_active:
-            # Cancel active operation
-            self._feedback_manager.cancel_requested.emit()
-            logger.debug("Keyboard shortcut: Escape — Operation cancelled")
+            self._feedback_manager.request_cancel()
+            logger.debug("Keyboard shortcut: Escape — Operation cancel requested")
 
     # ------------------------------------------------------------------
     # Primary Workflows — presets_ready signal wiring (Phase 1b)

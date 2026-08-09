@@ -288,16 +288,29 @@ class PrimaryWorkflowManager(QObject):
         """
         return self._discovered_devices
 
-    def _dispatch(self, operation_name: str, coro: Coroutine[Any, Any, Any]) -> None:
+    def _dispatch(
+        self, operation_name: str, coro: Coroutine[Any, Any, Any], *, cancellable: bool = False
+    ) -> None:
         """Run a coroutine on the bridge, wrapped for error mapping.
 
         Shared by every fire-and-forget entry point below — each one used to
         repeat this same assert/assert/run_async line; consolidated here
         once enough of them existed to justify it.
+
+        Args:
+            operation_name: Log-context label for _bridge_wrapper.
+            coro: The awaitable adapter coroutine to execute.
+            cancellable: Whether the user can cancel this operation via
+                Escape or the Cancel button. Defaults to False (the safe
+                direction) -- only pass True for confirmed pure reads with
+                no device-write/SafeWrite side effect a cancellation could
+                leave half-done.
         """
         assert self._bridge is not None
         assert self._bridge_wrapper is not None
-        self._bridge.run_async(self._bridge_wrapper(operation_name, coro))
+        self._bridge.run_async(
+            self._bridge_wrapper(operation_name, coro), cancellable=cancellable
+        )
 
     def _require_adapter(self) -> WiiMAdapter:
         """Return the current device adapter, asserting it's set.
@@ -332,7 +345,7 @@ class PrimaryWorkflowManager(QObject):
 
     def discover(self) -> None:
         """Trigger device discovery; results arrive via the bridge's discovery signals."""
-        self._dispatch("discovery", self._do_discovery())
+        self._dispatch("discovery", self._do_discovery(), cancellable=True)
 
     async def _do_discovery(self) -> None:
         """Run device discovery and emit results via bridge signal.
@@ -384,7 +397,7 @@ class PrimaryWorkflowManager(QObject):
             generation: Snapshot from bump_probe_generation() at selection
                 time, used by _do_probe to discard a stale result.
         """
-        self._dispatch("capability_probe", self._do_probe(prober, generation))
+        self._dispatch("capability_probe", self._do_probe(prober, generation), cancellable=True)
 
     async def _do_probe(self, prober: CapabilityProber, generation: int) -> None:
         """Run capability probing and emit results via bridge signal.
@@ -422,7 +435,7 @@ class PrimaryWorkflowManager(QObject):
 
     def import_file(self, path: str) -> None:
         """Trigger a single-file (stereo) REW import."""
-        self._dispatch("file_import", self._do_file_import(path))
+        self._dispatch("file_import", self._do_file_import(path), cancellable=True)
 
     async def _do_file_import(self, path: str) -> None:
         """Parse a REW EQ text file and populate filters.
@@ -461,7 +474,9 @@ class PrimaryWorkflowManager(QObject):
 
     def import_file_lr(self, path_l: str, path_r: str) -> None:
         """Trigger an L/R (two-file) REW import."""
-        self._dispatch("file_import_lr", self._do_file_import_lr(path_l, path_r))
+        self._dispatch(
+            "file_import_lr", self._do_file_import_lr(path_l, path_r), cancellable=True
+        )
 
     async def _do_file_import_lr(self, path_l: str, path_r: str) -> None:
         """Parse two REW EQ text files as L/R channels.
@@ -522,7 +537,7 @@ class PrimaryWorkflowManager(QObject):
         which needs to await the refresh inline as part of its own coroutine,
         calls refresh_presets() directly instead — see that method's docstring.
         """
-        self._dispatch("list_presets", self.refresh_presets())
+        self._dispatch("list_presets", self.refresh_presets(), cancellable=True)
 
     async def refresh_presets(self) -> None:
         """Fetch device PEQ preset list and RoomFit profiles, emit as signals.
@@ -667,7 +682,7 @@ class PrimaryWorkflowManager(QObject):
 
     def pull_device(self) -> None:
         """Trigger a pull-from-device; result arrives via peq_ready."""
-        self._dispatch("device_pull", self._do_device_pull())
+        self._dispatch("device_pull", self._do_device_pull(), cancellable=True)
 
     async def _do_device_pull(self) -> None:
         """Pull PEQ settings from the connected device.
@@ -776,7 +791,7 @@ class PrimaryWorkflowManager(QObject):
 
     def export_file(self, filters: list[CanonicalFilter], path: str) -> None:
         """Trigger a stereo REW file export; progress arrives via progress_update."""
-        self._dispatch("export", self._do_export(filters, path))
+        self._dispatch("export", self._do_export(filters, path), cancellable=True)
 
     async def _do_export(self, filters: list[CanonicalFilter], path: str) -> None:
         """Generate a REW EQ text file from current filters.
@@ -812,7 +827,11 @@ class PrimaryWorkflowManager(QObject):
         path_r: Path,
     ) -> None:
         """Trigger an L/R REW file export; progress arrives via progress_update."""
-        self._dispatch("export_lr", self._do_export_lr(filters_l, filters_r, path_l, path_r))
+        self._dispatch(
+            "export_lr",
+            self._do_export_lr(filters_l, filters_r, path_l, path_r),
+            cancellable=True,
+        )
 
     async def _do_export_lr(
         self,
@@ -855,7 +874,7 @@ class PrimaryWorkflowManager(QObject):
 
     def list_rew_measurements(self) -> None:
         """Trigger a REW measurement list fetch; results arrive via signals."""
-        self._dispatch("rew_list", self._do_rew_list_measurements())
+        self._dispatch("rew_list", self._do_rew_list_measurements(), cancellable=True)
 
     async def _do_rew_list_measurements(self) -> None:
         """List available measurements from REW API.
@@ -880,7 +899,9 @@ class PrimaryWorkflowManager(QObject):
 
     def get_rew_filters(self, uuid: str, measurement_name: str = "") -> None:
         """Trigger a REW filter fetch for one measurement; result arrives via signal."""
-        self._dispatch("rew_filters", self._do_rew_get_filters(uuid, measurement_name))
+        self._dispatch(
+            "rew_filters", self._do_rew_get_filters(uuid, measurement_name), cancellable=True
+        )
 
     async def _do_rew_get_filters(self, uuid: str, measurement_name: str = "") -> None:
         """Fetch filters for a specific REW measurement.
@@ -921,6 +942,7 @@ class PrimaryWorkflowManager(QObject):
         self._dispatch(
             "rew_filters_lr",
             self._do_rew_get_filters_lr(uuid_l, uuid_r, measurement_name_l, measurement_name_r),
+            cancellable=True,
         )
 
     async def _do_rew_get_filters_lr(
@@ -1229,7 +1251,9 @@ class PrimaryWorkflowManager(QObject):
 
     def populate_name_profiles(self) -> None:
         """Trigger a NameProfilePage profile-list refresh; result arrives via signal."""
-        self._dispatch("list_roomfit_for_naming", self._do_populate_name_profiles())
+        self._dispatch(
+            "list_roomfit_for_naming", self._do_populate_name_profiles(), cancellable=True
+        )
 
     async def _do_populate_name_profiles(self) -> None:
         """Fetch RoomFit profiles and emit name_profiles_ready for NameProfilePage."""

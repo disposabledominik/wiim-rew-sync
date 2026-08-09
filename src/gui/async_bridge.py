@@ -37,7 +37,7 @@ class AsyncBridge(QObject):
     progress_update = Signal(str)          # Status message for progress indicator
     stage_changed = Signal(str)            # Safe-write stage key (see push_page._STAGES)
     push_round_changed = Signal(str, int, int)  # (source_name, index, total); push or undo
-    operation_started = Signal()           # Triggers progress spinner
+    operation_started = Signal(bool)       # Triggers progress spinner; arg is cancellable
     operation_finished = Signal()          # Hides progress spinner
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -49,6 +49,14 @@ class AsyncBridge(QObject):
         super().__init__(parent)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
+        # Both only ever set/read on the GUI thread (run_async() is called
+        # synchronously from the GUI thread; the worker thread never touches
+        # these), so no locking is needed. The feedback-manager model this
+        # backs assumes a single active operation at a time (buttons are
+        # disabled for the duration), so tracking just the current one is
+        # sufficient -- see request_cancel().
+        self._current_future: concurrent.futures.Future[object] | None = None
+        self._current_cancellable: bool = False
 
     def start(self) -> None:
         """Start the background asyncio event loop thread."""
@@ -66,7 +74,9 @@ class AsyncBridge(QObject):
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
-    def run_async(self, coro: Coroutine[Any, Any, Any]) -> concurrent.futures.Future[object]:
+    def run_async(
+        self, coro: Coroutine[Any, Any, Any], *, cancellable: bool = False
+    ) -> concurrent.futures.Future[object]:
         """Submit a coroutine to the background loop.
 
         The coroutine is wrapped to emit operation_started before execution
@@ -74,6 +84,10 @@ class AsyncBridge(QObject):
 
         Args:
             coro: An awaitable coroutine to run on the async worker thread.
+            cancellable: Whether request_cancel() may cancel this operation.
+                Defaults to False (the safe direction) -- only pass True for
+                operations confirmed to have no device-write/SafeWrite
+                side effect that cancellation could leave half-done.
 
         Returns:
             A concurrent.futures.Future representing the pending result.
@@ -85,13 +99,27 @@ class AsyncBridge(QObject):
             raise RuntimeError("AsyncBridge has not been started. Call start() first.")
 
         async def _wrapped() -> object:
-            self.operation_started.emit()
+            self.operation_started.emit(cancellable)
             try:
                 return await coro
             finally:
                 self.operation_finished.emit()
 
-        return asyncio.run_coroutine_threadsafe(_wrapped(), self._loop)
+        future = asyncio.run_coroutine_threadsafe(_wrapped(), self._loop)
+        self._current_future = future
+        self._current_cancellable = cancellable
+        return future
+
+    def request_cancel(self) -> None:
+        """Cancel the current operation, if one is active and cancellable.
+
+        No-op if there's no current operation, it isn't cancellable, or it
+        has already finished (concurrent.futures.Future.cancel() safely
+        returns False in that case rather than raising). GUI-thread only,
+        same as run_async().
+        """
+        if self._current_future is not None and self._current_cancellable:
+            self._current_future.cancel()
 
     def shutdown(self) -> None:
         """Stop the event loop, join the thread.

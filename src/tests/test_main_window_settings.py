@@ -312,3 +312,54 @@ class TestOperationFeedbackButtonRegistration:
 
         assert rescan_btn.isEnabled()
         assert bundle_btn.isEnabled()
+
+
+class TestEscapeCancelsOnlyCancellableOperations:
+    """Escape is wired to request_cancel(), which is a no-op for a
+    non-cancellable operation (e.g. a device write/push) -- covers the
+    confirmed pre-existing bug where Escape used to log "cancelled" while
+    doing nothing (docs/backlog.md item 5)."""
+
+    def test_escape_is_a_noop_during_a_non_cancellable_operation(self, make_window) -> None:
+        """Simulates Escape during push: is_active but not cancellable --
+        must not touch feedback-manager state or request a bridge cancel."""
+        window = make_window()
+        rescan_btn = window._connect_page._rescan_btn
+
+        window._feedback_manager.start_operation("Pushing filters...")  # cancellable=False
+        assert not rescan_btn.isEnabled()
+
+        window._on_shortcut_escape()
+
+        # Untouched: still "in progress", buttons still disabled, bridge
+        # never asked to cancel anything.
+        assert window._feedback_manager.is_active
+        assert not rescan_btn.isEnabled()
+        window._bridge.request_cancel.assert_not_called()
+
+        window._feedback_manager.finish_operation()  # cleanup
+
+    def test_escape_requests_cancel_during_a_cancellable_operation(self, make_window) -> None:
+        window = make_window()
+
+        window._feedback_manager.start_operation("Scanning...", cancellable=True)
+
+        window._on_shortcut_escape()
+
+        window._bridge.request_cancel.assert_called_once()
+
+        window._feedback_manager.finish_operation()  # cleanup
+
+    def test_escape_prefers_closing_the_help_dialog_over_cancelling(self, make_window) -> None:
+        """Existing precedence: Escape closes the User Guide first if it's
+        open, even if an operation happens to be active underneath it."""
+        window = make_window()
+        window._help_dialog.show()
+
+        window._feedback_manager.start_operation("Scanning...", cancellable=True)
+        window._on_shortcut_escape()
+
+        assert not window._help_dialog.isVisible()
+        window._bridge.request_cancel.assert_not_called()
+
+        window._feedback_manager.finish_operation()  # cleanup

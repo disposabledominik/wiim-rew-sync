@@ -16,7 +16,7 @@ added 2026-08-05.
 | # | Item | Status |
 |---|------|--------|
 | 3 | Multi-source push has no automatic rollback across sources on partial failure (manual per-source Undo exists) | Partially addressed |
-| 5 | Overlapping operations can race and restore the wrong button-state snapshot | Not started |
+| 5 | Overlapping operations can race and restore the wrong button-state snapshot | Resolved (2026-08) |
 | 6 | CI only tests Ubuntu/Python 3.12 while release builds ship Windows/macOS/Linux | Not started |
 | 4 | Backup files don't record which source they were taken from | Not started |
 | 1 | Hardware QA sign-off — full-flow validation against real devices | Ongoing (1 open issue: smoke #119) |
@@ -78,13 +78,18 @@ Both are design decisions bigger than a quality-cleanup pass's scope, and the ap
 one-op-at-a-time model means this is a narrow race window in practice, not a routinely-hit bug.
 Independently re-confirmed (still unfixed) during a 2026-08-02 codebase review.
 
-**Status:** Not started.
-
-**To reactivate:** Add an opaque operation token to `start_operation()`'s return value and
-require `finish_operation(token)` (and the hard-timeout path) to match it before restoring
-button state — a mismatched/stale token means a no-op. Separately, decide whether Cancel should
-actually cancel the in-flight coroutine (e.g. via `asyncio.Task.cancel()` plumbed through
-`AsyncBridge`) rather than only resetting the UI early.
+**Status:** Resolved (2026-08). Both root causes from "Why deferred" above are fixed, and neither
+needed the token-based approach originally sketched under "To reactivate" — the actual fix is
+simpler than that: `AsyncBridge.run_async()` now accepts `cancellable: bool` and tracks the
+current `Future`; `_dispatch()` in both workflow managers threads it through, opt-in per call site
+(reads/local-file operations only — device writes stay non-cancellable by default, the safe
+direction). `OperationFeedbackManager.request_cancel()` (shared by the Cancel button and Escape)
+now actually cancels that Future via a new `AsyncBridge.request_cancel()`, and — this is what
+closes the race — no longer calls `finish_operation()` itself; the real `operation_finished`
+signal (fired once the cancelled coroutine's `finally` block actually unwinds) is the only thing
+that resets UI state, so a second operation starting in the gap can no longer have its snapshot
+stomped by a stale finish. Removing the premature call turned out to be simpler than adding a
+token to guard it. See `src/gui/async_bridge.py`, `src/gui/operation_feedback.py`.
 
 ---
 
