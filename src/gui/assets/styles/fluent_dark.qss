@@ -1321,15 +1321,6 @@ QFrame#DeviceCard[state="connected"] {
     border-left: 3px solid #00B4D8;
 }
 
-QFrame#DeviceCard[state="error"] {
-    border-left: 3px solid #EF5350;
-}
-
-#DeviceCardError {
-    font-size: 12px;
-    color: #EF5350;
-}
-
 /* ---------------------------------------------------------------------------
    SidebarNav (custom properties)
    --------------------------------------------------------------------------- */

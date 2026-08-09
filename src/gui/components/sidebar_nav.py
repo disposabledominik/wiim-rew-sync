@@ -92,9 +92,6 @@ class SidebarNav(QWidget):
     navigation_requested = Signal(str)
     """Emitted when a navigation item is clicked. Payload is the view key."""
 
-    collapse_toggled = Signal(bool)
-    """Emitted when the collapse state changes. True means collapsed (icon-only)."""
-
     _NAV_ITEMS: tuple[tuple[str, str, str, str], ...] = (
         (
             "home",
@@ -281,7 +278,6 @@ class SidebarNav(QWidget):
     def _on_toggle_clicked(self) -> None:
         """Handle collapse/expand toggle click."""
         self.set_collapsed(not self._collapsed)
-        self.collapse_toggled.emit(self._collapsed)
 
     def _on_device_header_clicked(self) -> None:
         """Request the read-only device-info popover.

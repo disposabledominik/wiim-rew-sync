@@ -56,9 +56,8 @@ class TestStatusBanner:
         assert banner.isVisible()
         assert banner.property("status") == "success"
 
-        # Wait for the dismissed signal (triggered by auto-dismiss timer)
-        with qtbot.waitSignal(banner.dismissed, timeout=2000):
-            pass
+        # Wait for the auto-dismiss timer to reset the banner to idle
+        qtbot.waitUntil(lambda: banner.property("status") == "idle", timeout=2000)
 
         # Banner stays visible (reserves space) but enters idle state
         assert banner.property("status") == "idle"
@@ -90,30 +89,30 @@ class TestStatusBanner:
         assert banner._message_label.text() == "Writing filters..."
 
     def test_clear_hides_and_emits_dismissed(self, qtbot) -> None:
-        """clear() resets the banner to idle and emits the dismissed signal."""
+        """clear() resets the banner to idle state."""
         banner = StatusBanner()
         qtbot.addWidget(banner)
 
         banner.show_info("Hello")
         assert banner.isVisible()
 
-        with qtbot.waitSignal(banner.dismissed, timeout=1000):
-            banner.clear()
+        banner.clear()
+        qtbot.waitUntil(lambda: banner.property("status") == "idle", timeout=1000)
 
         # Banner stays visible (reserves space) but enters idle state
         assert banner.property("status") == "idle"
         assert banner._message_label.text() == ""
 
     def test_close_button_dismisses(self, qtbot) -> None:
-        """Clicking the close button resets banner to idle and emits dismissed."""
+        """Clicking the close button resets banner to idle state."""
         banner = StatusBanner()
         qtbot.addWidget(banner)
 
         banner.show_error("Something went wrong")
         assert banner.isVisible()
 
-        with qtbot.waitSignal(banner.dismissed, timeout=1000):
-            qtbot.mouseClick(banner._close_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(banner._close_button, Qt.MouseButton.LeftButton)
+        qtbot.waitUntil(lambda: banner.property("status") == "idle", timeout=1000)
 
         # Banner stays visible (reserves space) but enters idle state
         assert banner.property("status") == "idle"
@@ -1109,17 +1108,6 @@ class TestDeviceCard:
 
         assert card.property("state") == "connected"
 
-    def test_error_state_shows_retry(self, qtbot) -> None:
-        """error state shows the error widget with retry button."""
-        card = DeviceCard()
-        qtbot.addWidget(card)
-
-        card.set_error("Timeout")
-
-        assert card.property("state") == "error"
-        assert not card._error_widget.isHidden()
-        assert card._error_label.text() == "Timeout"
-
     def test_clicked_signal_emitted(self, qtbot) -> None:
         """Left-clicking the card emits the clicked signal."""
         card = DeviceCard()
@@ -1127,16 +1115,6 @@ class TestDeviceCard:
 
         with qtbot.waitSignal(card.clicked, timeout=1000):
             qtbot.mouseClick(card, Qt.MouseButton.LeftButton)
-
-    def test_retry_signal_emitted(self, qtbot) -> None:
-        """Clicking retry button emits retry_clicked signal."""
-        card = DeviceCard()
-        qtbot.addWidget(card)
-
-        card.set_error("Connection lost")
-
-        with qtbot.waitSignal(card.retry_clicked, timeout=1000):
-            qtbot.mouseClick(card._retry_button, Qt.MouseButton.LeftButton)
 
 
 # ---------------------------------------------------------------------------

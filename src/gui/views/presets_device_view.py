@@ -193,7 +193,6 @@ class PresetsDeviceView(QWidget):
         export_requested(list): User wants to export selected items as REW files.
         save_to_my_presets(list): Save selected items to local preset library.
         copy_to_device_requested(list): Copy selected items to another device.
-        apply_to_sources_requested(str, list): Apply a PEQ preset to sources.
         delete_requested(list): User wants to permanently delete selected
             items from the connected device.
     """
@@ -201,7 +200,6 @@ class PresetsDeviceView(QWidget):
     export_requested = Signal(list)
     save_to_my_presets = Signal(list)
     copy_to_device_requested = Signal(list)
-    apply_to_sources_requested = Signal(str, list)
     delete_requested = Signal(list)
 
     def __init__(self, parent: QWidget | None = None) -> None:

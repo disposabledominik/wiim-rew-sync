@@ -1,9 +1,8 @@
 """DeviceCard — clickable card showing device info and connection state.
 
-Displays device name, model, and IP address in a single row. Supports four
-visual states: idle, connecting, connected, error. Emits ``clicked`` when the
-card is selected and ``retry_clicked`` when the retry button is pressed in
-the error state.
+Displays device name, model, and IP address in a single row. Supports three
+visual states: idle, connecting, connected. Emits ``clicked`` when the card
+is selected.
 
 Requirements referenced: 2.3, 2.7, 2.9.
 """
@@ -26,13 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.components.action_button import make_action_button
-from src.gui.constants import (
-    ANIMATION_NORMAL,
-    SPACING_MD,
-    SPACING_SM,
-    SPACING_XS,
-)
+from src.gui.constants import ANIMATION_NORMAL, SPACING_MD, SPACING_SM
 from src.gui.style_utils import set_qss_property
 
 
@@ -46,14 +39,12 @@ class DeviceCard(QFrame):
 
     Signals:
         clicked: Emitted when the card body is clicked (device selection).
-        retry_clicked: Emitted when the retry button is pressed in error state.
     """
 
     clicked = Signal()
-    retry_clicked = Signal()
 
     # Valid state values
-    _VALID_STATES = frozenset({"idle", "connecting", "connected", "error"})
+    _VALID_STATES = frozenset({"idle", "connecting", "connected"})
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -96,30 +87,6 @@ class DeviceCard(QFrame):
 
         self._main_layout.addLayout(info_row)
 
-        # Error row (hidden by default): error message + retry button
-        self._error_widget = QWidget(self)
-        self._error_widget.setVisible(False)
-        error_layout = QHBoxLayout(self._error_widget)
-        error_layout.setContentsMargins(0, SPACING_XS, 0, 0)
-        error_layout.setSpacing(SPACING_SM)
-
-        self._error_label = QLabel(self._error_widget)
-        self._error_label.setObjectName("DeviceCardError")
-        self._error_label.setWordWrap(True)
-        self._error_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        error_layout.addWidget(self._error_label)
-
-        self._retry_button = make_action_button(
-            "Retry", object_name="DeviceCardRetry", style_class="secondary",
-            parent=self._error_widget,
-        )
-        self._retry_button.clicked.connect(self._on_retry_clicked)
-        error_layout.addWidget(self._retry_button)
-
-        self._main_layout.addWidget(self._error_widget)
-
         # --- Pulsing animation for connecting state ---------------------------
         self._pulse_animation: QPropertyAnimation | None = None
 
@@ -143,7 +110,7 @@ class DeviceCard(QFrame):
         """Set the visual state of the card.
 
         Args:
-            state: One of "idle", "connecting", "connected", "error".
+            state: One of "idle", "connecting", "connected".
 
         Raises:
             ValueError: If *state* is not a recognized value.
@@ -157,26 +124,8 @@ class DeviceCard(QFrame):
         # Stop any existing animation
         self._stop_pulse()
 
-        # Hide error row unless in error state
-        if state != "error":
-            self._error_widget.setVisible(False)
-
         if state == "connecting":
             self._start_pulse()
-        elif state == "error":
-            self._error_widget.setVisible(True)
-
-    def set_error(self, message: str) -> None:
-        """Set the card to error state with the given message.
-
-        Convenience method that calls :meth:`set_state` with ``"error"`` and
-        populates the error label.
-
-        Args:
-            message: Human-readable error description.
-        """
-        self._error_label.setText(message)
-        self.set_state("error")
 
     # ------------------------------------------------------------------
     # Event handling
@@ -210,7 +159,3 @@ class DeviceCard(QFrame):
             self._pulse_animation = None
         # Ensure full opacity
         self.setWindowOpacity(1.0)
-
-    def _on_retry_clicked(self) -> None:
-        """Handle retry button click without propagating as card click."""
-        self.retry_clicked.emit()

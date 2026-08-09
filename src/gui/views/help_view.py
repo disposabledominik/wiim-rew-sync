@@ -173,11 +173,9 @@ class HelpView(QFrame):
 
     Signals:
         close_requested: Emitted when the user clicks the close button.
-        section_changed: Emitted with the section_id when navigation occurs.
     """
 
     close_requested = Signal()
-    section_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -358,7 +356,6 @@ class HelpView(QFrame):
         self._content_browser.setMarkdown(content)
         _apply_block_spacing(self._content_browser.document())
         self._content_browser.setExtraSelections([])
-        self.section_changed.emit(section_id)
 
     def _on_search_changed(self, text: str) -> None:
         """Perform search and filter TOC items based on search text."""
