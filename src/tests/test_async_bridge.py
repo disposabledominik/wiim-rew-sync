@@ -125,10 +125,15 @@ class TestIsCurrentOperation:
         future.cancel()
         qtbot.waitUntil(lambda: future.cancelled() or future.done(), timeout=1000)
 
-    def test_false_once_the_operation_completes(self, qtbot, bridge) -> None:
-        """_current is cleared once its own operation genuinely finishes
-        (not just overwritten by whatever the next dispatch happens to be),
-        so a token from a completed operation doesn't linger as "current"."""
+    def test_true_once_the_operation_completes_until_superseded(self, qtbot, bridge) -> None:
+        """_current is deliberately never cleared on the operation's own
+        finish -- only overwritten by a later run_async() call (see
+        AsyncBridge._current's docstring: a self-clearing listener on
+        operation_finished would race MainWindow's own listener on the same
+        signal, since Qt runs queued-connection slots in connection order
+        and AsyncBridge's own listener would always connect first). So a
+        token from a just-completed operation is still "current" as long as
+        nothing newer has been dispatched since."""
         async def _noop() -> None:
             pass
 
@@ -136,10 +141,37 @@ class TestIsCurrentOperation:
             bridge.run_async(_noop())
         token = blocker.args[0]
 
-        assert not bridge.is_current_operation(token)
+        assert bridge.is_current_operation(token)
 
     def test_false_with_no_operation_dispatched(self, bridge) -> None:
         assert not bridge.is_current_operation(0)
+
+    def test_external_listener_sees_current_through_real_signal_delivery(
+        self, qtbot, bridge
+    ) -> None:
+        """Regression test for a real bug found in review: an earlier design
+        had AsyncBridge self-connect a cleanup listener to its own
+        operation_finished signal in __init__. MainWindow connects its own
+        operation_finished listener afterwards (in _wire_signals(), called
+        after AsyncBridge's constructor returns), and Qt runs
+        queued-connection slots in *connection order* -- so AsyncBridge's
+        internal listener would always run first and clear _current before
+        MainWindow's listener ever got to check is_current_operation(),
+        making every operation's finish look stale. This reproduces
+        MainWindow's exact connection shape (an external listener connected
+        after dispatch, via a real queued signal, no mocks) to prove the
+        token this listener receives still reports current."""
+        seen: list[int] = []
+        bridge.operation_finished.connect(seen.append)
+
+        async def _noop() -> None:
+            pass
+
+        with qtbot.waitSignal(bridge.operation_finished, timeout=1000):
+            bridge.run_async(_noop())
+
+        assert len(seen) == 1
+        assert bridge.is_current_operation(seen[0])
 
 
 class TestRequestCancel:

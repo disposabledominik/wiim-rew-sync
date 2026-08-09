@@ -63,39 +63,43 @@ class AsyncBridge(QObject):
         super().__init__(parent)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
-        # Only ever set/read on the GUI thread (run_async() is called
-        # synchronously from the GUI thread; _on_own_operation_finished()
-        # below, which is the only thing that clears it, runs on the GUI
-        # thread too -- it's invoked through operation_finished's queued
-        # cross-thread connection, not called directly from the worker
-        # thread), so no locking is needed. The feedback-manager model this
-        # backs assumes a single active *displayed* operation at a time
-        # (buttons are disabled for the duration), so tracking just the most
+        # Only ever set/read on the GUI thread (run_async() is the sole
+        # writer and is always called synchronously from the GUI thread),
+        # so no locking is needed. The feedback-manager model this backs
+        # assumes a single active *displayed* operation at a time (buttons
+        # are disabled for the duration), so tracking just the most
         # recently dispatched one is sufficient -- see request_cancel().
         #
-        # *token* exists because "most recently dispatched" can still race a
-        # still-unwinding earlier operation: a signal handler for one
-        # operation's own result (e.g. MainWindow._on_capabilities_ready)
-        # can synchronously dispatch a second, unrelated operation (e.g.
-        # list_presets()) *before* the first operation's own
-        # operation_finished has been processed -- Qt delivers queued
-        # signals in emission order, and capabilities_ready was queued
-        # before operation_finished in the same _wrapped() call. Without a
-        # token, that second dispatch overwrites this tracking, and the
-        # first operation's *own* operation_finished then arrives, is
-        # indistinguishable from the second operation's, and would
-        # incorrectly tear down feedback-manager/UI state for the second
-        # operation while it's still genuinely running. Each dispatch gets
-        # a unique, monotonically increasing token; listeners that track
-        # per-operation UI state (see MainWindow._on_bridge_operation_finished)
-        # use is_current_operation() to recognize and ignore a stale one.
+        # Deliberately never cleared back to None once set -- only ever
+        # overwritten by the next run_async() call. *token* exists because
+        # "most recently dispatched" can still race a still-unwinding
+        # earlier operation: a signal handler for one operation's own
+        # result (e.g. MainWindow._on_capabilities_ready) can synchronously
+        # dispatch a second, unrelated operation (e.g. list_presets())
+        # *before* the first operation's own operation_finished has been
+        # processed -- Qt delivers queued signals in emission order, and
+        # capabilities_ready was queued before operation_finished in the
+        # same _wrapped() call. Without a token, that second dispatch
+        # overwrites this tracking, and the first operation's *own*
+        # operation_finished then arrives, is indistinguishable from the
+        # second operation's, and would incorrectly tear down
+        # feedback-manager/UI state for the second operation while it's
+        # still genuinely running. Each dispatch gets a unique, monotonically
+        # increasing token; listeners that track per-operation UI state (see
+        # MainWindow._on_bridge_operation_finished) use is_current_operation()
+        # to recognize and ignore a stale one -- which, for a token that
+        # already finished normally with nothing newer dispatched since,
+        # correctly still reports True (an earlier design tried to also
+        # self-clear _current on the operation's own finish, via a second
+        # listener on this same operation_finished signal -- but Qt runs
+        # queued-connection slots in *connection order*, and this bridge's
+        # own listener would necessarily connect before any external
+        # listener like MainWindow's, so it would always clear _current
+        # first and make every external is_current_operation() check see
+        # None, not just the raced case it was meant to catch. Comparing
+        # tokens against the last dispatch is sufficient on its own).
         self._current: _ActiveOperation | None = None
         self._next_token: int = 0
-        # Runs on the GUI thread (queued connection) once *this* bridge's
-        # own operation_finished fires -- clears _current, but only if
-        # *token* still matches (a newer dispatch may have already
-        # superseded it, per the token comment above).
-        self.operation_finished.connect(self._on_own_operation_finished)
 
     def start(self) -> None:
         """Start the background asyncio event loop thread."""
@@ -156,21 +160,15 @@ class AsyncBridge(QObject):
     def is_current_operation(self, token: int) -> bool:
         """Whether *token* still refers to the most recently dispatched
         operation -- False if a newer run_async() call has since superseded
-        it. Lets a listener that tracks UI state per-operation (see
-        MainWindow._on_bridge_operation_finished) recognize and ignore a
-        stale operation_started/operation_finished delivered after a newer
-        dispatch already took over.
+        it, True otherwise (including after that operation's own normal
+        completion, as long as nothing newer has been dispatched since --
+        see the _current attribute's comment in __init__ for why it's
+        never explicitly cleared on finish). Lets a listener that tracks
+        UI state per-operation (see MainWindow._on_bridge_operation_finished)
+        recognize and ignore a stale operation_started/operation_finished
+        delivered after a newer dispatch already took over.
         """
         return self._current is not None and self._current.token == token
-
-    def _on_own_operation_finished(self, token: int) -> None:
-        """Clear _current once its operation truly finishes -- but only if
-        *token* is still the current one; a newer dispatch may have already
-        superseded it (see the _current attribute's comment in __init__),
-        in which case that newer operation's tracking must be left alone.
-        """
-        if self._current is not None and self._current.token == token:
-            self._current = None
 
     def request_cancel(self) -> None:
         """Cancel the current operation, if one is active and cancellable.
