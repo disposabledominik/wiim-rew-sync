@@ -822,6 +822,7 @@ class MainWindow(QMainWindow):
         self._bridge.operation_error.connect(self._on_operation_error)
         self._bridge.probe_abandoned.connect(self._on_probe_abandoned)
         self._bridge.discovery_abandoned.connect(self._on_discovery_abandoned)
+        self._bridge.rew_list_abandoned.connect(self._on_rew_list_abandoned)
         self._bridge.progress_update.connect(self._on_progress_update)
         self._bridge.stage_changed.connect(self._on_stage_changed)
         self._bridge.push_round_changed.connect(self._on_push_round_changed)
@@ -2162,8 +2163,25 @@ class MainWindow(QMainWindow):
         indicator) never fires for a cancelled scan, so without this the
         "Scanning for devices..." UI would stay shown indefinitely after
         Escape/Cancel even though the operation has actually stopped.
+        Delegates to ConnectPage.cancel_scanning() rather than a bare
+        set_scanning(False) -- the latter is meant to always be paired with
+        a set_devices() call right after (which discovery_complete
+        provides but a cancellation never reaches), so calling it alone
+        here would leave the page blank when no devices were found yet.
         """
-        self._connect_page.set_scanning(False)
+        self._connect_page.cancel_scanning()
+
+    @Slot()
+    def _on_rew_list_abandoned(self) -> None:
+        """Handle a REW measurement fetch cancelled before it completed.
+
+        Mirrors _on_probe_abandoned/_on_discovery_abandoned: neither
+        rew_measurements_ready nor the info-message branch of
+        _do_rew_list_measurements fires for a cancelled fetch, so without
+        this the embedded RewPullView would stay showing "Connecting..."
+        forever after Escape/Cancel.
+        """
+        self._show_rew_pull_message("Measurement fetch cancelled.")
 
     @Slot(str)
     def _on_progress_update(self, message: str) -> None:

@@ -516,6 +516,7 @@ class TestRewListMeasurements:
 
         mock_bridge.rew_measurements_ready.emit.assert_called_once_with([measurement])
         mock_bridge.progress_update.emit.assert_not_called()
+        mock_bridge.rew_list_abandoned.emit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_empty_result_emits_info_progress_update(self) -> None:
@@ -529,6 +530,26 @@ class TestRewListMeasurements:
         mock_bridge.rew_measurements_ready.emit.assert_not_called()
         args, _ = mock_bridge.progress_update.emit.call_args
         assert args[0].startswith("__info__No measurements found in REW.")
+        mock_bridge.rew_list_abandoned.emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_fetch_reports_itself_abandoned(self) -> None:
+        """A cancelled fetch (Escape/Cancel while cancellable) must report
+        itself abandoned so the embedded RewPullView doesn't keep showing
+        "Connecting..." forever."""
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        manager._rew_client = MagicMock(
+            list_measurements=AsyncMock(side_effect=asyncio.CancelledError())
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await manager._do_rew_list_measurements()
+
+        mock_bridge.rew_measurements_ready.emit.assert_not_called()
+        mock_bridge.progress_update.emit.assert_not_called()
+        mock_bridge.rew_list_abandoned.emit.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------

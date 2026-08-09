@@ -70,6 +70,40 @@ class EmptyPresetFiltersError(Exception):
     """
 
 
+class _AbandonGuard:
+    """Tracks whether a cancellable ``_do_*`` coroutine reached its own
+    success emit, and fires *on_abandoned* in a ``finally`` if not.
+
+    Every cancellable workflow that leaves some UI element in a "waiting"
+    state (a pulsing device card, a scanning spinner, an embedded picker
+    showing "Connecting...") needs this: cancellation (``asyncio.CancelledError``)
+    and, for probe(), the pre-existing stale-generation-discard path both
+    exit without reaching the workflow's own success emit -- and neither is
+    caught by ``_bridge_wrapper``'s ``except Exception`` (``CancelledError``
+    is a ``BaseException``, not caught there). Without an explicit
+    abandonment signal, nothing would ever reset that UI element.
+
+    Usage::
+
+        async def _do_thing(self) -> None:
+            with _AbandonGuard(self._bridge.thing_abandoned.emit) as guard:
+                result = await ...
+                self._bridge.thing_ready.emit(result)
+                guard.succeeded = True
+    """
+
+    def __init__(self, on_abandoned: Callable[[], None]) -> None:
+        self._on_abandoned = on_abandoned
+        self.succeeded = False
+
+    def __enter__(self) -> _AbandonGuard:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if not self.succeeded:
+            self._on_abandoned()
+
+
 def _extract_profile_names(profiles: list[dict[str, Any]]) -> list[str]:
     """Extract non-empty "Name" values from a list_roomfit_profiles() result.
 
@@ -354,11 +388,9 @@ class PrimaryWorkflowManager(QObject):
         they're found rather than waiting for the full scan to complete.
 
         discover() is dispatched as cancellable, but a cancelled/superseded
-        scan still needs to clear ConnectPage's scanning indicator -- the
-        `finally` below emits `discovery_abandoned` whenever this coroutine
-        exits without reaching `discovery_complete`, whatever the reason
-        (Escape/Cancel raising CancelledError, or any other early exit),
-        instead of only handling the cancellation case explicitly.
+        scan still needs to clear ConnectPage's scanning indicator -- see
+        _AbandonGuard's docstring for why a plain `finally` (or an
+        `except Exception`) isn't enough on its own.
         """
         assert self._bridge is not None
         assert self._discovery_module is not None
@@ -372,8 +404,7 @@ class PrimaryWorkflowManager(QObject):
             assert self._bridge is not None
             self._bridge.discovery_progress.emit(device_list)
 
-        completed = False
-        try:
+        with _AbandonGuard(self._bridge.discovery_abandoned.emit) as guard:
             devices = await self._discovery_module.discover(on_found=_on_found)
             # Cache raw DeviceInfo objects for device picker dialogs
             self._discovered_devices = devices
@@ -382,10 +413,7 @@ class PrimaryWorkflowManager(QObject):
                 for d in devices
             ]
             self._bridge.discovery_complete.emit(device_list)
-            completed = True
-        finally:
-            if not completed:
-                self._bridge.discovery_abandoned.emit()
+            guard.succeeded = True
 
     # ------------------------------------------------------------------
     # Workflow: Capability Probing
@@ -437,8 +465,8 @@ class PrimaryWorkflowManager(QObject):
         Either way -- discarded as stale, or cancelled outright via
         Escape/Cancel while the probe is cancellable -- ConnectPage's card
         for *device_ip* was already left pulsing "connecting" by whoever
-        dispatched this probe, with nothing else to revert it. The `finally`
-        below emits `probe_abandoned` for exactly that device whenever this
+        dispatched this probe, with nothing else to revert it. _AbandonGuard
+        emits `probe_abandoned` for exactly that device whenever this
         coroutine exits without reaching `capabilities_ready`, so the card
         for a superseded/cancelled probe doesn't pulse forever.
 
@@ -447,9 +475,9 @@ class PrimaryWorkflowManager(QObject):
             generation: Snapshot of the probe-generation counter at selection time.
             device_ip: IP of the device this probe targets.
         """
-        assert self._bridge is not None
-        succeeded = False
-        try:
+        bridge = self._bridge
+        assert bridge is not None
+        with _AbandonGuard(lambda: bridge.probe_abandoned.emit(device_ip)) as guard:
             caps = await prober.probe()
             if generation != self._probe_generation:
                 logger.debug(
@@ -458,11 +486,8 @@ class PrimaryWorkflowManager(QObject):
                     self._probe_generation,
                 )
                 return
-            self._bridge.capabilities_ready.emit(caps)
-            succeeded = True
-        finally:
-            if not succeeded:
-                self._bridge.probe_abandoned.emit(device_ip)
+            bridge.capabilities_ready.emit(caps)
+            guard.succeeded = True
 
     # ------------------------------------------------------------------
     # Workflow: File Import
@@ -916,21 +941,32 @@ class PrimaryWorkflowManager(QObject):
 
         Calls REWHttpApiClient.list_measurements() and emits the result.
         If empty, emits an info message instead of the measurement list.
+
+        list_rew_measurements() is dispatched as cancellable, but nothing
+        else clears the embedded RewPullView's "Connecting..." state for a
+        cancelled fetch -- _AbandonGuard emits `rew_list_abandoned` whenever
+        this coroutine exits without reaching one of its two terminal emits
+        below, so the picker doesn't stay stuck showing "Connecting..."
+        forever after Escape/Cancel.
         """
-        assert self._bridge is not None
+        bridge = self._bridge
+        assert bridge is not None
         rew_client = self._require_rew_client()
 
-        measurements = await rew_client.list_measurements()
+        with _AbandonGuard(bridge.rew_list_abandoned.emit) as guard:
+            measurements = await rew_client.list_measurements()
 
-        if not measurements:
-            self._bridge.progress_update.emit(
-                "__info__No measurements found in REW. "
-                "Load or import measurement(s) in REW's Measurements pane, then try again."
-            )
-            return
+            if not measurements:
+                bridge.progress_update.emit(
+                    "__info__No measurements found in REW. "
+                    "Load or import measurement(s) in REW's Measurements pane, then try again."
+                )
+                guard.succeeded = True
+                return
 
-        # Emit measurement list for the picker dialog
-        self._bridge.rew_measurements_ready.emit(measurements)
+            # Emit measurement list for the picker dialog
+            bridge.rew_measurements_ready.emit(measurements)
+            guard.succeeded = True
 
     def get_rew_filters(self, uuid: str, measurement_name: str = "") -> None:
         """Trigger a REW filter fetch for one measurement; result arrives via signal."""

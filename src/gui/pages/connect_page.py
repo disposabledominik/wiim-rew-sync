@@ -86,6 +86,23 @@ class ConnectPage(QWidget):
             self._devices_scroll.setVisible(False)
             self._empty_widget.setVisible(False)
 
+    def cancel_scanning(self) -> None:
+        """Handle a discovery scan cancelled/abandoned before completing.
+
+        If devices were already found via progressive discovery,
+        update_devices() already switched the page to the device-list view
+        for them -- just hide the scanning indicator. Otherwise, converge on
+        the same empty/retry state a completed scan with zero results would
+        show, rather than leaving the page blank: set_scanning(False) alone
+        is meant to always be paired with a set_devices() call right after
+        (which a normal discovery_complete provides but a cancellation never
+        reaches).
+        """
+        if self._device_cards:
+            self._scanning_widget.setVisible(False)
+        else:
+            self.set_devices([])
+
     def set_devices(self, devices: list[dict[str, Any]]) -> None:
         """Populate the page with discovered device cards (replaces all current cards).
 

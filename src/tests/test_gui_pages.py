@@ -186,6 +186,41 @@ class TestConnectPage:
         page.set_scanning(False)
         assert page._rescan_btn.isEnabled()
 
+    def test_cancel_scanning_with_no_devices_shows_empty_state(self, qtbot) -> None:
+        """Cancelling a scan before any device was found must not leave the
+        page blank -- a bare set_scanning(False) only hides the spinner and
+        relies on a set_devices() call to show something else, which a
+        cancelled discovery never makes; cancel_scanning() must fall back to
+        the same empty/retry state a completed zero-result scan would show."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_scanning(True)
+
+        page.cancel_scanning()
+
+        assert page._empty_widget.isVisible()
+        assert not page._devices_scroll.isVisible()
+        assert not page._scanning_widget.isVisible()
+
+    def test_cancel_scanning_with_devices_keeps_them(self, qtbot) -> None:
+        """Cancelling a scan after progressive discovery already found some
+        devices must just hide the spinner -- not clear the cards already
+        shown via update_devices()."""
+        page = ConnectPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.update_devices(
+            [{"name": "Living Room", "model": "Pro Plus", "ip": "192.168.1.10"}]
+        )
+        assert page._devices_scroll.isVisible()
+
+        page.cancel_scanning()
+
+        assert len(page._device_cards) == 1
+        assert page._devices_scroll.isVisible()
+        assert not page._scanning_widget.isVisible()
+
     def test_empty_state_causes_text_not_clipped_at_narrow_width(self, qtbot) -> None:
         """The "Common causes" bullet list isn't squeezed to near-zero height
         at a narrow window width (smoke #180 -- _build_empty_widget's layout
