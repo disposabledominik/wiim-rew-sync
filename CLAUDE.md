@@ -133,12 +133,25 @@ docstring):
    `StatusBanner.show_error()` — a different, real, everywhere-used method — existed). Can't be
    fully automated without real type inference, so the script instead lists every method name
    shared by 2+ GUI classes as a "verify each class's own call sites by hand" set.
+4. **Orphaned Qt signal chains** — a signal can be defined, emitted, and even connected to a real
+   slot, with every individual link "referenced," and still be entirely unreachable, because a
+   signal's reachability depends on whether anything ever triggers the code that emits it — a
+   control-flow question, not a reference-count one. The script mechanically catches both shapes
+   found in practice: a signal with **zero** `.connect()` sites anywhere in production
+   (`DeviceCard.retry_clicked` — emitted internally, tested, but nothing outside the class ever
+   subscribes), and a signal emitted only by a method the script *already* flagged as orphaned
+   (`OnboardingOverlay.skip_clicked` — connected to a real `MainWindow` slot, but the only thing
+   that ever emits it is `_on_skip()`, which nothing calls). The second check only propagates one
+   hop (dead method → its signal → what's connected to it); it doesn't chase further from there.
 
 A clean run is not proof nothing is dead, and a flagged symbol is not proof it's safe to delete —
-before removing anything, check for a code comment or a `docs/backlog.md`/`docs/smoke_test_issues.md`
-entry documenting a deliberate keep (e.g. cheap fallback infra, backend support for a
-declined-for-now feature). If you confirm one, add it to the script's `_KNOWN_INTENTIONAL_KEEPS`
-with a citation so it stops being re-flagged, rather than deleting it or re-triaging it next time.
+**every candidate in every section, including the signal-chain ones, needs a human to actually
+look at the call site before anything is removed.** The script narrows down where to look; it
+does not decide for you. Before removing anything, check for a code comment or a
+`docs/backlog.md`/`docs/smoke_test_issues.md` entry documenting a deliberate keep (e.g. cheap
+fallback infra, backend support for a declined-for-now feature). If you confirm one, add it to the
+script's `_KNOWN_INTENTIONAL_KEEPS` with a citation so it stops being re-flagged, rather than
+deleting it or re-triaging it next time.
 
 ## Domain rules (non-negotiable)
 

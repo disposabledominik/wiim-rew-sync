@@ -30,12 +30,46 @@ error-state subsystem, OnboardingOverlay._on_skip(), WizardController.can_push()
    automated without real type inference, so this script instead lists every
    method name shared by 2+ GUI classes as a "verify by hand" set.
 
-None of this proves a flagged symbol is safe to delete. Before deleting
-anything this script reports, also check: is there a code comment or
-docs/backlog.md / docs/smoke_test_issues.md entry documenting a deliberate
-keep (a cheap fallback, dormant infra for a feature that might return)? If
-so, add it to _KNOWN_INTENTIONAL_KEEPS below instead of re-flagging it every
-run — with a comment citing the source, not just the name.
+4. Orphaned Qt signal chains: a signal can be "referenced" (defined, emitted,
+   even connected to a real slot) at every individual link and still be
+   entirely unreachable, because reachability of a *signal* depends on
+   whether anything ever triggers the code that emits it — a control-flow
+   question, not a reference-count one, which is what vulture (and grep)
+   check. Two concrete cases found here:
+     - DeviceCard.retry_clicked is defined, emitted internally by
+       _on_retry_clicked, and even exercised by a test — but nothing in
+       production ever calls `.retry_clicked.connect(...)`, so the emit
+       always fires into nothing. Mechanically catchable: find every
+       `name = Signal(...)` definition, then search for
+       `.name.connect(` anywhere in production; zero hits is a strong
+       dead-signal signal. See _collect_signal_definitions()/
+       _signal_connect_sites() below.
+     - OnboardingOverlay.skip_clicked *is* connected to a real slot
+       (MainWindow._on_onboarding_skip) — but the only thing that ever
+       emits it is _on_skip(), which vulture already flags as orphaned
+       (nothing calls it either). The connection can never fire. This is
+       one hop of transitive propagation from an already-confirmed-dead
+       method to whatever signal it emits: see
+       _signals_emitted_by_dead_methods() below, which re-parses each
+       already-orphaned method's body for `self.<name>.emit(...)` calls
+       and reports what's connected to that signal as similarly suspect.
+       This only propagates one hop (dead method -> its emitted signal ->
+       what's connected to it); it does not chase further, e.g. whether
+       that connected slot is itself otherwise reachable.
+
+None of this proves a flagged symbol is safe to delete, including hits from
+blind spot #4's mechanical checks — a signal with zero connect() sites
+today could still be part of a public API a plugin/future caller is meant
+to use, and "emitted only by dead code" is exactly the propagation this
+script does, not independent confirmation. Every single candidate this
+script prints, in every section, needs a human to actually look at the
+call site before anything is removed — this script narrows down where to
+look, it does not decide for you. Before deleting anything, also check: is
+there a code comment or docs/backlog.md / docs/smoke_test_issues.md entry
+documenting a deliberate keep (a cheap fallback, dormant infra for a
+feature that might return)? If so, add it to _KNOWN_INTENTIONAL_KEEPS below
+instead of re-flagging it every run — with a comment citing the source, not
+just the name.
 
 Usage:
     python3 scripts/find_dead_code.py
@@ -202,6 +236,114 @@ def _collect_shared_method_names() -> dict[str, list[str]]:
     return {name: sorted(classes) for name, classes in owners.items() if len(classes) > 1}
 
 
+def _collect_signal_definitions() -> dict[str, list[str]]:
+    """Map every `name = Signal(...)` class attribute to its defining file:class.
+
+    Only looks at `ClassDef` bodies (not e.g. module-level Signal() calls,
+    which don't occur in this codebase) across the scan roots, tests
+    excluded — a signal's own definition being test-only isn't a thing.
+    """
+    owners: dict[str, list[str]] = defaultdict(list)
+    for root in _SCAN_ROOTS:
+        for path in root.rglob("*.py"):
+            if _TESTS_DIR in path.parents:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ClassDef):
+                    continue
+                for item in node.body:
+                    if not isinstance(item, ast.Assign):
+                        continue
+                    call = item.value
+                    if not isinstance(call, ast.Call):
+                        continue
+                    func = call.func
+                    func_name = (
+                        func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+                    )
+                    if func_name != "Signal":
+                        continue
+                    for target in item.targets:
+                        if isinstance(target, ast.Name):
+                            owners[target.id].append(f"{path.relative_to(_REPO_ROOT)}:{node.name}")
+    return owners
+
+
+def _signal_connect_sites(name: str, *, include_tests: bool) -> list[str]:
+    """Find `.<name>.connect(` call sites — the only syntax Qt signal wiring
+    in this codebase uses. `include_tests=True` also searches src/tests/,
+    used only to give context (e.g. "only a test connects this"), never to
+    decide whether a signal counts as reachable in production.
+    """
+    pattern = re.compile(rf"\.{re.escape(name)}\.connect\(")
+    roots = [*_SCAN_ROOTS, _TESTS_DIR] if include_tests else _SCAN_ROOTS
+    hits = []
+    for root in roots:
+        for path in root.rglob("*.py"):
+            if not include_tests and _TESTS_DIR in path.parents:
+                continue
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                if pattern.search(line):
+                    hits.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}")
+    return hits
+
+
+def _find_function_node(path: Path, lineno: int) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Find the function/method whose `def` line matches vulture's reported line."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.lineno == lineno:
+            return node
+    return None
+
+
+def _emitted_signal_names(node: ast.AST) -> set[str]:
+    """Walk a function body for `self.<name>.emit(...)` calls, return the names."""
+    names = set()
+    for call in ast.walk(node):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)):
+            continue
+        if call.func.attr != "emit":
+            continue
+        emit_target = call.func.value
+        if isinstance(emit_target, ast.Attribute):
+            names.add(emit_target.attr)
+    return names
+
+
+def _signals_emitted_by_dead_methods(orphaned_lines: list[str]) -> dict[str, tuple[str, list[str]]]:
+    """For each already-orphaned method, find signals it emits, and what's
+    connected to those signals elsewhere.
+
+    Second half of blind spot #4: propagates "this method is unreachable"
+    one hop forward to "so is any signal only it ever emits, and so is
+    whatever's connected to that signal" — the OnboardingOverlay.skip_clicked
+    case. Only propagates one hop; doesn't chase further from there.
+
+    Returns {signal_name: (emitting_method_location, [connect_site, ...])},
+    limited to signals with at least one real connect() site (otherwise
+    blind spot #4's other half, _collect_signal_definitions(), already
+    covers it as a zero-connect signal).
+    """
+    result: dict[str, tuple[str, list[str]]] = {}
+    for line in orphaned_lines:
+        m = _VULTURE_LINE_RE.match(line)
+        if m is None or m.group("kind") not in ("method", "function"):
+            continue
+        path = _REPO_ROOT / m.group("file")
+        lineno = int(m.group("line"))
+        node = _find_function_node(path, lineno)
+        if node is None:
+            continue
+        for signal_name in _emitted_signal_names(node):
+            connect_sites = _signal_connect_sites(signal_name, include_tests=False)
+            if connect_sites:
+                emitter = f"{m.group('file')}:{lineno} ({m.group('name')})"
+                result[signal_name] = (emitter, connect_sites)
+    return result
+
+
 def main() -> int:
     print("Running vulture against src/ (src/tests/ excluded from the scan)...\n")
     raw_lines = _run_vulture()
@@ -280,6 +422,46 @@ def main() -> int:
         for name, classes in sorted(shared.items()):
             print(f"  {name}: {', '.join(classes)}")
 
+    signal_defs = _collect_signal_definitions()
+    zero_connect: list[tuple[str, list[str], list[str]]] = []
+    for name, defined_at in sorted(signal_defs.items()):
+        if _signal_connect_sites(name, include_tests=False):
+            continue
+        test_sites = _signal_connect_sites(name, include_tests=True)
+        zero_connect.append((name, defined_at, test_sites))
+    if zero_connect:
+        print(
+            f"\n=== {len(zero_connect)} signal(s) with zero .connect() sites "
+            "in production ==="
+        )
+        print(
+            "(defined, maybe even emitted, but nothing outside the class "
+            "subscribes to it — see blind spot #4 in this module's "
+            "docstring, the DeviceCard.retry_clicked case)"
+        )
+        for name, defined_at, test_sites in zero_connect:
+            print(f"  {name}: defined at {', '.join(defined_at)}")
+            if test_sites:
+                print(f"    connected only in test(s): {', '.join(test_sites)}")
+
+    emitted_by_dead = _signals_emitted_by_dead_methods(orphaned)
+    if emitted_by_dead:
+        print(
+            f"\n=== {len(emitted_by_dead)} signal(s) emitted only by an "
+            "already-orphaned method ==="
+        )
+        print(
+            "(the emit() call is real and so is the connect() below, but "
+            "nothing ever calls the method that would trigger the emit — "
+            "see blind spot #4, the OnboardingOverlay.skip_clicked case. "
+            "This propagates only one hop; the connected slot itself isn't "
+            "re-checked for reachability)"
+        )
+        for name, (emitter, connect_sites) in sorted(emitted_by_dead.items()):
+            print(f"  {name}: only emitted by {emitter}")
+            for site in connect_sites:
+                print(f"    connected at: {site}")
+
     print(
         "\nEvery hit above still needs a human to check: (1) getattr()/string "
         "dispatch, (2) a same-named sibling class masking it, (3) a comment or "
@@ -289,8 +471,11 @@ def main() -> int:
         "(e.g. MainWindow's page/view properties) vs. a real orphaned "
         "feature, (5) for the 'dead in production, still tested' group, "
         "whether the test lines listed should be deleted with the symbol or "
-        "rewritten to exercise it a different way. See CLAUDE.md's 'Dead "
-        "code detection' section."
+        "rewritten to exercise it a different way, (6) for the signal "
+        "sections, whether the connected slot does something worth keeping "
+        "reachable another way. This script narrows down where to look, it "
+        "does not decide for you — nothing above should be deleted without "
+        "that check. See CLAUDE.md's 'Dead code detection' section."
     )
     return 0
 
