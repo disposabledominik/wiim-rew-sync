@@ -46,11 +46,15 @@ pushing your first set of filters. Prefer to build from source instead? See
 
 ### Download
 
-- **Windows:** [WiiM-REW-Sync-windows-x64.zip](https://github.com/disposabledominik/wiim-rew-sync/releases/latest/download/WiiM-REW-Sync-windows-x64.zip)
-- **macOS:** [WiiM-REW-Sync-macos.zip](https://github.com/disposabledominik/wiim-rew-sync/releases/latest/download/WiiM-REW-Sync-macos.zip)
-- **Linux:** [WiiM-REW-Sync-linux-x64.zip](https://github.com/disposabledominik/wiim-rew-sync/releases/latest/download/WiiM-REW-Sync-linux-x64.zip)
+Get the build for your platform from the [latest release](https://github.com/disposabledominik/wiim-rew-sync/releases/latest):
+`WiiM-REW-Sync-<version>-windows-x64.zip`, `-macos.zip`, or `-linux-x64.zip`.
 
-These links always point to the newest published [release](https://github.com/disposabledominik/wiim-rew-sync/releases). Each release also includes a `SHA256SUMS.txt` to verify your download.
+Each release asset's filename includes its version (e.g. `WiiM-REW-Sync-v1.2.0-windows-x64.zip`),
+so downloads from different releases never collide on disk -- that also means there's no longer a
+stable per-OS filename to link to directly, hence the link above going to the release page rather
+than straight to a file. Each zip includes a `SHA256SUMS.txt` for its own contents; the release
+page also attaches a combined `SHA256SUMS.txt` covering all three zips, for verifying a download
+before extracting it.
 
 > **Testing status:** Only the **Windows** build has been verified on real hardware so far. The
 > macOS and Linux builds come from the same automated pipeline and are expected to work, but
