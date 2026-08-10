@@ -29,19 +29,28 @@ _FILTER_PREFIX_RE = re.compile(
 # Individual filter body patterns (after stripping state prefix)
 # ---------------------------------------------------------------------------
 
+# Shared numeric fragments -- a single optional sign, digits, optional decimal
+# part. Deliberately stricter than a bare [-+\d.]+ character class (which
+# also matches malformed values like "--5.0" or "1.2.3"): those would still
+# satisfy a per-field regex but then crash float() with a raw, uncaught
+# ValueError instead of the clean "Malformed filter line" ParseError every
+# other unrecognized body already falls through to below.
+_UNSIGNED_NUM = r"\d+(?:\.\d+)?"
+_SIGNED_NUM = r"[-+]?\d+(?:\.\d+)?"
+
 # PK Fc <freq> Hz Gain <gain> dB Q <q>
 _PK_RE = re.compile(
-    r"^PK\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
+    rf"^PK\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s+Gain\s+({_SIGNED_NUM})\s+dB\s+Q\s+({_UNSIGNED_NUM})\s*$"
 )
 
 # HP Q Fc <freq> Hz Q <q>
 _HP_Q_RE = re.compile(
-    r"^HP\s+Q\s+Fc\s+([\d.]+)\s+Hz\s+Q\s+([\d.]+)\s*$"
+    rf"^HP\s+Q\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s+Q\s+({_UNSIGNED_NUM})\s*$"
 )
 
 # LP Q Fc <freq> Hz Q <q>
 _LP_Q_RE = re.compile(
-    r"^LP\s+Q\s+Fc\s+([\d.]+)\s+Hz\s+Q\s+([\d.]+)\s*$"
+    rf"^LP\s+Q\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s+Q\s+({_UNSIGNED_NUM})\s*$"
 )
 
 # LS Q Fc <freq> Hz Gain <gain> dB Q <q> — also matches "LSC", AutoEQ /
@@ -56,35 +65,35 @@ _LP_Q_RE = re.compile(
 # testing against a real WiiM device's shelf filter. See
 # docs/corrections.md, 2026-08-10.
 _LS_Q_RE = re.compile(
-    r"^(?:LS\s+Q|LSC)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
+    rf"^(?:LS\s+Q|LSC)\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s+Gain\s+({_SIGNED_NUM})\s+dB\s+Q\s+({_UNSIGNED_NUM})\s*$"
 )
 
 # HS Q Fc <freq> Hz Gain <gain> dB Q <q> — also matches "HSC" (see LS Q's
 # ASSUMPTION above; applies identically to the high-shelf variant).
 _HS_Q_RE = re.compile(
-    r"^(?:HS\s+Q|HSC)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
+    rf"^(?:HS\s+Q|HSC)\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s+Gain\s+({_SIGNED_NUM})\s+dB\s+Q\s+({_UNSIGNED_NUM})\s*$"
 )
 
 # HP Fc <freq> Hz (Butterworth, no Q specified)
 _HP_BW_RE = re.compile(
-    r"^HP\s+Fc\s+([\d.]+)\s+Hz\s*$"
+    rf"^HP\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s*$"
 )
 
 # LP Fc <freq> Hz (Butterworth, no Q specified)
 _LP_BW_RE = re.compile(
-    r"^LP\s+Fc\s+([\d.]+)\s+Hz\s*$"
+    rf"^LP\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s*$"
 )
 
 # LS Fc <freq> Hz Gain <gain> dB (bare shelf — REW's slope parameter S, no Q;
 # used only to detect+skip this unsupported variant, see _SKIP_TYPES below)
 _LS_FIXED_RE = re.compile(
-    r"^LS\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s*$"
+    rf"^LS\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s+Gain\s+({_SIGNED_NUM})\s+dB\s*$"
 )
 
 # HS Fc <freq> Hz Gain <gain> dB (bare shelf — REW's slope parameter S, no Q;
 # used only to detect+skip this unsupported variant, see _SKIP_TYPES below)
 _HS_FIXED_RE = re.compile(
-    r"^HS\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s*$"
+    rf"^HS\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s+Gain\s+({_SIGNED_NUM})\s+dB\s*$"
 )
 
 # None (empty/disabled band)
@@ -92,7 +101,7 @@ _NONE_RE = re.compile(r"^None\s*$")
 
 # Legacy format: <type> Fc <freq> Hz Gain <gain> dB Q <q>  (for backward compat)
 _LEGACY_FULL_RE = re.compile(
-    r"^(\w+)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
+    rf"^(\w+)\s+Fc\s+({_UNSIGNED_NUM})\s+Hz\s+Gain\s+({_SIGNED_NUM})\s+dB\s+Q\s+({_UNSIGNED_NUM})\s*$"
 )
 
 # REW's documented fixed Q for bare LP/HP (12 dB/octave Butterworth alignment)

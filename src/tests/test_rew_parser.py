@@ -842,6 +842,43 @@ class TestParseFileMalformedLine:
         assert exc_info.value.line_number == 3
         assert "Malformed" in str(exc_info.value)
 
+    def test_double_signed_gain_raises_parse_error_not_uncaught_valueerror(
+        self, parser: REWParser, tmp_path: Path
+    ) -> None:
+        """A doubled sign in Gain (e.g. hand-edited/corrupted file) must fall
+        through to the same clean ParseError every other unrecognized body
+        gets, not crash inside float() with an uncaught ValueError -- the
+        gain regex accepts AutoEQ's explicit '+' sign, so it must not also
+        accept two signs in a row."""
+        content = (
+            "Equaliser: Parametric EQ\n"
+            "Filter  1: ON  PK       Fc   100.00 Hz  Gain  --5.0 dB  Q  1.0\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        with pytest.raises(ParseError) as exc_info:
+            parser.parse_file(file)
+        assert exc_info.value.line_number == 2
+        assert "Malformed" in str(exc_info.value)
+
+    def test_double_decimal_point_raises_parse_error_not_uncaught_valueerror(
+        self, parser: REWParser, tmp_path: Path
+    ) -> None:
+        """A doubled decimal point in Fc must also fall through to a clean
+        ParseError rather than crashing float()."""
+        content = (
+            "Equaliser: Parametric EQ\n"
+            "Filter  1: ON  PK       Fc   1.2.3 Hz  Gain  -5.0 dB  Q  1.0\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        with pytest.raises(ParseError) as exc_info:
+            parser.parse_file(file)
+        assert exc_info.value.line_number == 2
+        assert "Malformed" in str(exc_info.value)
+
 
 # ---------------------------------------------------------------------------
 # Error: frequency out of range
