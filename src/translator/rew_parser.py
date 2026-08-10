@@ -54,6 +54,15 @@ _HS_Q_RE = re.compile(
     r"^HS\s+Q\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
 )
 
+# ASSUMPTION: LSC/HSC (AutoEQ / Equalizer APO's Q-parametrized shelf tokens)
+# are treated as identical to REW's own "LS Q"/"HS Q" -- same canonical
+# LS/HS type, Gain and Q taken literally. Supported by REW's/Equalizer
+# APO's own documentation and AutoEQ's own bug report (GitHub issue #586:
+# a user's measured curve only matched AutoEQ's documented target after
+# relabeling identical Fc/Gain/Q filters from LS/HS to LSC/HSC), not by
+# hardware testing against a real WiiM device's shelf filter. See
+# docs/corrections.md, 2026-08-10.
+
 # LSC Fc <freq> Hz Gain <gain> dB Q <q> — AutoEQ / Equalizer APO low-shelf
 # token (fully Q-specified, equivalent to REW's "LS Q" variant)
 _LSC_RE = re.compile(
