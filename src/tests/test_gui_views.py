@@ -673,7 +673,7 @@ class TestMyPresetsViewContextMenu:
         with qtbot.waitSignal(view.copy_to_device_requested, timeout=1000) as blocker:
             qtbot.mouseClick(view._copy_btn, Qt.MouseButton.LeftButton)
 
-        assert blocker.args[0].name == "Copy Me"
+        assert [p.name for p in blocker.args[0]] == ["Copy Me"]
 
     def test_copy_to_device_disabled_without_selection(self, qtbot) -> None:
         """Copy to Another Device is disabled until a preset is selected."""
@@ -688,9 +688,10 @@ class TestMyPresetsViewContextMenu:
 class TestMyPresetsViewMultiSelect:
     """QA-reported gap: My Saved Presets had no multi-select, unlike Presets
     on Device / the Filters step's Device panel, which both use
-    ExtendedSelection. Delete now supports a multi-select batch, matching
-    that convention -- Rename/Duplicate/Copy stay single-item only, since
-    they're inherently one-name/one-Profile operations."""
+    ExtendedSelection. Delete and Copy to Another Device both support a
+    multi-select batch, matching that convention (and matching Presets on
+    Device's own batch Copy) -- Rename/Duplicate stay single-item only,
+    since they're inherently one-name/one-copy operations."""
 
     def test_selection_mode_is_extended(self, qtbot) -> None:
         view = MyPresetsView()
@@ -700,7 +701,9 @@ class TestMyPresetsViewMultiSelect:
 
         assert view._list_widget.selectionMode() == QListWidget.SelectionMode.ExtendedSelection
 
-    def test_multi_select_enables_delete_but_not_single_item_actions(self, qtbot) -> None:
+    def test_multi_select_enables_delete_and_copy_but_not_single_item_actions(
+        self, qtbot
+    ) -> None:
         view = MyPresetsView()
         qtbot.addWidget(view)
         view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
@@ -709,9 +712,45 @@ class TestMyPresetsViewMultiSelect:
         view._list_widget.item(1).setSelected(True)
 
         assert view._delete_btn.isEnabled()
+        assert view._copy_btn.isEnabled()
         assert not view._rename_btn.isEnabled()
         assert not view._duplicate_btn.isEnabled()
-        assert not view._copy_btn.isEnabled()
+
+    def test_copy_clicked_with_multi_select_emits_all_selected_profiles(
+        self, qtbot
+    ) -> None:
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
+
+        view._list_widget.item(0).setSelected(True)
+        view._list_widget.item(2).setSelected(True)
+
+        with qtbot.waitSignal(view.copy_to_device_requested, timeout=1000) as blocker:
+            view._on_copy_clicked()
+
+        assert sorted(p.name for p in blocker.args[0]) == ["A", "C"]
+
+    def test_context_menu_copy_batches_full_selection(self, qtbot) -> None:
+        """Right-clicking a selected item within a multi-selection must batch
+        Copy over the whole selection, same as Delete -- Qt's default
+        right-click does not clear an existing selection.
+        """
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.set_presets([_make_profile("A"), _make_profile("B"), _make_profile("C")])
+
+        view._list_widget.item(0).setSelected(True)
+        view._list_widget.item(1).setSelected(True)
+
+        menu = view._build_context_menu(view._list_widget.item(1))
+        copy_action = next(a for a in menu.actions() if a.text() == "Copy to Another Device")
+        assert copy_action.isEnabled()
+
+        with qtbot.waitSignal(view.copy_to_device_requested, timeout=1000) as blocker:
+            copy_action.trigger()
+
+        assert sorted(p.name for p in blocker.args[0]) == ["A", "B"]
 
     def test_delete_clicked_with_multi_select_emits_all_selected_names(self, qtbot) -> None:
         view = MyPresetsView()

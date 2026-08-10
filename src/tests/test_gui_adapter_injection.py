@@ -266,6 +266,28 @@ class TestConnectPageCardStateWiring:
         window._wizard_controller.state.current_filters = []
         window.close()
 
+    def test_operation_error_clears_a_stuck_scanning_indicator_on_connect_step(
+        self, qtbot
+    ) -> None:
+        """A genuine discovery failure must also stop the scanning
+        indicator spinning forever -- _AbandonGuard deliberately doesn't
+        fire discovery_abandoned for a real error (only for cancellation),
+        so operation_error's own handler owns this cleanup instead."""
+        # window is never shown (matches this class's other tests), so
+        # isVisible() would be False regardless -- isHidden() tracks each
+        # widget's own explicit show/hide state independent of its
+        # (unshown) ancestor chain.
+        window = _make_window(qtbot)
+        window._connect_page.set_scanning(True)
+        assert not window._connect_page._scanning_widget.isHidden()
+
+        window._on_operation_error("OSError", "Network unreachable")
+
+        assert window._connect_page._scanning_widget.isHidden()
+        assert not window._connect_page._empty_widget.isHidden()
+        window._wizard_controller.state.current_filters = []
+        window.close()
+
     def test_operation_error_does_not_touch_cards_once_past_connect_step(
         self, qtbot
     ) -> None:

@@ -220,7 +220,16 @@ Filter  1: ON  PK Fc 100.0 Hz  Gain 18.0 dB  Q 2.0
 """
 
 _INVALID_HEADER_REW = """Not A REW File
-Filter  1: ON  PK Fc 100.0 Hz  Gain 3.0 dB  Q 2.0
+Nor a REW-import-compatible one -- no 'Equaliser:' header and no 'Filter N:' lines either.
+"""
+
+# spinorama.org/AutoEQ-style export: no 'Equaliser:' header, explicit '+' on a
+# positive gain -- REW itself can import this; the app's own parser must too.
+_NO_HEADER_REW = """EQ for Some Speaker computed from measurement data
+Preamp: -5.0 dB
+
+Filter  1: ON PK Fc    33 Hz Gain +3.00 dB Q 1.32
+Filter  2: ON PK Fc   105 Hz Gain -5.62 dB Q 1.07
 """
 
 
@@ -251,6 +260,22 @@ def test_dry_run_import_surfaces_range_warning(
     assert code == 0
     assert "WiiM range warnings:" in out
     assert "clamped to +12.0 dB" in out
+
+
+def test_dry_run_import_no_header_still_parses(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A REW-import-compatible file with no 'Equaliser:' header (spinorama.org,
+    AutoEQ) still parses, including a Gain value with an explicit '+' sign."""
+    rew_file = tmp_path / "no_header.txt"
+    rew_file.write_text(_NO_HEADER_REW, encoding="utf-8")
+
+    code = cli.cmd_dry_run_import(str(rew_file))
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "PEAK" in out
+    assert "33.00" in out
 
 
 def test_dry_run_import_invalid_file(

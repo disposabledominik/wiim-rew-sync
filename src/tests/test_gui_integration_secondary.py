@@ -17,7 +17,7 @@ genuinely dead at the time -- that note is retired as of the 2026-07-17
 branch-quality review, which found it had gone stale: the copy-to-device
 methods above are very much alive and wired to real UI actions in
 main_window.py (_on_copy_to_device_requested, _on_local_preset_copy_to_device_requested).
-_do_copy_local_profile_to_devices's write path is still exercised via
+_do_copy_local_profiles_to_devices's write path is still exercised via
 MainWindow in test_smoke_regression_operations.py, but its PEQSettings
 build/validation step moved into the manager itself (2026-08-02, GUI
 business-logic-leak fix) and is tested directly against the coroutine below
@@ -491,14 +491,15 @@ class TestUndoMultiSource:
 
 
 class TestCopyLocalProfileToDevicesValidation:
-    """SecondaryWorkflowManager._do_copy_local_profile_to_devices builds and
-    validates PEQSettings from a local Profile's raw fields itself now
+    """SecondaryWorkflowManager._do_copy_local_profiles_to_devices builds and
+    validates a PEQSettings from each local Profile's raw fields itself now
     (moved out of MainWindow, branch-quality review 2026-08-02, GUI
     business-logic-leak fix). An incomplete L/R split (build_peq_settings()'s
     ValueError, require_lr_filters, ca14e26) must be reported the same way a
     live-device read failure is in _do_copy_presets_batch_multi: via
-    copy_local_profile_complete with succeeded=0/failed=n_devices, plus a
-    progress_update naming the failure -- not raised back into the caller.
+    copy_batch_complete with the failing profile's device-count added to
+    failed, plus a progress_update naming the failure -- not raised back
+    into the caller, and without blocking the rest of the batch.
     """
 
     @pytest.mark.asyncio
@@ -506,25 +507,31 @@ class TestCopyLocalProfileToDevicesValidation:
         manager = SecondaryWorkflowManager()
         manager._bridge = MagicMock()
 
-        complete_signals: list[tuple[str, int, int, int]] = []
-        manager.copy_local_profile_complete.connect(
-            lambda name, n, ok, fail: complete_signals.append((name, n, ok, fail))
+        complete_signals: list[tuple[int, int, int, int, str]] = []
+        manager.copy_batch_complete.connect(
+            lambda n_items, n, ok, fail, label: complete_signals.append(
+                (n_items, n, ok, fail, label)
+            )
         )
 
         target_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
 
-        await manager._do_copy_local_profile_to_devices(
-            "Broken LR Profile",
+        await manager._do_copy_local_profiles_to_devices(
+            [
+                (
+                    "Broken LR Profile",
+                    ChannelMode.LR,
+                    None,
+                    [],
+                    [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)],
+                )
+            ],
             "PEQ",
             target_devices,
             "wifi",
-            ChannelMode.LR,
-            None,
-            [],
-            [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)],
         )
 
-        assert complete_signals == [("Broken LR Profile", 1, 0, 1)]
+        assert complete_signals == [(1, 1, 0, 1, "profile")]
         manager._bridge.progress_update.emit.assert_called_once()
         assert "Copy failed" in manager._bridge.progress_update.emit.call_args[0][0]
 
@@ -544,9 +551,11 @@ class TestCopyLocalProfileToDevicesValidation:
 
         manager._write_preset_copies_to_devices = _fake_write
 
-        complete_signals: list[tuple[str, int, int, int]] = []
-        manager.copy_local_profile_complete.connect(
-            lambda name, n, ok, fail: complete_signals.append((name, n, ok, fail))
+        complete_signals: list[tuple[int, int, int, int, str]] = []
+        manager.copy_batch_complete.connect(
+            lambda n_items, n, ok, fail, label: complete_signals.append(
+                (n_items, n, ok, fail, label)
+            )
         )
 
         target_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
@@ -554,16 +563,65 @@ class TestCopyLocalProfileToDevicesValidation:
             CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)
         ]
 
-        await manager._do_copy_local_profile_to_devices(
-            "Good Profile",
+        await manager._do_copy_local_profiles_to_devices(
+            [("Good Profile", ChannelMode.STEREO, stereo_filters, None, None)],
             "PEQ",
             target_devices,
             "wifi",
-            ChannelMode.STEREO,
-            stereo_filters,
-            None,
-            None,
         )
 
         assert len(write_calls) == 1
-        assert complete_signals == [("Good Profile", 1, 1, 0)]
+        assert complete_signals == [(1, 1, 1, 0, "profile")]
+
+    @pytest.mark.asyncio
+    async def test_batch_of_multiple_profiles_writes_all_and_aggregates_counts(
+        self,
+    ) -> None:
+        """Multi-select Copy to Another Device (My Saved Presets) sends every
+        selected profile through in one batch, not just the first -- this is
+        the regression case for the "Copy greyed out under multi-select"
+        report: the batch must actually reach the write path with every
+        profile represented, and a single build failure partway through
+        must not drop the rest of the batch."""
+        manager = SecondaryWorkflowManager()
+        manager._bridge = MagicMock()
+
+        write_calls: list[tuple] = []
+
+        async def _fake_write(reads, target_devices, target_source):
+            write_calls.append((reads, target_devices, target_source))
+            return len(reads) * len(target_devices), 0
+
+        manager._write_preset_copies_to_devices = _fake_write
+
+        complete_signals: list[tuple[int, int, int, int, str]] = []
+        manager.copy_batch_complete.connect(
+            lambda n_items, n, ok, fail, label: complete_signals.append(
+                (n_items, n, ok, fail, label)
+            )
+        )
+
+        target_devices = [
+            MagicMock(ip="192.168.1.200", name="Device A"),
+            MagicMock(ip="192.168.1.201", name="Device B"),
+        ]
+        filters = [CanonicalFilter(type="PEAK", frequency_hz=100.0, gain_db=-2.0, q=1.0)]
+
+        await manager._do_copy_local_profiles_to_devices(
+            [
+                ("Profile One", ChannelMode.STEREO, filters, None, None),
+                ("Broken LR Profile", ChannelMode.LR, None, [], filters),
+                ("Profile Two", ChannelMode.STEREO, filters, None, None),
+            ],
+            "PEQ",
+            target_devices,
+            "wifi",
+        )
+
+        # The two valid profiles reach the shared write primitive together;
+        # the broken one is excluded from `reads` but still counted as
+        # failed (2 target devices) rather than silently dropped.
+        assert len(write_calls) == 1
+        reads_arg = write_calls[0][0]
+        assert [r[0] for r in reads_arg] == ["Profile One", "Profile Two"]
+        assert complete_signals == [(3, 2, 4, 2, "profile")]

@@ -75,20 +75,36 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller ${{ matrix.spec }}
 
+      # Each zip carries a SHA256SUMS.txt of its own payload (the built
+      # binary/app), so a user can verify it after extracting without
+      # needing the release page. This is separate from -- not a
+      # replacement for -- the combined SHA256SUMS.txt the release job
+      # attaches alongside the zips below, which verifies the zip itself
+      # before extraction (a zip can't contain a checksum of its own
+      # compressed bytes, since compressing it would change that hash).
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path dist/WiiM-REW-Sync.exe -DestinationPath ${{ matrix.asset }}
+        run: |
+          $hash = (Get-FileHash dist/WiiM-REW-Sync.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  WiiM-REW-Sync.exe" | Out-File -Encoding ascii dist/SHA256SUMS.txt
+          Compress-Archive -Path dist/WiiM-REW-Sync.exe, dist/SHA256SUMS.txt -DestinationPath ${{ matrix.asset }}
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: ditto -c -k --sequesterRsrc --keepParent dist/WiiM-REW-Sync.app ${{ matrix.asset }}
+        run: |
+          mkdir stage
+          ditto dist/WiiM-REW-Sync.app stage/WiiM-REW-Sync.app
+          find dist/WiiM-REW-Sync.app -type f | sort | xargs shasum -a 256 \
+            | shasum -a 256 | awk '{print $1 "  WiiM-REW-Sync.app"}' > stage/SHA256SUMS.txt
+          (cd stage && ditto -c -k --sequesterRsrc . ../${{ matrix.asset }})
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
           chmod +x dist/WiiM-REW-Sync
-          (cd dist && zip -X ../${{ matrix.asset }} WiiM-REW-Sync)
+          (cd dist && sha256sum WiiM-REW-Sync > SHA256SUMS.txt && \
+            zip -X ../${{ matrix.asset }} WiiM-REW-Sync SHA256SUMS.txt)
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
