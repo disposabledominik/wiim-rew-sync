@@ -41,6 +41,7 @@ from src.repository.backup_manager import (
     load_backup_json,
     parse_backup_restore_metadata,
 )
+from src.translator.wiim_generator import find_unsupported_filter_types
 
 if TYPE_CHECKING:
     from src.adapters.capability_prober import CapabilityProber
@@ -102,6 +103,17 @@ class SecondaryWorkflowManager(QObject):
             time; the label lets _on_copy_batch_complete's summary say
             "preset(s)"/"profile(s)" accurately instead of a name borrowed
             from whichever caller was implemented first.
+        copy_item_failed(str): One pre-formatted, human-readable line per
+            failed copy operation (or per group of operations skipped for
+            the same reason -- a source-read failure or a target-connect
+            failure skips every affected device/item at once rather than
+            emitting one identical line per item). Emitted as failures
+            happen during a copy_presets_to_devices/
+            copy_local_profiles_to_devices batch, in addition to (not
+            instead of) the aggregate counts in copy_batch_complete --
+            lets MainWindow show *what* failed and *why* (e.g. "device
+            doesn't support RoomFit" vs. "connection lost") instead of
+            only a bare "N of M operations failed" tally.
     """
 
     # --- Signals ---
@@ -111,6 +123,7 @@ class SecondaryWorkflowManager(QObject):
     source_slots_ready = Signal(list)
     source_slots_error = Signal(str)
     copy_batch_complete = Signal(int, int, int, int, str)
+    copy_item_failed = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -607,6 +620,22 @@ class SecondaryWorkflowManager(QObject):
         assert self._safe_write_factory is not None
         assert self._roomfit_safe_write_factory is not None
 
+        # Fail fast on a device-unsupported filter type (e.g. LP/HP on a
+        # WiiM Mini) instead of sending it and trusting write+read-back
+        # verification to catch the mismatch -- a device that silently
+        # mis-stores an unsupported mode value could echo it back unchanged
+        # and pass verification without ever applying the intended filter.
+        # `filters` is already the combined stereo/L+R list (see
+        # extract_filters()), so one check covers both channel modes.
+        unsupported_types = find_unsupported_filter_types(
+            filters, target_adapter.capabilities.supported_filter_types
+        )
+        if unsupported_types:
+            raise RuntimeError(
+                "Filter type(s) " + ", ".join(sorted(unsupported_types))
+                + " not supported on this device"
+            )
+
         if preset_type == "RoomFit":
             # RoomFit: write as RoomFit profile on target (smoke #34, #79),
             # verified and rolled back on mismatch via RoomFitSafeWrite --
@@ -705,8 +734,12 @@ class SecondaryWorkflowManager(QObject):
             try:
                 target_caps = await self._capability_prober_factory(target_client).probe()
                 target_adapter = self._target_adapter_factory(target_client, target_caps)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Connect to %s failed", device.ip)
+                self.copy_item_failed.emit(
+                    f"{device.name}: could not connect ({exc}) -- "
+                    f"all item(s) skipped for this device"
+                )
                 failed += len(reads)
                 await target_client.close()
                 continue
@@ -722,9 +755,12 @@ class SecondaryWorkflowManager(QObject):
                             filters, channel_mode, peq_settings,
                         )
                         succeeded += 1
-                    except Exception:
+                    except Exception as exc:
                         logger.exception(
                             "Copy preset '%s' to %s failed", preset_name, device.ip
+                        )
+                        self.copy_item_failed.emit(
+                            f"{device.name} -- '{preset_name}': {exc}"
                         )
                         failed += 1
             finally:
@@ -797,10 +833,14 @@ class SecondaryWorkflowManager(QObject):
                 filters, channel_mode, peq_settings = await self._read_preset_to_copy(
                     source_name, preset_name, preset_type, is_custom=is_custom
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception("Read preset '%s' for copy failed", preset_name)
                 self._bridge.progress_update.emit(
                     f"Failed to read '{preset_name}' -- skipping"
+                )
+                self.copy_item_failed.emit(
+                    f"'{preset_name}': could not read from source device "
+                    f"({exc}) -- skipped for all target devices"
                 )
                 read_failed += len(target_devices)
                 continue
@@ -900,6 +940,9 @@ class SecondaryWorkflowManager(QObject):
                 )
                 self._bridge.progress_update.emit(
                     f"Copy failed for '{profile_name}': {exc}"
+                )
+                self.copy_item_failed.emit(
+                    f"'{profile_name}': {exc} -- skipped for all target devices"
                 )
                 build_failed += len(target_devices)
                 continue

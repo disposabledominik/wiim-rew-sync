@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMainWindow,
     QMenuBar,
+    QMessageBox,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -3063,8 +3064,6 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_about_triggered(self) -> None:
         """Show About dialog (Help > About)."""
-        from PySide6.QtWidgets import QMessageBox
-
         version = get_app_version()
         QMessageBox.about(
             self,
@@ -3322,6 +3321,13 @@ class MainWindow(QMainWindow):
         """
         self._secondary_workflows = SecondaryWorkflowManager(parent=self)
 
+        # Per-item failure detail lines for the copy-to-device workflows,
+        # accumulated from copy_item_failed and consumed by
+        # _on_copy_batch_complete. Reset by each dispatch handler
+        # (_on_copy_to_device_requested / _on_local_preset_copy_to_device_requested)
+        # right before starting a new batch.
+        self._copy_batch_failures: list[str] = []
+
         # Configured eagerly, like PrimaryWorkflowManager above: every
         # argument here is a device-agnostic factory/callable already built
         # in __init__, not tied to whichever device the Connect step probes.
@@ -3396,6 +3402,9 @@ class MainWindow(QMainWindow):
         self._secondary_workflows.copy_batch_complete.connect(
             self._on_copy_batch_complete
         )
+        self._secondary_workflows.copy_item_failed.connect(
+            self._on_copy_item_failed
+        )
 
     # --- Inbound handlers (page/view → workflow trigger) ---
 
@@ -3466,6 +3475,7 @@ class MainWindow(QMainWindow):
         # source_name and target_source are the same wizard-state value here --
         # the source device's active source is assumed to name the same slot
         # on each target device.
+        self._copy_batch_failures = []
         self._secondary_workflows.copy_presets_to_devices(
             items, selected_devices, target_source, target_source
         )
@@ -3581,6 +3591,7 @@ class MainWindow(QMainWindow):
             )
             for profile in profiles
         ]
+        self._copy_batch_failures = []
         self._secondary_workflows.copy_local_profiles_to_devices(
             profiles_data, preset_type, selected_devices, target_source,
         )
@@ -4064,6 +4075,17 @@ class MainWindow(QMainWindow):
             self._push_page.set_undo_failure(message)
             self._status_banner.show_error(message)
 
+    def _on_copy_item_failed(self, detail: str) -> None:
+        """Handle SecondaryWorkflowManager.copy_item_failed — accumulate a
+        per-item failure detail line for the current copy batch.
+
+        Consumed by _on_copy_batch_complete once the whole batch finishes;
+        reset to [] by each dispatch handler right before starting a new
+        batch (_on_copy_to_device_requested /
+        _on_local_preset_copy_to_device_requested).
+        """
+        self._copy_batch_failures.append(detail)
+
     @Slot(int, int, int, int, str)
     def _on_copy_batch_complete(
         self, n_items: int, n_devices: int, succeeded: int, failed: int, item_label: str
@@ -4074,15 +4096,31 @@ class MainWindow(QMainWindow):
         item_label ("preset"/"profile") lets the success message name what
         was actually copied instead of always saying "preset(s)", which was
         wrong for a local-Profile-to-device copy (smoke #269 follow-up).
+
+        On any failure, also shows the per-item detail lines accumulated via
+        copy_item_failed in a dialog -- the StatusBanner's aggregate count
+        alone doesn't say which device/item failed or why (e.g. "device
+        doesn't support RoomFit" vs. a connection drop), which left the user
+        no way to tell a capability mismatch from a transient failure
+        without reading app.log.
         """
         total_ops = n_items * n_devices
         if failed == 0:
             self._status_banner.show_success(
                 f"{n_items} {item_label}(s) copied to {n_devices} device(s)"
             )
-        else:
-            self._status_banner.show_error(
-                f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
+            return
+
+        self._status_banner.show_error(
+            f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
+        )
+        if self._copy_batch_failures:
+            QMessageBox.warning(
+                self,
+                "Some Copies Failed",
+                "Nothing was written to a device for these failed "
+                "operations:\n\n"
+                + "\n".join(f"• {line}" for line in self._copy_batch_failures),
             )
 
     # ------------------------------------------------------------------
