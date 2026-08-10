@@ -337,6 +337,53 @@ class TestParseFileRealFormat:
 
 
 # ---------------------------------------------------------------------------
+# Header-less, REW-import-compatible formats (AutoEQ, spinorama.org)
+# ---------------------------------------------------------------------------
+
+
+class TestParseFileNoHeaderRealWorldFormat:
+    """Tests for real-world REW-import-compatible files that omit the
+    'Equaliser:' header entirely and use tool-specific conventions
+    (explicit '+' on positive gains, "LSC"/"HSC" shelf tokens).
+    """
+
+    def test_spinorama_export(self, parser: REWParser) -> None:
+        """Parse docs/rew_export_examples/spinorama_no_header.txt (spinorama.org)."""
+        file = Path("docs/rew_export_examples/spinorama_no_header.txt")
+        filters = parser.parse_file(file)
+
+        assert len(filters) == 7
+        assert all(f.type == "PEAK" for f in filters)
+        # Filter 1: PK at 33 Hz, explicit '+3.00 dB'
+        assert filters[0].frequency_hz == 33.0
+        assert filters[0].gain_db == 3.0
+        assert filters[0].q == 1.32
+        # Filter 3: PK at 105 Hz, negative gain
+        assert filters[2].frequency_hz == 105.0
+        assert filters[2].gain_db == -5.62
+
+    def test_autoeq_export(self, parser: REWParser) -> None:
+        """Parse docs/rew_export_examples/autoeq_no_header.txt (AutoEQ)."""
+        file = Path("docs/rew_export_examples/autoeq_no_header.txt")
+        filters = parser.parse_file(file)
+
+        assert len(filters) == 10
+        # Filter 1: LSC -> LS
+        assert filters[0].type == "LS"
+        assert filters[0].frequency_hz == 105.0
+        assert filters[0].gain_db == 7.7
+        assert filters[0].q == 0.70
+        # Filter 6: HSC -> HS
+        assert filters[5].type == "HS"
+        assert filters[5].frequency_hz == 10000.0
+        assert filters[5].gain_db == -1.3
+        assert filters[5].q == 0.70
+        # Filters 2-5, 7-10 are PK
+        peak_indices = [1, 2, 3, 4, 6, 7, 8, 9]
+        assert all(filters[i].type == "PEAK" for i in peak_indices)
+
+
+# ---------------------------------------------------------------------------
 # Filter type variants
 # ---------------------------------------------------------------------------
 
@@ -467,6 +514,49 @@ class TestFilterTypeVariants:
         assert filters[0].frequency_hz == 1000.0
         assert filters[0].gain_db == -2.0
         assert filters[0].q == 0.71
+
+    def test_lsc(self, parser: REWParser, tmp_path: Path) -> None:
+        """LSC Fc <freq> Hz Gain <gain> dB Q <q> (AutoEQ/Equalizer APO) -> LS with specified Q."""
+        content = (
+            "Equaliser: Generic\n"
+            "Filter  1: ON  LSC      Fc  105.00 Hz  Gain    7.7 dB Q   0.70\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters = parser.parse_file(file)
+        assert filters[0].type == "LS"
+        assert filters[0].frequency_hz == 105.0
+        assert filters[0].gain_db == 7.7
+        assert filters[0].q == 0.70
+
+    def test_hsc(self, parser: REWParser, tmp_path: Path) -> None:
+        """HSC Fc <freq> Hz Gain <gain> dB Q <q> (AutoEQ/Equalizer APO) -> HS with specified Q."""
+        content = (
+            "Equaliser: Generic\n"
+            "Filter  1: ON  HSC      Fc 10000.00 Hz  Gain   -1.3 dB Q   0.70\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters = parser.parse_file(file)
+        assert filters[0].type == "HS"
+        assert filters[0].frequency_hz == 10000.0
+        assert filters[0].gain_db == -1.3
+        assert filters[0].q == 0.70
+
+    def test_pk_gain_with_explicit_plus_sign(self, parser: REWParser, tmp_path: Path) -> None:
+        """PK Gain +<value> dB (AutoEQ/spinorama style explicit '+') parses as positive gain."""
+        content = (
+            "Equaliser: Generic\n"
+            "Filter  1: ON PK Fc    33 Hz Gain +3.00 dB Q 1.32\n"
+        )
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        filters = parser.parse_file(file)
+        assert filters[0].type == "PEAK"
+        assert filters[0].gain_db == 3.0
 
     def test_ls_12db_unsupported(self, parser: REWParser, tmp_path: Path) -> None:
         """LS 12dB uses REW's shelf-slope S parameter, not Q -> skipped, not approximated."""
@@ -690,15 +780,32 @@ class TestUnsupportedFilterTypes:
 class TestParseFileHeaderError:
     """Tests for ParseError when the header is wrong or missing."""
 
-    def test_no_equaliser_line_raises_parse_error(
+    def test_no_equaliser_line_but_filter_lines_present_still_parses(
         self, parser: REWParser, tmp_path: Path
     ) -> None:
-        """File with no Equaliser: line raises ParseError."""
+        """A file with no Equaliser: header but a recognizable Filter line still parses.
+
+        REW-import-compatible tools such as AutoEQ and spinorama.org export
+        "Filter N: ON ..." lines with no preceding "Equaliser:" header at all.
+        """
         content = "Some random content\nFilter  1: ON  PK Fc 100.00 Hz  Gain -1.00 dB  Q 1.000\n"
         file = tmp_path / "eq.txt"
         file.write_text(content, encoding="utf-8")
 
-        with pytest.raises(ParseError, match="Equaliser"):
+        filters = parser.parse_file(file)
+        assert len(filters) == 1
+        assert filters[0].type == "PEAK"
+        assert filters[0].frequency_hz == 100.0
+
+    def test_no_equaliser_line_and_no_filter_lines_raises_parse_error(
+        self, parser: REWParser, tmp_path: Path
+    ) -> None:
+        """A file with neither an Equaliser: header nor any Filter lines raises ParseError."""
+        content = "Some random content\nwith no filter lines at all\n"
+        file = tmp_path / "eq.txt"
+        file.write_text(content, encoding="utf-8")
+
+        with pytest.raises(ParseError):
             parser.parse_file(file)
 
     def test_empty_file_raises_parse_error(self, parser: REWParser, tmp_path: Path) -> None:
