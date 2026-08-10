@@ -322,8 +322,9 @@ class MainWindow(QMainWindow):
         self._last_confirmed_filters_signature: tuple[object, ...] | None = None
 
         # --- Primary workflows (discovery, probing, file import, push) ---
-        # Configured eagerly, unlike SecondaryWorkflowManager: only push()
-        # needs a live device adapter, obtained the same way every other
+        # Configured eagerly (SecondaryWorkflowManager is configured eagerly
+        # too, in _setup_secondary_workflows() below): only push() needs a
+        # live device adapter, obtained the same way every other
         # adapter-dependent workflow here does -- set_current_adapter(),
         # once a device is selected and probed (see primary_workflows.py).
         self._primary_workflows = PrimaryWorkflowManager(parent=self)
@@ -1769,16 +1770,10 @@ class MainWindow(QMainWindow):
         assert self._wiim_http_client is not None
         self._wiim_adapter = self._wiim_adapter_factory(self._wiim_http_client, device_caps)
 
-        # Configure SecondaryWorkflowManager with adapter factories (Req 8.1, 9.3, 10.3, 15.3)
-        self._secondary_workflows.configure(
-            bridge=self._bridge,
-            bridge_wrapper=self._bridge_wrapper,
-            safe_write_factory=self._safe_write_factory,
-            roomfit_safe_write_factory=self._roomfit_safe_write_factory,
-            wiim_http_client_factory=self._wiim_http_client_factory,
-            capability_prober_factory=self._capability_prober_factory,
-            target_adapter_factory=self._wiim_adapter_factory,
-        )
+        # SecondaryWorkflowManager itself is configured eagerly in
+        # _setup_secondary_workflows() (__init__) -- only the "current
+        # device" pointer, used by same-device workflows like
+        # undo_last_push, updates here on each successful connect.
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)
         self._primary_workflows.set_current_adapter(self._wiim_adapter)
 
@@ -3326,6 +3321,26 @@ class MainWindow(QMainWindow):
         were removed as dead code (code quality audit, 2026-06-28).
         """
         self._secondary_workflows = SecondaryWorkflowManager(parent=self)
+
+        # Configured eagerly, like PrimaryWorkflowManager above: every
+        # argument here is a device-agnostic factory/callable already built
+        # in __init__, not tied to whichever device the Connect step probes.
+        # "My Saved Presets" and its Copy to Another Device action are local-
+        # file / self-contained-dialog workflows (the target device is picked
+        # inside the dialog itself) that must not require a prior Connect-step
+        # probe -- gating this behind _on_capabilities_ready made
+        # copy_local_profiles_to_devices()/copy_presets_to_devices() raise a
+        # bare AssertionError in _dispatch() (self._bridge is None) whenever
+        # the user opened My Saved Presets before connecting to any device.
+        self._secondary_workflows.configure(
+            bridge=self._bridge,
+            bridge_wrapper=self._bridge_wrapper,
+            safe_write_factory=self._safe_write_factory,
+            roomfit_safe_write_factory=self._roomfit_safe_write_factory,
+            wiim_http_client_factory=self._wiim_http_client_factory,
+            capability_prober_factory=self._capability_prober_factory,
+            target_adapter_factory=self._wiim_adapter_factory,
+        )
 
         # --- Inbound: page/view actions → workflow manager ---
         self._presets_device_view.copy_to_device_requested.connect(

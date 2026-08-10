@@ -143,7 +143,10 @@ class SecondaryWorkflowManager(QObject):
     ) -> None:
         """Inject adapter dependencies for real async workflow execution.
 
-        Called from MainWindow._on_capabilities_ready after adapters are created.
+        Called eagerly from MainWindow._setup_secondary_workflows() (__init__)
+        -- every argument is a device-agnostic factory/callable, not tied to
+        whichever device the Connect step later probes, so workflows like
+        copy_local_profiles_to_devices() must not require a prior connect.
 
         Args:
             bridge: The AsyncBridge for run_async calls.
