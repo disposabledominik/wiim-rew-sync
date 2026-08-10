@@ -2590,16 +2590,15 @@ class MainWindow(QMainWindow):
 
     # _read_preset_to_copy, _write_preset_to_adapter,
     # _write_preset_copies_to_devices, _do_copy_presets_batch_multi,
-    # _do_copy_local_profile_to_devices moved to SecondaryWorkflowManager
+    # _do_copy_local_profiles_to_devices moved to SecondaryWorkflowManager
     # (src/gui/secondary_workflows.py) — docs/backlog.md item 2, Phase D.
     # (_do_copy_preset_to_device, also moved here at Phase D, was deleted --
     # round-4 review finding #10 -- once _write_preset_to_adapter became the
     # actual production write primitive and it had zero remaining callers.)
     # Dispatch from _on_copy_to_device_requested/
     # _on_local_preset_copy_to_device_requested now calls the manager
-    # directly; results arrive via copy_batch_complete/
-    # copy_local_profile_complete, see _on_copy_batch_complete/
-    # _on_copy_local_profile_complete.
+    # directly; results arrive via the shared copy_batch_complete signal
+    # (both dispatch paths report the same shape, see _on_copy_batch_complete).
 
     # _do_delete_presets moved to PrimaryWorkflowManager
     # (src/gui/primary_workflows.py) — docs/backlog.md item 2, Phase 5.
@@ -3378,9 +3377,6 @@ class MainWindow(QMainWindow):
         self._secondary_workflows.copy_batch_complete.connect(
             self._on_copy_batch_complete
         )
-        self._secondary_workflows.copy_local_profile_complete.connect(
-            self._on_copy_local_profile_complete
-        )
 
     # --- Inbound handlers (page/view → workflow trigger) ---
 
@@ -3493,23 +3489,26 @@ class MainWindow(QMainWindow):
             return renamed
         return items
 
-    @Slot(object)
-    def _on_local_preset_copy_to_device_requested(self, profile: object) -> None:
+    @Slot(list)
+    def _on_local_preset_copy_to_device_requested(self, profiles: list[Any]) -> None:
         """Handle MyPresetsView "Copy to Another Device" action.
 
         A locally saved Profile carries no record of whether it originated
         as a PEQ preset or a RoomFit profile (see build_profile /
         Profile in src/models/profile.py), so unlike the device-to-device
-        copy flow, this asks the user which target write-mode to use before
-        picking devices. There's also no live source device to read from
-        here -- the filters are already in hand -- so there's no source-read
-        warning to show; the target-write warning (identical concern to the
-        device-to-device flow) is folded into the device picker dialog once
-        the type is known, instead of shown as a separate confirmation step.
+        copy flow, this asks the user which target write-mode to use once
+        -- applied to every selected profile -- before picking devices.
+        There's also no live source device to read from here -- the filters
+        are already in hand -- so there's no source-read warning to show;
+        the target-write warning (identical concern to the device-to-device
+        flow) is folded into the device picker dialog once the type is
+        known, instead of shown as a separate confirmation step.
 
         Args:
-            profile: Profile object selected in My Saved Presets.
+            profiles: Profile objects selected in My Saved Presets.
         """
+        if not profiles:
+            return
         if not self._primary_workflows.discovered_devices:
             self._status_banner.show_error("No other devices discovered")
             return
@@ -3518,18 +3517,17 @@ class MainWindow(QMainWindow):
         if preset_type is None:
             return
 
-        name: str = getattr(profile, "name", "")
-        channel_mode_value = getattr(profile, "channel_mode", ChannelMode.STEREO)
-        filters_value = getattr(profile, "filters", None)
-        filters_l_value = getattr(profile, "filters_l", None)
-        filters_r_value = getattr(profile, "filters_r", None)
-
-        preview_item = PresetItem(
-            name=name,
-            channel_mode=channel_mode_value.display_value,
-            preset_type=preset_type,
-        )
-        activation_body = self._copy_activation_warning_html([preview_item])
+        preview_items = [
+            PresetItem(
+                name=getattr(profile, "name", ""),
+                channel_mode=getattr(
+                    profile, "channel_mode", ChannelMode.STEREO
+                ).display_value,
+                preset_type=preset_type,
+            )
+            for profile in profiles
+        ]
+        activation_body = self._copy_activation_warning_html(preview_items)
         warning = (
             ("Copy Will Change Target Device(s)", activation_body)
             if activation_body
@@ -3546,17 +3544,26 @@ class MainWindow(QMainWindow):
         target_source = state.primary_source
 
         logger.info(
-            "Copy local preset '%s' (%s) to %d device(s)",
-            name, preset_type, len(selected_devices),
+            "Copy %d local preset(s) (%s) to %d device(s)",
+            len(profiles), preset_type, len(selected_devices),
         )
 
         # Passed as raw Profile fields, not a pre-built PEQSettings --
         # build_peq_settings()/extract_filters() and the incomplete-L/R-split
         # ValueError case they can raise are SecondaryWorkflowManager's job,
         # not MainWindow's (CLAUDE.md: "GUI has zero business logic").
-        self._secondary_workflows.copy_local_profile_to_devices(
-            name, preset_type, selected_devices, target_source,
-            channel_mode_value, filters_value, filters_l_value, filters_r_value,
+        profiles_data = [
+            (
+                getattr(profile, "name", ""),
+                getattr(profile, "channel_mode", ChannelMode.STEREO),
+                getattr(profile, "filters", None),
+                getattr(profile, "filters_l", None),
+                getattr(profile, "filters_r", None),
+            )
+            for profile in profiles
+        ]
+        self._secondary_workflows.copy_local_profiles_to_devices(
+            profiles_data, preset_type, selected_devices, target_source,
         )
 
     @Slot()
@@ -4052,21 +4059,6 @@ class MainWindow(QMainWindow):
         else:
             self._status_banner.show_error(
                 f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
-            )
-
-    @Slot(str, int, int, int)
-    def _on_copy_local_profile_complete(
-        self, profile_name: str, n_devices: int, succeeded: int, failed: int
-    ) -> None:
-        """Handle SecondaryWorkflowManager.copy_local_profile_complete —
-        show result in StatusBanner."""
-        if failed == 0:
-            self._status_banner.show_success(
-                f"'{profile_name}' copied to {n_devices} device(s)"
-            )
-        else:
-            self._status_banner.show_error(
-                f"Copied to {succeeded} of {n_devices} device(s) ({failed} failed)"
             )
 
     # ------------------------------------------------------------------

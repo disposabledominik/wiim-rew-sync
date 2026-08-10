@@ -57,14 +57,18 @@ with variations of an existing configuration.
 
 ### Copy to Another Device
 
-Select a preset and click "Copy to Another Device" to push it straight to
-one or more other WiiM devices on your network, without going through the
-wizard. You pick the target devices from a list.
+Select one or more presets (ctrl+click, shift+click, or select all) and
+click "Copy to Another Device" to push them straight to one or more other
+WiiM devices on your network, without going through the wizard. Since a
+locally saved preset doesn't record whether it's a PEQ preset or a RoomFit
+profile, you'll be asked once (applied to the whole selection) whether to
+copy it as PEQ or RoomFit, then you pick the target devices from a list.
 
 ### Delete
 
-Select a preset and click "Delete" in the toolbar to permanently remove it.
-This action cannot be undone.
+Select one or more presets (ctrl+click, shift+click, or select all) and
+click "Delete" in the toolbar to permanently remove them. This action cannot
+be undone.
 
 ### Search and Filter
 

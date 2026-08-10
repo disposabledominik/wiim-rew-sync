@@ -13,7 +13,7 @@ Note: "Copy to another source" (Req 20) and "Apply to multiple devices"
 code (code quality audit, 2026-06-28) — see docs/backlog.md if those
 features are revisited. "Copy preset to another device" (Req 15.11, 17.3)
 lives here in full, including the batch dispatchers
-(copy_presets_to_devices / copy_local_profile_to_devices — docs/backlog.md
+(copy_presets_to_devices / copy_local_profiles_to_devices — docs/backlog.md
 item 2 Phase D).
 
 Requirements referenced: 17.2, 18.1, 18.2, 18.3, 18.4, 18.6.
@@ -94,12 +94,10 @@ class SecondaryWorkflowManager(QObject):
             couldn't be fetched (e.g. device doesn't support the command).
         copy_batch_complete(int, int, int, int): n_items, n_devices,
             succeeded, failed counts from a multi-preset/multi-device copy.
-        copy_local_profile_complete(str, int, int, int): profile_name,
-            n_devices, succeeded, failed counts from copying a local
-            profile to one or more devices. A separate signal from
-            copy_batch_complete rather than a shared one -- the two
-            summaries need genuinely different data shapes (an item count
-            vs. a single profile name).
+            Shared by copy_presets_to_devices (device-to-device) and
+            copy_local_profiles_to_devices (local-Profile-to-device) --
+            both report the same (item count, device count, succeeded,
+            failed) shape, one or more items at a time.
     """
 
     # --- Signals ---
@@ -109,7 +107,6 @@ class SecondaryWorkflowManager(QObject):
     source_slots_ready = Signal(list)
     source_slots_error = Signal(str)
     copy_batch_complete = Signal(int, int, int, int)
-    copy_local_profile_complete = Signal(str, int, int, int)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -151,7 +148,7 @@ class SecondaryWorkflowManager(QObject):
                 logs it, maps it to a user-friendly message, and emits
                 operation_error. Used by the fire-and-forget dispatchers
                 below (undo_roomfit, undo_multi_source, copy_presets_to_devices,
-                copy_local_profile_to_devices) so an exception that escapes
+                copy_local_profiles_to_devices) so an exception that escapes
                 their coroutine reaches a status banner instead of being
                 silently dropped by run_async's un-awaited Future.
             safe_write_factory: Factory creating a SafeWrite from a WiiMAdapter.
@@ -583,8 +580,9 @@ class SecondaryWorkflowManager(QObject):
         device) write. That's intentionally not reproduced here -- with
         this manager, per-item feedback is the existing progress_update
         message ("Copying '{preset}' to {device}...") emitted by the
-        caller, and the final result is the batch-level summary
-        (copy_batch_complete/copy_local_profile_complete). A banner per
+        caller, and the final result is the batch-level copy_batch_complete
+        summary (shared by both copy_presets_to_devices and
+        copy_local_profiles_to_devices). A banner per
         item would flicker/spam for a multi-preset, multi-device batch;
         consolidating into one summary is a deliberate UX choice, not a
         dropped feature (branch-quality review, 2026-07-17).
@@ -664,8 +662,8 @@ class SecondaryWorkflowManager(QObject):
         """Write each already-read preset to every target device.
 
         Shared by `_do_copy_presets_batch_multi` (reads come from the live
-        source device) and `_do_copy_local_profile_to_devices` (reads come
-        from a locally saved Profile, no source device involved) -- both
+        source device) and `_do_copy_local_profiles_to_devices` (reads come
+        from locally saved Profiles, no source device involved) -- both
         write via the identical `_write_preset_to_adapter` primitive per
         (read, device) pair, so that loop/exception-handling/progress-emit
         logic lives exactly once.
@@ -810,94 +808,112 @@ class SecondaryWorkflowManager(QObject):
             len(items) - skipped, len(target_devices), succeeded, failed
         )
 
-    @Slot(str, str, list, str, object, object, object, object)
-    def copy_local_profile_to_devices(
+    @Slot(list, str, list, str)
+    def copy_local_profiles_to_devices(
         self,
-        profile_name: str,
+        profiles: list[
+            tuple[
+                str,
+                ChannelMode,
+                list[CanonicalFilter] | None,
+                list[CanonicalFilter] | None,
+                list[CanonicalFilter] | None,
+            ]
+        ],
         preset_type: str,
         target_devices: list[DeviceInfo],
         target_source: str,
-        channel_mode: ChannelMode,
-        filters: list[CanonicalFilter] | None,
-        filters_l: list[CanonicalFilter] | None,
-        filters_r: list[CanonicalFilter] | None,
     ) -> None:
-        """Copy a locally saved Profile's raw filter fields to devices.
+        """Copy one or more locally saved Profiles' raw filter fields to devices.
 
-        Takes the Profile's fields as-is (not a pre-built PEQSettings) so the
+        Takes each Profile's fields as-is (not a pre-built PEQSettings) so the
         build_peq_settings()/extract_filters() normalization -- and its
         ValueError case for an incomplete L/R split -- happens here rather
         than in MainWindow, matching how `_do_copy_presets_batch_multi`
         handles a live-device read failure: reported through
-        copy_local_profile_complete, not a synchronous caller-side try/except.
+        copy_batch_complete, not a synchronous caller-side try/except.
         """
         self._dispatch(
-            "copy_local_profile_to_devices",
-            self._do_copy_local_profile_to_devices(
-                profile_name, preset_type, target_devices, target_source,
-                channel_mode, filters, filters_l, filters_r,
+            "copy_local_profiles_to_devices",
+            self._do_copy_local_profiles_to_devices(
+                profiles, preset_type, target_devices, target_source,
             ),
         )
 
-    async def _do_copy_local_profile_to_devices(
+    async def _do_copy_local_profiles_to_devices(
         self,
-        profile_name: str,
+        profiles: list[
+            tuple[
+                str,
+                ChannelMode,
+                list[CanonicalFilter] | None,
+                list[CanonicalFilter] | None,
+                list[CanonicalFilter] | None,
+            ]
+        ],
         preset_type: str,
         target_devices: list[DeviceInfo],
         target_source: str,
-        channel_mode: ChannelMode,
-        filters: list[CanonicalFilter] | None,
-        filters_l: list[CanonicalFilter] | None,
-        filters_r: list[CanonicalFilter] | None,
     ) -> None:
-        """Copy a locally saved profile's filters to devices.
+        """Copy one or more locally saved profiles' filters to devices.
 
         Unlike `_do_copy_presets_batch_multi`, there's no source device to
-        read from -- the filters already came from a local Profile -- so
-        this builds/validates the PEQSettings from the Profile's raw fields
-        (the "read" step's equivalent here) before the single-entry `reads`
-        list around the same shared `_write_preset_copies_to_devices` write
-        primitive. No widget access here (moved out of MainWindow,
-        docs/backlog.md item 2 Phase D) -- results reported via
-        copy_local_profile_complete.
+        read from -- the filters already came from local Profiles -- so
+        this builds/validates a PEQSettings from each Profile's raw fields
+        (the "read" step's equivalent here, one per profile) before the
+        `reads` list around the same shared `_write_preset_copies_to_devices`
+        write primitive -- same batching shape as
+        `_do_copy_presets_batch_multi`'s per-item read-failure handling. No
+        widget access here (moved out of MainWindow, docs/backlog.md item 2
+        Phase D) -- results reported via copy_batch_complete.
 
         Args:
-            profile_name: Name of the local profile being copied.
-            preset_type: "PEQ" or "RoomFit", chosen via PresetTypeDialog.
+            profiles: List of (name, channel_mode, filters, filters_l,
+                filters_r) tuples, one per selected local Profile.
+            preset_type: "PEQ" or "RoomFit", chosen once via
+                PresetTypeDialog and applied to every profile in the batch.
             target_devices: List of discovered device objects to copy to.
             target_source: Target source name on each remote device.
-            channel_mode: Channel mode of the local Profile.
-            filters: Stereo filters from the local Profile, if any.
-            filters_l: Left-channel filters from the local Profile, if any.
-            filters_r: Right-channel filters from the local Profile, if any.
         """
         assert self._bridge is not None
-        try:
-            peq_settings = build_peq_settings(
-                target_source, filters or [], channel_mode,
-                filters_l=filters_l, filters_r=filters_r,
-            )
-        except ValueError as exc:
-            logger.warning(
-                "Build PEQSettings for local profile copy '%s' failed: %s",
-                profile_name, exc,
-            )
-            self._bridge.progress_update.emit(f"Copy failed: {exc}")
-            self.copy_local_profile_complete.emit(
-                profile_name, len(target_devices), 0, len(target_devices)
-            )
-            return
-        resolved_filters, resolved_channel_mode = extract_filters(peq_settings)
 
-        reads = [
-            (profile_name, preset_type, resolved_filters, resolved_channel_mode, peq_settings)
-        ]
-        succeeded, failed = await self._write_preset_copies_to_devices(
-            reads, target_devices, target_source
-        )
+        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
+        build_failed = 0
 
-        self.copy_local_profile_complete.emit(
-            profile_name, len(target_devices), succeeded, failed
+        for profile_name, channel_mode, filters, filters_l, filters_r in profiles:
+            try:
+                peq_settings = build_peq_settings(
+                    target_source, filters or [], channel_mode,
+                    filters_l=filters_l, filters_r=filters_r,
+                )
+            except ValueError as exc:
+                logger.warning(
+                    "Build PEQSettings for local profile copy '%s' failed: %s",
+                    profile_name, exc,
+                )
+                self._bridge.progress_update.emit(
+                    f"Copy failed for '{profile_name}': {exc}"
+                )
+                build_failed += len(target_devices)
+                continue
+            resolved_filters, resolved_channel_mode = extract_filters(peq_settings)
+            reads.append(
+                (profile_name, preset_type, resolved_filters, resolved_channel_mode, peq_settings)
+            )
+
+        # Skip connecting to target devices entirely when every profile in
+        # the batch failed to build -- there's nothing to write, and
+        # _write_preset_copies_to_devices would otherwise still probe/
+        # connect to each target device for no reason.
+        if reads:
+            succeeded, write_failed = await self._write_preset_copies_to_devices(
+                reads, target_devices, target_source
+            )
+        else:
+            succeeded, write_failed = 0, 0
+
+        self.copy_batch_complete.emit(
+            len(profiles), len(target_devices), succeeded, build_failed + write_failed
         )
 
     # ------------------------------------------------------------------

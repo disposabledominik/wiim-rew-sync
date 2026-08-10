@@ -2086,13 +2086,13 @@ class TestPresets:
     def test_local_preset_copy_dispatches_raw_profile_fields_to_manager(
         self, window
     ) -> None:
-        """_on_local_preset_copy_to_device_requested passes the Profile's raw
+        """_on_local_preset_copy_to_device_requested passes each Profile's raw
         channel_mode/filters/filters_l/filters_r straight through to
-        SecondaryWorkflowManager.copy_local_profile_to_devices rather than
+        SecondaryWorkflowManager.copy_local_profiles_to_devices rather than
         building/validating a PEQSettings itself. Validating an incomplete
         L/R split (build_peq_settings()'s ValueError, require_lr_filters,
         ca14e26) is the manager's job now -- covered directly against
-        _do_copy_local_profile_to_devices in
+        _do_copy_local_profiles_to_devices in
         test_gui_integration_secondary.py, not here -- so MainWindow always
         dispatches regardless of whether the split is valid (branch-quality
         review, 2026-08-02: this used to validate synchronously in the Qt
@@ -2119,19 +2119,70 @@ class TestPresets:
                 return_value=[MagicMock(ip="192.168.1.200", name="Other Device")],
             ),
             patch.object(
-                window._secondary_workflows, "copy_local_profile_to_devices"
+                window._secondary_workflows, "copy_local_profiles_to_devices"
             ) as mock_copy,
             patch.object(window._status_banner, "show_error") as mock_error,
         ):
-            window._on_local_preset_copy_to_device_requested(profile)
+            window._on_local_preset_copy_to_device_requested([profile])
 
         mock_copy.assert_called_once()
         args = mock_copy.call_args[0]
-        assert args[4] == ChannelMode.LR  # channel_mode
-        assert args[5] is None  # filters
-        assert args[6] == []  # filters_l
-        assert args[7] == [_make_filter(100)]  # filters_r
+        profiles_data = args[0]
+        assert profiles_data == [
+            ("Broken LR Profile", ChannelMode.LR, None, [], [_make_filter(100)])
+        ]
         mock_error.assert_not_called()
+
+    def test_local_preset_copy_batches_multiple_selected_profiles(
+        self, window
+    ) -> None:
+        """Multi-select Copy to Another Device in My Saved Presets must send
+        every selected profile through in a single batch call, not just the
+        first -- regression coverage for the "Copy to Another Device greyed
+        out under multi-select" report (the toolbar/context-menu now enable
+        Copy for any selection of one or more presets, matching Presets on
+        Device)."""
+        _setup_device(window)
+        window._primary_workflows._discovered_devices = [
+            MagicMock(ip="192.168.1.200", name="Other Device")
+        ]
+        profile_a = MagicMock(
+            name="Profile A",
+            channel_mode=ChannelMode.STEREO,
+            filters=[_make_filter(100)],
+            filters_l=None,
+            filters_r=None,
+        )
+        profile_a.name = "Profile A"
+        profile_b = MagicMock(
+            name="Profile B",
+            channel_mode=ChannelMode.STEREO,
+            filters=[_make_filter(200)],
+            filters_l=None,
+            filters_r=None,
+        )
+        profile_b.name = "Profile B"
+
+        with (
+            patch(
+                "src.gui.main_window.PresetTypeDialog.get_type", return_value="PEQ"
+            ),
+            patch(
+                "src.gui.main_window.DevicePickerDialog.get_devices",
+                return_value=[MagicMock(ip="192.168.1.200", name="Other Device")],
+            ),
+            patch.object(
+                window._secondary_workflows, "copy_local_profiles_to_devices"
+            ) as mock_copy,
+        ):
+            window._on_local_preset_copy_to_device_requested([profile_a, profile_b])
+
+        mock_copy.assert_called_once()
+        profiles_data = mock_copy.call_args[0][0]
+        assert profiles_data == [
+            ("Profile A", ChannelMode.STEREO, [_make_filter(100)], None, None),
+            ("Profile B", ChannelMode.STEREO, [_make_filter(200)], None, None),
+        ]
 
     # --- #191: Copy-to-Device RoomFit target-activation warning ---
 
