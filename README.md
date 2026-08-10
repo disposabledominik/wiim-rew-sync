@@ -10,6 +10,8 @@ No cloud services, no telemetry, no accounts — everything runs locally.
 
 Open-source software licensed under the MIT License.
 
+![WiiM ↔ REW PEQ Sync Tool](annotated-screenshots.png)
+
 ## Disclaimer
 
 This is an independent open-source project.
