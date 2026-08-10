@@ -278,17 +278,14 @@ def validate_filters_for_device(
     # OFF/UNKNOWN aren't "filter types" needing device support, so they're
     # left alone regardless of what's listed.
     if supported_filter_types:
-        allowed = set(supported_filter_types)
-        unsupported_types: set[str] = set()
+        unsupported_types = find_unsupported_filter_types(
+            [row for row in rows if isinstance(row, CanonicalFilter)],
+            supported_filter_types,
+        )
         type_filtered_rows: list[FilterRow] = []
         kept_filters: list[CanonicalFilter] = []
         for row in rows:
-            if (
-                isinstance(row, CanonicalFilter)
-                and row.type in _DEVICE_FILTER_TYPES
-                and row.type not in allowed
-            ):
-                unsupported_types.add(row.type)
+            if isinstance(row, CanonicalFilter) and row.type in unsupported_types:
                 type_filtered_rows.append(
                     SkippedBand(
                         original_type=row.type,
