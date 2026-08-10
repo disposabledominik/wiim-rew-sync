@@ -44,35 +44,25 @@ _LP_Q_RE = re.compile(
     r"^LP\s+Q\s+Fc\s+([\d.]+)\s+Hz\s+Q\s+([\d.]+)\s*$"
 )
 
-# LS Q Fc <freq> Hz Gain <gain> dB Q <q>
-_LS_Q_RE = re.compile(
-    r"^LS\s+Q\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
-)
-
-# HS Q Fc <freq> Hz Gain <gain> dB Q <q>
-_HS_Q_RE = re.compile(
-    r"^HS\s+Q\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
-)
-
-# ASSUMPTION: LSC/HSC (AutoEQ / Equalizer APO's Q-parametrized shelf tokens)
-# are treated as identical to REW's own "LS Q"/"HS Q" -- same canonical
-# LS/HS type, Gain and Q taken literally. Supported by REW's/Equalizer
-# APO's own documentation and AutoEQ's own bug report (GitHub issue #586:
-# a user's measured curve only matched AutoEQ's documented target after
-# relabeling identical Fc/Gain/Q filters from LS/HS to LSC/HSC), not by
-# hardware testing against a real WiiM device's shelf filter. See
+# LS Q Fc <freq> Hz Gain <gain> dB Q <q> — also matches "LSC", AutoEQ /
+# Equalizer APO's own token for the same fully Q-specified low-shelf variant.
+#
+# ASSUMPTION: LSC (AutoEQ / Equalizer APO's Q-parametrized shelf token) is
+# treated as identical to REW's own "LS Q" -- same canonical LS type, Gain
+# and Q taken literally. Supported by REW's/Equalizer APO's own
+# documentation and AutoEQ's own bug report (GitHub issue #586: a user's
+# measured curve only matched AutoEQ's documented target after relabeling
+# identical Fc/Gain/Q filters from LS/HS to LSC/HSC), not by hardware
+# testing against a real WiiM device's shelf filter. See
 # docs/corrections.md, 2026-08-10.
-
-# LSC Fc <freq> Hz Gain <gain> dB Q <q> — AutoEQ / Equalizer APO low-shelf
-# token (fully Q-specified, equivalent to REW's "LS Q" variant)
-_LSC_RE = re.compile(
-    r"^LSC\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
+_LS_Q_RE = re.compile(
+    r"^(?:LS\s+Q|LSC)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
 )
 
-# HSC Fc <freq> Hz Gain <gain> dB Q <q> — AutoEQ / Equalizer APO high-shelf
-# token (fully Q-specified, equivalent to REW's "HS Q" variant)
-_HSC_RE = re.compile(
-    r"^HSC\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
+# HS Q Fc <freq> Hz Gain <gain> dB Q <q> — also matches "HSC" (see LS Q's
+# ASSUMPTION above; applies identically to the high-shelf variant).
+_HS_Q_RE = re.compile(
+    r"^(?:HS\s+Q|HSC)\s+Fc\s+([\d.]+)\s+Hz\s+Gain\s+([-+\d.]+)\s+dB\s+Q\s+([\d.]+)\s*$"
 )
 
 # HP Fc <freq> Hz (Butterworth, no Q specified)
@@ -316,7 +306,7 @@ def _parse_filter_body(
             None,
         )
 
-    # --- LS Q (Low-shelf with explicit Q) ---
+    # --- LS Q / LSC (Low-shelf with explicit Q) ---
     m = _LS_Q_RE.match(body)
     if m:
         freq = float(m.group(1))
@@ -329,34 +319,8 @@ def _parse_filter_body(
             None,
         )
 
-    # --- HS Q (High-shelf with explicit Q) ---
+    # --- HS Q / HSC (High-shelf with explicit Q) ---
     m = _HS_Q_RE.match(body)
-    if m:
-        freq = float(m.group(1))
-        gain = float(m.group(2))
-        q = float(m.group(3))
-        _validate_frequency(freq, line_number=line_number)
-        return (
-            CanonicalFilter(type="HS", frequency_hz=freq, gain_db=gain, q=q),
-            None,
-            None,
-        )
-
-    # --- LSC (AutoEQ / Equalizer APO low-shelf, explicit Q) ---
-    m = _LSC_RE.match(body)
-    if m:
-        freq = float(m.group(1))
-        gain = float(m.group(2))
-        q = float(m.group(3))
-        _validate_frequency(freq, line_number=line_number)
-        return (
-            CanonicalFilter(type="LS", frequency_hz=freq, gain_db=gain, q=q),
-            None,
-            None,
-        )
-
-    # --- HSC (AutoEQ / Equalizer APO high-shelf, explicit Q) ---
-    m = _HSC_RE.match(body)
     if m:
         freq = float(m.group(1))
         gain = float(m.group(2))

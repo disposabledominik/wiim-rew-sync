@@ -92,12 +92,16 @@ class SecondaryWorkflowManager(QObject):
             device's EQGetSourceModes overview (diagnostic-only).
         source_slots_error(str): Error message when the slot overview
             couldn't be fetched (e.g. device doesn't support the command).
-        copy_batch_complete(int, int, int, int): n_items, n_devices,
-            succeeded, failed counts from a multi-preset/multi-device copy.
-            Shared by copy_presets_to_devices (device-to-device) and
-            copy_local_profiles_to_devices (local-Profile-to-device) --
-            both report the same (item count, device count, succeeded,
-            failed) shape, one or more items at a time.
+        copy_batch_complete(int, int, int, int, str): n_items, n_devices,
+            succeeded, failed counts, and a singular item-kind label
+            ("preset"/"profile") from a multi-item/multi-device copy.
+            Shared by copy_presets_to_devices (device-to-device, label
+            "preset") and copy_local_profiles_to_devices (local-Profile-to-
+            device, label "profile") -- both report the same (item count,
+            device count, succeeded, failed) shape, one or more items at a
+            time; the label lets _on_copy_batch_complete's summary say
+            "preset(s)"/"profile(s)" accurately instead of a name borrowed
+            from whichever caller was implemented first.
     """
 
     # --- Signals ---
@@ -106,7 +110,7 @@ class SecondaryWorkflowManager(QObject):
     undo_multi_source_complete = Signal(int, int, str)
     source_slots_ready = Signal(list)
     source_slots_error = Signal(str)
-    copy_batch_complete = Signal(int, int, int, int)
+    copy_batch_complete = Signal(int, int, int, int, str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -805,7 +809,7 @@ class SecondaryWorkflowManager(QObject):
         failed = read_failed + write_failed
 
         self.copy_batch_complete.emit(
-            len(items) - skipped, len(target_devices), succeeded, failed
+            len(items) - skipped, len(target_devices), succeeded, failed, "preset"
         )
 
     @Slot(list, str, list, str)
@@ -913,7 +917,7 @@ class SecondaryWorkflowManager(QObject):
             succeeded, write_failed = 0, 0
 
         self.copy_batch_complete.emit(
-            len(profiles), len(target_devices), succeeded, build_failed + write_failed
+            len(profiles), len(target_devices), succeeded, build_failed + write_failed, "profile"
         )
 
     # ------------------------------------------------------------------

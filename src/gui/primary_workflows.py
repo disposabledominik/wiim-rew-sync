@@ -72,7 +72,10 @@ class EmptyPresetFiltersError(Exception):
 
 class _AbandonGuard:
     """Tracks whether a cancellable ``_do_*`` coroutine reached its own
-    success emit, and fires *on_abandoned* in a ``finally`` if not.
+    success emit, and fires *on_abandoned* in a ``finally`` if not --
+    unless a genuine (non-cancellation) exception is propagating, since
+    that's already reported through ``_bridge_wrapper``'s ``operation_error``
+    emit.
 
     Every cancellable workflow that leaves some UI element in a "waiting"
     state (a pulsing device card, a scanning spinner, an embedded picker
@@ -82,6 +85,17 @@ class _AbandonGuard:
     caught by ``_bridge_wrapper``'s ``except Exception`` (``CancelledError``
     is a ``BaseException``, not caught there). Without an explicit
     abandonment signal, nothing would ever reset that UI element.
+
+    A genuine ``Exception`` is deliberately excluded from firing
+    *on_abandoned*: it's about to be turned into an ``operation_error``
+    emit by ``_bridge_wrapper``, which already carries the real failure
+    message. Firing *on_abandoned* too let its handler's "cancelled" /
+    empty-state framing run first and clobber that real message (e.g.
+    the embedded REW measurement picker showing "Measurement fetch
+    cancelled." for what was actually a connection failure, because the
+    abandonment handler cleared the picker reference the error handler
+    needed). Any UI cleanup that must happen on error too (not just on
+    cancellation) belongs in the operation_error handler itself, not here.
 
     Usage::
 
@@ -99,9 +113,17 @@ class _AbandonGuard:
     def __enter__(self) -> _AbandonGuard:
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
-        if not self.succeeded:
-            self._on_abandoned()
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        if self.succeeded:
+            return
+        if exc_type is not None and issubclass(exc_type, Exception):
+            return
+        self._on_abandoned()
 
 
 def _extract_profile_names(profiles: list[dict[str, Any]]) -> list[str]:
@@ -387,10 +409,11 @@ class PrimaryWorkflowManager(QObject):
         Uses progressive discovery — devices appear in the UI as soon as
         they're found rather than waiting for the full scan to complete.
 
-        discover() is dispatched as cancellable, but a cancelled/superseded
-        scan still needs to clear ConnectPage's scanning indicator -- see
-        _AbandonGuard's docstring for why a plain `finally` (or an
-        `except Exception`) isn't enough on its own.
+        discover() is dispatched as cancellable, but a cancelled scan still
+        needs to clear ConnectPage's scanning indicator -- see
+        _AbandonGuard's docstring for why a plain `finally` isn't enough on
+        its own. A genuine discovery error is handled separately, by
+        MainWindow._on_operation_error, not by this guard.
         """
         assert self._bridge is not None
         assert self._discovery_module is not None
@@ -466,9 +489,11 @@ class PrimaryWorkflowManager(QObject):
         Escape/Cancel while the probe is cancellable -- ConnectPage's card
         for *device_ip* was already left pulsing "connecting" by whoever
         dispatched this probe, with nothing else to revert it. _AbandonGuard
-        emits `probe_abandoned` for exactly that device whenever this
-        coroutine exits without reaching `capabilities_ready`, so the card
-        for a superseded/cancelled probe doesn't pulse forever.
+        emits `probe_abandoned` for exactly that device when this coroutine
+        exits stale/cancelled without reaching `capabilities_ready`, so the
+        card for a superseded/cancelled probe doesn't pulse forever. A
+        genuine probe error is handled separately, by
+        MainWindow._on_operation_error, not by this guard.
 
         Args:
             prober: The CapabilityProber for the device this probe targets.
@@ -954,10 +979,13 @@ class PrimaryWorkflowManager(QObject):
 
         list_rew_measurements() is dispatched as cancellable, but nothing
         else clears the embedded RewPullView's "Connecting..." state for a
-        cancelled fetch -- _AbandonGuard emits `rew_list_abandoned` whenever
-        this coroutine exits without reaching one of its two terminal emits
-        below, so the picker doesn't stay stuck showing "Connecting..."
-        forever after Escape/Cancel.
+        cancelled fetch -- _AbandonGuard emits `rew_list_abandoned` when
+        this coroutine is cancelled without reaching one of its two terminal
+        emits below, so the picker doesn't stay stuck showing
+        "Connecting..." forever after Escape/Cancel. A genuine fetch error
+        is handled separately, by MainWindow._on_operation_error (which
+        shows the real error in the still-active RewPullView), not by this
+        guard.
         """
         bridge = self._bridge
         assert bridge is not None

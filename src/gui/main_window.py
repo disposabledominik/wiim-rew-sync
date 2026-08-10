@@ -2128,14 +2128,18 @@ class MainWindow(QMainWindow):
         if self._active_rew_pull_view is not None:
             self._show_rew_pull_message(message, icon=ICON_NO_CONNECTION)
 
-        # A failed capability probe leaves the clicked card pulsing forever
-        # with no other reset path -- only relevant while Connect is still
-        # the active step (mirrors _on_capabilities_ready's own guard); a
-        # no-op otherwise since reset_connecting() only touches a card
-        # actually showing "connecting". A probe that ends *without* an
-        # error (cancelled, or superseded by a newer selection) doesn't
-        # reach this handler at all -- see _on_probe_abandoned below.
+        # A failed discovery scan or capability probe leaves the scanning
+        # indicator/clicked card stuck forever with no other reset path --
+        # only relevant while Connect is still the active step (mirrors
+        # _on_capabilities_ready's own guard); a no-op otherwise, since both
+        # calls only touch state actually showing "scanning"/"connecting".
+        # _AbandonGuard deliberately skips firing discovery_abandoned/
+        # probe_abandoned for a genuine error (as opposed to cancellation or
+        # a stale-generation discard) so their "cancelled"/empty-state
+        # framing can't run ahead of and clobber this handler's real error
+        # message -- this is where that cleanup happens instead.
         if self._wizard_controller.current_step == WizardStep.CONNECT:
+            self._connect_page.cancel_scanning()
             self._connect_page.reset_connecting()
 
     @Slot(str)
@@ -4045,16 +4049,21 @@ class MainWindow(QMainWindow):
             self._push_page.set_undo_failure(message)
             self._status_banner.show_error(message)
 
-    @Slot(int, int, int, int)
+    @Slot(int, int, int, int, str)
     def _on_copy_batch_complete(
-        self, n_items: int, n_devices: int, succeeded: int, failed: int
+        self, n_items: int, n_devices: int, succeeded: int, failed: int, item_label: str
     ) -> None:
         """Handle SecondaryWorkflowManager.copy_batch_complete — show result
-        in StatusBanner (smoke #73, #78)."""
+        in StatusBanner (smoke #73, #78).
+
+        item_label ("preset"/"profile") lets the success message name what
+        was actually copied instead of always saying "preset(s)", which was
+        wrong for a local-Profile-to-device copy (smoke #269 follow-up).
+        """
         total_ops = n_items * n_devices
         if failed == 0:
             self._status_banner.show_success(
-                f"{n_items} preset(s) copied to {n_devices} device(s)"
+                f"{n_items} {item_label}(s) copied to {n_devices} device(s)"
             )
         else:
             self._status_banner.show_error(

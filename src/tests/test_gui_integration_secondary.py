@@ -507,9 +507,11 @@ class TestCopyLocalProfileToDevicesValidation:
         manager = SecondaryWorkflowManager()
         manager._bridge = MagicMock()
 
-        complete_signals: list[tuple[int, int, int, int]] = []
+        complete_signals: list[tuple[int, int, int, int, str]] = []
         manager.copy_batch_complete.connect(
-            lambda n_items, n, ok, fail: complete_signals.append((n_items, n, ok, fail))
+            lambda n_items, n, ok, fail, label: complete_signals.append(
+                (n_items, n, ok, fail, label)
+            )
         )
 
         target_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
@@ -529,7 +531,7 @@ class TestCopyLocalProfileToDevicesValidation:
             "wifi",
         )
 
-        assert complete_signals == [(1, 1, 0, 1)]
+        assert complete_signals == [(1, 1, 0, 1, "profile")]
         manager._bridge.progress_update.emit.assert_called_once()
         assert "Copy failed" in manager._bridge.progress_update.emit.call_args[0][0]
 
@@ -549,9 +551,11 @@ class TestCopyLocalProfileToDevicesValidation:
 
         manager._write_preset_copies_to_devices = _fake_write
 
-        complete_signals: list[tuple[int, int, int, int]] = []
+        complete_signals: list[tuple[int, int, int, int, str]] = []
         manager.copy_batch_complete.connect(
-            lambda n_items, n, ok, fail: complete_signals.append((n_items, n, ok, fail))
+            lambda n_items, n, ok, fail, label: complete_signals.append(
+                (n_items, n, ok, fail, label)
+            )
         )
 
         target_devices = [MagicMock(ip="192.168.1.200", name="Other Device")]
@@ -567,7 +571,7 @@ class TestCopyLocalProfileToDevicesValidation:
         )
 
         assert len(write_calls) == 1
-        assert complete_signals == [(1, 1, 1, 0)]
+        assert complete_signals == [(1, 1, 1, 0, "profile")]
 
     @pytest.mark.asyncio
     async def test_batch_of_multiple_profiles_writes_all_and_aggregates_counts(
@@ -590,9 +594,11 @@ class TestCopyLocalProfileToDevicesValidation:
 
         manager._write_preset_copies_to_devices = _fake_write
 
-        complete_signals: list[tuple[int, int, int, int]] = []
+        complete_signals: list[tuple[int, int, int, int, str]] = []
         manager.copy_batch_complete.connect(
-            lambda n_items, n, ok, fail: complete_signals.append((n_items, n, ok, fail))
+            lambda n_items, n, ok, fail, label: complete_signals.append(
+                (n_items, n, ok, fail, label)
+            )
         )
 
         target_devices = [
@@ -618,4 +624,4 @@ class TestCopyLocalProfileToDevicesValidation:
         assert len(write_calls) == 1
         reads_arg = write_calls[0][0]
         assert [r[0] for r in reads_arg] == ["Profile One", "Profile Two"]
-        assert complete_signals == [(3, 2, 4, 2)]
+        assert complete_signals == [(3, 2, 4, 2, "profile")]

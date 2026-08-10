@@ -102,6 +102,26 @@ class TestDiscovery:
         mock_bridge.discovery_complete.emit.assert_not_called()
         mock_bridge.discovery_abandoned.emit.assert_called_once_with()
 
+    @pytest.mark.asyncio
+    async def test_genuine_error_does_not_report_itself_abandoned(self) -> None:
+        """A real scan failure must NOT also emit discovery_abandoned --
+        that's about to be reported through operation_error instead, and
+        MainWindow._on_discovery_abandoned's cancel_scanning() call would
+        otherwise show a misleading "no devices found" empty state instead
+        of the real error."""
+        manager = PrimaryWorkflowManager()
+        manager._discovery_module = MagicMock(
+            discover=AsyncMock(side_effect=OSError("network unreachable"))
+        )
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+
+        with pytest.raises(OSError):
+            await manager._do_discovery()
+
+        mock_bridge.discovery_complete.emit.assert_not_called()
+        mock_bridge.discovery_abandoned.emit.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Capability probing
@@ -166,6 +186,24 @@ class TestProbe:
 
         mock_bridge.capabilities_ready.emit.assert_not_called()
         mock_bridge.probe_abandoned.emit.assert_called_once_with("192.168.1.100")
+
+    @pytest.mark.asyncio
+    async def test_genuine_error_does_not_report_itself_abandoned(self) -> None:
+        """A real probe failure must NOT also emit probe_abandoned -- that's
+        about to be reported through operation_error instead, which already
+        resets the connecting card via ConnectPage.reset_connecting()."""
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        generation = manager.bump_probe_generation()
+
+        prober = MagicMock(probe=AsyncMock(side_effect=ConnectionError("refused")))
+
+        with pytest.raises(ConnectionError):
+            await manager._do_probe(prober, generation, "192.168.1.100")
+
+        mock_bridge.capabilities_ready.emit.assert_not_called()
+        mock_bridge.probe_abandoned.emit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +588,27 @@ class TestRewListMeasurements:
         mock_bridge.rew_measurements_ready.emit.assert_not_called()
         mock_bridge.progress_update.emit.assert_not_called()
         mock_bridge.rew_list_abandoned.emit.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_genuine_error_does_not_report_itself_abandoned(self) -> None:
+        """A real fetch failure (REW unreachable, etc.) must NOT also emit
+        rew_list_abandoned -- that's about to be reported through
+        operation_error instead, and MainWindow._on_rew_list_abandoned's
+        "Measurement fetch cancelled." framing would otherwise clear the
+        embedded RewPullView reference operation_error's own handler needs
+        to show the real error there."""
+        manager = PrimaryWorkflowManager()
+        mock_bridge = MagicMock()
+        manager._bridge = mock_bridge
+        manager._rew_client = MagicMock(
+            list_measurements=AsyncMock(side_effect=ConnectionError("refused"))
+        )
+
+        with pytest.raises(ConnectionError):
+            await manager._do_rew_list_measurements()
+
+        mock_bridge.rew_measurements_ready.emit.assert_not_called()
+        mock_bridge.rew_list_abandoned.emit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

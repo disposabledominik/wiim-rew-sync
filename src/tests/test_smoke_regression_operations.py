@@ -4140,7 +4140,7 @@ class TestSettingsUIState:
             lambda client, caps: MagicMock()
         )
 
-        emitted: list[tuple[int, int, int, int]] = []
+        emitted: list[tuple[int, int, int, int, str]] = []
         window._secondary_workflows.copy_batch_complete.connect(
             lambda *args: emitted.append(args)
         )
@@ -4166,7 +4166,7 @@ class TestSettingsUIState:
         # Only the real item was ever read -- the empty-name item was
         # skipped, not attempted (and therefore not a failure either).
         mock_read.assert_called_once()
-        assert emitted == [(1, 1, 1, 0)]
+        assert emitted == [(1, 1, 1, 0, "preset")]
 
     def test_copy_batch_connects_once_per_device_not_per_preset(self, window) -> None:
         """Regression test (branch-quality review, 2026-07-17):
@@ -4265,10 +4265,10 @@ class TestSettingsUIState:
             lambda client, caps: MagicMock()
         )
 
-        captured: list[tuple[int, int, int, int]] = []
+        captured: list[tuple[int, int, int, int, str]] = []
         window._secondary_workflows.copy_batch_complete.connect(
-            lambda n_items, n_devices, succeeded, failed: captured.append(
-                (n_items, n_devices, succeeded, failed)
+            lambda n_items, n_devices, succeeded, failed, label: captured.append(
+                (n_items, n_devices, succeeded, failed, label)
             )
         )
 
@@ -4291,7 +4291,7 @@ class TestSettingsUIState:
             )
 
         assert mock_write.call_count == 2  # only device_ok's 2 presets were attempted
-        assert captured == [(2, 2, 2, 2)]  # n_items, n_devices, succeeded, failed
+        assert captured == [(2, 2, 2, 2, "preset")]  # n_items, n_devices, succeeded, failed, label
 
     # --- Issue #79: Copy L/R RoomFit preserves channel_mode ---
 
