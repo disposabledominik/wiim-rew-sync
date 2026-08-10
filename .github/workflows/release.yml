@@ -47,13 +47,13 @@ jobs:
         include:
           - os: windows-latest
             spec: packaging/wiim_rew_sync_windows.spec
-            asset: WiiM-REW-Sync-${{ github.ref_name }}-windows-x64.zip
+            asset: WiiM-REW-Sync-windows-x64.zip
           - os: macos-latest
             spec: packaging/wiim_rew_sync_macos.spec
-            asset: WiiM-REW-Sync-${{ github.ref_name }}-macos.zip
+            asset: WiiM-REW-Sync-macos.zip
           - os: ubuntu-latest
             spec: packaging/wiim_rew_sync_linux.spec
-            asset: WiiM-REW-Sync-${{ github.ref_name }}-linux-x64.zip
+            asset: WiiM-REW-Sync-linux-x64.zip
     steps:
       - uses: actions/checkout@v7
         with:
@@ -134,15 +134,13 @@ jobs:
       - name: Create draft GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # Globs the three versioned zips instead of listing them by exact
-        # name, so this step doesn't have to be kept in sync with the
-        # build job's matrix.asset naming (which embeds ${{ github.ref_name
-        # }}) -- one fewer place a filename convention change could drift.
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --draft \
             --generate-notes \
             --title "${GITHUB_REF_NAME}" \
-            artifacts/*.zip \
+            artifacts/WiiM-REW-Sync-windows-x64.zip \
+            artifacts/WiiM-REW-Sync-macos.zip \
+            artifacts/WiiM-REW-Sync-linux-x64.zip \
             artifacts/SHA256SUMS.txt
