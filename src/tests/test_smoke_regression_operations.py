@@ -4313,6 +4313,78 @@ class TestSettingsUIState:
         mock_read.assert_called_once()
         assert emitted == [(1, 1, 1, 0, "preset")]
 
+    def test_copy_dispatch_ignored_while_batch_in_progress(self, window) -> None:
+        """A second copy dispatch (from either copy_presets_to_devices or
+        copy_local_profiles_to_devices) while a batch is already running
+        must be ignored, not interleaved with it. There's no synchronous
+        guarantee that the UI's button-disable already prevents this: a
+        run_async() call schedules its coroutine on a background-thread
+        event loop and only emits operation_started -- which disables the
+        Copy buttons -- once that coroutine actually starts running there,
+        not synchronously when run_async() is called, leaving a window
+        where a fast double-click isn't caught by the UI alone."""
+        manager = window._secondary_workflows
+        manager._copy_in_progress = True
+
+        with patch.object(manager, "_dispatch") as mock_dispatch:
+            manager.copy_presets_to_devices(
+                [MagicMock()], [MagicMock()], "wifi", "wifi"
+            )
+            manager.copy_local_profiles_to_devices(
+                [("Name", ChannelMode.STEREO, [], None, None)],
+                "PEQ", [MagicMock()], "wifi",
+            )
+            mock_dispatch.assert_not_called()
+
+    def test_copy_in_progress_resets_after_batch_completes(self, window) -> None:
+        """_copy_in_progress must clear once its batch coroutine finishes,
+        or every later copy attempt would be silently ignored forever."""
+        manager = window._secondary_workflows
+        manager._copy_in_progress = True
+
+        import asyncio
+
+        with patch.object(
+            manager, "_write_preset_copies_to_devices",
+            new_callable=AsyncMock, return_value=(0, 0),
+        ):
+            asyncio.run(manager._do_copy_presets_batch_multi([], [], "wifi", "wifi"))
+
+        assert manager._copy_in_progress is False
+
+    def test_copy_in_progress_resets_even_on_unexpected_error(self, window) -> None:
+        """An unexpected exception escaping the batch coroutine must still
+        clear _copy_in_progress -- otherwise a single bug would permanently
+        block every future copy attempt until the app restarts."""
+        manager = window._secondary_workflows
+        manager._copy_in_progress = True
+
+        items = [MagicMock()]
+        items[0].name = "Preset1"
+        items[0].preset_type = "PEQ"
+        read_result = ([_make_filter(100)], ChannelMode.STEREO, MagicMock())
+
+        import asyncio
+
+        with (
+            patch.object(
+                manager, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
+            ),
+            patch.object(
+                manager, "_write_preset_copies_to_devices",
+                new_callable=AsyncMock, side_effect=RuntimeError("boom"),
+            ),
+        ):
+            with pytest.raises(RuntimeError):
+                asyncio.run(
+                    manager._do_copy_presets_batch_multi(
+                        items, [MagicMock()], "wifi", "wifi"
+                    )
+                )
+
+        assert manager._copy_in_progress is False
+
     def test_copy_batch_connects_once_per_device_not_per_preset(self, window) -> None:
         """Regression test (branch-quality review, 2026-07-17):
         _write_preset_copies_to_devices must connect + probe capabilities

@@ -139,6 +139,16 @@ class SecondaryWorkflowManager(QObject):
         self._target_adapter_factory: (
             Callable[[WiiMHttpClient, DeviceCapabilities], WiiMAdapter] | None
         ) = None
+        # Shared by copy_presets_to_devices/copy_local_profiles_to_devices --
+        # both feed the same MainWindow-level _copy_batch_failures
+        # accumulator, so a second dispatch overlapping the first (there's
+        # no synchronous "button already disabled" guarantee: run_async()
+        # schedules the coroutine on a background-thread event loop and
+        # only emits operation_started -- which disables the Copy buttons --
+        # once that coroutine actually starts running there, leaving a
+        # window where a fast double-click isn't caught by the UI) would
+        # interleave both batches' results into one summary/dialog.
+        self._copy_in_progress = False
 
     # ------------------------------------------------------------------
     # Configuration (adapter injection for async execution)
@@ -785,7 +795,19 @@ class SecondaryWorkflowManager(QObject):
         source_name: str,
         target_source: str,
     ) -> None:
-        """Copy presets to multiple target devices (smoke #73 fix)."""
+        """Copy presets to multiple target devices (smoke #73 fix).
+
+        Ignores a call while another copy batch (from either this method or
+        copy_local_profiles_to_devices) is still in flight -- see
+        _copy_in_progress's comment in __init__ for why the UI's
+        button-disable alone doesn't already prevent this.
+        """
+        if self._copy_in_progress:
+            logger.warning(
+                "copy_presets_to_devices ignored -- a copy batch is already in progress"
+            )
+            return
+        self._copy_in_progress = True
         self._dispatch(
             "copy_presets_to_devices",
             self._do_copy_presets_batch_multi(
@@ -819,50 +841,53 @@ class SecondaryWorkflowManager(QObject):
                 this manager has none of its own).
             target_source: Target source name on each remote device.
         """
-        assert self._bridge is not None
+        try:
+            assert self._bridge is not None
 
-        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
-        read_failed = 0
-        skipped = 0
+            reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
+            read_failed = 0
+            skipped = 0
 
-        for item in items:
-            preset_name = getattr(item, "name", "")
-            preset_type = getattr(item, "preset_type", "PEQ")
-            is_custom = getattr(item, "is_custom", False)
-            if not preset_name:
-                # Never attempted -- not a read failure, so it must not
-                # count toward n_items below either, or the batch-complete
-                # totals (n_items * n_devices vs succeeded + failed) stop
-                # matching (round-4 review finding #5, 2026-07-19).
-                skipped += 1
-                continue
+            for item in items:
+                preset_name = getattr(item, "name", "")
+                preset_type = getattr(item, "preset_type", "PEQ")
+                is_custom = getattr(item, "is_custom", False)
+                if not preset_name:
+                    # Never attempted -- not a read failure, so it must not
+                    # count toward n_items below either, or the batch-complete
+                    # totals (n_items * n_devices vs succeeded + failed) stop
+                    # matching (round-4 review finding #5, 2026-07-19).
+                    skipped += 1
+                    continue
 
-            self._bridge.progress_update.emit(f"Reading '{preset_name}'...")
-            try:
-                filters, channel_mode, peq_settings = await self._read_preset_to_copy(
-                    source_name, preset_name, preset_type, is_custom=is_custom
-                )
-            except Exception as exc:
-                logger.exception("Read preset '%s' for copy failed", preset_name)
-                self._bridge.progress_update.emit(
-                    f"Failed to read '{preset_name}' -- skipping"
-                )
-                self.copy_item_failed.emit(
-                    f"'{preset_name}': could not read from source device "
-                    f"({exc}) -- skipped for all target devices"
-                )
-                read_failed += len(target_devices)
-                continue
-            reads.append((preset_name, preset_type, filters, channel_mode, peq_settings))
+                self._bridge.progress_update.emit(f"Reading '{preset_name}'...")
+                try:
+                    filters, channel_mode, peq_settings = await self._read_preset_to_copy(
+                        source_name, preset_name, preset_type, is_custom=is_custom
+                    )
+                except Exception as exc:
+                    logger.exception("Read preset '%s' for copy failed", preset_name)
+                    self._bridge.progress_update.emit(
+                        f"Failed to read '{preset_name}' -- skipping"
+                    )
+                    self.copy_item_failed.emit(
+                        f"'{preset_name}': could not read from source device "
+                        f"({exc}) -- skipped for all target devices"
+                    )
+                    read_failed += len(target_devices)
+                    continue
+                reads.append((preset_name, preset_type, filters, channel_mode, peq_settings))
 
-        succeeded, write_failed = await self._write_preset_copies_to_devices(
-            reads, target_devices, target_source
-        )
-        failed = read_failed + write_failed
+            succeeded, write_failed = await self._write_preset_copies_to_devices(
+                reads, target_devices, target_source
+            )
+            failed = read_failed + write_failed
 
-        self.copy_batch_complete.emit(
-            len(items) - skipped, len(target_devices), succeeded, failed, "preset"
-        )
+            self.copy_batch_complete.emit(
+                len(items) - skipped, len(target_devices), succeeded, failed, "preset"
+            )
+        finally:
+            self._copy_in_progress = False
 
     @Slot(list, str, list, str)
     def copy_local_profiles_to_devices(
@@ -888,7 +913,19 @@ class SecondaryWorkflowManager(QObject):
         than in MainWindow, matching how `_do_copy_presets_batch_multi`
         handles a live-device read failure: reported through
         copy_batch_complete, not a synchronous caller-side try/except.
+
+        Ignores a call while another copy batch (from either this method or
+        copy_presets_to_devices) is still in flight -- see
+        _copy_in_progress's comment in __init__ for why the UI's
+        button-disable alone doesn't already prevent this.
         """
+        if self._copy_in_progress:
+            logger.warning(
+                "copy_local_profiles_to_devices ignored -- a copy batch is "
+                "already in progress"
+            )
+            return
+        self._copy_in_progress = True
         self._dispatch(
             "copy_local_profiles_to_devices",
             self._do_copy_local_profiles_to_devices(
@@ -931,49 +968,54 @@ class SecondaryWorkflowManager(QObject):
             target_devices: List of discovered device objects to copy to.
             target_source: Target source name on each remote device.
         """
-        assert self._bridge is not None
+        try:
+            assert self._bridge is not None
 
-        reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
-        build_failed = 0
+            reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
+            build_failed = 0
 
-        for profile_name, channel_mode, filters, filters_l, filters_r in profiles:
-            try:
-                peq_settings = build_peq_settings(
-                    target_source, filters or [], channel_mode,
-                    filters_l=filters_l, filters_r=filters_r,
+            for profile_name, channel_mode, filters, filters_l, filters_r in profiles:
+                try:
+                    peq_settings = build_peq_settings(
+                        target_source, filters or [], channel_mode,
+                        filters_l=filters_l, filters_r=filters_r,
+                    )
+                except ValueError as exc:
+                    logger.warning(
+                        "Build PEQSettings for local profile copy '%s' failed: %s",
+                        profile_name, exc,
+                    )
+                    self._bridge.progress_update.emit(
+                        f"Copy failed for '{profile_name}': {exc}"
+                    )
+                    self.copy_item_failed.emit(
+                        f"'{profile_name}': {exc} -- skipped for all target devices"
+                    )
+                    build_failed += len(target_devices)
+                    continue
+                resolved_filters, resolved_channel_mode = extract_filters(peq_settings)
+                reads.append((
+                    profile_name, preset_type, resolved_filters,
+                    resolved_channel_mode, peq_settings,
+                ))
+
+            # Skip connecting to target devices entirely when every profile in
+            # the batch failed to build -- there's nothing to write, and
+            # _write_preset_copies_to_devices would otherwise still probe/
+            # connect to each target device for no reason.
+            if reads:
+                succeeded, write_failed = await self._write_preset_copies_to_devices(
+                    reads, target_devices, target_source
                 )
-            except ValueError as exc:
-                logger.warning(
-                    "Build PEQSettings for local profile copy '%s' failed: %s",
-                    profile_name, exc,
-                )
-                self._bridge.progress_update.emit(
-                    f"Copy failed for '{profile_name}': {exc}"
-                )
-                self.copy_item_failed.emit(
-                    f"'{profile_name}': {exc} -- skipped for all target devices"
-                )
-                build_failed += len(target_devices)
-                continue
-            resolved_filters, resolved_channel_mode = extract_filters(peq_settings)
-            reads.append(
-                (profile_name, preset_type, resolved_filters, resolved_channel_mode, peq_settings)
+            else:
+                succeeded, write_failed = 0, 0
+
+            self.copy_batch_complete.emit(
+                len(profiles), len(target_devices), succeeded,
+                build_failed + write_failed, "profile",
             )
-
-        # Skip connecting to target devices entirely when every profile in
-        # the batch failed to build -- there's nothing to write, and
-        # _write_preset_copies_to_devices would otherwise still probe/
-        # connect to each target device for no reason.
-        if reads:
-            succeeded, write_failed = await self._write_preset_copies_to_devices(
-                reads, target_devices, target_source
-            )
-        else:
-            succeeded, write_failed = 0, 0
-
-        self.copy_batch_complete.emit(
-            len(profiles), len(target_devices), succeeded, build_failed + write_failed, "profile"
-        )
+        finally:
+            self._copy_in_progress = False
 
     # ------------------------------------------------------------------
     # Workflow: Source-Slot Overview (#194 follow-up diagnostic)

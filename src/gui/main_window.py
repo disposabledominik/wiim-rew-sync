@@ -3322,10 +3322,13 @@ class MainWindow(QMainWindow):
         self._secondary_workflows = SecondaryWorkflowManager(parent=self)
 
         # Per-item failure detail lines for the copy-to-device workflows,
-        # accumulated from copy_item_failed and consumed by
-        # _on_copy_batch_complete. Reset by each dispatch handler
-        # (_on_copy_to_device_requested / _on_local_preset_copy_to_device_requested)
-        # right before starting a new batch.
+        # accumulated from copy_item_failed and consumed + cleared by
+        # _on_copy_batch_complete once its batch finishes -- not reset
+        # up front by the dispatch handlers, since SecondaryWorkflowManager
+        # can silently ignore a dispatch while another batch is already in
+        # flight (_copy_in_progress) and an unconditional pre-dispatch
+        # reset here would wipe that in-flight batch's own accumulated
+        # failures out from under it.
         self._copy_batch_failures: list[str] = []
 
         # Configured eagerly, like PrimaryWorkflowManager above: every
@@ -3475,7 +3478,13 @@ class MainWindow(QMainWindow):
         # source_name and target_source are the same wizard-state value here --
         # the source device's active source is assumed to name the same slot
         # on each target device.
-        self._copy_batch_failures = []
+        #
+        # Not reset here: SecondaryWorkflowManager ignores this dispatch
+        # outright if a batch is already in flight (_copy_in_progress), so
+        # clearing _copy_batch_failures unconditionally at this point could
+        # wipe out an in-flight batch's already-accumulated failures out
+        # from under it. Cleared instead at the end of
+        # _on_copy_batch_complete, once its own batch is actually done.
         self._secondary_workflows.copy_presets_to_devices(
             items, selected_devices, target_source, target_source
         )
@@ -3591,7 +3600,9 @@ class MainWindow(QMainWindow):
             )
             for profile in profiles
         ]
-        self._copy_batch_failures = []
+        # Not reset here -- see the matching comment in
+        # _on_copy_to_device_requested; cleared at the end of
+        # _on_copy_batch_complete instead.
         self._secondary_workflows.copy_local_profiles_to_devices(
             profiles_data, preset_type, selected_devices, target_source,
         )
@@ -4079,10 +4090,11 @@ class MainWindow(QMainWindow):
         """Handle SecondaryWorkflowManager.copy_item_failed — accumulate a
         per-item failure detail line for the current copy batch.
 
-        Consumed by _on_copy_batch_complete once the whole batch finishes;
-        reset to [] by each dispatch handler right before starting a new
-        batch (_on_copy_to_device_requested /
-        _on_local_preset_copy_to_device_requested).
+        Consumed and cleared by _on_copy_batch_complete once the whole batch
+        finishes. Not reset before a new batch starts -- see
+        _on_copy_to_device_requested's comment for why clearing here only,
+        rather than pre-emptively before every dispatch, is what actually
+        keeps two overlapping batches from corrupting each other's list.
         """
         self._copy_batch_failures.append(detail)
 
@@ -4109,6 +4121,7 @@ class MainWindow(QMainWindow):
             self._status_banner.show_success(
                 f"{n_items} {item_label}(s) copied to {n_devices} device(s)"
             )
+            self._copy_batch_failures = []
             return
 
         self._status_banner.show_error(
@@ -4122,6 +4135,7 @@ class MainWindow(QMainWindow):
                 "operations:\n\n"
                 + "\n".join(f"• {line}" for line in self._copy_batch_failures),
             )
+        self._copy_batch_failures = []
 
     # ------------------------------------------------------------------
     # Close Event
