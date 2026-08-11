@@ -351,6 +351,60 @@ class TestNestedOperationDoesNotCorruptSnapshot:
 
         assert not already_disabled.isEnabled()
 
+    def test_nested_non_cancellable_stops_an_outer_cancellable_timer(
+        self, feedback_env
+    ) -> None:
+        """A cancellable outer operation (e.g. a discovery scan) that
+        synchronously nests a non-cancellable inner one (e.g. a device
+        write) must not leave the outer op's cancel timer armed -- left
+        running, it would later show a Cancel button for an operation
+        that's actually non-cancellable, and clicking it would silently
+        no-op (request_cancel() correctly refuses), leaving a dead button
+        stuck on screen for the rest of the operation."""
+        manager, _banner, _container = feedback_env
+
+        manager.start_operation("Scanning...", cancellable=True)
+        assert manager._cancel_timer.isActive()
+
+        manager.start_operation("Pushing filters...", cancellable=False)
+
+        assert not manager._cancel_timer.isActive()
+        assert not manager._cancellable
+
+    def test_nested_non_cancellable_hides_an_already_shown_cancel_button(
+        self, feedback_env
+    ) -> None:
+        manager, _banner, _container = feedback_env
+
+        manager.start_operation("Scanning...", cancellable=True)
+        manager._show_cancel_button()
+        assert manager._cancel_button is not None
+        assert manager._cancel_button.isVisible()
+
+        manager.start_operation("Pushing filters...", cancellable=False)
+
+        assert not manager._cancel_button.isVisible()
+
+    def test_nested_start_operation_does_not_extend_the_hard_timeout(
+        self, qtbot, feedback_env
+    ) -> None:
+        """The 30s hard timeout is an *absolute* safety net measured from
+        the outermost start_operation() call -- a nested dispatch must not
+        restart it, or a chain of nested operations could push the
+        force-finish point arbitrarily far out, defeating the guarantee."""
+        manager, _banner, _container = feedback_env
+        manager._timeout_timer.setInterval(50)
+
+        manager.start_operation("Loading preset...")
+        qtbot.wait(40)
+        manager.start_operation("Fetching profile list...")
+
+        # Only ~10ms of the outer call's original 50ms deadline should be
+        # left at this point. A nested call that restarts the timer would
+        # instead need a full new 50ms from here, missing this tight
+        # window and proving the deadline got pushed out.
+        qtbot.waitUntil(lambda: not manager.is_active, timeout=30)
+
 
 class TestCancellable:
     """start_operation(cancellable=...) gates whether the Cancel button/timer

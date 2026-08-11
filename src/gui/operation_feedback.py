@@ -191,11 +191,29 @@ class OperationFeedbackManager(QObject):
         # Req 13.2: Show loading state in banner
         self._status_banner.show_progress(message)
 
-        # Start timers for long-operation and (if cancellable) cancel thresholds
-        self._long_op_timer.start()
+        # The long-operation message and hard-timeout timers measure elapsed
+        # wait time for the whole active streak, not any one nested
+        # dispatch -- restarting them on a nested start_operation() call
+        # would silently push the "absolute" 30s safety net further out
+        # every time a result handler dispatches a follow-up operation, so
+        # only the outermost call (re)starts them, same as the button
+        # snapshot above.
+        if not was_active:
+            self._long_op_timer.start()
+            self._timeout_timer.start()
+
+        # Cancel affordance always reflects the innermost (actually
+        # running) operation, since that's what AsyncBridge.request_cancel()
+        # would actually cancel -- but a nested call that flips cancellable
+        # False must also stop/hide a cancel timer or button an earlier,
+        # cancellable dispatch already armed, or it fires later for an
+        # operation request_cancel() then silently refuses to cancel,
+        # leaving a dead Cancel button stuck on screen.
         if cancellable:
             self._cancel_timer.start()
-        self._timeout_timer.start()
+        else:
+            self._cancel_timer.stop()
+            self._hide_cancel_button()
 
         logger.debug("Operation started: %s (cancellable=%s)", message, cancellable)
 
