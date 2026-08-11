@@ -193,6 +193,39 @@ def clamp_filters_for_verification(
 _DEVICE_FILTER_TYPES = {"PEAK", "LS", "HS", "LP", "HP"}
 
 
+def find_unsupported_filter_types(
+    filters: list[CanonicalFilter],
+    supported_filter_types: list[str] | None,
+) -> set[str]:
+    """Return the device-unsupported filter types present in `filters`.
+
+    Shared by validate_filters_for_device (import-time warning/skip) and
+    the copy-to-device write path (secondary_workflows.py), which needs the
+    same "would this type work on this device" check as a fail-fast
+    pre-write gate rather than a skip-and-warn one -- a device that
+    silently mis-stores an unsupported LP/HP mode value could pass a naive
+    write+read-back verification without ever applying the intended
+    filter, so copy-to-device must refuse instead of guessing.
+
+    Args:
+        filters: Filters to check.
+        supported_filter_types: Device's supported canonical filter types
+            (DeviceCapabilities.supported_filter_types). Empty/None means
+            "no restriction" (matches validate_filters_for_device).
+
+    Returns:
+        Set of unsupported filter-type strings found (empty if none, or if
+        supported_filter_types is empty/None).
+    """
+    if not supported_filter_types:
+        return set()
+    allowed = set(supported_filter_types)
+    return {
+        f.type for f in filters
+        if f.type in _DEVICE_FILTER_TYPES and f.type not in allowed
+    }
+
+
 def validate_filters_for_device(
     filters: list[CanonicalFilter],
     max_filters: int = DEFAULT_MAX_BANDS,
@@ -245,17 +278,14 @@ def validate_filters_for_device(
     # OFF/UNKNOWN aren't "filter types" needing device support, so they're
     # left alone regardless of what's listed.
     if supported_filter_types:
-        allowed = set(supported_filter_types)
-        unsupported_types: set[str] = set()
+        unsupported_types = find_unsupported_filter_types(
+            [row for row in rows if isinstance(row, CanonicalFilter)],
+            supported_filter_types,
+        )
         type_filtered_rows: list[FilterRow] = []
         kept_filters: list[CanonicalFilter] = []
         for row in rows:
-            if (
-                isinstance(row, CanonicalFilter)
-                and row.type in _DEVICE_FILTER_TYPES
-                and row.type not in allowed
-            ):
-                unsupported_types.add(row.type)
+            if isinstance(row, CanonicalFilter) and row.type in unsupported_types:
                 type_filtered_rows.append(
                     SkippedBand(
                         original_type=row.type,

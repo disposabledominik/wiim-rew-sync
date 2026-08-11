@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QMainWindow,
     QMenuBar,
+    QMessageBox,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -322,8 +323,9 @@ class MainWindow(QMainWindow):
         self._last_confirmed_filters_signature: tuple[object, ...] | None = None
 
         # --- Primary workflows (discovery, probing, file import, push) ---
-        # Configured eagerly, unlike SecondaryWorkflowManager: only push()
-        # needs a live device adapter, obtained the same way every other
+        # Configured eagerly (SecondaryWorkflowManager is configured eagerly
+        # too, in _setup_secondary_workflows() below): only push() needs a
+        # live device adapter, obtained the same way every other
         # adapter-dependent workflow here does -- set_current_adapter(),
         # once a device is selected and probed (see primary_workflows.py).
         self._primary_workflows = PrimaryWorkflowManager(parent=self)
@@ -1769,16 +1771,10 @@ class MainWindow(QMainWindow):
         assert self._wiim_http_client is not None
         self._wiim_adapter = self._wiim_adapter_factory(self._wiim_http_client, device_caps)
 
-        # Configure SecondaryWorkflowManager with adapter factories (Req 8.1, 9.3, 10.3, 15.3)
-        self._secondary_workflows.configure(
-            bridge=self._bridge,
-            bridge_wrapper=self._bridge_wrapper,
-            safe_write_factory=self._safe_write_factory,
-            roomfit_safe_write_factory=self._roomfit_safe_write_factory,
-            wiim_http_client_factory=self._wiim_http_client_factory,
-            capability_prober_factory=self._capability_prober_factory,
-            target_adapter_factory=self._wiim_adapter_factory,
-        )
+        # SecondaryWorkflowManager itself is configured eagerly in
+        # _setup_secondary_workflows() (__init__) -- only the "current
+        # device" pointer, used by same-device workflows like
+        # undo_last_push, updates here on each successful connect.
         self._secondary_workflows.set_current_adapter(self._wiim_adapter)
         self._primary_workflows.set_current_adapter(self._wiim_adapter)
 
@@ -3068,8 +3064,6 @@ class MainWindow(QMainWindow):
     @Slot()
     def _on_about_triggered(self) -> None:
         """Show About dialog (Help > About)."""
-        from PySide6.QtWidgets import QMessageBox
-
         version = get_app_version()
         QMessageBox.about(
             self,
@@ -3327,6 +3321,36 @@ class MainWindow(QMainWindow):
         """
         self._secondary_workflows = SecondaryWorkflowManager(parent=self)
 
+        # Per-item failure detail lines for the copy-to-device workflows,
+        # accumulated from copy_item_failed and consumed + cleared by
+        # _on_copy_batch_complete once its batch finishes -- not reset
+        # up front by the dispatch handlers, since SecondaryWorkflowManager
+        # can silently ignore a dispatch while another batch is already in
+        # flight (_copy_in_progress) and an unconditional pre-dispatch
+        # reset here would wipe that in-flight batch's own accumulated
+        # failures out from under it.
+        self._copy_batch_failures: list[str] = []
+
+        # Configured eagerly, like PrimaryWorkflowManager above: every
+        # argument here is a device-agnostic factory/callable already built
+        # in __init__, not tied to whichever device the Connect step probes.
+        # "My Saved Presets" and its Copy to Another Device action are local-
+        # file / self-contained-dialog workflows (the target device is picked
+        # inside the dialog itself) that must not require a prior Connect-step
+        # probe -- gating this behind _on_capabilities_ready made
+        # copy_local_profiles_to_devices()/copy_presets_to_devices() raise a
+        # bare AssertionError in _dispatch() (self._bridge is None) whenever
+        # the user opened My Saved Presets before connecting to any device.
+        self._secondary_workflows.configure(
+            bridge=self._bridge,
+            bridge_wrapper=self._bridge_wrapper,
+            safe_write_factory=self._safe_write_factory,
+            roomfit_safe_write_factory=self._roomfit_safe_write_factory,
+            wiim_http_client_factory=self._wiim_http_client_factory,
+            capability_prober_factory=self._capability_prober_factory,
+            target_adapter_factory=self._wiim_adapter_factory,
+        )
+
         # --- Inbound: page/view actions → workflow manager ---
         self._presets_device_view.copy_to_device_requested.connect(
             self._on_copy_to_device_requested
@@ -3380,6 +3404,9 @@ class MainWindow(QMainWindow):
         )
         self._secondary_workflows.copy_batch_complete.connect(
             self._on_copy_batch_complete
+        )
+        self._secondary_workflows.copy_item_failed.connect(
+            self._on_copy_item_failed
         )
 
     # --- Inbound handlers (page/view → workflow trigger) ---
@@ -3451,6 +3478,13 @@ class MainWindow(QMainWindow):
         # source_name and target_source are the same wizard-state value here --
         # the source device's active source is assumed to name the same slot
         # on each target device.
+        #
+        # Not reset here: SecondaryWorkflowManager ignores this dispatch
+        # outright if a batch is already in flight (_copy_in_progress), so
+        # clearing _copy_batch_failures unconditionally at this point could
+        # wipe out an in-flight batch's already-accumulated failures out
+        # from under it. Cleared instead at the end of
+        # _on_copy_batch_complete, once its own batch is actually done.
         self._secondary_workflows.copy_presets_to_devices(
             items, selected_devices, target_source, target_source
         )
@@ -3566,6 +3600,9 @@ class MainWindow(QMainWindow):
             )
             for profile in profiles
         ]
+        # Not reset here -- see the matching comment in
+        # _on_copy_to_device_requested; cleared at the end of
+        # _on_copy_batch_complete instead.
         self._secondary_workflows.copy_local_profiles_to_devices(
             profiles_data, preset_type, selected_devices, target_source,
         )
@@ -4049,6 +4086,18 @@ class MainWindow(QMainWindow):
             self._push_page.set_undo_failure(message)
             self._status_banner.show_error(message)
 
+    def _on_copy_item_failed(self, detail: str) -> None:
+        """Handle SecondaryWorkflowManager.copy_item_failed — accumulate a
+        per-item failure detail line for the current copy batch.
+
+        Consumed and cleared by _on_copy_batch_complete once the whole batch
+        finishes. Not reset before a new batch starts -- see
+        _on_copy_to_device_requested's comment for why clearing here only,
+        rather than pre-emptively before every dispatch, is what actually
+        keeps two overlapping batches from corrupting each other's list.
+        """
+        self._copy_batch_failures.append(detail)
+
     @Slot(int, int, int, int, str)
     def _on_copy_batch_complete(
         self, n_items: int, n_devices: int, succeeded: int, failed: int, item_label: str
@@ -4059,16 +4108,34 @@ class MainWindow(QMainWindow):
         item_label ("preset"/"profile") lets the success message name what
         was actually copied instead of always saying "preset(s)", which was
         wrong for a local-Profile-to-device copy (smoke #269 follow-up).
+
+        On any failure, also shows the per-item detail lines accumulated via
+        copy_item_failed in a dialog -- the StatusBanner's aggregate count
+        alone doesn't say which device/item failed or why (e.g. "device
+        doesn't support RoomFit" vs. a connection drop), which left the user
+        no way to tell a capability mismatch from a transient failure
+        without reading app.log.
         """
         total_ops = n_items * n_devices
         if failed == 0:
             self._status_banner.show_success(
                 f"{n_items} {item_label}(s) copied to {n_devices} device(s)"
             )
-        else:
-            self._status_banner.show_error(
-                f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
+            self._copy_batch_failures = []
+            return
+
+        self._status_banner.show_error(
+            f"Copied {succeeded} of {total_ops} operations ({failed} failed)"
+        )
+        if self._copy_batch_failures:
+            QMessageBox.warning(
+                self,
+                "Some Copies Failed",
+                "Nothing was written to a device for these failed "
+                "operations:\n\n"
+                + "\n".join(f"• {line}" for line in self._copy_batch_failures),
             )
+        self._copy_batch_failures = []
 
     # ------------------------------------------------------------------
     # Close Event

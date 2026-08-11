@@ -21,6 +21,7 @@ from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.models.errors import RoomFitUnsupportedError
 from src.models.peq import PEQSettings
 from src.models.profile import build_profile
 from src.repository.backup_manager import parse_backup_filters
@@ -299,6 +300,11 @@ class TestPushWriteOperations:
 
             target_adapter = MagicMock()
             target_adapter.save_peq_profile = AsyncMock()
+            # Unset (not a real DeviceCapabilities) -- explicitly None so the
+            # find_unsupported_filter_types() gate treats it as "no
+            # restriction" rather than a MagicMock's default empty __iter__,
+            # which would make every real filter type look unsupported.
+            target_adapter.capabilities.supported_filter_types = None
             mock_adapter_cls.return_value = target_adapter
 
             mock_target_client = MagicMock()
@@ -3276,6 +3282,7 @@ class TestSettingsUIState:
 
         target_adapter = MagicMock()
         target_adapter.save_peq_profile = AsyncMock()
+        target_adapter.capabilities.supported_filter_types = None
 
         safe_write = MagicMock()
         safe_write.execute = AsyncMock(
@@ -3302,6 +3309,141 @@ class TestSettingsUIState:
             )
         # The failed write must not be saved as if it succeeded.
         target_adapter.save_peq_profile.assert_not_called()
+
+    def test_copy_rejects_filter_type_unsupported_by_target_device(
+        self, window
+    ) -> None:
+        """Copying a preset containing a filter type the target device
+        doesn't support (e.g. LP/HP on a WiiM Mini) must fail cleanly --
+        nothing written -- rather than sending the unsupported mode value
+        and trusting write+read-back verification to catch a device that
+        might silently echo it back unchanged."""
+        filters = [CanonicalFilter(type="LP", frequency_hz=100.0, gain_db=-3.0, q=1.0)]
+        peq_settings = MagicMock(channel_mode="stereo", bands=filters)
+
+        target_adapter = MagicMock()
+        target_adapter.save_peq_profile = AsyncMock()
+        # WiiM Mini-like: PEAK/LS/HS only, no LP/HP.
+        target_adapter.capabilities.supported_filter_types = ["PEAK", "LS", "HS"]
+
+        safe_write = MagicMock()
+        safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._safe_write_factory = lambda adapter: safe_write
+        window._secondary_workflows._roomfit_safe_write_factory = lambda adapter: MagicMock()
+
+        import asyncio
+
+        with pytest.raises(RuntimeError, match="LP"):
+            asyncio.run(
+                window._secondary_workflows._write_preset_to_adapter(
+                    target_adapter, "Movie Night", "PEQ", "wifi",
+                    filters, ChannelMode.STEREO, peq_settings,
+                )
+            )
+        safe_write.execute.assert_not_called()
+        target_adapter.save_peq_profile.assert_not_called()
+
+    def test_copy_rejects_filter_type_unsupported_for_roomfit_too(
+        self, window
+    ) -> None:
+        """The unsupported-filter-type gate applies to RoomFit copies as well
+        as PEQ: RoomFit reuses the exact same LV2 PEQ commands as user PEQ,
+        just at EQLevel:2 (docs/wiim_api_notes.md "RoomFit (Room Correction)
+        API") -- same plugin, same filter-type support -- so a RoomFit copy
+        containing a device-unsupported type must fail cleanly, the same as
+        the PEQ case, rather than reaching RoomFitSafeWrite at all."""
+        filters = [CanonicalFilter(type="LP", frequency_hz=100.0, gain_db=-3.0, q=1.0)]
+        roomfit_settings = MagicMock(
+            channel_mode="stereo", bands=filters, bands_l=[], bands_r=[]
+        )
+
+        target_adapter = MagicMock()
+        target_adapter.capabilities.supported_filter_types = ["PEAK", "LS", "HS"]
+
+        roomfit_safe_write = MagicMock()
+        roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: roomfit_safe_write
+        )
+        window._secondary_workflows._safe_write_factory = lambda adapter: MagicMock()
+
+        import asyncio
+
+        with pytest.raises(RuntimeError, match="LP"):
+            asyncio.run(
+                window._secondary_workflows._write_preset_to_adapter(
+                    target_adapter, "My RoomFit", "RoomFit", "wifi",
+                    filters, ChannelMode.STEREO, roomfit_settings,
+                )
+            )
+        roomfit_safe_write.execute.assert_not_called()
+
+    def test_copy_batch_emits_item_failed_detail_for_unsupported_device(
+        self, window
+    ) -> None:
+        """A target device that can't take a copied item (e.g. RoomFit
+        unsupported) must surface a clear, per-item reason via
+        copy_item_failed -- not just an opaque aggregate failed-count, which
+        gives the user no way to tell a capability mismatch from a
+        transient connection failure."""
+        items = [MagicMock()]
+        items[0].name = "Living Room"
+        items[0].preset_type = "RoomFit"
+
+        device = MagicMock(ip="192.168.1.201", name="WiiM Mini")
+
+        filters = [_make_filter(100)]
+        peq_settings = MagicMock(
+            channel_mode="stereo", bands=filters, bands_l=[], bands_r=[]
+        )
+        read_result = (filters, ChannelMode.STEREO, peq_settings)
+
+        window._secondary_workflows._wiim_http_client_factory = (
+            lambda ip: MagicMock(close=AsyncMock())
+        )
+        window._secondary_workflows._capability_prober_factory = (
+            lambda client: MagicMock(probe=AsyncMock(return_value=MagicMock()))
+        )
+        def _make_target_adapter(client: object, caps: object) -> MagicMock:
+            adapter = MagicMock()
+            # Only RoomFit is unsupported here, not filter types -- None
+            # means "no restriction" for find_unsupported_filter_types()
+            # (a MagicMock's default empty __iter__ would otherwise make
+            # every real filter type look unsupported).
+            adapter.capabilities.supported_filter_types = None
+            return adapter
+
+        window._secondary_workflows._target_adapter_factory = _make_target_adapter
+        window._secondary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: MagicMock(
+                execute=AsyncMock(
+                    side_effect=RoomFitUnsupportedError(
+                        "RoomFit write is not supported by this device "
+                        "(missing 'read' capability)"
+                    )
+                )
+            )
+        )
+
+        failures: list[str] = []
+        window._secondary_workflows.copy_item_failed.connect(failures.append)
+
+        with patch.object(
+            window._secondary_workflows, "_read_preset_to_copy",
+            new_callable=AsyncMock, return_value=read_result,
+        ):
+            import asyncio
+
+            asyncio.run(
+                window._secondary_workflows._do_copy_presets_batch_multi(
+                    items, [device], "wifi", "wifi"
+                )
+            )
+
+        assert len(failures) == 1
+        assert "WiiM Mini" in failures[0]
+        assert "Living Room" in failures[0]
+        assert "RoomFit" in failures[0]
 
     def test_issue154_undo_roomfit_uses_safe_write(self, window, tmp_path) -> None:
         """#154: _do_undo_roomfit must go through RoomFitSafeWrite (verified,
@@ -3461,6 +3603,7 @@ class TestSettingsUIState:
 
         target_adapter = MagicMock()
         target_adapter.save_peq_profile = AsyncMock()
+        target_adapter.capabilities.supported_filter_types = None
 
         safe_write = MagicMock()
         safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
@@ -3512,6 +3655,7 @@ class TestSettingsUIState:
 
         target_adapter = MagicMock()
         target_adapter.save_peq_profile = AsyncMock()
+        target_adapter.capabilities.supported_filter_types = None
 
         safe_write = MagicMock()
         safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
@@ -3552,6 +3696,7 @@ class TestSettingsUIState:
         target_adapter = MagicMock()
         target_adapter.write_roomfit = AsyncMock()
         target_adapter.save_peq_profile = AsyncMock()
+        target_adapter.capabilities.supported_filter_types = None
 
         safe_write = MagicMock()
         safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
@@ -4168,6 +4313,78 @@ class TestSettingsUIState:
         mock_read.assert_called_once()
         assert emitted == [(1, 1, 1, 0, "preset")]
 
+    def test_copy_dispatch_ignored_while_batch_in_progress(self, window) -> None:
+        """A second copy dispatch (from either copy_presets_to_devices or
+        copy_local_profiles_to_devices) while a batch is already running
+        must be ignored, not interleaved with it. There's no synchronous
+        guarantee that the UI's button-disable already prevents this: a
+        run_async() call schedules its coroutine on a background-thread
+        event loop and only emits operation_started -- which disables the
+        Copy buttons -- once that coroutine actually starts running there,
+        not synchronously when run_async() is called, leaving a window
+        where a fast double-click isn't caught by the UI alone."""
+        manager = window._secondary_workflows
+        manager._copy_in_progress = True
+
+        with patch.object(manager, "_dispatch") as mock_dispatch:
+            manager.copy_presets_to_devices(
+                [MagicMock()], [MagicMock()], "wifi", "wifi"
+            )
+            manager.copy_local_profiles_to_devices(
+                [("Name", ChannelMode.STEREO, [], None, None)],
+                "PEQ", [MagicMock()], "wifi",
+            )
+            mock_dispatch.assert_not_called()
+
+    def test_copy_in_progress_resets_after_batch_completes(self, window) -> None:
+        """_copy_in_progress must clear once its batch coroutine finishes,
+        or every later copy attempt would be silently ignored forever."""
+        manager = window._secondary_workflows
+        manager._copy_in_progress = True
+
+        import asyncio
+
+        with patch.object(
+            manager, "_write_preset_copies_to_devices",
+            new_callable=AsyncMock, return_value=(0, 0),
+        ):
+            asyncio.run(manager._do_copy_presets_batch_multi([], [], "wifi", "wifi"))
+
+        assert manager._copy_in_progress is False
+
+    def test_copy_in_progress_resets_even_on_unexpected_error(self, window) -> None:
+        """An unexpected exception escaping the batch coroutine must still
+        clear _copy_in_progress -- otherwise a single bug would permanently
+        block every future copy attempt until the app restarts."""
+        manager = window._secondary_workflows
+        manager._copy_in_progress = True
+
+        items = [MagicMock()]
+        items[0].name = "Preset1"
+        items[0].preset_type = "PEQ"
+        read_result = ([_make_filter(100)], ChannelMode.STEREO, MagicMock())
+
+        import asyncio
+
+        with (
+            patch.object(
+                manager, "_read_preset_to_copy",
+                new_callable=AsyncMock, return_value=read_result,
+            ),
+            patch.object(
+                manager, "_write_preset_copies_to_devices",
+                new_callable=AsyncMock, side_effect=RuntimeError("boom"),
+            ),
+        ):
+            with pytest.raises(RuntimeError):
+                asyncio.run(
+                    manager._do_copy_presets_batch_multi(
+                        items, [MagicMock()], "wifi", "wifi"
+                    )
+                )
+
+        assert manager._copy_in_progress is False
+
     def test_copy_batch_connects_once_per_device_not_per_preset(self, window) -> None:
         """Regression test (branch-quality review, 2026-07-17):
         _write_preset_copies_to_devices must connect + probe capabilities
@@ -4305,6 +4522,7 @@ class TestSettingsUIState:
         peq_settings.bands = []
 
         target_adapter = MagicMock()
+        target_adapter.capabilities.supported_filter_types = None
 
         roomfit_safe_write = MagicMock()
         roomfit_safe_write.execute = AsyncMock(return_value=WriteResult(success=True))
@@ -4354,12 +4572,15 @@ class TestSettingsUIState:
             lambda adapter: roomfit_safe_write
         )
 
+        target_adapter = MagicMock()
+        target_adapter.capabilities.supported_filter_types = None
+
         import asyncio
 
         with pytest.raises(ValueError, match="L/R filters missing"):
             asyncio.run(
                 window._secondary_workflows._write_preset_to_adapter(
-                    MagicMock(), "My RoomFit", "RoomFit", "wifi",
+                    target_adapter, "My RoomFit", "RoomFit", "wifi",
                     peq_settings.bands_l, ChannelMode.LR, peq_settings,
                 )
             )
