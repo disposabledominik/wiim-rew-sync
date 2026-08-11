@@ -3343,24 +3343,21 @@ class TestSettingsUIState:
         safe_write.execute.assert_not_called()
         target_adapter.save_peq_profile.assert_not_called()
 
-    def test_copy_roomfit_not_gated_by_peq_filter_type_support(
+    def test_copy_rejects_filter_type_unsupported_for_roomfit_too(
         self, window
     ) -> None:
-        """The unsupported-filter-type gate is PEQ-only: `supported_filter_types`
-        (device capability file) documents the PEQ engine's supported types,
-        not RoomFit's -- nothing confirms the two share identical
-        restrictions on real hardware, so a RoomFit copy must not be
-        rejected by a PEQ-scoped type list it was never validated against.
-        RoomFit continues to rely solely on RoomFitSafeWrite's own
-        write+verify+rollback protocol for safety."""
+        """The unsupported-filter-type gate applies to RoomFit copies as well
+        as PEQ: RoomFit reuses the exact same LV2 PEQ commands as user PEQ,
+        just at EQLevel:2 (docs/wiim_api_notes.md "RoomFit (Room Correction)
+        API") -- same plugin, same filter-type support -- so a RoomFit copy
+        containing a device-unsupported type must fail cleanly, the same as
+        the PEQ case, rather than reaching RoomFitSafeWrite at all."""
         filters = [CanonicalFilter(type="LP", frequency_hz=100.0, gain_db=-3.0, q=1.0)]
         roomfit_settings = MagicMock(
             channel_mode="stereo", bands=filters, bands_l=[], bands_r=[]
         )
 
         target_adapter = MagicMock()
-        # Same PEQ-only restriction as the rejection test above -- LP would
-        # be rejected if this gate applied to RoomFit too.
         target_adapter.capabilities.supported_filter_types = ["PEAK", "LS", "HS"]
 
         roomfit_safe_write = MagicMock()
@@ -3372,13 +3369,14 @@ class TestSettingsUIState:
 
         import asyncio
 
-        asyncio.run(
-            window._secondary_workflows._write_preset_to_adapter(
-                target_adapter, "My RoomFit", "RoomFit", "wifi",
-                filters, ChannelMode.STEREO, roomfit_settings,
+        with pytest.raises(RuntimeError, match="LP"):
+            asyncio.run(
+                window._secondary_workflows._write_preset_to_adapter(
+                    target_adapter, "My RoomFit", "RoomFit", "wifi",
+                    filters, ChannelMode.STEREO, roomfit_settings,
+                )
             )
-        )
-        roomfit_safe_write.execute.assert_called_once()
+        roomfit_safe_write.execute.assert_not_called()
 
     def test_copy_batch_emits_item_failed_detail_for_unsupported_device(
         self, window

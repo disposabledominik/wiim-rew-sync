@@ -620,6 +620,25 @@ class SecondaryWorkflowManager(QObject):
         assert self._safe_write_factory is not None
         assert self._roomfit_safe_write_factory is not None
 
+        # Fail fast on a device-unsupported filter type (e.g. LP/HP on a
+        # WiiM Mini) instead of sending it and trusting write+read-back
+        # verification to catch the mismatch -- a device that silently
+        # mis-stores an unsupported mode value could echo it back unchanged
+        # and pass verification without ever applying the intended filter.
+        # Applies to both PEQ and RoomFit: RoomFit reuses the exact same LV2
+        # PEQ commands as user PEQ, just at EQLevel:2 (docs/wiim_api_notes.md
+        # "RoomFit (Room Correction) API") -- same plugin, same filter-type
+        # support. `filters` is already the combined stereo/L+R list (see
+        # extract_filters()), so one check covers both channel modes.
+        unsupported_types = find_unsupported_filter_types(
+            filters, target_adapter.capabilities.supported_filter_types
+        )
+        if unsupported_types:
+            raise RuntimeError(
+                "Filter type(s) " + ", ".join(sorted(unsupported_types))
+                + " not supported on this device"
+            )
+
         if preset_type == "RoomFit":
             # RoomFit: write as RoomFit profile on target (smoke #34, #79),
             # verified and rolled back on mismatch via RoomFitSafeWrite --
@@ -656,26 +675,6 @@ class SecondaryWorkflowManager(QObject):
                     result.error_message or "RoomFit copy verification failed"
                 )
         else:
-            # Fail fast on a device-unsupported filter type (e.g. LP/HP on a
-            # WiiM Mini) instead of sending it and trusting write+read-back
-            # verification to catch the mismatch -- a device that silently
-            # mis-stores an unsupported mode value could echo it back
-            # unchanged and pass verification without ever applying the
-            # intended filter. PEQ-only: `supported_filter_types` (device
-            # capability file / docs/data_models.md) documents the PEQ
-            # engine's supported types -- nothing confirms RoomFit's filter
-            # engine shares the identical restriction, so RoomFit continues
-            # to rely solely on RoomFitSafeWrite's write+verify+rollback
-            # protocol above, same as before this check existed.
-            unsupported_types = find_unsupported_filter_types(
-                filters, target_adapter.capabilities.supported_filter_types
-            )
-            if unsupported_types:
-                raise RuntimeError(
-                    "Filter type(s) " + ", ".join(sorted(unsupported_types))
-                    + " not supported on this device"
-                )
-
             # PEQ: write filters (verified via SafeWrite, smoke #153), then
             # save as named PEQ preset -- only if the write actually verified.
             settings = build_peq_settings(
