@@ -17,6 +17,12 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# None of these jobs write to the repo, comment on PRs, or call the GitHub
+# API -- checkout is the only thing that needs a token, and it only needs
+# read access.
+permissions:
+  contents: read
+
 jobs:
   pr-title:
     name: PR title check
