@@ -159,12 +159,32 @@ class OperationFeedbackManager(QObject):
                 than appearing and offering a cancellation that can't
                 safely happen.
         """
+        # AsyncBridge allows a result handler for one operation to
+        # synchronously dispatch a second, unrelated operation before the
+        # first operation's own operation_finished has been processed (see
+        # MainWindow._on_bridge_operation_finished's docstring, e.g.
+        # _on_capabilities_ready dispatching list_presets()) -- that second
+        # dispatch's operation_started re-enters start_operation() while
+        # we're still active. MainWindow's token check means the first
+        # operation's own operation_finished is then correctly discarded as
+        # stale and finish_operation() never runs for it, so this call is
+        # the only one whose restore actually applies. Only snapshot on the
+        # outermost (not-yet-active) call: re-snapshotting here would
+        # capture "every button already disabled by the outer operation" as
+        # each button's supposed prior state, and finish_operation() would
+        # then permanently restore everything to disabled once the inner
+        # operation completes -- a real, previously unguarded bug (every
+        # registered button app-wide gets stuck disabled after any nested
+        # dispatch, since nothing re-derives their true prior state from a
+        # corrupted snapshot).
+        was_active = self._is_active
         self._is_active = True
         self._current_message = message
         self._cancellable = cancellable
 
         # Req 13.1: Disable buttons immediately (prevent double-submit)
-        self._prior_enabled = {id(btn): btn.isEnabled() for btn in self._action_buttons}
+        if not was_active:
+            self._prior_enabled = {id(btn): btn.isEnabled() for btn in self._action_buttons}
         for btn in self._action_buttons:
             btn.setEnabled(False)
 

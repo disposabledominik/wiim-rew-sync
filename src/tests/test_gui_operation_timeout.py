@@ -282,6 +282,76 @@ class TestFinishRestoresPriorButtonState:
         assert btn.isEnabled()
 
 
+class TestNestedOperationDoesNotCorruptSnapshot:
+    """A result handler for one operation can synchronously dispatch a
+    second, unrelated operation before the first's own operation_finished
+    is processed (AsyncBridge supports this; see
+    MainWindow._on_bridge_operation_finished's docstring for the real
+    example, _on_capabilities_ready dispatching list_presets()).
+    MainWindow's token check means only the *inner* operation's finish
+    ever reaches finish_operation() -- the outer one's is discarded as
+    stale. start_operation() must not re-snapshot on that inner call, or
+    every registered button app-wide gets stuck disabled forever: the
+    inner snapshot would capture "already disabled by the outer
+    operation" as everyone's prior state, and nothing after that ever
+    re-derives the true value."""
+
+    def test_nested_start_operation_does_not_overwrite_snapshot(
+        self, feedback_env
+    ) -> None:
+        manager, _banner, _container = feedback_env
+
+        push_btn = QPushButton("Push to Device")
+        export_btn = QPushButton("Export")
+
+        manager.register_action_buttons([push_btn, export_btn])
+
+        # Outer operation starts -- true prior state (both enabled) is
+        # captured here.
+        manager.start_operation("Loading preset...")
+        assert not push_btn.isEnabled()
+        assert not export_btn.isEnabled()
+
+        # Its own result handler synchronously dispatches a second,
+        # unrelated operation before the outer operation_finished is
+        # processed -- operation_started fires again, re-entering
+        # start_operation() while still active.
+        manager.start_operation("Fetching profile list...")
+        assert not push_btn.isEnabled()
+        assert not export_btn.isEnabled()
+
+        # MainWindow discards the outer operation's own operation_finished
+        # as stale (superseded token) -- it never reaches finish_operation().
+        # Only the inner operation's finish does.
+        manager.finish_operation()
+
+        # Both buttons must return to their real pre-outer-operation state,
+        # not get stuck disabled because the inner start_operation() call
+        # clobbered the snapshot with "already disabled".
+        assert push_btn.isEnabled()
+        assert export_btn.isEnabled()
+
+    def test_nested_start_operation_preserves_an_already_disabled_button(
+        self, feedback_env
+    ) -> None:
+        """Mirrors TestFinishRestoresPriorButtonState's non-nested case: a
+        button that was genuinely disabled before the outer operation
+        started (e.g. no list selection) must stay disabled after a nested
+        dispatch too, not get force-enabled by the fix."""
+        manager, _banner, _container = feedback_env
+
+        already_disabled = QPushButton("Delete")
+        already_disabled.setEnabled(False)
+
+        manager.register_action_buttons([already_disabled])
+
+        manager.start_operation("Loading preset...")
+        manager.start_operation("Fetching profile list...")
+        manager.finish_operation()
+
+        assert not already_disabled.isEnabled()
+
+
 class TestCancellable:
     """start_operation(cancellable=...) gates whether the Cancel button/timer
     ever becomes reachable, and request_cancel() is the single entry point
