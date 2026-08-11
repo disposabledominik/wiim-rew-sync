@@ -22,7 +22,8 @@ Requirements referenced: 17.2, 18.1, 18.2, 18.3, 18.4, 18.6.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -702,6 +703,24 @@ class SecondaryWorkflowManager(QObject):
                 target_source, preset_name
             )
 
+    async def _close_client_best_effort(
+        self, client: WiiMHttpClient, device_ip: str
+    ) -> None:
+        """Close a target-device HTTP client, swallowing any close() failure.
+
+        A close() failure must not itself escape and abort the rest of a
+        copy batch -- that would skip copy_batch_complete for every
+        remaining device, leaving MainWindow's _copy_batch_failures
+        unresolved and leaking into the next batch's failure dialog,
+        defeating _copy_in_progress's whole purpose. Shared by both call
+        sites in _write_preset_copies_to_devices below (round-5 review
+        finding #3, 2026-08-11).
+        """
+        try:
+            await client.close()
+        except Exception:
+            logger.exception("Closing connection to %s failed", device_ip)
+
     async def _write_preset_copies_to_devices(
         self,
         reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]],
@@ -743,8 +762,12 @@ class SecondaryWorkflowManager(QObject):
 
         for device in target_devices:
             self._bridge.progress_update.emit(f"Connecting to {device.name}...")
-            target_client = self._wiim_http_client_factory(device.ip)
+            # None until the factory call below succeeds -- may still be
+            # None when the except branch runs, if the factory call itself
+            # is what raised.
+            target_client: WiiMHttpClient | None = None
             try:
+                target_client = self._wiim_http_client_factory(device.ip)
                 target_caps = await self._capability_prober_factory(target_client).probe()
                 target_adapter = self._target_adapter_factory(target_client, target_caps)
             except Exception as exc:
@@ -760,7 +783,8 @@ class SecondaryWorkflowManager(QObject):
                         f"all item(s) skipped for this device"
                     )
                 failed += len(reads)
-                await target_client.close()
+                if target_client is not None:
+                    await self._close_client_best_effort(target_client, device.ip)
                 continue
 
             try:
@@ -783,9 +807,25 @@ class SecondaryWorkflowManager(QObject):
                         )
                         failed += 1
             finally:
-                await target_client.close()
+                await self._close_client_best_effort(target_client, device.ip)
 
         return succeeded, failed
+
+    @asynccontextmanager
+    async def _copy_batch_guard(self) -> AsyncIterator[None]:
+        """Wrap a copy-batch coroutine body, guaranteeing _copy_in_progress
+        clears no matter how the body exits.
+
+        Shared by _do_copy_presets_batch_multi and
+        _do_copy_local_profiles_to_devices -- previously each hand-rolled an
+        identical try/finally; a future change to this guard (e.g. also
+        covering some new exception path) would have had to be applied
+        twice by hand (round-5 review finding #3, 2026-08-11).
+        """
+        try:
+            yield
+        finally:
+            self._copy_in_progress = False
 
     @Slot(list, list, str, str)
     def copy_presets_to_devices(
@@ -841,7 +881,7 @@ class SecondaryWorkflowManager(QObject):
                 this manager has none of its own).
             target_source: Target source name on each remote device.
         """
-        try:
+        async with self._copy_batch_guard():
             assert self._bridge is not None
 
             reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
@@ -886,8 +926,6 @@ class SecondaryWorkflowManager(QObject):
             self.copy_batch_complete.emit(
                 len(items) - skipped, len(target_devices), succeeded, failed, "preset"
             )
-        finally:
-            self._copy_in_progress = False
 
     @Slot(list, str, list, str)
     def copy_local_profiles_to_devices(
@@ -968,7 +1006,7 @@ class SecondaryWorkflowManager(QObject):
             target_devices: List of discovered device objects to copy to.
             target_source: Target source name on each remote device.
         """
-        try:
+        async with self._copy_batch_guard():
             assert self._bridge is not None
 
             reads: list[tuple[str, str, list[CanonicalFilter], ChannelMode, PEQSettings]] = []
@@ -1014,8 +1052,6 @@ class SecondaryWorkflowManager(QObject):
                 len(profiles), len(target_devices), succeeded,
                 build_failed + write_failed, "profile",
             )
-        finally:
-            self._copy_in_progress = False
 
     # ------------------------------------------------------------------
     # Workflow: Source-Slot Overview (#194 follow-up diagnostic)
@@ -1029,13 +1065,14 @@ class SecondaryWorkflowManager(QObject):
         left behind by invalid source_name writes. Not a new MainWindow
         `_do_*` method: this orchestration lives here, per backlog #7's
         rule that new orchestration must not grow MainWindow further.
+
+        No `self._bridge is None` guard here (unlike `_dispatch()`'s
+        assert): configure() now runs eagerly in MainWindow.__init__, so
+        `self._bridge` is never None by the time a user action can reach
+        this slot -- "no device connected" is `_do_fetch_source_slots()`'s
+        own `self._current_adapter is None` check below, a separate
+        per-connect concern configure() doesn't set.
         """
-        if self._bridge is None:
-            # configure() hasn't run yet (no device has been probed) --
-            # report the same "no device" outcome _do_fetch_source_slots
-            # would, instead of asserting out of this Qt slot.
-            self.source_slots_error.emit("No device connected")
-            return
         self._dispatch(
             "fetch_source_slots", self._do_fetch_source_slots(), cancellable=True
         )
