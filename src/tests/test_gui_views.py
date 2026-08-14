@@ -477,6 +477,120 @@ class TestPresetsDeviceViewSignals:
         assert len(blocker.args[0]) == 2
 
 
+class TestPresetsDeviceViewContextMenu:
+    """Tests for the PEQ/RoomFit lists' right-click context menu."""
+
+    def test_context_menu_has_expected_actions(self, qtbot) -> None:
+        """The menu mirrors the toolbar's action set and order: Export,
+        Save, Copy, Delete."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(_make_peq_presets(2))
+        item = view._peq_list.item(0)
+
+        menu = view._build_context_menu(view._peq_list, item)
+        labels = [a.text() for a in menu.actions() if not a.isSeparator()]
+
+        assert labels == [
+            "Export as REW File",
+            "Save to My Presets",
+            "Copy to Another Device",
+            "Delete",
+        ]
+
+    def test_context_menu_delete_disabled_for_custom_row(self, qtbot) -> None:
+        """Delete is disabled when the right-clicked/batched selection
+        includes the synthetic "Custom" row (#165c) -- matching
+        _update_action_buttons()'s toolbar-button logic."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(_make_peq_presets(1), active_name="")
+        custom_item = view._peq_list.item(0)
+        assert custom_item.text().startswith("Custom")
+
+        menu = view._build_context_menu(view._peq_list, custom_item)
+        actions = {a.text(): a for a in menu.actions() if not a.isSeparator()}
+
+        assert not actions["Delete"].isEnabled()
+        assert actions["Export as REW File"].isEnabled()
+
+    def test_context_menu_single_item_when_not_in_selection(self, qtbot) -> None:
+        """Right-clicking an item outside the current selection acts on
+        just that item, not the stale selection (matches MyPresetsView's
+        equivalent behavior)."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(3))
+        view._peq_list.item(0).setSelected(True)
+        view._peq_list.item(1).setSelected(True)
+
+        other_item = view._peq_list.item(2)
+        menu = view._build_context_menu(view._peq_list, other_item)
+        export_action = next(a for a in menu.actions() if a.text() == "Export as REW File")
+
+        with qtbot.waitSignal(view.export_requested, timeout=1000) as blocker:
+            export_action.trigger()
+
+        assert blocker.args[0] == [other_item.data(Qt.ItemDataRole.UserRole)]
+
+    def test_context_menu_batches_full_multiselection(self, qtbot) -> None:
+        """Right-clicking an item that IS part of a multi-selection batches
+        the action over every selected item, not just the one under the
+        cursor -- Qt doesn't clear a selection on right-click."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(3))
+        view._peq_list.item(0).setSelected(True)
+        view._peq_list.item(2).setSelected(True)
+
+        clicked_item = view._peq_list.item(2)
+        menu = view._build_context_menu(view._peq_list, clicked_item)
+        copy_action = next(a for a in menu.actions() if a.text() == "Copy to Another Device")
+
+        with qtbot.waitSignal(view.copy_to_device_requested, timeout=1000) as blocker:
+            copy_action.trigger()
+
+        assert len(blocker.args[0]) == 2
+
+    def test_context_menu_works_on_roomfit_list(self, qtbot) -> None:
+        """The same shared handler builds a working menu for the RoomFit
+        list, not just PEQ."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_roomfit_profiles(_make_roomfit_profiles(2))
+        item = view._roomfit_list.item(0)
+
+        menu = view._build_context_menu(view._roomfit_list, item)
+        save_action = next(a for a in menu.actions() if a.text() == "Save to My Presets")
+
+        with qtbot.waitSignal(view.save_to_my_presets, timeout=1000) as blocker:
+            save_action.trigger()
+
+        assert blocker.args[0] == [item.data(Qt.ItemDataRole.UserRole)]
+
+    def test_show_context_menu_no_op_when_no_item_at_position(self, qtbot) -> None:
+        """Right-clicking empty list space (no item under the cursor) is a
+        no-op -- no menu, no exception."""
+        from PySide6.QtCore import QPoint
+
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(1))
+        # Nothing to assert beyond "doesn't raise" -- itemAt() at an empty
+        # position returns None, which _show_context_menu must handle.
+        view._show_context_menu(view._peq_list, QPoint(5000, 5000))
+
+
 # ---------------------------------------------------------------------------
 # TestMyPresetsView
 # ---------------------------------------------------------------------------
@@ -1321,7 +1435,9 @@ class TestRewPullView:
         shrinks, never the fixed items around it (smoke #232)."""
         view = RewPullView()
         qtbot.addWidget(view)
-        view.resize(400, 900)
+        # Tall enough to fit 20 rows at the app's shared LIST_ITEM_HEIGHT
+        # (44px) + inter-row spacing without a scrollbar.
+        view.resize(400, 1300)
         view.show()
         measurements = [
             _make_rew_measurement(f"Measurement {i}", i) for i in range(20)

@@ -3806,9 +3806,9 @@ class TestSettingsUIState:
         assert profile.channel_mode == ChannelMode.STEREO
 
     def test_issue39_lr_profile_renders_lr_badge_not_stereo(self, window) -> None:
-        """#39: An L/R profile rendered in MyPresetsView shows the "L/R"
-        badge (not "Stereo") and a per-channel band count -- not a flat
-        combined count. This is the actual UI-visible manifestation of the
+        """#39: An L/R profile rendered in MyPresetsView shows per-channel
+        "L:"/"R:" band counts in the row text (not "Stereo", and not a flat
+        combined count). This is the actual UI-visible manifestation of the
         original bug; the build_profile-level tests above only prove the
         enum is stored correctly, not that the view renders it right.
         """
@@ -3823,11 +3823,7 @@ class TestSettingsUIState:
         view.set_presets([profile])
 
         item = view._list_widget.item(0)
-        item_widget = view._list_widget.itemWidget(item)
-        assert item_widget._mode_badge.text() == "L/R"
-        # _count_bands() uses the left channel as the representative count
-        # for L/R profiles (2 bands), not a flat/combined 3.
-        assert item_widget._band_label.text() == "2/2 bands"
+        assert item.text() == "LR Test  [L: 2 bands / R: 1 bands]"
 
     def test_issue39_stereo_profile_renders_stereo_badge(self, window) -> None:
         """#39 sibling: a stereo profile still shows "Stereo" (not "L/R")."""
@@ -3838,9 +3834,7 @@ class TestSettingsUIState:
         view.set_presets([profile])
 
         item = view._list_widget.item(0)
-        item_widget = view._list_widget.itemWidget(item)
-        assert item_widget._mode_badge.text() == "Stereo"
-        assert item_widget._band_label.text() == "3/3 bands"
+        assert item.text() == "Stereo Test  [Stereo: 3 bands]"
 
     # --- Issue #42: Source page receives all common sources including line-in ---
 

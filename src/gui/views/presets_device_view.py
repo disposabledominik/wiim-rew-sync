@@ -14,20 +14,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import QPoint, Qt, Signal, Slot
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
+    QMenu,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from src.gui.components.action_button import make_action_button
-from src.gui.components.list_item_style import build_preset_list_item
+from src.gui.components.list_item_style import build_preset_list_item, style_selectable_list
 from src.gui.components.page_layout import (
     ICON_NO_CONNECTION,
     build_centered_content,
@@ -187,7 +190,9 @@ class PresetsDeviceView(QWidget):
 
     The view does NOT perform network calls directly. Data is supplied
     via :meth:`set_peq_presets` and :meth:`set_roomfit_profiles`. Actions
-    are communicated outward via signals.
+    are communicated outward via signals -- available both from the bottom
+    action bar and from a right-click context menu on either list (see
+    _build_context_menu), matching My Saved Presets' context menu.
 
     Signals:
         export_requested(list): User wants to export selected items as REW files.
@@ -450,15 +455,18 @@ class PresetsDeviceView(QWidget):
         # List widget with multi-select
         self._peq_list = QListWidget()
         self._peq_list.setObjectName("peq_preset_list")
-        self._peq_list.setProperty("class", "selectableList")
+        style_selectable_list(self._peq_list)
         self._peq_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self._peq_list.setAlternatingRowColors(True)
         self._peq_list.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._peq_list.itemSelectionChanged.connect(self._on_peq_selection_changed)
+        self._peq_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._peq_list.customContextMenuRequested.connect(
+            lambda position: self._show_context_menu(self._peq_list, position)
+        )
         layout.addWidget(self._peq_list)
 
         return section
@@ -487,15 +495,18 @@ class PresetsDeviceView(QWidget):
         # List widget with multi-select
         self._roomfit_list = QListWidget()
         self._roomfit_list.setObjectName("roomfit_profile_list")
-        self._roomfit_list.setProperty("class", "selectableList")
+        style_selectable_list(self._roomfit_list)
         self._roomfit_list.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self._roomfit_list.setAlternatingRowColors(True)
         self._roomfit_list.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._roomfit_list.itemSelectionChanged.connect(self._on_roomfit_selection_changed)
+        self._roomfit_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._roomfit_list.customContextMenuRequested.connect(
+            lambda position: self._show_context_menu(self._roomfit_list, position)
+        )
         layout.addWidget(self._roomfit_list)
 
         return section
@@ -602,6 +613,79 @@ class PresetsDeviceView(QWidget):
             self._roomfit_list.addItem(list_item)
 
         self._update_action_buttons()
+
+    # ------------------------------------------------------------------
+    # Context menu
+    # ------------------------------------------------------------------
+
+    def _show_context_menu(self, list_widget: QListWidget, position: QPoint) -> None:
+        """Show right-click context menu for the item at position.
+
+        Shared by both the PEQ and RoomFit lists -- which list is passed in
+        by the caller (see the customContextMenuRequested connections in
+        _build_peq_section/_build_roomfit_section), matching My Saved
+        Presets' equivalent context menu (MyPresetsView._show_context_menu).
+        """
+        item = list_widget.itemAt(position)
+        if item is None:
+            return
+
+        menu = self._build_context_menu(list_widget, item)
+        menu.exec(list_widget.viewport().mapToGlobal(position))
+
+    def _build_context_menu(self, list_widget: QListWidget, item: QListWidgetItem) -> QMenu:
+        """Build (without showing) the context menu for *item* in *list_widget*.
+
+        Mirrors the toolbar's action set exactly: Export as REW File, Save
+        to My Presets, Copy to Another Device, Delete. Right-clicking in Qt
+        does not clear an existing multi-selection, so every action batches
+        over the full selection when the right-clicked item is part of one
+        -- otherwise they'd silently drop every selected item except the one
+        under the cursor, contradicting the toolbar buttons' batch behavior
+        on the same selection (same rationale as
+        MyPresetsView._build_context_menu). Delete is disabled whenever the
+        batch includes the synthetic "Custom" row (#165c) -- there's no
+        saved preset on the device to delete, matching
+        _update_action_buttons()'s toolbar-button logic.
+        """
+        selected = list_widget.selectedItems()
+        if item in selected and len(selected) > 1:
+            batch_targets = [i.data(Qt.ItemDataRole.UserRole) for i in selected]
+        else:
+            batch_targets = [item.data(Qt.ItemDataRole.UserRole)]
+        has_custom = any(target.is_custom for target in batch_targets)
+
+        menu = QMenu(self)
+        menu.setObjectName("PresetsDeviceContextMenu")
+
+        export_action = QAction("Export as REW File", menu)
+        export_action.triggered.connect(
+            lambda: self.export_requested.emit(batch_targets)
+        )
+        menu.addAction(export_action)
+
+        save_action = QAction("Save to My Presets", menu)
+        save_action.triggered.connect(
+            lambda: self.save_to_my_presets.emit(batch_targets)
+        )
+        menu.addAction(save_action)
+
+        copy_action = QAction("Copy to Another Device", menu)
+        copy_action.triggered.connect(
+            lambda: self.copy_to_device_requested.emit(batch_targets)
+        )
+        menu.addAction(copy_action)
+
+        menu.addSeparator()
+
+        delete_action = QAction("Delete", menu)
+        delete_action.setEnabled(not has_custom)
+        delete_action.triggered.connect(
+            lambda: self.delete_requested.emit(batch_targets)
+        )
+        menu.addAction(delete_action)
+
+        return menu
 
     # ------------------------------------------------------------------
     # State helpers

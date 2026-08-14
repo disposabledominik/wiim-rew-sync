@@ -19,7 +19,11 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
-from src.gui.components.list_item_style import apply_active_item_style
+from src.gui.components.list_item_style import (
+    apply_active_item_style,
+    size_list_item,
+    style_selectable_list,
+)
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
     SPACING_MD,
@@ -131,6 +135,8 @@ class NameProfilePage(QWidget):
         layout.addWidget(profiles_heading)
 
         self._profiles_list = QListWidget()
+        self._profiles_list.setObjectName("NameProfileExistingList")
+        style_selectable_list(self._profiles_list)
         self._profiles_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._profiles_list.setMaximumHeight(150)
         self._profiles_list.itemClicked.connect(self._on_profile_item_clicked)
@@ -195,6 +201,7 @@ class NameProfilePage(QWidget):
             item = QListWidgetItem(f"{name} (active)" if is_active else name)
             item.setData(Qt.ItemDataRole.UserRole, name)
             apply_active_item_style(item, is_active)
+            size_list_item(item)
             self._profiles_list.addItem(item)
 
         # Re-evaluate warning in case input already has text

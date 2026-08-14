@@ -31,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -50,15 +50,17 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
-from src.gui.components.list_item_style import build_preset_list_item
+from src.gui.components.list_item_style import (
+    build_local_preset_list_item,
+    build_preset_list_item,
+    style_selectable_list,
+)
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    LIST_ITEM_HEIGHT,
     SPACING_LG,
     SPACING_MD,
     SPACING_SM,
 )
-from src.gui.views.my_presets_view import _PresetItemWidget
 from src.gui.views.presets_device_view import PresetItem, build_peq_rows, build_roomfit_rows
 from src.gui.views.rew_pull_view import RewPullView
 from src.gui.wizard_controller import FiltersSource
@@ -687,7 +689,7 @@ class FiltersPage(QWidget):
 
         self._device_list = QListWidget()
         self._device_list.setObjectName("FiltersDeviceList")
-        self._device_list.setProperty("class", "selectableList")
+        style_selectable_list(self._device_list)
         self._device_list.currentItemChanged.connect(
             lambda current, _previous: self._on_list_selection_changed(
                 self._device_load_btn, current
@@ -721,7 +723,7 @@ class FiltersPage(QWidget):
 
         self._local_list = QListWidget()
         self._local_list.setObjectName("FiltersLocalLibraryList")
-        self._local_list.setProperty("class", "selectableList")
+        style_selectable_list(self._local_list)
         self._local_list.currentItemChanged.connect(
             lambda current, _previous: self._on_list_selection_changed(
                 self._local_load_btn, current
@@ -972,17 +974,7 @@ class FiltersPage(QWidget):
         self._local_empty_label.setVisible(not self._local_profiles)
         self._local_list.setVisible(bool(self._local_profiles))
         for profile in self._local_profiles:
-            active_bands, total_bands = profile.band_counts()
-            item_widget = _PresetItemWidget(
-                name=profile.name,
-                channel_mode=profile.channel_mode,
-                active_bands=active_bands,
-                total_bands=total_bands,
-            )
-            item = QListWidgetItem(self._local_list)
-            item.setSizeHint(QSize(0, LIST_ITEM_HEIGHT))
-            item.setData(Qt.ItemDataRole.UserRole, profile)
-            self._local_list.setItemWidget(item, item_widget)
+            self._local_list.addItem(build_local_preset_list_item(profile))
         self._local_load_btn.setEnabled(False)
 
     def _on_list_selection_changed(

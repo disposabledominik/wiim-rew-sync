@@ -221,14 +221,16 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 
 ### Test 13: My Saved Presets
 - [P] Sidebar "My Saved Presets" navigates to presets library
-- [P] Shows list of saved presets with name and channel-mode badge
+- [P] Shows list of saved presets with name plus a bracketed channel-mode/band-count summary
+  (e.g. "[Stereo: 7 bands]")
 - [P] Selecting a preset shows a bottom-anchored toolbar, in this order: **Copy to Another
   Device, Rename, Duplicate, Delete**
 - [P] Copy to Another Device: shows device picker, copies to selected device(s)
 - [P] Rename: allows inline name edit, persists on confirm
 - [P] Duplicate: creates copy with " (copy)" suffix
 - [P] Delete: removes preset permanently
-- [P] L/R presets show "L/R" badge with Left-channel band count (Right-channel band count is not shown)
+- [P] L/R presets show per-channel band counts, e.g. "[L: 5 bands / R: 11 bands]" (both channels,
+  not just Left)
 - [P] There is no "Load" action here — loading a preset into the wizard happens via the Filters
   step's Local Library option (Test 13a)
 

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.components.action_button import make_action_button
+from src.gui.components.list_item_style import size_list_item, style_selectable_list
 from src.gui.components.page_layout import (
     build_centered_content,
     center_column,
@@ -142,6 +143,7 @@ class RewPullView(QWidget):
             for measurement in measurements:
                 item = QListWidgetItem(measurement.name)
                 item.setData(Qt.ItemDataRole.UserRole, measurement)
+                size_list_item(item)
                 list_widget.addItem(item)
 
         # Give each list a small floor height (a couple of rows) rather than
@@ -341,7 +343,7 @@ class RewPullView(QWidget):
         list_widget = QListWidget()
         list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         list_widget.setObjectName(object_name)
-        list_widget.setProperty("class", "selectableList")
+        style_selectable_list(list_widget)
         list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         list_widget.itemSelectionChanged.connect(self._update_continue_enabled)
         return list_widget

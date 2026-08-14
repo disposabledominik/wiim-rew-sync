@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
+from src.gui.components.list_item_style import size_list_item, style_selectable_list
 from src.gui.constants import (
     ACCENT_COLOR,
     SPACING_MD,
@@ -288,7 +289,7 @@ class HelpView(QFrame):
         # TOC list
         self._toc_list = QListWidget()
         self._toc_list.setObjectName("helpTocList")
-        self._toc_list.setProperty("class", "selectableList")
+        style_selectable_list(self._toc_list)
         self._toc_list.currentItemChanged.connect(self._on_toc_item_changed)
         toc_layout.addWidget(self._toc_list)
 
@@ -324,6 +325,7 @@ class HelpView(QFrame):
         for section_id, title in self._section_titles.items():
             item = QListWidgetItem(title)
             item.setData(Qt.ItemDataRole.UserRole, section_id)
+            size_list_item(item)
             self._toc_list.addItem(item)
 
         # Select the first item by default

@@ -1,11 +1,12 @@
 """MyPresetsView — local preset library with CRUD operations.
 
-Displays saved presets in a list with name, channel mode badge (Stereo/L/R),
-and active band count. Supports inline rename (double-click), right-click
-context menu (Copy to Another Device, Rename, Duplicate, Delete), and
-search/filter when more than 10 items are present. Loading a preset into
-the wizard now happens via the Filters step's Local Library option, not a
-button on this view.
+Displays saved presets in a list, each row showing the preset name plus a
+bracketed channel-mode/band-count summary (e.g. "[Stereo: 7 bands]" or
+"[L: 5 bands / R: 11 bands]"). Supports inline rename (double-click),
+right-click context menu (Copy to Another Device, Rename, Duplicate,
+Delete), and search/filter when more than 10 items are present. Loading a
+preset into the wizard now happens via the Filters step's Local Library
+option, not a button on this view.
 
 The view does NOT handle persistence. It receives data via :meth:`set_presets`
 and emits action signals for the controller to handle.
@@ -15,7 +16,7 @@ Requirements referenced: 8.3, 8.4, 10.9.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QAction, QMouseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -29,70 +30,21 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
+from src.gui.components.list_item_style import (
+    build_local_preset_list_item,
+    preset_row_text,
+    style_selectable_list,
+)
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
-    LIST_ITEM_HEIGHT,
     SPACING_MD,
     SPACING_SM,
-    SPACING_XS,
 )
-from src.models.channel_mode import ChannelMode
 from src.models.profile import Profile
 from src.utils.device_name import sanitize_device_name
 
 # Threshold: show search field when preset count exceeds this value.
 _SEARCH_THRESHOLD = 10
-
-
-class _PresetItemWidget(QWidget):
-    """Custom widget displayed for each preset list item.
-
-    Shows the preset name, a channel mode badge (Stereo/L/R), and the
-    active band count (e.g. "8/10 bands").
-    """
-
-    def __init__(
-        self,
-        name: str,
-        channel_mode: str | ChannelMode,
-        active_bands: int,
-        total_bands: int,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setMinimumHeight(LIST_ITEM_HEIGHT)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(SPACING_MD, SPACING_XS, SPACING_MD, SPACING_XS)
-        layout.setSpacing(SPACING_SM)
-
-        # Preset name
-        self._name_label = QLabel(name, self)
-        self._name_label.setObjectName("PresetItemName")
-        self._name_label.setProperty("class", "subheading")
-        self._name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        layout.addWidget(self._name_label)
-
-        # Channel mode badge
-        badge_text = _channel_mode_display(channel_mode)
-        self._mode_badge = QLabel(badge_text, self)
-        self._mode_badge.setObjectName("PresetItemBadge")
-        self._mode_badge.setProperty("class", "badge")
-        self._mode_badge.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        layout.addWidget(self._mode_badge)
-
-        # Active band count
-        band_text = f"{active_bands}/{total_bands} bands"
-        self._band_label = QLabel(band_text, self)
-        self._band_label.setObjectName("PresetItemBands")
-        self._band_label.setProperty("class", "caption")
-        self._band_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        layout.addWidget(self._band_label)
-
-    @property
-    def preset_name(self) -> str:
-        """Return the displayed preset name."""
-        return self._name_label.text()
 
 
 class MyPresetsView(QWidget):
@@ -190,12 +142,11 @@ class MyPresetsView(QWidget):
         # bottom-anchored, smoke #227).
         self._list_widget = QListWidget(content)
         self._list_widget.setObjectName("MyPresetsList")
-        self._list_widget.setProperty("class", "selectableList")
+        style_selectable_list(self._list_widget)
         self._list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list_widget.customContextMenuRequested.connect(self._show_context_menu)
         self._list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self._list_widget.setSpacing(2)
         self._list_widget.itemSelectionChanged.connect(self._on_selection_changed)
         content_layout.addWidget(self._list_widget, 1)
 
@@ -300,17 +251,7 @@ class MyPresetsView(QWidget):
         self._list_widget.setVisible(True)
 
         for profile in visible_presets:
-            active_bands, total_bands = profile.band_counts()
-            item_widget = _PresetItemWidget(
-                name=profile.name,
-                channel_mode=profile.channel_mode,
-                active_bands=active_bands,
-                total_bands=total_bands,
-            )
-            item = QListWidgetItem(self._list_widget)
-            item.setSizeHint(QSize(0, LIST_ITEM_HEIGHT))
-            item.setData(Qt.ItemDataRole.UserRole, profile)
-            self._list_widget.setItemWidget(item, item_widget)
+            self._list_widget.addItem(build_local_preset_list_item(profile))
 
     # ------------------------------------------------------------------
     # Search/filter
@@ -337,12 +278,9 @@ class MyPresetsView(QWidget):
         self._rename_item = item
         profile: Profile = item.data(Qt.ItemDataRole.UserRole)
 
-        # Completely remove the item widget to prevent any background text showing.
-        # Qt may repaint item widgets even when hidden; removing is the only reliable fix.
-        item_widget = self._list_widget.itemWidget(item)
-        if item_widget:
-            self._list_widget.removeItemWidget(item)
-            item_widget.deleteLater()
+        # Blank the item's own text so it can't show through/behind the
+        # floating editor while renaming is in progress.
+        item.setText("")
 
         # Position the editor over the item
         rect = self._list_widget.visualItemRect(item)
@@ -365,8 +303,8 @@ class MyPresetsView(QWidget):
 
         self._rename_editor.setVisible(False)
 
-        # Rebuild the item widget (was removed during rename)
-        self._rebuild_item_widget(self._rename_item, profile)
+        # Restore the item's row text (blanked during rename)
+        self._rename_item.setText(preset_row_text(profile))
         self._rename_item = None
 
         if new_name and new_name != old_name:
@@ -376,20 +314,9 @@ class MyPresetsView(QWidget):
         """Cancel any in-progress rename operation."""
         if self._rename_item is not None:
             profile: Profile = self._rename_item.data(Qt.ItemDataRole.UserRole)
-            self._rebuild_item_widget(self._rename_item, profile)
+            self._rename_item.setText(preset_row_text(profile))
         self._rename_editor.setVisible(False)
         self._rename_item = None
-
-    def _rebuild_item_widget(self, item: QListWidgetItem, profile: Profile) -> None:
-        """Recreate the item widget after inline editing is complete."""
-        active_bands, total_bands = profile.band_counts()
-        new_widget = _PresetItemWidget(
-            name=profile.name,
-            channel_mode=profile.channel_mode,
-            active_bands=active_bands,
-            total_bands=total_bands,
-        )
-        self._list_widget.setItemWidget(item, new_widget)
 
     # ------------------------------------------------------------------
     # Context menu
@@ -551,26 +478,3 @@ class MyPresetsView(QWidget):
         if self._rename_editor.isVisible():
             self._cancel_rename()
         super().mousePressEvent(event)
-
-
-# ---------------------------------------------------------------------------
-# Module-level helpers
-# ---------------------------------------------------------------------------
-
-
-def _channel_mode_display(mode: str | ChannelMode) -> str:
-    """Convert channel mode value to display badge text.
-
-    Args:
-        mode: ChannelMode enum or legacy string ("stereo", "left", "right").
-
-    Returns:
-        Display string: "Stereo" or "L/R".
-    """
-    if isinstance(mode, ChannelMode):
-        return mode.display_value
-    if mode in ("left", "right"):
-        return "L/R"
-    return "Stereo"
-
-

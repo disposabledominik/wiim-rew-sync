@@ -100,6 +100,15 @@ MIN_WINDOW_HEIGHT: int = 600
 LIST_ITEM_HEIGHT: int = 44
 """Minimum list item height in pixels (comfortable click/touch target)."""
 
+LIST_ITEM_SPACING: int = 2
+"""Gap in pixels between rows in every selectable list (QListWidget.setSpacing()).
+
+Small enough to read as one continuous list, but enough that adjoining
+multi-selected rows' highlight rects stay visually distinct from each other
+rather than fusing into one solid block. Applied uniformly by
+:func:`src.gui.components.list_item_style.style_selectable_list` so every
+list in the app carries the same gap."""
+
 STEP_INDICATOR_HEIGHT: int = 56
 """Step indicator bar height in pixels."""
 
