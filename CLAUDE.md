@@ -41,6 +41,7 @@ src/
 ├── models/       # pydantic domain models (CanonicalFilter is the hub)
 ├── repository/   # local JSON profile storage + backup manager
 ├── discovery/    # mDNS (zeroconf) then subnet-scan fallback
+├── utils/        # pure helpers (fp_compare, clamping, device identity/naming, paths)
 ├── gui/          # PySide6 — pages (wizard steps), dialogs, components, panels, views
 ├── cli/          # CLI entry point (original proof-of-concept, still used for scripting)
 ├── logging/      # three rotating logs: app.log, wiim_api.log, rew_api.log
@@ -155,8 +156,9 @@ Assert the right thing:
 - **Every network call: explicit timeout (default 5s).** No indefinite blocking.
 - **Mark uncertain behavior** with `# ASSUMPTION:`, log in `docs/corrections.md`, set capability
   flag conservatively, add `# TODO:`, proceed with only confirmed behavior.
-- **Every hardware-detected GUI bug goes in `docs/smoke_test_issues.md`** (issue #, description,
-  status, test status). Fix and regression test update the same row in the same commit.
+- **Every live-app GUI bug (user-reported, smoke-tested, or review-discovered) goes in
+  `docs/smoke_test_issues.md`** (issue #, description, status, test status). Fix and regression
+  test update the same row in the same commit.
 - **Never reference WiiM/LinkPlay app internals in checked-in docs, comments, commits, or scripts**
   — no decompiled class/method names, smali paths, APK contents, or app UI/architecture. Findings
   go in as observed API behavior confirmed via hardware testing (`docs/corrections.md`), not as
