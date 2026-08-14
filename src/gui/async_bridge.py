@@ -98,6 +98,20 @@ class AsyncBridge(QObject):
         # first and make every external is_current_operation() check see
         # None, not just the raced case it was meant to catch. Comparing
         # tokens against the last dispatch is sufficient on its own).
+        #
+        # Known limitation (flagged repeatedly in review, documented here so
+        # it stops costing re-review time): _current is a single slot, not a
+        # stack, so it only tracks the *chained* nesting pattern above (one
+        # handler's result synchronously triggers the next dispatch). It
+        # does NOT protect two *sibling* dispatches fired from the same
+        # handler (fan-out, not a chain) -- if the second-dispatched
+        # sibling's operation_finished arrived before the first's, the first
+        # sibling's own finish would then be misjudged stale while it's
+        # still genuinely running. No call site does this today (every
+        # nested dispatch in this codebase is a single linear chain, e.g.
+        # MainWindow._on_capabilities_ready -> list_presets()); turning this
+        # into a set/counter to guard a scenario nothing actually triggers
+        # would be speculative hardening, not a fix for a live bug.
         self._current: _ActiveOperation | None = None
         self._next_token: int = 0
 
