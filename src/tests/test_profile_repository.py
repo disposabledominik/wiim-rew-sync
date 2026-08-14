@@ -344,59 +344,6 @@ class TestDuplicate:
             repo.duplicate("nonexistent", "copy")
 
 
-# --- tags ---
-
-
-class TestTags:
-    """Test add_tag, remove_tag, and get_by_tag."""
-
-    def test_add_tag_persists(self, repo: ProfileRepository) -> None:
-        """Added tags persist across load cycles."""
-        repo.save(_make_stereo_profile("tagged"))
-        repo.add_tag("tagged", "room-correction")
-
-        loaded = repo.load("tagged")
-        assert "room-correction" in loaded.tags
-
-    def test_add_tag_idempotent(self, repo: ProfileRepository) -> None:
-        """Adding the same tag twice does not duplicate it."""
-        repo.save(_make_stereo_profile("tagged"))
-        repo.add_tag("tagged", "test")
-        repo.add_tag("tagged", "test")
-
-        loaded = repo.load("tagged")
-        assert loaded.tags.count("test") == 1
-
-    def test_remove_tag_persists(self, repo: ProfileRepository) -> None:
-        """Removed tags persist across load cycles."""
-        profile = _make_stereo_profile("tagged")
-        profile.tags = ["keep", "remove"]
-        repo.save(profile)
-
-        repo.remove_tag("tagged", "remove")
-        loaded = repo.load("tagged")
-        assert "remove" not in loaded.tags
-        assert "keep" in loaded.tags
-
-    def test_get_by_tag_filters_correctly(self, repo: ProfileRepository) -> None:
-        """get_by_tag returns only profiles with the given tag."""
-        p1 = _make_stereo_profile("one")
-        p1.tags = ["eq", "living-room"]
-        repo.save(p1)
-
-        p2 = _make_stereo_profile("two")
-        p2.tags = ["eq"]
-        repo.save(p2)
-
-        p3 = _make_stereo_profile("three")
-        p3.tags = ["bedroom"]
-        repo.save(p3)
-
-        results = repo.get_by_tag("eq")
-        names = [p.name for p in results]
-        assert "one" in names
-        assert "two" in names
-        assert "three" not in names
 
 
 # --- schema migration ---

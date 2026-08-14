@@ -353,7 +353,6 @@ class TestDevicePull:
 
         state = manager._wizard_controller.state
         assert state.current_filters == filters
-        assert state.device_filters == filters
         assert state.filters_origin == "Pulled from device (source: wifi)"
         mock_bridge.peq_ready.emit.assert_called_once_with(settings)
 
@@ -383,7 +382,6 @@ class TestRoomfitPull:
 
         state = manager._wizard_controller.state
         assert state.current_filters == filters
-        assert state.device_filters == filters
         assert state.filters_origin == "RoomFit profile: Living Room"
         mock_bridge.peq_ready.emit.assert_called_once_with(settings)
 

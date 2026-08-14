@@ -15,7 +15,6 @@ class ValidationWarning:
     field: str
     message: str
     original_value: Any
-    clamped_value: Any | None = None
 
 
 @dataclass

@@ -793,7 +793,6 @@ class PrimaryWorkflowManager(QObject):
 
         # Store in wizard state
         state.current_filters = filters
-        state.device_filters = filters
         state.filters_origin = f"Pulled from device (source: {source_name})"
 
         # Emit result signal
@@ -831,7 +830,6 @@ class PrimaryWorkflowManager(QObject):
 
         # Store in wizard state
         state.current_filters = filters
-        state.device_filters = filters
         state.filters_origin = f"RoomFit profile: {profile_name}"
 
         # Emit result signal (triggers _on_peq_ready -> Review page)
@@ -870,7 +868,6 @@ class PrimaryWorkflowManager(QObject):
 
         # Store in wizard state
         state.current_filters = filters
-        state.device_filters = filters
         state.filters_origin = f"PEQ preset: {preset_name}"
 
         # Emit result signal

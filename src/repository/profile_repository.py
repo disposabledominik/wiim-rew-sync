@@ -198,29 +198,3 @@ class ProfileRepository:
         new_profile = Profile.model_validate(data)
         self.save(new_profile)
         return new_profile
-
-    def add_tag(self, name: str, tag: str) -> None:
-        """Add a tag to a profile and persist.
-
-        Raises:
-            ProfileNotFoundError: If the profile does not exist.
-        """
-        profile = self.load(name)
-        if tag not in profile.tags:
-            profile.tags.append(tag)
-            self.save(profile)
-
-    def remove_tag(self, name: str, tag: str) -> None:
-        """Remove a tag from a profile and persist.
-
-        Raises:
-            ProfileNotFoundError: If the profile does not exist.
-        """
-        profile = self.load(name)
-        if tag in profile.tags:
-            profile.tags.remove(tag)
-            self.save(profile)
-
-    def get_by_tag(self, tag: str) -> list[Profile]:
-        """Return all profiles that have the given tag."""
-        return [p for p in self.list_all() if tag in p.tags]

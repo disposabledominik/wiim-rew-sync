@@ -103,10 +103,6 @@ class MyPresetsView(QWidget):
         """Re-render the list from the current preset data."""
         self._populate_list()
 
-    def preset_count(self) -> int:
-        """Return the number of presets currently held."""
-        return len(self._presets)
-
     # ------------------------------------------------------------------
     # UI Setup
     # ------------------------------------------------------------------

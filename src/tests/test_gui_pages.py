@@ -467,61 +467,6 @@ class TestFiltersPage:
 
         assert page._next_btn.isEnabled()
 
-    def test_show_warnings_displays_text(self, qtbot) -> None:
-        """show_warnings displays warning messages in the warnings section."""
-        page = FiltersPage()
-        qtbot.addWidget(page)
-        page.show()
-
-        page.show_warnings(["Gain clamped to +6 dB", "Q adjusted from 50 to 24"])
-
-        assert page._warnings_section.isVisible()
-        assert "Gain clamped" in page._warnings_label.text()
-        assert "Q adjusted" in page._warnings_label.text()
-
-    def test_show_error_displays_text(self, qtbot) -> None:
-        """show_error displays error message in the error section."""
-        page = FiltersPage()
-        qtbot.addWidget(page)
-        page.show()
-
-        page.show_error("Failed to parse REW file: invalid format")
-
-        assert page._error_section.isVisible()
-        assert "Failed to parse" in page._error_label.text()
-
-    def test_source_toggle_hides_stale_warnings(self, qtbot) -> None:
-        """Smoke #236: _on_source_index_changed() must hide _warnings_section
-        when switching sources -- previously only the file-import/REW-pull
-        sections themselves were toggled, so a stale warning box from a File
-        Import stayed visible after switching to Pull from REW API."""
-        page = FiltersPage()
-        qtbot.addWidget(page)
-        page.show()
-
-        page.show_warnings(["Gain clamped to +6 dB"])
-        assert page._warnings_section.isVisible()
-
-        page._source_combo.setCurrentIndex(_REW_API_INDEX)
-
-        assert not page._warnings_section.isVisible()
-
-    def test_source_toggle_hides_stale_error(self, qtbot) -> None:
-        """Smoke #236: _on_source_index_changed() must hide _error_section
-        when switching source modes -- previously a stale parse-error box
-        from a File Import stayed visible after switching to Pull from REW
-        API."""
-        page = FiltersPage()
-        qtbot.addWidget(page)
-        page.show()
-
-        page.show_error("Failed to parse REW file: invalid format")
-        assert page._error_section.isVisible()
-
-        page._source_combo.setCurrentIndex(_REW_API_INDEX)
-
-        assert not page._error_section.isVisible()
-
     def test_file_import_is_default_source(self, qtbot) -> None:
         """File Import panel is visible and RewPullView hidden by default."""
         page = FiltersPage()
@@ -704,19 +649,6 @@ class TestFiltersPage:
             - subtitle_bottom
         )
         assert toggle_top - subtitle_bottom == expected_gap
-
-    def test_set_rew_api_available_false_disables_and_falls_back(self, qtbot) -> None:
-        """set_rew_api_available(False) disables the option and reverts selection."""
-        from src.gui.wizard_controller import FiltersSource
-
-        page = FiltersPage()
-        qtbot.addWidget(page)
-        page._source_combo.setCurrentIndex(_REW_API_INDEX)
-
-        page.set_rew_api_available(False)
-
-        assert not page._source_items[FiltersSource.REW_API].isEnabled()
-        assert page._source_combo.currentIndex() == _REW_FILE_INDEX
 
     def test_clear_results_reverts_to_file_import(self, qtbot) -> None:
         """clear_results() resets the source dropdown back to File Import."""

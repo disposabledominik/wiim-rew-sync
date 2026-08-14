@@ -3180,9 +3180,8 @@ class TestSettingsUIState:
     # --- Issue #11: FiltersPage retry shows option cards ---
 
     def test_issue11_filters_page_has_retry_mechanism(self, window) -> None:
-        """#11: Clearing error state fully resets FiltersPage for retry."""
+        """#11: Clearing state fully resets FiltersPage for retry."""
         page = window._filters_page
-        page.show_error("Parse failed")
         page._stereo_path = "/tmp/rew.txt"
         page._left_path = "/tmp/left.txt"
         page._right_path = "/tmp/right.txt"
@@ -3194,8 +3193,6 @@ class TestSettingsUIState:
 
         page.clear_results()
 
-        assert page._error_section.isVisible() is False
-        assert page._warnings_section.isVisible() is False
         assert page._stereo_path == ""
         assert page._left_path == ""
         assert page._right_path == ""

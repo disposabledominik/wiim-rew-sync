@@ -89,7 +89,6 @@ def generate_wiim_band_array(
                 field="filters",
                 message=f"Received {len(filters)} filters; truncated to {max_bands} bands",
                 original_value=len(filters),
-                clamped_value=max_bands,
             )
         )
         filters = filters[:max_bands]
@@ -123,7 +122,6 @@ def generate_wiim_band_array(
                     field=f"band_{i + 1}_gain",
                     message=f"Band {i + 1}: {gain_reason}",
                     original_value=gain,
-                    clamped_value=clamped_gain,
                 )
             )
         gain = clamped_gain
@@ -137,7 +135,6 @@ def generate_wiim_band_array(
                     field=f"band_{i + 1}_q",
                     message=f"Band {i + 1}: {q_reason}",
                     original_value=q,
-                    clamped_value=clamped_q,
                 )
             )
         q = clamped_q

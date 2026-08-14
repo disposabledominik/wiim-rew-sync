@@ -623,14 +623,6 @@ class TestMyPresetsViewPopulation:
         assert view._empty_label.isVisible()
         assert not view._list_widget.isVisible()
 
-    def test_preset_count_property(self, qtbot) -> None:
-        """preset_count() returns the number of presets held."""
-        view = MyPresetsView()
-        qtbot.addWidget(view)
-
-        view.set_presets([_make_profile("A"), _make_profile("B")])
-        assert view.preset_count() == 2
-
 
 class TestMyPresetsViewSearch:
     """Tests for search field visibility and filtering."""

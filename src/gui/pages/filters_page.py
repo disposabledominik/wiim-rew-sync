@@ -223,8 +223,6 @@ class FiltersPage(QWidget):
         return [
             self._next_btn,
             self._import_lr_btn,
-            self._continue_with_warnings_btn,
-            self._retry_btn,
             self._device_load_btn,
             self._local_load_btn,
         ]
@@ -240,18 +238,6 @@ class FiltersPage(QWidget):
             path: The user's configured default REW folder, or "" for none.
         """
         self._default_import_dir = path
-
-    def set_rew_api_available(self, available: bool) -> None:
-        """Enable/disable the "Pull from REW API" source option.
-
-        Falls back to File Import if it was selected when disabled.
-
-        Args:
-            available: Whether REW API pull should be offered on this page.
-        """
-        self._source_items[FiltersSource.REW_API].setEnabled(available)
-        if not available and self._current_source == FiltersSource.REW_API:
-            self._source_combo.setCurrentIndex(_SOURCE_ORDER.index(FiltersSource.REW_FILE))
 
     def set_lr_enabled(self, enabled: bool) -> None:
         """Enable or disable the L/R channel mode option.
@@ -420,26 +406,8 @@ class FiltersPage(QWidget):
         self._device_source_label.setVisible(False)
         self._populate_device_list()
 
-    def show_warnings(self, warnings: list[str]) -> None:
-        """Display validation warnings inline with a continue button."""
-        self._error_section.setVisible(False)
-        if not warnings:
-            self._warnings_section.setVisible(False)
-            return
-        text = "\n".join(f"• {w}" for w in warnings)
-        self._warnings_label.setText(text)
-        self._warnings_section.setVisible(True)
-
-    def show_error(self, message: str) -> None:
-        """Display a parse/network error with retry option."""
-        self._warnings_section.setVisible(False)
-        self._error_label.setText(message)
-        self._error_section.setVisible(True)
-
     def clear_results(self) -> None:
-        """Reset to initial state - hide warnings/errors, revert to File Import."""
-        self._warnings_section.setVisible(False)
-        self._error_section.setVisible(False)
+        """Reset to initial state - revert to File Import."""
         self._source_combo.setCurrentIndex(_SOURCE_ORDER.index(FiltersSource.REW_FILE))
         self._stereo_path = ""
         self._left_path = ""
@@ -519,15 +487,6 @@ class FiltersPage(QWidget):
         self.rew_pull_view.back_requested.connect(self._on_rew_pull_back_requested)
 
         # --- Warnings section ---
-        self._warnings_section = self._build_warnings_section()
-        self._warnings_section.setVisible(False)
-        page_layout.addWidget(self._warnings_section)
-
-        # --- Error section ---
-        self._error_section = self._build_error_section()
-        self._error_section.setVisible(False)
-        page_layout.addWidget(self._error_section)
-
         # Set initial mode visibility
         self._update_mode_ui()
 
@@ -748,58 +707,6 @@ class FiltersPage(QWidget):
 
         return panel
 
-    def _build_warnings_section(self) -> QWidget:
-        """Build the inline warnings display area."""
-        widget = QWidget()
-        widget.setObjectName("FiltersWarningsSection")
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(SPACING_MD)
-
-        heading = QLabel("Validation Warnings")
-        heading.setProperty("class", "warning")
-        layout.addWidget(heading)
-
-        self._warnings_label = QLabel("")
-        self._warnings_label.setWordWrap(True)
-        layout.addWidget(self._warnings_label)
-
-        self._continue_with_warnings_btn = make_action_button(
-            "Continue with adjustments",
-            object_name="filters_continue_with_warnings",
-            style_class="warning",
-        )
-        self._continue_with_warnings_btn.clicked.connect(self._on_continue_with_warnings)
-        layout.addWidget(
-            self._continue_with_warnings_btn, alignment=Qt.AlignmentFlag.AlignLeft
-        )
-
-        return widget
-
-    def _build_error_section(self) -> QWidget:
-        """Build the error display area with retry."""
-        widget = QWidget()
-        widget.setObjectName("FiltersErrorSection")
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(SPACING_MD)
-
-        heading = QLabel("Error")
-        heading.setProperty("class", "error")
-        layout.addWidget(heading)
-
-        self._error_label = QLabel("")
-        self._error_label.setWordWrap(True)
-        layout.addWidget(self._error_label)
-
-        self._retry_btn = make_action_button(
-            "Try Again", object_name="filters_retry_btn", style_class="secondary"
-        )
-        self._retry_btn.clicked.connect(self._on_retry)
-        layout.addWidget(self._retry_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        return widget
-
     # ------------------------------------------------------------------
     # Private: Event handlers
     # ------------------------------------------------------------------
@@ -830,8 +737,6 @@ class FiltersPage(QWidget):
         """
         self._current_source = _SOURCE_ORDER[index]
         self._source_panels.setCurrentIndex(index)
-        self._warnings_section.setVisible(False)
-        self._error_section.setVisible(False)
         self._subtitle.setText(_SOURCE_SUBTITLES[self._current_source])
 
         if self._current_source == FiltersSource.REW_API:
@@ -995,17 +900,6 @@ class FiltersPage(QWidget):
             return
         profile = current.data(Qt.ItemDataRole.UserRole)
         self.local_profile_selected.emit(profile)
-
-    @Slot()
-    def _on_continue_with_warnings(self) -> None:
-        """User acknowledged warnings - emit filters_accepted."""
-        self.filters_accepted.emit()
-
-    @Slot()
-    def _on_retry(self) -> None:
-        """Retry after error - reset page to initial state."""
-        self._error_section.setVisible(False)
-        self._warnings_section.setVisible(False)
 
     # ------------------------------------------------------------------
     # Private: Helpers

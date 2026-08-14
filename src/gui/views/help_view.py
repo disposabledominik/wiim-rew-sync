@@ -517,32 +517,7 @@ class HelpView(QFrame):
         if resolved_id in self._sections:
             self._display_section(resolved_id)
 
-    def navigate_for_step(self, step_value: str) -> None:
-        """Auto-navigate to the help section relevant to a wizard step.
-
-        Args:
-            step_value: The WizardStep enum value (e.g. 'connect', 'filters').
-        """
-        section_id = _STEP_SECTION_MAP.get(step_value)
-        if section_id:
-            self.navigate_to_section(section_id)
-
-    @property
-    def current_section(self) -> str | None:
-        """Return the currently displayed section ID, or None."""
-        return self._current_section
-
     @property
     def section_count(self) -> int:
         """Return the number of loaded help sections."""
         return len(self._sections)
-
-    @property
-    def visible_toc_count(self) -> int:
-        """Return the number of currently visible (not hidden) TOC items."""
-        count = 0
-        for i in range(self._toc_list.count()):
-            item = self._toc_list.item(i)
-            if item is not None and not item.isHidden():
-                count += 1
-        return count

@@ -492,20 +492,10 @@ class TestValidationWarning:
             field="gain_db",
             message="Gain exceeds ±12 dB limit",
             original_value=15.0,
-            clamped_value=12.0,
         )
         assert w.field == "gain_db"
         assert w.message == "Gain exceeds ±12 dB limit"
         assert w.original_value == 15.0
-        assert w.clamped_value == 12.0
-
-    def test_warning_without_clamped_value(self) -> None:
-        w = ValidationWarning(
-            field="q",
-            message="Q value unusual",
-            original_value=0.001,
-        )
-        assert w.clamped_value is None
 
 
 # ---------------------------------------------------------------------------
