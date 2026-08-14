@@ -490,36 +490,3 @@ class WizardController(QObject):
 
         self._state.flow_type = flow_type
         self.flow_type_changed.emit(flow_type)
-
-    # ------------------------------------------------------------------
-    # Push prerequisites
-    # ------------------------------------------------------------------
-
-    def can_push(self) -> bool:
-        """Return True if all push prerequisites are met.
-
-        Prerequisites:
-        1. A device is connected (selected_device is not None).
-        2. A source is selected OR flow is RoomFit (source is implicit).
-        3. Filters are loaded (current_filters is non-empty).
-        4. Dry run mode is False.
-        """
-        state = self._state
-
-        # 1. Device connected
-        if state.selected_device is None:
-            return False
-
-        # 2. Source selected (RoomFit is source-agnostic)
-        if state.flow_type != FlowType.ROOMFIT and not state.selected_sources:
-            return False
-
-        # 3. Filters loaded
-        if not state.current_filters:
-            return False
-
-        # 4. Not in dry run
-        if state.dry_run:
-            return False
-
-        return True
