@@ -200,13 +200,14 @@ class TestPushWriteOperations:
     def test_on_peq_ready_invalidates_stale_review_on_filter_change(
         self, window
     ) -> None:
-        """Regression: the FILTERS change-detection added for
+        """Regression: the FILTERS change-detection originally added for
         _on_filters_accepted (browsing back and re-confirming a different
-        filter set clears stale Review/Push checkmarks) must also apply to
-        the device-pull/file-import path, which is the common case and
-        previously bypassed it entirely -- _on_peq_ready called advance()
-        directly with no invalidation, so this is the only test exercising
-        that path's checkmark behavior end to end."""
+        filter set clears stale Review/Push checkmarks; that method was
+        later removed entirely, see docs/smoke_test_issues.md #274) must
+        also apply to the device-pull/file-import path, which is the common
+        case and previously bypassed it entirely -- _on_peq_ready called
+        advance() directly with no invalidation, so this is the only test
+        exercising that path's checkmark behavior end to end."""
         _setup_device(window)
         wc = window._wizard_controller
         state = wc.state
