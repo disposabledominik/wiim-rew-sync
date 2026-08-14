@@ -314,10 +314,10 @@ class MainWindow(QMainWindow):
 
         # Snapshot of (current_filters, filters_l, filters_r, channel_mode)
         # as of the last time the Filters step was completed -- lets
-        # _on_filters_accepted() detect an actual change-of-selection the
-        # same way _on_source_changed() does for the Source step (see that
-        # method), so re-confirming Filters with a *different* filter set
-        # after navigating back invalidates the now-stale Review/Push
+        # _confirm_filters_selection() detect an actual change-of-selection
+        # the same way _on_source_changed() does for the Source step (see
+        # that method), so re-confirming Filters with a *different* filter
+        # set after navigating back invalidates the now-stale Review/Push
         # checkmarks instead of leaving them in place (docs/smoke_test_issues.md,
         # QA issue #8). None until the Filters step is completed once.
         self._last_confirmed_filters_signature: tuple[object, ...] | None = None
@@ -1133,14 +1133,16 @@ class MainWindow(QMainWindow):
 
         Called from every path that advances past FILTERS -- _on_peq_ready
         (device pull / file import, the common case) and _on_profile_recalled
-        (Local Library) are the two live UI paths; _on_filters_accepted (once
-        the warnings-acknowledgment path, now unreachable from any UI trigger
-        since that inline warnings section was dead-code-swept -- see
-        docs/smoke_test_issues.md #236) is kept only as the wizard-
-        integration tests' generic "advance past FILTERS" entry point, so
-        this check still has to run there too. A version of this fix that
-        only ran from _on_filters_accepted left Review/Push staleness
-        undetected for every filter change that didn't happen to trigger a
+        (Local Library) are the two live UI paths today. A third path,
+        _on_filters_accepted (the warnings-acknowledgment "Continue with
+        adjustments" button), was removed entirely once its own UI trigger
+        was dead-code-swept and left it with zero reachable callers --
+        see docs/smoke_test_issues.md #236, #274; wizard-integration tests
+        that used to call it directly now use the test-only
+        conftest.advance_past_filters() helper instead, which inlines this
+        same call. A version of this fix that only ran from
+        _on_filters_accepted left Review/Push staleness undetected for
+        every filter change that didn't happen to trigger a
         truncation/clamping warning, i.e. almost all of them.
         """
         state = self._wizard_controller.state
@@ -1165,24 +1167,6 @@ class MainWindow(QMainWindow):
         if new_signature != self._last_confirmed_filters_signature:
             self._wizard_controller.invalidate_after(WizardStep.FILTERS)
         self._last_confirmed_filters_signature = new_signature
-
-    def _on_filters_accepted(self) -> None:
-        """Confirm the current filter selection and advance past FILTERS.
-
-        Not wired to any live UI signal -- its original trigger (the
-        warnings-acknowledgment "Continue with adjustments" button) was
-        removed as dead code (docs/smoke_test_issues.md #236). Kept as the
-        wizard-integration tests' generic "advance past FILTERS" entry
-        point; see _confirm_filters_selection()'s docstring.
-        """
-        state = self._wizard_controller.state
-        # Order matters: invalidate first (may clear REVIEW/PUSH), then
-        # advance (re-marks FILTERS complete) -- same order at the other two
-        # _confirm_filters_selection() call sites.
-        self._confirm_filters_selection()
-
-        summary = self._resolve_filters_summary(len(state.current_filters))
-        self._wizard_controller.advance(summary=summary, tooltip=state.filters_origin)
 
     @Slot(str)
     def _on_file_import_requested(self, path: str) -> None:

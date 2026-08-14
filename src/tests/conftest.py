@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,6 +21,9 @@ from PySide6.QtWidgets import QApplication
 
 from src.gui.theme import _RESOLVED_THEME_PROPERTY
 from src.models.canonical import CanonicalFilter
+
+if TYPE_CHECKING:
+    from src.gui.main_window import MainWindow
 
 
 def iter_src_python_files() -> list[Path]:
@@ -71,6 +75,22 @@ def close_coroutine_tree(
             close_coroutine_tree(local_value, seen)
 
     value.close()
+
+
+def advance_past_filters(window: MainWindow) -> None:
+    """Confirm the current filter selection and advance past FILTERS.
+
+    Test-only stand-in for the removed MainWindow._on_filters_accepted()
+    (docs/smoke_test_issues.md #274 -- it had no remaining live UI trigger
+    once the warnings-acknowledgment button it was wired to was deleted as
+    dead code) -- inlines its two-line body so wizard-integration tests can
+    advance past FILTERS without the heavier _on_peq_ready()/
+    _on_profile_recalled() setup (validated PEQ data or a Profile object).
+    """
+    state = window._wizard_controller.state
+    window._confirm_filters_selection()
+    summary = window._resolve_filters_summary(len(state.current_filters))
+    window._wizard_controller.advance(summary=summary, tooltip=state.filters_origin)
 
 
 @pytest.fixture()
