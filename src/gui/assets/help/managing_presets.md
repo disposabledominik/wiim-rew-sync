@@ -21,7 +21,8 @@ You can save a preset from two places:
 
 Give your preset a descriptive name (e.g., "Living Room Correction" or
 "Headphone EQ v2"). The channel mode (Stereo or L/R) is saved automatically
-and displayed as a badge in the preset list.
+and shown in brackets after the name in the preset list (e.g.
+"[Stereo: 7 bands]" or "[L: 5 bands / R: 11 bands]").
 
 If you later push this preset to a device (directly, or via "Copy to
 another device"), only letters (any language), numbers, spaces, `-`, and `_`
@@ -152,4 +153,4 @@ not expected to disturb what's currently applied to your audio.
   (room, mic position, date).
 - PEQ presets can be loaded onto any source on any device. They are not
   tied to a specific input.
-- L/R presets show a "L/R" badge and display per-channel band counts.
+- L/R presets show per-channel band counts, e.g. "[L: 5 bands / R: 11 bands]".

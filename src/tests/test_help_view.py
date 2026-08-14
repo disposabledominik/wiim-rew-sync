@@ -21,6 +21,15 @@ from src.gui.views.help_view import (
 
 _KEY_RETURN = getattr(Qt, "Key_Return", 0x01000004)
 
+
+def _visible_toc_count(view: HelpView) -> int:
+    """Count TOC items not hidden by the current search filter."""
+    return sum(
+        1
+        for i in range(view._toc_list.count())
+        if (item := view._toc_list.item(i)) is not None and not item.isHidden()
+    )
+
 # ---------------------------------------------------------------------------
 # TestHelpViewBasic
 # ---------------------------------------------------------------------------
@@ -84,25 +93,25 @@ class TestHelpViewNavigation:
     """Tests for contextual navigation and section display."""
 
     def test_navigate_to_section_updates_current(self, qtbot) -> None:
-        """navigate_to_section updates current_section property."""
+        """navigate_to_section updates the tracked current section."""
         view = HelpView()
         qtbot.addWidget(view)
 
         if view.section_count > 0:
             section_id = next(iter(view._sections))
             view.navigate_to_section(section_id)
-            assert view.current_section == section_id
+            assert view._current_section == section_id
 
-    def test_navigate_for_step_maps_correctly(self, qtbot) -> None:
-        """navigate_for_step maps wizard step names to help sections."""
+    def test_navigate_to_section_maps_wizard_step_names(self, qtbot) -> None:
+        """navigate_to_section maps wizard step names to help sections."""
         view = HelpView()
         qtbot.addWidget(view)
 
         # Test that step mapping resolves without error
         for step_value, expected_section in _STEP_SECTION_MAP.items():
             if expected_section in view._sections:
-                view.navigate_for_step(step_value)
-                assert view.current_section == expected_section
+                view.navigate_to_section(step_value)
+                assert view._current_section == expected_section
 
     def test_navigate_to_unknown_section_no_crash(self, qtbot) -> None:
         """Navigating to a non-existent section does not crash."""
@@ -120,7 +129,7 @@ class TestHelpViewNavigation:
         # 'connect' should resolve to 'getting-started' section
         if "getting-started" in view._sections:
             view.navigate_to_section("connect")
-            assert view.current_section == "getting-started"
+            assert view._current_section == "getting-started"
 
     def test_toc_click_changes_content(self, qtbot) -> None:
         """Clicking a different TOC item changes the displayed content."""
@@ -131,7 +140,7 @@ class TestHelpViewNavigation:
             # Select second item
             view._toc_list.setCurrentRow(1)
             second_section = view._toc_list.item(1).data(Qt.ItemDataRole.UserRole)
-            assert view.current_section == second_section
+            assert view._current_section == second_section
 
 
 # ---------------------------------------------------------------------------
@@ -147,26 +156,26 @@ class TestHelpViewSearch:
         view = HelpView()
         qtbot.addWidget(view)
 
-        initial_visible = view.visible_toc_count
+        initial_visible = _visible_toc_count(view)
 
         # Search for something unlikely to match all items
         view._search_input.setText("xyznonexistent")
 
         # Should have fewer visible items (possibly zero)
-        assert view.visible_toc_count <= initial_visible
+        assert _visible_toc_count(view) <= initial_visible
 
     def test_clear_search_shows_all(self, qtbot) -> None:
         """Clearing the search shows all TOC items again."""
         view = HelpView()
         qtbot.addWidget(view)
 
-        initial_visible = view.visible_toc_count
+        initial_visible = _visible_toc_count(view)
 
         # Apply and then clear filter
         view._search_input.setText("xyznonexistent")
         view._search_input.clear()
 
-        assert view.visible_toc_count == initial_visible
+        assert _visible_toc_count(view) == initial_visible
 
     def test_search_is_case_insensitive(self, qtbot) -> None:
         """Search matching is case-insensitive."""
@@ -179,7 +188,7 @@ class TestHelpViewSearch:
             if first_title:
                 view._search_input.setText(first_title.upper())
                 # At least the matching section should be visible
-                assert view.visible_toc_count >= 1
+                assert _visible_toc_count(view) >= 1
 
     def test_search_navigation_buttons_exist(self, qtbot) -> None:
         """Search view has next/previous navigation buttons and hit counter."""
@@ -242,7 +251,7 @@ class TestHelpViewSearch:
                 view._search_input.setText(search_term)
 
                 # Should navigate to a matching section
-                assert view.current_section is not None
+                assert view._current_section is not None
 
     def test_search_next_button_navigation(self, qtbot) -> None:
         """Clicking next button advances to the next search hit."""

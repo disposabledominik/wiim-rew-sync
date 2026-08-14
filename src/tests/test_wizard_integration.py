@@ -20,6 +20,7 @@ import pytest
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import PAGE_INDICES, MainWindow
 from src.gui.wizard_controller import FlowType, WizardStep
+from src.tests.conftest import advance_past_filters
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -133,7 +134,7 @@ class TestHappyPathPEQ:
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["filters"]
 
         # Step 4: Filters accepted
-        window._on_filters_accepted()
+        advance_past_filters(window)
         assert window.wizard_controller.current_step == WizardStep.REVIEW
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["review"]
 
@@ -223,7 +224,7 @@ class TestRoomFitFlow:
         assert window.wizard_controller.current_step == WizardStep.FILTERS
 
         # Filters → Review
-        window._on_filters_accepted()
+        advance_past_filters(window)
         assert window.wizard_controller.current_step == WizardStep.REVIEW
         assert window.stacked_widget.currentIndex() == PAGE_INDICES["review"]
 
@@ -263,7 +264,7 @@ class TestBackNavigation:
         caps = _make_caps(roomfit_level=0)
         window._on_capabilities_ready(caps)
         window._on_source_selected("wifi", "Stereo")
-        window._on_filters_accepted()
+        advance_past_filters(window)
 
         # Now at REVIEW
         assert window.wizard_controller.current_step == WizardStep.REVIEW
@@ -348,7 +349,7 @@ class TestErrorRecovery:
         caps = _make_caps(roomfit_level=0)
         window._on_capabilities_ready(caps)
         window._on_source_selected("wifi", "Stereo")
-        window._on_filters_accepted()
+        advance_past_filters(window)
         window._on_push_requested()
         assert window.wizard_controller.current_step == WizardStep.PUSH
 
@@ -397,7 +398,7 @@ class TestUndoAfterPush:
         caps = _make_caps(roomfit_level=0)
         window._on_capabilities_ready(caps)
         window._on_source_selected("wifi", "Stereo")
-        window._on_filters_accepted()
+        advance_past_filters(window)
         window._on_push_requested()
 
         result = _make_write_result(success=True)
@@ -463,7 +464,7 @@ class TestSidebarNavigation:
         caps = _make_caps(roomfit_level=0)
         window._on_capabilities_ready(caps)
         window._on_source_selected("wifi", "Stereo")
-        window._on_filters_accepted()
+        advance_past_filters(window)
 
         # Now at REVIEW
         assert window.wizard_controller.current_step == WizardStep.REVIEW

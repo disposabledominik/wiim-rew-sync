@@ -19,9 +19,15 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
-from src.gui.components.list_item_style import apply_active_item_style
+from src.gui.components.list_item_style import (
+    apply_active_item_style,
+    size_list_item,
+    style_selectable_list,
+)
 from src.gui.components.page_layout import build_centered_content, make_page_title
 from src.gui.constants import (
+    LIST_ITEM_HEIGHT,
+    LIST_ITEM_SPACING,
     SPACING_MD,
     SPACING_SM,
 )
@@ -131,8 +137,18 @@ class NameProfilePage(QWidget):
         layout.addWidget(profiles_heading)
 
         self._profiles_list = QListWidget()
+        self._profiles_list.setObjectName("NameProfileExistingList")
+        style_selectable_list(self._profiles_list)
         self._profiles_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-        self._profiles_list.setMaximumHeight(150)
+        # Cap at a handful of rows before scrolling takes over, computed from
+        # the shared row metrics (LIST_ITEM_HEIGHT/SPACING) rather than a
+        # hardcoded pixel value -- a stale 150px cap (tuned for Qt's old
+        # default ~20-24px row height) would silently shrink to ~3 visible
+        # rows once style_selectable_list()'s taller rows applied here.
+        _visible_rows = 4
+        self._profiles_list.setMaximumHeight(
+            _visible_rows * LIST_ITEM_HEIGHT + (2 * _visible_rows - 1) * LIST_ITEM_SPACING
+        )
         self._profiles_list.itemClicked.connect(self._on_profile_item_clicked)
         layout.addWidget(self._profiles_list)
 
@@ -195,6 +211,7 @@ class NameProfilePage(QWidget):
             item = QListWidgetItem(f"{name} (active)" if is_active else name)
             item.setData(Qt.ItemDataRole.UserRole, name)
             apply_active_item_style(item, is_active)
+            size_list_item(item)
             self._profiles_list.addItem(item)
 
         # Re-evaluate warning in case input already has text

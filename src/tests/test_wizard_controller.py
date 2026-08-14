@@ -1,7 +1,7 @@
 """Unit tests for WizardController — adaptive flow state machine.
 
-Tests flow branching, navigation, signal emission, can_push prerequisites,
-and step summary management.
+Tests flow branching, navigation, signal emission, and step summary
+management.
 
 Requirements referenced: 1.2-1.12, 11.1-11.8.
 """
@@ -559,72 +559,6 @@ class TestWizardControllerFlowTypeInvalidation:
 
         assert emissions == []
 
-
-# ---------------------------------------------------------------------------
-# TestWizardControllerCanPush
-# ---------------------------------------------------------------------------
-
-
-class TestWizardControllerCanPush:
-    """Tests for can_push prerequisite checks."""
-
-    def _setup_pushable(self, ctrl: WizardController) -> None:
-        """Set up state so that can_push returns True."""
-        ctrl._state.selected_device = "WiiM Pro Plus"
-        ctrl._state.selected_source = "wifi"
-        ctrl._state.current_filters = [
-            CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=3.0, q=1.0)
-        ]
-        ctrl._state.dry_run = False
-
-    def test_can_push_all_conditions_met(self, qtbot) -> None:
-        """can_push returns True when all prerequisites are satisfied."""
-        ctrl = WizardController()
-        self._setup_pushable(ctrl)
-
-        assert ctrl.can_push() is True
-
-    def test_cannot_push_no_device(self, qtbot) -> None:
-        """can_push returns False when no device is selected."""
-        ctrl = WizardController()
-        self._setup_pushable(ctrl)
-        ctrl._state.selected_device = None
-
-        assert ctrl.can_push() is False
-
-    def test_cannot_push_no_source_peq(self, qtbot) -> None:
-        """can_push returns False for PEQ flow when no source is selected."""
-        ctrl = WizardController()
-        self._setup_pushable(ctrl)
-        ctrl._state.flow_type = FlowType.PEQ
-        ctrl._state.selected_source = ""
-
-        assert ctrl.can_push() is False
-
-    def test_can_push_roomfit_no_source(self, qtbot) -> None:
-        """can_push returns True for ROOMFIT flow even without a source selected."""
-        ctrl = WizardController()
-        self._setup_pushable(ctrl)
-        ctrl._state.flow_type = FlowType.ROOMFIT
-        ctrl._state.selected_source = ""
-
-        assert ctrl.can_push() is True
-
-    def test_cannot_push_no_filters(self, qtbot) -> None:
-        """can_push returns False when current_filters is empty."""
-        ctrl = WizardController()
-        self._setup_pushable(ctrl)
-        ctrl._state.current_filters = []
-
-        assert ctrl.can_push() is False
-
-    def test_cannot_push_dry_run(self, qtbot) -> None:
-        """can_push returns False when dry_run is True."""
-        ctrl = WizardController()
-        self._setup_pushable(ctrl)
-        ctrl._state.dry_run = True
-
-        assert ctrl.can_push() is False
 
 
 # ---------------------------------------------------------------------------

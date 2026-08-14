@@ -569,6 +569,14 @@ QTableView {
     gridline-color: #333333;
     selection-background-color: rgba(0, 180, 216, 0.1);
     selection-color: #F5F5F5;
+}
+
+/* Single source of truth for the app-wide alternating-row shade, shared by
+   every table and by every selectable list (QListWidget[class="selectableList"],
+   defined further below) so the two can't drift apart. */
+QTableWidget,
+QTableView,
+QListWidget[class="selectableList"] {
     alternate-background-color: #333333;
 }
 
@@ -998,8 +1006,11 @@ QDockWidget::float-button:hover {
     border-radius: 4px;
 }
 
-/* Selectable list rows — shared by Help TOC, preset lists, and picker
-   dialogs. Uses the same background-tint + left-border accent language as
+/* Selectable list rows — every QListWidget in the app (Help TOC, preset
+   lists, picker dialogs) goes through
+   src/gui/components/list_item_style.py's style_selectable_list(), which
+   sets this class plus alternating row shading and inter-row spacing in
+   Python. Uses the same background-tint + left-border accent language as
    the sidebar nav's active item and DeviceCard/StatusBanner, so every
    "this row is selected" treatment in the app looks the same. */
 

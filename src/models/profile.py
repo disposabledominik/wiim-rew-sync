@@ -8,7 +8,6 @@ from pydantic import BaseModel, model_validator
 
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode, ChannelModeField, resolve_channel_split
-from src.utils.fp_compare import gain_matches
 
 
 class Profile(BaseModel):
@@ -20,7 +19,6 @@ class Profile(BaseModel):
     filters: list[CanonicalFilter] | None = None
     filters_l: list[CanonicalFilter] | None = None
     filters_r: list[CanonicalFilter] | None = None
-    tags: list[str] = []
 
     @model_validator(mode="after")
     def check_filter_keys_match_channel_mode(self) -> Profile:
@@ -63,26 +61,6 @@ class Profile(BaseModel):
         if isinstance(cm, ChannelMode):
             data["channel_mode"] = cm.profile_value
         return data
-
-    def band_counts(self) -> tuple[int, int]:
-        """Count active and total bands for this profile.
-
-        A band is considered active if its gain is non-zero.
-
-        For L/R profiles, returns per-channel counts (each channel
-        separately, using the left channel as representative).
-
-        Returns:
-            Tuple of (active_band_count, total_band_count).
-        """
-        if self.channel_mode == ChannelMode.STEREO:
-            filters = self.filters or []
-        else:
-            filters = self.filters_l or []
-
-        total = len(filters)
-        active = sum(1 for f in filters if not gain_matches(f.gain_db, 0.0))
-        return active, total
 
 
 class BackupRecord(Profile):

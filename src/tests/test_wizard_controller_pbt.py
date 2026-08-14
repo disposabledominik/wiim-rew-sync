@@ -1,7 +1,7 @@
 """Property-based tests for WizardController.
 
 Tests the core state-machine logic of the wizard flow: step sequencing,
-classification, advancement, back-navigation, and push prerequisites.
+classification, advancement, and back-navigation.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from src.gui.wizard_controller import (
     WizardStep,
     steps_for_flow,
 )
-from src.models.canonical import CanonicalFilter
 
 # ---------------------------------------------------------------------------
 # Strategies
@@ -280,60 +279,3 @@ def test_back_navigation_preserves_completed_steps(
     # Browsing destroys nothing and never moves the frontier
     assert dict(ctrl.completed_steps) == completed_before
     assert ctrl.frontier_step == frontier_before
-
-
-# ---------------------------------------------------------------------------
-# Property 5: Push prerequisites predicate
-# **Validates: Requirements 12.1**
-# ---------------------------------------------------------------------------
-
-
-@given(
-    flow_type=st_flow_type,
-    has_device=st.booleans(),
-    has_source=st.booleans(),
-    has_filters=st.booleans(),
-    dry_run=st.booleans(),
-)
-@settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
-def test_push_prerequisites_predicate(
-    flow_type: FlowType,
-    has_device: bool,
-    has_source: bool,
-    has_filters: bool,
-    dry_run: bool,
-    _ensure_qapp,
-) -> None:
-    """**Validates: Requirements 12.1**
-
-    Push enabled iff: device connected, source selected (or RoomFit),
-    filters non-empty, dry_run is False. If any condition not met, push
-    is disabled.
-    """
-    ctrl = WizardController()
-    ctrl._state.flow_type = flow_type
-
-    # Set up state
-    ctrl._state.selected_device = "WiiM Pro" if has_device else None
-    ctrl._state.selected_source = "wifi" if has_source else ""
-    ctrl._state.current_filters = (
-        [CanonicalFilter(type="PEAK", frequency_hz=1000.0, gain_db=0.0, q=1.0)]
-        if has_filters
-        else []
-    )
-    ctrl._state.dry_run = dry_run
-
-    result = ctrl.can_push()
-
-    # Compute expected result
-    device_ok = has_device
-    source_ok = has_source or (flow_type == FlowType.ROOMFIT)
-    filters_ok = has_filters
-    no_dry_run = not dry_run
-
-    expected = device_ok and source_ok and filters_ok and no_dry_run
-    assert result == expected, (
-        f"can_push()={result} but expected={expected} "
-        f"(device={has_device}, source={has_source}, filters={has_filters}, "
-        f"dry_run={dry_run}, flow={flow_type})"
-    )

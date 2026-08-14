@@ -15,7 +15,7 @@ from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.gui.views.presets_device_view import PresetItem
 from src.gui.wizard_controller import FlowType, WizardStep, steps_for_flow
-from src.tests.conftest import close_coroutine_tree
+from src.tests.conftest import advance_past_filters, close_coroutine_tree
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -655,7 +655,7 @@ class TestIssue57BackNavClearsCompletedSteps:
         checkmarks in place, letting a push proceed against stale reviewed
         data. Unlike Source's own state field, `state.current_filters` is
         already overwritten by the producer (file import/device pull/preset
-        load) well before Continue is clicked, so _on_filters_accepted
+        load) well before Continue is clicked, so _confirm_filters_selection()
         tracks its own "last confirmed" snapshot rather than comparing
         against wizard state directly (see that method's docstring).
         Re-confirming the SAME filters must not invalidate anything,
@@ -668,19 +668,19 @@ class TestIssue57BackNavClearsCompletedSteps:
         wc.advance(summary="Connected")  # CONNECT done, at SOURCE
         wc.advance(summary="wifi")  # SOURCE done, at FILTERS
         wc.state.current_filters = filters_a
-        window._on_filters_accepted()  # FILTERS done, at REVIEW
+        advance_past_filters(window)  # FILTERS done, at REVIEW
         wc.advance(summary="Reviewed")  # REVIEW done, at PUSH
 
         # Browse back, re-confirm the SAME filters -- nothing clears
         wc.go_to_step(WizardStep.FILTERS)
         wc.state.current_filters = filters_a
-        window._on_filters_accepted()
+        advance_past_filters(window)
         assert WizardStep.REVIEW in wc.completed_steps
 
         # Browse back, load a DIFFERENT filter set, re-confirm -- Review/Push clear
         wc.go_to_step(WizardStep.FILTERS)
         wc.state.current_filters = [MagicMock()]
-        window._on_filters_accepted()
+        advance_past_filters(window)
         assert WizardStep.REVIEW not in wc.completed_steps
         # FILTERS itself was just re-completed by the advance()
         assert WizardStep.FILTERS in wc.completed_steps
@@ -837,7 +837,7 @@ class TestIssue162ConsistentStepSummaries:
             MagicMock(), MagicMock(), MagicMock(),
         ]
 
-        window._on_filters_accepted()
+        advance_past_filters(window)
 
         state = window._wizard_controller.state
         assert state.completed_steps[WizardStep.FILTERS] == "3 filters"
@@ -865,7 +865,7 @@ class TestLazyInvalidationEntrySideEffects:
         window._on_capabilities_ready(_make_caps(roomfit_level=0))
         window._on_source_selected("wifi", "Stereo")
         window._wizard_controller.state.current_filters = [MagicMock()]
-        window._on_filters_accepted()  # -> REVIEW
+        advance_past_filters(window)  # -> REVIEW
         window._wizard_controller.advance("Ready")  # REVIEW done -> PUSH
 
     def test_browsing_back_to_completed_push_keeps_result_view(self, window) -> None:

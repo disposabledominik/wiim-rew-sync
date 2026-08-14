@@ -299,8 +299,8 @@ class TestProfileRecallInvalidatesStalePush:
     recall here, exactly as it did for every other producer at the time.
     That gap (tracked as smoke_test_issues.md #268) is now closed:
     ``_on_profile_recalled`` calls the shared ``_confirm_filters_selection()``
-    helper (also used by ``_on_peq_ready`` and ``_on_filters_accepted``)
-    before advancing, which invalidates downstream steps whenever the
+    helper (also used by ``_on_peq_ready``) before advancing, which
+    invalidates downstream steps whenever the
     recalled filters differ from what Review/Push last saw -- restoring the
     original #238 invariant this class is named for.
     """

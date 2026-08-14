@@ -16,7 +16,7 @@ This project delivers a lightweight cross-platform desktop tool to transfer para
 3. **PEQ Read (Pull)**: Read active PEQ presets from WiiM device via "Presets on Device" sidebar view.
 4. **PEQ Write (Push)**: Validate all values, backup existing state per source, write PEQ to one or more sources, read back to verify (using floating-point tolerances), and rollback on mismatch/failure. Multi-source push supported.
 5. **REW Import/Export**: Import REW EQ text files (.txt) in Stereo or L/R mode. Export to REW-compatible text format (dual files for L/R).
-6. **Local Profile Library ("My Saved Presets")**: Save, load, rename, delete, duplicate presets. Supports Stereo and L/R channel modes with badge display.
+6. **Local Profile Library ("My Saved Presets")**: Save, load, rename, delete, duplicate presets. Supports Stereo and L/R channel modes, shown as a bracketed summary after the preset name (e.g. "[Stereo: 7 bands]" or "[L: 5 bands / R: 11 bands]").
 7. **Presets on Device**: Browse PEQ presets and RoomFit profiles stored on device. Export, save locally, load into wizard, copy to other devices.
 8. **Multi-Source Push**: Source step allows multi-select. Same filter set pushed to all selected sources in one operation with per-source backup and undo.
 

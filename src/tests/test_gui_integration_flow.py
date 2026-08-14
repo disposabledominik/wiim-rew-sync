@@ -22,7 +22,7 @@ from src.models.canonical import CanonicalFilter
 from src.models.capabilities import DeviceInfo
 from src.models.channel_mode import ChannelMode
 from src.models.errors import WiiMConnectionError, WiiMTimeoutError
-from src.tests.conftest import close_coroutine_tree
+from src.tests.conftest import advance_past_filters, close_coroutine_tree
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -217,7 +217,7 @@ class TestFullWizardFlow:
         # Load filters into state
         filters = [_make_filter(100.0), _make_filter(200.0), _make_filter(500.0)]
         window._wizard_controller.state.current_filters = filters
-        window._on_filters_accepted()
+        advance_past_filters(window)
         assert window._wizard_controller.current_step == WizardStep.REVIEW
 
         # Advance to PUSH step

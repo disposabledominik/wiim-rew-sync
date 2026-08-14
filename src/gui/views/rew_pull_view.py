@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.components.action_button import make_action_button
+from src.gui.components.list_item_style import size_list_item, style_selectable_list
 from src.gui.components.page_layout import (
     build_centered_content,
     center_column,
@@ -142,6 +143,7 @@ class RewPullView(QWidget):
             for measurement in measurements:
                 item = QListWidgetItem(measurement.name)
                 item.setData(Qt.ItemDataRole.UserRole, measurement)
+                size_list_item(item)
                 list_widget.addItem(item)
 
         # Give each list a small floor height (a couple of rows) rather than
@@ -173,12 +175,26 @@ class RewPullView(QWidget):
     @classmethod
     def _list_floor_height(cls, list_widget: QListWidget) -> int:
         """Minimum height showing a couple of rows, below which the list's
-        own scrollbar (rather than further compression) takes over."""
+        own scrollbar (rather than further compression) takes over.
+
+        Must include the gap QListWidget.setSpacing() inserts around every
+        row (applied uniformly via style_selectable_list()) -- sizeHintForRow()
+        only covers a row's own height, not its spacing margin, so omitting
+        it here under-counts the floor and clips the last of the "couple of
+        rows" this floor is meant to keep fully visible. Qt's spacing is a
+        margin on *both* sides of every row (confirmed empirically: with
+        setSpacing(s), consecutive rows' tops are row_height + 2*s apart,
+        and the first row itself starts s pixels in) -- so `rows` rows span
+        `rows * row_height + (2*rows - 1) * spacing` pixels: one leading
+        margin, one trailing margin, and 2*spacing between each adjacent
+        pair.
+        """
         if list_widget.count() == 0:
             return 0
         row_height = list_widget.sizeHintForRow(0)
         rows = min(list_widget.count(), cls._MIN_VISIBLE_ROWS)
-        return rows * row_height + 2 * list_widget.frameWidth()
+        spacing = list_widget.spacing()
+        return rows * row_height + (2 * rows - 1) * spacing + 2 * list_widget.frameWidth()
 
     # ------------------------------------------------------------------
     # UI Setup
@@ -341,7 +357,7 @@ class RewPullView(QWidget):
         list_widget = QListWidget()
         list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         list_widget.setObjectName(object_name)
-        list_widget.setProperty("class", "selectableList")
+        style_selectable_list(list_widget)
         list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         list_widget.itemSelectionChanged.connect(self._update_continue_enabled)
         return list_widget

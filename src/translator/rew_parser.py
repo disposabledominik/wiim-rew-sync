@@ -274,7 +274,6 @@ def _parse_filter_body(
             field="filter_type",
             message=f"Unsupported filter type '{unsupported}' at line {line_number}, skipping",
             original_value=unsupported,
-            clamped_value=None,
         )
         return (None, warning, None)
 
@@ -384,7 +383,6 @@ def _parse_filter_body(
                     f"Unsupported filter type '{type_token}' at line {line_number}, skipping"
                 ),
                 original_value=type_token,
-                clamped_value=None,
             )
             return (None, warning, None)
 

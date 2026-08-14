@@ -200,13 +200,14 @@ class TestPushWriteOperations:
     def test_on_peq_ready_invalidates_stale_review_on_filter_change(
         self, window
     ) -> None:
-        """Regression: the FILTERS change-detection added for
+        """Regression: the FILTERS change-detection originally added for
         _on_filters_accepted (browsing back and re-confirming a different
-        filter set clears stale Review/Push checkmarks) must also apply to
-        the device-pull/file-import path, which is the common case and
-        previously bypassed it entirely -- _on_peq_ready called advance()
-        directly with no invalidation, so this is the only test exercising
-        that path's checkmark behavior end to end."""
+        filter set clears stale Review/Push checkmarks; that method was
+        later removed entirely, see docs/smoke_test_issues.md #274) must
+        also apply to the device-pull/file-import path, which is the common
+        case and previously bypassed it entirely -- _on_peq_ready called
+        advance() directly with no invalidation, so this is the only test
+        exercising that path's checkmark behavior end to end."""
         _setup_device(window)
         wc = window._wizard_controller
         state = wc.state
@@ -3180,9 +3181,8 @@ class TestSettingsUIState:
     # --- Issue #11: FiltersPage retry shows option cards ---
 
     def test_issue11_filters_page_has_retry_mechanism(self, window) -> None:
-        """#11: Clearing error state fully resets FiltersPage for retry."""
+        """#11: Clearing state fully resets FiltersPage for retry."""
         page = window._filters_page
-        page.show_error("Parse failed")
         page._stereo_path = "/tmp/rew.txt"
         page._left_path = "/tmp/left.txt"
         page._right_path = "/tmp/right.txt"
@@ -3194,8 +3194,6 @@ class TestSettingsUIState:
 
         page.clear_results()
 
-        assert page._error_section.isVisible() is False
-        assert page._warnings_section.isVisible() is False
         assert page._stereo_path == ""
         assert page._left_path == ""
         assert page._right_path == ""
@@ -3806,9 +3804,9 @@ class TestSettingsUIState:
         assert profile.channel_mode == ChannelMode.STEREO
 
     def test_issue39_lr_profile_renders_lr_badge_not_stereo(self, window) -> None:
-        """#39: An L/R profile rendered in MyPresetsView shows the "L/R"
-        badge (not "Stereo") and a per-channel band count -- not a flat
-        combined count. This is the actual UI-visible manifestation of the
+        """#39: An L/R profile rendered in MyPresetsView shows per-channel
+        "L:"/"R:" band counts in the row text (not "Stereo", and not a flat
+        combined count). This is the actual UI-visible manifestation of the
         original bug; the build_profile-level tests above only prove the
         enum is stored correctly, not that the view renders it right.
         """
@@ -3823,11 +3821,7 @@ class TestSettingsUIState:
         view.set_presets([profile])
 
         item = view._list_widget.item(0)
-        item_widget = view._list_widget.itemWidget(item)
-        assert item_widget._mode_badge.text() == "L/R"
-        # _count_bands() uses the left channel as the representative count
-        # for L/R profiles (2 bands), not a flat/combined 3.
-        assert item_widget._band_label.text() == "2/2 bands"
+        assert item.text() == "LR Test  [L: 2 bands / R: 1 band]"
 
     def test_issue39_stereo_profile_renders_stereo_badge(self, window) -> None:
         """#39 sibling: a stereo profile still shows "Stereo" (not "L/R")."""
@@ -3838,9 +3832,7 @@ class TestSettingsUIState:
         view.set_presets([profile])
 
         item = view._list_widget.item(0)
-        item_widget = view._list_widget.itemWidget(item)
-        assert item_widget._mode_badge.text() == "Stereo"
-        assert item_widget._band_label.text() == "3/3 bands"
+        assert item.text() == "Stereo Test  [Stereo: 3 bands]"
 
     # --- Issue #42: Source page receives all common sources including line-in ---
 

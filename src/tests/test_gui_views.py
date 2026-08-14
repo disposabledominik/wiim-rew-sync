@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.components.page_layout import ICON_NO_CONNECTION
@@ -477,6 +477,118 @@ class TestPresetsDeviceViewSignals:
         assert len(blocker.args[0]) == 2
 
 
+class TestPresetsDeviceViewContextMenu:
+    """Tests for the PEQ/RoomFit lists' right-click context menu."""
+
+    def test_context_menu_has_expected_actions(self, qtbot) -> None:
+        """The menu mirrors the toolbar's action set and order: Export,
+        Save, Copy, Delete."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(_make_peq_presets(2))
+        item = view._peq_list.item(0)
+
+        menu = view._build_context_menu(view._peq_list, item)
+        labels = [a.text() for a in menu.actions() if not a.isSeparator()]
+
+        assert labels == [
+            "Export as REW File",
+            "Save to My Presets",
+            "Copy to Another Device",
+            "Delete",
+        ]
+
+    def test_context_menu_delete_disabled_for_custom_row(self, qtbot) -> None:
+        """Delete is disabled when the right-clicked/batched selection
+        includes the synthetic "Custom" row (#165c) -- matching
+        _update_action_buttons()'s toolbar-button logic."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+
+        view.set_peq_presets(_make_peq_presets(1), active_name="")
+        custom_item = view._peq_list.item(0)
+        assert custom_item.text().startswith("Custom")
+
+        menu = view._build_context_menu(view._peq_list, custom_item)
+        actions = {a.text(): a for a in menu.actions() if not a.isSeparator()}
+
+        assert not actions["Delete"].isEnabled()
+        assert actions["Export as REW File"].isEnabled()
+
+    def test_context_menu_single_item_when_not_in_selection(self, qtbot) -> None:
+        """Right-clicking an item outside the current selection acts on
+        just that item, not the stale selection (matches MyPresetsView's
+        equivalent behavior)."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(3))
+        view._peq_list.item(0).setSelected(True)
+        view._peq_list.item(1).setSelected(True)
+
+        other_item = view._peq_list.item(2)
+        menu = view._build_context_menu(view._peq_list, other_item)
+        export_action = next(a for a in menu.actions() if a.text() == "Export as REW File")
+
+        with qtbot.waitSignal(view.export_requested, timeout=1000) as blocker:
+            export_action.trigger()
+
+        assert blocker.args[0] == [other_item.data(Qt.ItemDataRole.UserRole)]
+
+    def test_context_menu_batches_full_multiselection(self, qtbot) -> None:
+        """Right-clicking an item that IS part of a multi-selection batches
+        the action over every selected item, not just the one under the
+        cursor -- Qt doesn't clear a selection on right-click."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(3))
+        view._peq_list.item(0).setSelected(True)
+        view._peq_list.item(2).setSelected(True)
+
+        clicked_item = view._peq_list.item(2)
+        menu = view._build_context_menu(view._peq_list, clicked_item)
+        copy_action = next(a for a in menu.actions() if a.text() == "Copy to Another Device")
+
+        with qtbot.waitSignal(view.copy_to_device_requested, timeout=1000) as blocker:
+            copy_action.trigger()
+
+        assert len(blocker.args[0]) == 2
+
+    def test_context_menu_works_on_roomfit_list(self, qtbot) -> None:
+        """The same shared handler builds a working menu for the RoomFit
+        list, not just PEQ."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_roomfit_profiles(_make_roomfit_profiles(2))
+        item = view._roomfit_list.item(0)
+
+        menu = view._build_context_menu(view._roomfit_list, item)
+        save_action = next(a for a in menu.actions() if a.text() == "Save to My Presets")
+
+        with qtbot.waitSignal(view.save_to_my_presets, timeout=1000) as blocker:
+            save_action.trigger()
+
+        assert blocker.args[0] == [item.data(Qt.ItemDataRole.UserRole)]
+
+    def test_show_context_menu_no_op_when_no_item_at_position(self, qtbot) -> None:
+        """Right-clicking empty list space (no item under the cursor) is a
+        no-op -- no menu, no exception."""
+        view = PresetsDeviceView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_peq_presets(_make_peq_presets(1))
+        # Nothing to assert beyond "doesn't raise" -- itemAt() at an empty
+        # position returns None, which _show_context_menu must handle.
+        view._show_context_menu(view._peq_list, QPoint(5000, 5000))
+
+
 # ---------------------------------------------------------------------------
 # TestMyPresetsView
 # ---------------------------------------------------------------------------
@@ -508,14 +620,6 @@ class TestMyPresetsViewPopulation:
 
         assert view._empty_label.isVisible()
         assert not view._list_widget.isVisible()
-
-    def test_preset_count_property(self, qtbot) -> None:
-        """preset_count() returns the number of presets held."""
-        view = MyPresetsView()
-        qtbot.addWidget(view)
-
-        view.set_presets([_make_profile("A"), _make_profile("B")])
-        assert view.preset_count() == 2
 
 
 class TestMyPresetsViewSearch:
@@ -572,6 +676,28 @@ class TestMyPresetsViewRename:
 
         assert view._rename_editor.isVisible()
         assert view._rename_editor.text() == "Original Name"
+
+    def test_repopulate_during_active_rename_does_not_crash(self, qtbot) -> None:
+        """A repopulate (e.g. search-field typing, or an external refresh)
+        firing while a rename is still in progress must not crash --
+        _populate_list() used to call QListWidget.clear() before
+        _cancel_rename(), so _cancel_rename() touched a QListWidgetItem
+        already destroyed by clear() (RuntimeError: Internal C++ object
+        already deleted)."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_presets([_make_profile("Original Name"), _make_profile("Other")])
+        item = view._list_widget.item(0)
+        view._list_widget.itemDoubleClicked.emit(item)
+        assert view._rename_editor.isVisible()
+
+        # Reproduces the risky sequence directly -- must not raise.
+        view._populate_list()
+
+        assert not view._rename_editor.isVisible()
+        assert view._rename_item is None
 
     def test_rename_editor_emits_rename_requested(self, qtbot) -> None:
         """Completing a rename emits rename_requested(old_name, new_name)."""
@@ -1321,7 +1447,9 @@ class TestRewPullView:
         shrinks, never the fixed items around it (smoke #232)."""
         view = RewPullView()
         qtbot.addWidget(view)
-        view.resize(400, 900)
+        # Tall enough to fit 20 rows at the app's shared LIST_ITEM_HEIGHT
+        # (44px) + inter-row spacing without a scrollbar.
+        view.resize(400, 1300)
         view.show()
         measurements = [
             _make_rew_measurement(f"Measurement {i}", i) for i in range(20)
@@ -1345,6 +1473,37 @@ class TestRewPullView:
             view, view._continue_btn.rect().bottomLeft()
         ).y()
         assert continue_btn_bottom <= view.height()
+
+    def test_list_floor_height_shows_full_min_visible_rows_without_clipping(
+        self, qtbot
+    ) -> None:
+        """_list_floor_height()'s promised "couple of rows" must actually
+        render in full (not cut off mid-row) at exactly that floor height
+        -- more rows exist below the floor (so the scrollbar itself stays
+        nonzero; that's correct, not a bug), but the _MIN_VISIBLE_ROWS rows
+        the floor claims to show must each be entirely inside the viewport.
+        The floor used to omit the spacing style_selectable_list() applies
+        around every row via setSpacing(), under-counting the floor height
+        and clipping the last visible row by a few pixels (found via
+        /code-review on the list-styling-consistency change that
+        introduced the spacing)."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.show()
+
+        measurements = [_make_rew_measurement(f"Measurement {i}", i) for i in range(5)]
+        view.set_measurements(measurements)
+        qtbot.wait(20)
+
+        floor_height = RewPullView._list_floor_height(view._list_widget)
+        view._list_widget.resize(view._list_widget.width(), floor_height)
+        qtbot.wait(20)
+
+        last_visible_row = RewPullView._MIN_VISIBLE_ROWS - 1
+        row_rect = view._list_widget.visualItemRect(
+            view._list_widget.item(last_visible_row)
+        )
+        assert row_rect.bottom() < view._list_widget.viewport().height()
 
     def test_lr_mode_continue_button_reachable_at_minimal_window_height(
         self, qtbot

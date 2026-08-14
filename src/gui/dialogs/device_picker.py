@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.gui.components.list_item_style import size_list_item, style_selectable_list
 from src.gui.components.warning_box import add_optional_warning_box
 from src.models.capabilities import DeviceInfo
 
@@ -76,12 +77,13 @@ class DevicePickerDialog(QDialog):
         # Checkable device list
         self._list_widget = QListWidget()
         self._list_widget.setObjectName("device_list")
-        self._list_widget.setProperty("class", "selectableList")
+        style_selectable_list(self._list_widget)
         for device in self._devices:
             item = QListWidgetItem(f"{device.name} ({device.ip})")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             item.setData(Qt.ItemDataRole.UserRole, device)
+            size_list_item(item)
             self._list_widget.addItem(item)
         layout.addWidget(self._list_widget)
 

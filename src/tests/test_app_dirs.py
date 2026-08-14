@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-from src.utils.app_dirs import APP_NAME, ensure_app_directories, get_app_data_dir, get_log_dir
+from src.utils.app_dirs import APP_NAME, get_app_data_dir, get_log_dir
 
 
 class TestWindowsPath:
@@ -100,42 +97,6 @@ class TestAppName:
 
     def test_app_name_value(self) -> None:
         assert APP_NAME == "wiim-rew-sync"
-
-
-class TestEnsureAppDirectories:
-    """Tests for the first-run setup function ensure_app_directories()."""
-
-    def test_creates_all_subdirectories(self, tmp_path: Path) -> None:
-        """All three required subdirectories are created on first call."""
-        with patch("src.utils.app_dirs.get_app_data_dir", return_value=tmp_path):
-            result = ensure_app_directories()
-
-        assert result == tmp_path
-        assert (tmp_path / "logs").is_dir()
-        assert (tmp_path / "profiles").is_dir()
-        assert (tmp_path / "backups").is_dir()
-
-    def test_idempotent_when_directories_exist(self, tmp_path: Path) -> None:
-        """Calling ensure_app_directories() when dirs already exist is a no-op."""
-        # Pre-create the directories
-        (tmp_path / "logs").mkdir()
-        (tmp_path / "profiles").mkdir()
-        (tmp_path / "backups").mkdir()
-
-        with patch("src.utils.app_dirs.get_app_data_dir", return_value=tmp_path):
-            result = ensure_app_directories()
-
-        assert result == tmp_path
-        assert (tmp_path / "logs").is_dir()
-        assert (tmp_path / "profiles").is_dir()
-        assert (tmp_path / "backups").is_dir()
-
-    def test_raises_runtime_error_on_os_error(self, tmp_path: Path) -> None:
-        """OSError during directory creation is re-raised as RuntimeError."""
-        with patch("src.utils.app_dirs.get_app_data_dir", return_value=tmp_path):
-            with patch.object(Path, "mkdir", side_effect=OSError("Permission denied")):
-                with pytest.raises(RuntimeError, match=re.escape(str(tmp_path))):
-                    ensure_app_directories()
 
 
 class TestGetLogDir:

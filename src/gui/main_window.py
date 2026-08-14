@@ -314,10 +314,10 @@ class MainWindow(QMainWindow):
 
         # Snapshot of (current_filters, filters_l, filters_r, channel_mode)
         # as of the last time the Filters step was completed -- lets
-        # _on_filters_accepted() detect an actual change-of-selection the
-        # same way _on_source_changed() does for the Source step (see that
-        # method), so re-confirming Filters with a *different* filter set
-        # after navigating back invalidates the now-stale Review/Push
+        # _confirm_filters_selection() detect an actual change-of-selection
+        # the same way _on_source_changed() does for the Source step (see
+        # that method), so re-confirming Filters with a *different* filter
+        # set after navigating back invalidates the now-stale Review/Push
         # checkmarks instead of leaving them in place (docs/smoke_test_issues.md,
         # QA issue #8). None until the Filters step is completed once.
         self._last_confirmed_filters_signature: tuple[object, ...] | None = None
@@ -781,7 +781,6 @@ class MainWindow(QMainWindow):
         self._connect_page.refresh_requested.connect(self._on_refresh_requested)
         self._eq_type_page.eq_type_selected.connect(self._on_eq_type_selected)
         self._source_page.source_selected.connect(self._on_source_selected)
-        self._filters_page.filters_accepted.connect(self._on_filters_accepted)
         self._filters_page.file_import_requested.connect(self._on_file_import_requested)
         self._filters_page.file_import_lr_requested.connect(self._on_file_import_lr_requested)
         self._filters_page.device_pull_requested.connect(self._on_device_pull_requested)
@@ -1133,12 +1132,18 @@ class MainWindow(QMainWindow):
         than read back off wizard state itself.
 
         Called from every path that advances past FILTERS -- _on_peq_ready
-        (device pull / file import, the common case), _on_profile_recalled
-        (Local Library), and _on_filters_accepted (the warnings-
-        acknowledgment path) -- not just the last of those. A version of
-        this fix that only ran from _on_filters_accepted left Review/Push
-        staleness undetected for every filter change that didn't happen to
-        trigger a truncation/clamping warning, i.e. almost all of them.
+        (device pull / file import, the common case) and _on_profile_recalled
+        (Local Library) are the two live UI paths today. A third path,
+        _on_filters_accepted (the warnings-acknowledgment "Continue with
+        adjustments" button), was removed entirely once its own UI trigger
+        was dead-code-swept and left it with zero reachable callers --
+        see docs/smoke_test_issues.md #236, #274; wizard-integration tests
+        that used to call it directly now use the test-only
+        conftest.advance_past_filters() helper instead, which inlines this
+        same call. A version of this fix that only ran from
+        _on_filters_accepted left Review/Push staleness undetected for
+        every filter change that didn't happen to trigger a
+        truncation/clamping warning, i.e. almost all of them.
         """
         state = self._wizard_controller.state
         # Value comparison, not identity: CanonicalFilter is an unfrozen
@@ -1162,18 +1167,6 @@ class MainWindow(QMainWindow):
         if new_signature != self._last_confirmed_filters_signature:
             self._wizard_controller.invalidate_after(WizardStep.FILTERS)
         self._last_confirmed_filters_signature = new_signature
-
-    @Slot()
-    def _on_filters_accepted(self) -> None:
-        """Handle user accepting filters (with or without warnings) — advance."""
-        state = self._wizard_controller.state
-        # Order matters: invalidate first (may clear REVIEW/PUSH), then
-        # advance (re-marks FILTERS complete) -- same order at the other two
-        # _confirm_filters_selection() call sites.
-        self._confirm_filters_selection()
-
-        summary = self._resolve_filters_summary(len(state.current_filters))
-        self._wizard_controller.advance(summary=summary, tooltip=state.filters_origin)
 
     @Slot(str)
     def _on_file_import_requested(self, path: str) -> None:

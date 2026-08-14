@@ -10,13 +10,8 @@ CURRENT_SCHEMA_VERSION = 1
 
 
 def _migrate_v0_to_v1(raw: dict[str, object]) -> dict[str, object]:
-    """Migrate a version-0 profile dict to version 1.
-
-    Adds ``schema_version: 1`` and ``tags: []`` if missing.
-    """
+    """Migrate a version-0 profile dict to version 1 (sets ``schema_version: 1``)."""
     raw["schema_version"] = 1
-    if "tags" not in raw:
-        raw["tags"] = []
     return raw
 
 
