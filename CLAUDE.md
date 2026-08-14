@@ -158,7 +158,9 @@ Assert the right thing:
   flag conservatively, add `# TODO:`, proceed with only confirmed behavior.
 - **Every live-app GUI bug (user-reported, smoke-tested, or review-discovered) goes in
   `docs/smoke_test_issues.md`** (issue #, description, status, test status). Fix and regression
-  test update the same row in the same commit.
+  test update the same row in the same commit. If a later change removes or rewrites code that an
+  existing row cites as its fix, amend that row in the same commit rather than leaving it stale
+  (precedent: `#236`, `#237`).
 - **Never reference WiiM/LinkPlay app internals in checked-in docs, comments, commits, or scripts**
   — no decompiled class/method names, smali paths, APK contents, or app UI/architecture. Findings
   go in as observed API behavior confirmed via hardware testing (`docs/corrections.md`), not as
