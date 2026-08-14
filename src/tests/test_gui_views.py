@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 
 from src.adapters.rew_http_client import MeasurementSummary
 from src.gui.components.page_layout import ICON_NO_CONNECTION
@@ -579,8 +579,6 @@ class TestPresetsDeviceViewContextMenu:
     def test_show_context_menu_no_op_when_no_item_at_position(self, qtbot) -> None:
         """Right-clicking empty list space (no item under the cursor) is a
         no-op -- no menu, no exception."""
-        from PySide6.QtCore import QPoint
-
         view = PresetsDeviceView()
         qtbot.addWidget(view)
         view.show()
