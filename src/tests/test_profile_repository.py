@@ -353,8 +353,8 @@ class TestSchemaMigration:
     """Test that load() applies schema migration for older profiles."""
 
     def test_load_applies_migration(self, repo: ProfileRepository) -> None:
-        """A v0 profile (no schema_version, no tags) gets migrated on load."""
-        # Write a raw v0 profile directly (no schema_version, no tags field)
+        """A v0 profile (no schema_version) gets migrated on load."""
+        # Write a raw v0 profile directly (no schema_version field)
         raw = {
             "name": "legacy",
             "channel_mode": "stereo",
@@ -367,7 +367,6 @@ class TestSchemaMigration:
 
         loaded = repo.load("legacy")
         assert loaded.schema_version == 1
-        assert loaded.tags == []
         assert loaded.name == "legacy"
         assert loaded.filters is not None
 

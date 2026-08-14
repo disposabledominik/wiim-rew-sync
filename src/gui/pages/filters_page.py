@@ -18,8 +18,6 @@ QStackedWidget:
       action (see FiltersPage's own docstring for the full rule).
     - Local Library: a list of presets saved locally on this computer.
 
-Supports inline validation warnings and error display with retry.
-
 The page does NOT perform network I/O or filesystem reads - it only emits
 signals; all four panels are populated from the outside (MainWindow).
 
@@ -181,7 +179,6 @@ class FiltersPage(QWidget):
             that emits device_pull_requested instead (see above).
         local_profile_selected: User picked a preset from the Local Library
             list (Profile payload).
-        filters_accepted: User clicked "Continue with adjustments" after warnings.
     """
 
     file_import_requested = Signal(str)
@@ -192,7 +189,6 @@ class FiltersPage(QWidget):
     local_profiles_requested = Signal()
     device_item_selected = Signal(object)
     local_profile_selected = Signal(object)
-    filters_accepted = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -486,7 +482,6 @@ class FiltersPage(QWidget):
 
         self.rew_pull_view.back_requested.connect(self._on_rew_pull_back_requested)
 
-        # --- Warnings section ---
         # Set initial mode visibility
         self._update_mode_ui()
 

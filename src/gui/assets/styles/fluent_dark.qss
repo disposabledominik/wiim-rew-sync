@@ -569,6 +569,14 @@ QTableView {
     gridline-color: #333333;
     selection-background-color: rgba(0, 180, 216, 0.1);
     selection-color: #F5F5F5;
+}
+
+/* Single source of truth for the app-wide alternating-row shade, shared by
+   every table and by every selectable list (QListWidget[class="selectableList"],
+   defined further below) so the two can't drift apart. */
+QTableWidget,
+QTableView,
+QListWidget[class="selectableList"] {
     alternate-background-color: #333333;
 }
 
@@ -1009,7 +1017,6 @@ QDockWidget::float-button:hover {
 QListWidget[class="selectableList"] {
     border: none;
     outline: none;
-    alternate-background-color: #333333;
 }
 
 QListWidget[class="selectableList"]::item {

@@ -18,12 +18,10 @@ class TestMigrateProfile:
             "name": "my_profile",
             "channel_mode": "stereo",
             "filters": [],
-            "tags": ["room-a"],
         }
         result = migrate_profile(raw)
         assert result is raw  # same object, no copy needed
         assert result["schema_version"] == CURRENT_SCHEMA_VERSION
-        assert result["tags"] == ["room-a"]
 
     def test_missing_version_migrates_to_current(self) -> None:
         """A dict without schema_version is treated as version 0 and migrated."""
@@ -34,7 +32,6 @@ class TestMigrateProfile:
         }
         result = migrate_profile(raw)
         assert result["schema_version"] == CURRENT_SCHEMA_VERSION
-        assert result["tags"] == []
 
     def test_version_0_migrates_to_current(self) -> None:
         """A dict with schema_version=0 gets upgraded to current."""
@@ -46,20 +43,6 @@ class TestMigrateProfile:
         }
         result = migrate_profile(raw)
         assert result["schema_version"] == CURRENT_SCHEMA_VERSION
-        assert result["tags"] == []
-
-    def test_version_0_preserves_existing_tags(self) -> None:
-        """Migration from v0 does not overwrite existing tags."""
-        raw = {
-            "schema_version": 0,
-            "name": "tagged_profile",
-            "channel_mode": "stereo",
-            "filters": [],
-            "tags": ["existing-tag"],
-        }
-        result = migrate_profile(raw)
-        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
-        assert result["tags"] == ["existing-tag"]
 
     def test_future_version_raises_schema_version_error(self) -> None:
         """A dict with schema_version > CURRENT raises SchemaVersionError."""

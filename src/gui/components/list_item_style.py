@@ -131,11 +131,16 @@ def preset_row_text(profile: Profile) -> str:
     if profile.channel_mode.is_lr:
         left = len(profile.filters_l or [])
         right = len(profile.filters_r or [])
-        summary = f"L: {left} bands / R: {right} bands"
+        summary = f"L: {_band_count_text(left)} / R: {_band_count_text(right)}"
     else:
         total = len(profile.filters or [])
-        summary = f"{profile.channel_mode.display_value}: {total} bands"
+        summary = f"{profile.channel_mode.display_value}: {_band_count_text(total)}"
     return f"{profile.name}  [{summary}]"
+
+
+def _band_count_text(count: int) -> str:
+    """Format a band count with correct singular/plural, e.g. '1 band', '2 bands'."""
+    return f"{count} band" if count == 1 else f"{count} bands"
 
 
 def build_local_preset_list_item(profile: Profile) -> QListWidgetItem:
@@ -168,12 +173,20 @@ def resolve_batch_targets(list_widget: QListWidget, item: QListWidgetItem) -> li
     specific logic, e.g. is_batch/has_custom, on top of this).
 
     Returns each target's UserRole payload (a Profile or PresetItem
-    depending on the caller), not the QListWidgetItem itself.
+    depending on the caller), not the QListWidgetItem itself. Items with no
+    UserRole payload are skipped, matching PresetsDeviceView's toolbar-path
+    guard (_get_all_selected_items()) so the two batch paths can't diverge
+    in failure mode.
     """
     selected = list_widget.selectedItems()
     if item in selected and len(selected) > 1:
-        return [selected_item.data(Qt.ItemDataRole.UserRole) for selected_item in selected]
-    return [item.data(Qt.ItemDataRole.UserRole)]
+        return [
+            data
+            for selected_item in selected
+            if (data := selected_item.data(Qt.ItemDataRole.UserRole)) is not None
+        ]
+    data = item.data(Qt.ItemDataRole.UserRole)
+    return [data] if data is not None else []
 
 
 def show_list_context_menu(

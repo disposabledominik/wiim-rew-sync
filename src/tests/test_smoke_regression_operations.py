@@ -3820,7 +3820,7 @@ class TestSettingsUIState:
         view.set_presets([profile])
 
         item = view._list_widget.item(0)
-        assert item.text() == "LR Test  [L: 2 bands / R: 1 bands]"
+        assert item.text() == "LR Test  [L: 2 bands / R: 1 band]"
 
     def test_issue39_stereo_profile_renders_stereo_badge(self, window) -> None:
         """#39 sibling: a stereo profile still shows "Stereo" (not "L/R")."""

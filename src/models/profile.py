@@ -19,7 +19,6 @@ class Profile(BaseModel):
     filters: list[CanonicalFilter] | None = None
     filters_l: list[CanonicalFilter] | None = None
     filters_r: list[CanonicalFilter] | None = None
-    tags: list[str] = []
 
     @model_validator(mode="after")
     def check_filter_keys_match_channel_mode(self) -> Profile:

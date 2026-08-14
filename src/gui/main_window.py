@@ -781,7 +781,6 @@ class MainWindow(QMainWindow):
         self._connect_page.refresh_requested.connect(self._on_refresh_requested)
         self._eq_type_page.eq_type_selected.connect(self._on_eq_type_selected)
         self._source_page.source_selected.connect(self._on_source_selected)
-        self._filters_page.filters_accepted.connect(self._on_filters_accepted)
         self._filters_page.file_import_requested.connect(self._on_file_import_requested)
         self._filters_page.file_import_lr_requested.connect(self._on_file_import_lr_requested)
         self._filters_page.device_pull_requested.connect(self._on_device_pull_requested)
@@ -1133,12 +1132,16 @@ class MainWindow(QMainWindow):
         than read back off wizard state itself.
 
         Called from every path that advances past FILTERS -- _on_peq_ready
-        (device pull / file import, the common case), _on_profile_recalled
-        (Local Library), and _on_filters_accepted (the warnings-
-        acknowledgment path) -- not just the last of those. A version of
-        this fix that only ran from _on_filters_accepted left Review/Push
-        staleness undetected for every filter change that didn't happen to
-        trigger a truncation/clamping warning, i.e. almost all of them.
+        (device pull / file import, the common case) and _on_profile_recalled
+        (Local Library) are the two live UI paths; _on_filters_accepted (once
+        the warnings-acknowledgment path, now unreachable from any UI trigger
+        since that inline warnings section was dead-code-swept -- see
+        docs/smoke_test_issues.md #236) is kept only as the wizard-
+        integration tests' generic "advance past FILTERS" entry point, so
+        this check still has to run there too. A version of this fix that
+        only ran from _on_filters_accepted left Review/Push staleness
+        undetected for every filter change that didn't happen to trigger a
+        truncation/clamping warning, i.e. almost all of them.
         """
         state = self._wizard_controller.state
         # Value comparison, not identity: CanonicalFilter is an unfrozen
@@ -1163,9 +1166,15 @@ class MainWindow(QMainWindow):
             self._wizard_controller.invalidate_after(WizardStep.FILTERS)
         self._last_confirmed_filters_signature = new_signature
 
-    @Slot()
     def _on_filters_accepted(self) -> None:
-        """Handle user accepting filters (with or without warnings) — advance."""
+        """Confirm the current filter selection and advance past FILTERS.
+
+        Not wired to any live UI signal -- its original trigger (the
+        warnings-acknowledgment "Continue with adjustments" button) was
+        removed as dead code (docs/smoke_test_issues.md #236). Kept as the
+        wizard-integration tests' generic "advance past FILTERS" entry
+        point; see _confirm_filters_selection()'s docstring.
+        """
         state = self._wizard_controller.state
         # Order matters: invalidate first (may clear REVIEW/PUSH), then
         # advance (re-marks FILTERS complete) -- same order at the other two
