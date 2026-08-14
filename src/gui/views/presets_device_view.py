@@ -30,7 +30,12 @@ from PySide6.QtWidgets import (
 )
 
 from src.gui.components.action_button import make_action_button
-from src.gui.components.list_item_style import build_preset_list_item, style_selectable_list
+from src.gui.components.list_item_style import (
+    build_preset_list_item,
+    resolve_batch_targets,
+    show_list_context_menu,
+    style_selectable_list,
+)
 from src.gui.components.page_layout import (
     ICON_NO_CONNECTION,
     build_centered_content,
@@ -463,10 +468,7 @@ class PresetsDeviceView(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._peq_list.itemSelectionChanged.connect(self._on_peq_selection_changed)
-        self._peq_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._peq_list.customContextMenuRequested.connect(
-            lambda position: self._show_context_menu(self._peq_list, position)
-        )
+        self._wire_context_menu(self._peq_list)
         layout.addWidget(self._peq_list)
 
         return section
@@ -503,10 +505,7 @@ class PresetsDeviceView(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         self._roomfit_list.itemSelectionChanged.connect(self._on_roomfit_selection_changed)
-        self._roomfit_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._roomfit_list.customContextMenuRequested.connect(
-            lambda position: self._show_context_menu(self._roomfit_list, position)
-        )
+        self._wire_context_menu(self._roomfit_list)
         layout.addWidget(self._roomfit_list)
 
         return section
@@ -618,41 +617,41 @@ class PresetsDeviceView(QWidget):
     # Context menu
     # ------------------------------------------------------------------
 
+    def _wire_context_menu(self, list_widget: QListWidget) -> None:
+        """Enable and connect list_widget's right-click context menu.
+
+        Shared by both the PEQ and RoomFit lists' section builders so the
+        policy/connect boilerplate isn't duplicated per list.
+        """
+        list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        list_widget.customContextMenuRequested.connect(
+            lambda position: self._show_context_menu(list_widget, position)
+        )
+
     def _show_context_menu(self, list_widget: QListWidget, position: QPoint) -> None:
         """Show right-click context menu for the item at position.
 
         Shared by both the PEQ and RoomFit lists -- which list is passed in
-        by the caller (see the customContextMenuRequested connections in
-        _build_peq_section/_build_roomfit_section), matching My Saved
-        Presets' equivalent context menu (MyPresetsView._show_context_menu).
+        by the caller (see _wire_context_menu), matching My Saved Presets'
+        equivalent context menu (MyPresetsView._show_context_menu).
         """
-        item = list_widget.itemAt(position)
-        if item is None:
-            return
-
-        menu = self._build_context_menu(list_widget, item)
-        menu.exec(list_widget.viewport().mapToGlobal(position))
+        show_list_context_menu(
+            list_widget, position, lambda item: self._build_context_menu(list_widget, item)
+        )
 
     def _build_context_menu(self, list_widget: QListWidget, item: QListWidgetItem) -> QMenu:
         """Build (without showing) the context menu for *item* in *list_widget*.
 
         Mirrors the toolbar's action set exactly: Export as REW File, Save
-        to My Presets, Copy to Another Device, Delete. Right-clicking in Qt
-        does not clear an existing multi-selection, so every action batches
-        over the full selection when the right-clicked item is part of one
-        -- otherwise they'd silently drop every selected item except the one
-        under the cursor, contradicting the toolbar buttons' batch behavior
-        on the same selection (same rationale as
-        MyPresetsView._build_context_menu). Delete is disabled whenever the
-        batch includes the synthetic "Custom" row (#165c) -- there's no
-        saved preset on the device to delete, matching
-        _update_action_buttons()'s toolbar-button logic.
+        to My Presets, Copy to Another Device, Delete.
+        resolve_batch_targets() decides whether every action batches over
+        the full selection or just the clicked item (shared with
+        MyPresetsView's equivalent menu, see list_item_style.py). Delete is
+        disabled whenever the batch includes the synthetic "Custom" row
+        (#165c) -- there's no saved preset on the device to delete,
+        matching _update_action_buttons()'s toolbar-button logic.
         """
-        selected = list_widget.selectedItems()
-        if item in selected and len(selected) > 1:
-            batch_targets = [i.data(Qt.ItemDataRole.UserRole) for i in selected]
-        else:
-            batch_targets = [item.data(Qt.ItemDataRole.UserRole)]
+        batch_targets = resolve_batch_targets(list_widget, item)
         has_custom = any(target.is_custom for target in batch_targets)
 
         menu = QMenu(self)

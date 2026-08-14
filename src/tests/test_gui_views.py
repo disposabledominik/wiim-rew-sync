@@ -687,6 +687,28 @@ class TestMyPresetsViewRename:
         assert view._rename_editor.isVisible()
         assert view._rename_editor.text() == "Original Name"
 
+    def test_repopulate_during_active_rename_does_not_crash(self, qtbot) -> None:
+        """A repopulate (e.g. search-field typing, or an external refresh)
+        firing while a rename is still in progress must not crash --
+        _populate_list() used to call QListWidget.clear() before
+        _cancel_rename(), so _cancel_rename() touched a QListWidgetItem
+        already destroyed by clear() (RuntimeError: Internal C++ object
+        already deleted)."""
+        view = MyPresetsView()
+        qtbot.addWidget(view)
+        view.show()
+
+        view.set_presets([_make_profile("Original Name"), _make_profile("Other")])
+        item = view._list_widget.item(0)
+        view._list_widget.itemDoubleClicked.emit(item)
+        assert view._rename_editor.isVisible()
+
+        # Reproduces the risky sequence directly -- must not raise.
+        view._populate_list()
+
+        assert not view._rename_editor.isVisible()
+        assert view._rename_item is None
+
     def test_rename_editor_emits_rename_requested(self, qtbot) -> None:
         """Completing a rename emits rename_requested(old_name, new_name)."""
         view = MyPresetsView()
@@ -1461,6 +1483,37 @@ class TestRewPullView:
             view, view._continue_btn.rect().bottomLeft()
         ).y()
         assert continue_btn_bottom <= view.height()
+
+    def test_list_floor_height_shows_full_min_visible_rows_without_clipping(
+        self, qtbot
+    ) -> None:
+        """_list_floor_height()'s promised "couple of rows" must actually
+        render in full (not cut off mid-row) at exactly that floor height
+        -- more rows exist below the floor (so the scrollbar itself stays
+        nonzero; that's correct, not a bug), but the _MIN_VISIBLE_ROWS rows
+        the floor claims to show must each be entirely inside the viewport.
+        The floor used to omit the spacing style_selectable_list() applies
+        around every row via setSpacing(), under-counting the floor height
+        and clipping the last visible row by a few pixels (found via
+        /code-review on the list-styling-consistency change that
+        introduced the spacing)."""
+        view = RewPullView()
+        qtbot.addWidget(view)
+        view.show()
+
+        measurements = [_make_rew_measurement(f"Measurement {i}", i) for i in range(5)]
+        view.set_measurements(measurements)
+        qtbot.wait(20)
+
+        floor_height = RewPullView._list_floor_height(view._list_widget)
+        view._list_widget.resize(view._list_widget.width(), floor_height)
+        qtbot.wait(20)
+
+        last_visible_row = RewPullView._MIN_VISIBLE_ROWS - 1
+        row_rect = view._list_widget.visualItemRect(
+            view._list_widget.item(last_visible_row)
+        )
+        assert row_rect.bottom() < view._list_widget.viewport().height()
 
     def test_lr_mode_continue_button_reachable_at_minimal_window_height(
         self, qtbot

@@ -33,6 +33,8 @@ from src.gui.components.action_button import make_action_button
 from src.gui.components.list_item_style import (
     build_local_preset_list_item,
     preset_row_text,
+    resolve_batch_targets,
+    show_list_context_menu,
     style_selectable_list,
 )
 from src.gui.components.page_layout import build_centered_content, make_page_title
@@ -234,8 +236,14 @@ class MyPresetsView(QWidget):
         Args:
             filter_text: Optional text to filter presets by name (case-insensitive).
         """
-        self._list_widget.clear()
+        # Cancel any in-progress rename BEFORE clear() -- _cancel_rename()
+        # touches the tracked QListWidgetItem, and clear() destroys the
+        # underlying C++ object, so the old clear()-then-cancel order would
+        # raise "Internal C++ object already deleted" whenever a repopulate
+        # (e.g. typing in the search field, or an external refresh) fires
+        # while a rename is still in progress.
         self._cancel_rename()
+        self._list_widget.clear()
 
         filter_lower = filter_text.lower()
         visible_presets = [
@@ -302,20 +310,24 @@ class MyPresetsView(QWidget):
         old_name = profile.name
 
         self._rename_editor.setVisible(False)
-
-        # Restore the item's row text (blanked during rename)
-        self._rename_item.setText(preset_row_text(profile))
-        self._rename_item = None
+        self._end_rename()
 
         if new_name and new_name != old_name:
             self.rename_requested.emit(old_name, new_name)
 
     def _cancel_rename(self) -> None:
         """Cancel any in-progress rename operation."""
+        self._rename_editor.setVisible(False)
+        self._end_rename()
+
+    def _end_rename(self) -> None:
+        """Restore the tracked item's row text (blanked during rename) and
+        clear _rename_item -- the shared tail of both _on_rename_finished()
+        and _cancel_rename(), so a future change to what "ending a rename"
+        restores only has to be made in one place."""
         if self._rename_item is not None:
             profile: Profile = self._rename_item.data(Qt.ItemDataRole.UserRole)
             self._rename_item.setText(preset_row_text(profile))
-        self._rename_editor.setVisible(False)
         self._rename_item = None
 
     # ------------------------------------------------------------------
@@ -324,12 +336,7 @@ class MyPresetsView(QWidget):
 
     def _show_context_menu(self, position: QPoint) -> None:
         """Show right-click context menu for the item at position."""
-        item = self._list_widget.itemAt(position)
-        if item is None:
-            return
-
-        menu = self._build_context_menu(item)
-        menu.exec(self._list_widget.viewport().mapToGlobal(position))
+        show_list_context_menu(self._list_widget, position, self._build_context_menu)
 
     def _build_context_menu(self, item: QListWidgetItem) -> QMenu:
         """Build (without showing) the context menu for *item*.
@@ -341,21 +348,15 @@ class MyPresetsView(QWidget):
         Action order matches the toolbar's: Load, Copy to Another Device,
         Rename, Duplicate, Delete.
 
-        Right-clicking in Qt does not clear an existing multi-selection, so
-        Copy and Delete must both batch over the full selection when the
-        right-clicked item is part of one -- otherwise they silently drop
-        every selected item except the one under the cursor, contradicting
-        the toolbar buttons' batch behavior on the same selection. Rename
-        and Duplicate stay single-item-only, same as the toolbar, since
-        they're inherently one-name/one-copy operations, and are disabled
-        when the selection is a batch.
+        resolve_batch_targets() decides whether Copy/Delete act on just the
+        clicked item or the whole multi-selection (shared with
+        PresetsDeviceView's equivalent menu, see list_item_style.py).
+        Rename and Duplicate stay single-item-only, same as the toolbar,
+        since they're inherently one-name/one-copy operations, and are
+        disabled when the selection is a batch.
         """
         profile: Profile = item.data(Qt.ItemDataRole.UserRole)
-        selected = self._list_widget.selectedItems()
-        if item in selected and len(selected) > 1:
-            batch_targets = self._get_selected_profiles()
-        else:
-            batch_targets = [profile]
+        batch_targets = resolve_batch_targets(self._list_widget, item)
         is_batch = len(batch_targets) > 1
 
         menu = QMenu(self)

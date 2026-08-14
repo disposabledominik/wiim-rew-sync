@@ -175,12 +175,26 @@ class RewPullView(QWidget):
     @classmethod
     def _list_floor_height(cls, list_widget: QListWidget) -> int:
         """Minimum height showing a couple of rows, below which the list's
-        own scrollbar (rather than further compression) takes over."""
+        own scrollbar (rather than further compression) takes over.
+
+        Must include the gap QListWidget.setSpacing() inserts around every
+        row (applied uniformly via style_selectable_list()) -- sizeHintForRow()
+        only covers a row's own height, not its spacing margin, so omitting
+        it here under-counts the floor and clips the last of the "couple of
+        rows" this floor is meant to keep fully visible. Qt's spacing is a
+        margin on *both* sides of every row (confirmed empirically: with
+        setSpacing(s), consecutive rows' tops are row_height + 2*s apart,
+        and the first row itself starts s pixels in) -- so `rows` rows span
+        `rows * row_height + (2*rows - 1) * spacing` pixels: one leading
+        margin, one trailing margin, and 2*spacing between each adjacent
+        pair.
+        """
         if list_widget.count() == 0:
             return 0
         row_height = list_widget.sizeHintForRow(0)
         rows = min(list_widget.count(), cls._MIN_VISIBLE_ROWS)
-        return rows * row_height + 2 * list_widget.frameWidth()
+        spacing = list_widget.spacing()
+        return rows * row_height + (2 * rows - 1) * spacing + 2 * list_widget.frameWidth()
 
     # ------------------------------------------------------------------
     # UI Setup

@@ -1,6 +1,6 @@
-"""Shared styling for every selectable QListWidget in the app.
+"""Shared styling and behavior for every selectable QListWidget in the app.
 
-Two responsibilities live here:
+Three responsibilities live here:
 
 1. style_selectable_list() -- the one place every list's shared visual
    convention (selection/hover styling class, alternating row shading, and
@@ -12,15 +12,21 @@ Two responsibilities live here:
    and the local-preset row format shared by MyPresetsView and FiltersPage's
    Local Library panel -- so independently-built lists stay visually
    consistent by construction rather than by convention.
+3. resolve_batch_targets()/show_list_context_menu() -- the shared
+   right-click-context-menu scaffold (selection-batching rule + itemAt/
+   None-check/exec boilerplate) used by both MyPresetsView and
+   PresetsDeviceView, so the "does this action apply to just the clicked
+   item, or the whole multi-selection" rule can't drift between the two.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QListWidget, QListWidgetItem
+from PySide6.QtWidgets import QListWidget, QListWidgetItem, QMenu
 
 from src.gui.constants import ACCENT_COLOR, LIST_ITEM_HEIGHT, LIST_ITEM_SPACING
 from src.models.profile import Profile
@@ -146,3 +152,46 @@ def build_local_preset_list_item(profile: Profile) -> QListWidgetItem:
     list_item.setData(Qt.ItemDataRole.UserRole, profile)
     size_list_item(list_item)
     return list_item
+
+
+def resolve_batch_targets(list_widget: QListWidget, item: QListWidgetItem) -> list[Any]:
+    """Resolve which item(s) a right-click context-menu action should act on.
+
+    Right-clicking in Qt does not clear an existing multi-selection, so if
+    the right-clicked item is part of one, the action batches over the full
+    selection -- otherwise it would silently drop every selected item except
+    the one under the cursor, contradicting a toolbar button's own batch
+    behavior on the same selection. Otherwise, the action applies to just
+    the clicked item, ignoring a selection it isn't part of. Shared by
+    MyPresetsView and PresetsDeviceView's context menus so this rule can't
+    drift between the two (each menu builder still applies its own type-
+    specific logic, e.g. is_batch/has_custom, on top of this).
+
+    Returns each target's UserRole payload (a Profile or PresetItem
+    depending on the caller), not the QListWidgetItem itself.
+    """
+    selected = list_widget.selectedItems()
+    if item in selected and len(selected) > 1:
+        return [selected_item.data(Qt.ItemDataRole.UserRole) for selected_item in selected]
+    return [item.data(Qt.ItemDataRole.UserRole)]
+
+
+def show_list_context_menu(
+    list_widget: QListWidget,
+    position: QPoint,
+    build_menu: Callable[[QListWidgetItem], QMenu],
+) -> None:
+    """Show a right-click context menu for the item at position, if any.
+
+    Shared "itemAt -> None-check -> build -> exec" scaffold for every
+    list's context menu, so this boilerplate (and any future fix to it,
+    e.g. a mapToGlobal offset correction) can't diverge between lists.
+    `build_menu` receives the clicked QListWidgetItem and returns the menu
+    to show -- the caller owns whatever selection-batching logic it needs
+    (see resolve_batch_targets()).
+    """
+    item = list_widget.itemAt(position)
+    if item is None:
+        return
+    menu = build_menu(item)
+    menu.exec(list_widget.viewport().mapToGlobal(position))
