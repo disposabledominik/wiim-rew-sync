@@ -3834,6 +3834,32 @@ class TestSettingsUIState:
         item = view._list_widget.item(0)
         assert item.text() == "Stereo Test  [Stereo: 3 bands]"
 
+    def test_issue275_band_count_excludes_off_padding(self, window) -> None:
+        """#275: User-reported -- every preset showed the device's max band
+        count (e.g. 12) regardless of how many filters it actually used.
+        A Profile saved from a device read always carries exactly
+        capabilities.max_filters slots (read_peq() parses the device's
+        full fixed-size band array 1:1), with any unconfigured slot coming
+        back as a type="OFF" placeholder rather than being omitted -- so
+        counting raw list length showed the device's slot count, not the
+        number of real filters. Covers both stereo and L/R, and both
+        boundary cases (an OFF-only channel, an OFF-free channel)."""
+        off_filter = CanonicalFilter(type="OFF", frequency_hz=1000.0, gain_db=0.0, q=1.0)
+        filters_l = [_make_filter(100), off_filter, off_filter]
+        filters_r = [off_filter, off_filter, off_filter]
+        lr_profile = build_profile(
+            "Padded LR", filters_l + filters_r, "L/R",
+            filters_l=filters_l, filters_r=filters_r,
+        )
+        stereo_filters = [_make_filter(100), _make_filter(200), off_filter, off_filter]
+        stereo_profile = build_profile("Padded Stereo", stereo_filters, "Stereo")
+
+        view = window._my_presets_view
+        view.set_presets([lr_profile, stereo_profile])
+
+        assert view._list_widget.item(0).text() == "Padded LR  [L: 1 band / R: 0 bands]"
+        assert view._list_widget.item(1).text() == "Padded Stereo  [Stereo: 2 bands]"
+
     # --- Issue #42: Source page receives all common sources including line-in ---
 
     def test_issue42_source_page_has_set_sources(self, window) -> None:

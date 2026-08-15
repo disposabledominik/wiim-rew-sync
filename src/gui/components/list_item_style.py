@@ -29,6 +29,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QMenu
 
 from src.gui.constants import ACCENT_COLOR, LIST_ITEM_HEIGHT, LIST_ITEM_SPACING
+from src.models.canonical import CanonicalFilter
 from src.models.profile import Profile
 
 if TYPE_CHECKING:
@@ -122,20 +123,31 @@ def preset_row_text(profile: Profile) -> str:
     """Build the display text for a locally-saved preset/profile row.
 
     Format: "Name  [Stereo: N bands]" or "Name  [L: N bands / R: M bands]" --
-    the total configured band count per channel (not just the active/
-    nonzero-gain subset, kept simple since this is user-facing summary
-    text, not a diagnostic). Shared by build_local_preset_list_item() and
-    by MyPresetsView's inline-rename flow, which restores a row's text from
-    this same function once editing ends.
+    the count of *enabled* bands per channel (type != "OFF"), not the raw
+    slot count. A Profile saved from a device read (the common case, via
+    _do_preset_save()) always carries exactly capabilities.max_filters
+    slots -- read_peq()/parse_wiim_band_array() parse the device's full
+    fixed-size band array 1:1, and any slot the user hasn't configured
+    comes back as a mode=-1 ("OFF") placeholder, not omitted -- so counting
+    raw list length here would show every preset as having the device's max
+    band count regardless of how many filters it actually uses. Shared by
+    build_local_preset_list_item() and by MyPresetsView's inline-rename
+    flow, which restores a row's text from this same function once editing
+    ends.
     """
     if profile.channel_mode.is_lr:
-        left = len(profile.filters_l or [])
-        right = len(profile.filters_r or [])
+        left = _active_band_count(profile.filters_l)
+        right = _active_band_count(profile.filters_r)
         summary = f"L: {_band_count_text(left)} / R: {_band_count_text(right)}"
     else:
-        total = len(profile.filters or [])
+        total = _active_band_count(profile.filters)
         summary = f"{profile.channel_mode.display_value}: {_band_count_text(total)}"
     return f"{profile.name}  [{summary}]"
+
+
+def _active_band_count(filters: list[CanonicalFilter] | None) -> int:
+    """Count bands that aren't the "OFF" placeholder type."""
+    return sum(1 for f in filters or [] if f.type != "OFF")
 
 
 def _band_count_text(count: int) -> str:
