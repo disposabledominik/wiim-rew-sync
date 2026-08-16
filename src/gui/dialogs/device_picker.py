@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from src.gui.components.list_item_style import size_list_item, style_checkable_list
 from src.gui.components.warning_box import add_optional_warning_box
 from src.models.capabilities import DeviceInfo
+from src.utils.device_identity import device_display_name
 
 
 class _CheckableListWidget(QListWidget):
@@ -103,11 +104,12 @@ class DevicePickerDialog(QDialog):
         # discovered_devices arrives in mDNS/subnet-scan discovery order
         # (whichever device answers first), not name order -- sorted here to
         # match ConnectPage's own device list (_device_sort_key(), same
-        # casefold-by-name convention), so device order doesn't flip between
-        # the two screens a user sees during a session.
+        # casefold-by-name convention via the shared device_display_name()
+        # fallback), so device order doesn't flip between the two screens a
+        # user sees during a session, including for a blank-named device.
         self._devices = sorted(
             (d for d in discovered_devices if d.ip != exclude_ip),
-            key=lambda d: d.name.casefold(),
+            key=lambda d: device_display_name(d.name).casefold(),
         )
         self._warning = warning
         self._setup_ui()
@@ -132,7 +134,7 @@ class DevicePickerDialog(QDialog):
         self._list_widget.setObjectName("device_list")
         style_checkable_list(self._list_widget)
         for device in self._devices:
-            item = QListWidgetItem(f"{device.name} ({device.ip})")
+            item = QListWidgetItem(f"{device_display_name(device.name)} ({device.ip})")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Unchecked)
             item.setData(Qt.ItemDataRole.UserRole, device)

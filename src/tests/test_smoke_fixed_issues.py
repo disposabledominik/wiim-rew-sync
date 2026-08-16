@@ -262,8 +262,10 @@ def test_onboarding_overlay_theme_and_no_skip(qtbot):
     the original bug's fix (overlay always looked like one theme) without
     breaking the "no inline stylesheet" / "selector exists" checks above.
     """
-    import re
     from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
+    from check_qss_parity import extract_rule_property  # type: ignore[import-not-found]
 
     from src.gui.dialogs.onboarding_overlay import OnboardingOverlay
 
@@ -283,18 +285,8 @@ def test_onboarding_overlay_theme_and_no_skip(qtbot):
     assert "QLabel#onboarding_title" in dark_qss
     assert "QLabel#onboarding_title" in light_qss
 
-    def _onboarding_title_color(qss_text: str) -> str:
-        """Extract the `color:` hex value from the QLabel#onboarding_title rule block."""
-        match = re.search(
-            r"QLabel#onboarding_title\s*\{([^}]*)\}", qss_text, re.DOTALL
-        )
-        assert match is not None, "QLabel#onboarding_title rule block not found"
-        color_match = re.search(r"color:\s*(#[0-9A-Fa-f]{3,8})\s*;", match.group(1))
-        assert color_match is not None, "no color: value in QLabel#onboarding_title block"
-        return color_match.group(1).lower()
-
-    dark_color = _onboarding_title_color(dark_qss)
-    light_color = _onboarding_title_color(light_qss)
+    dark_color = extract_rule_property(dark_qss, "QLabel#onboarding_title", "color").lower()
+    light_color = extract_rule_property(light_qss, "QLabel#onboarding_title", "color").lower()
     # Regression guard: dark and light themes must resolve to visibly
     # different colors -- if they matched, the overlay would render
     # identically regardless of active theme (the original #91/#117 bug).

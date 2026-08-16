@@ -30,6 +30,27 @@ _RGBA_RE = re.compile(r"rgba?\([^)]*\)")
 _HEADER_COMMENT_RE = re.compile(r"\A/\*.*?\*/\n*", re.DOTALL)
 
 
+def extract_rule_property(qss_text: str, selector: str, prop: str) -> str:
+    """Extract `prop`'s value from the QSS rule anchored by `selector`.
+
+    Anchored to a real selector boundary (`selector` directly followed by
+    `{`, allowing whitespace/newlines in between) rather than a bare
+    substring search, so a selector that's a literal prefix of a later,
+    unrelated one (e.g. adding `::item:hover:disabled` after an existing
+    `::item:hover` rule) can't silently match the wrong rule and return the
+    wrong value with no test failure to signal it.
+
+    Shared by test_qss_parity.py and test_smoke_fixed_issues.py so this
+    "regex a `selector { ... }` block, then pull one property out of it"
+    logic isn't hand-rolled independently in each test file.
+    """
+    match = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", qss_text, re.DOTALL)
+    assert match is not None, f"no rule found for selector {selector!r}"
+    prop_match = re.search(rf"{re.escape(prop)}:\s*([^;]+);", match.group(1))
+    assert prop_match is not None, f"{prop!r} not found in the rule for {selector!r}"
+    return prop_match.group(1).strip()
+
+
 def _normalize(qss_text: str) -> list[str]:
     """Mask color values and strip the leading header comment block.
 

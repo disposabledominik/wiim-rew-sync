@@ -8,13 +8,17 @@ files, instead of leaving that drift to be found during manual QA.
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
-from check_qss_parity import _DARK_QSS, _LIGHT_QSS, _normalize  # type: ignore[import-not-found]
+from check_qss_parity import (  # type: ignore[import-not-found]
+    _DARK_QSS,
+    _LIGHT_QSS,
+    _normalize,
+    extract_rule_property,
+)
 
 
 def test_dark_and_light_qss_are_structurally_identical() -> None:
@@ -26,17 +30,6 @@ def test_dark_and_light_qss_are_structurally_identical() -> None:
         "fluent_dark.qss and fluent_light.qss have drifted structurally. "
         "Run `python3 scripts/check_qss_parity.py` for a full diff."
     )
-
-
-def _rule_property(qss_text: str, selector: str, prop: str) -> str:
-    """Extract `prop`'s value from the first QSS rule containing `selector`."""
-    start = qss_text.index(selector)
-    block_start = qss_text.index("{", start)
-    block_end = qss_text.index("}", block_start)
-    block = qss_text[block_start:block_end]
-    match = re.search(rf"{re.escape(prop)}:\s*([^;]+);", block)
-    assert match is not None, f"{prop!r} not found in the rule for {selector!r}"
-    return match.group(1).strip()
 
 
 def test_checkable_list_keyboard_focus_matches_mouse_hover() -> None:
@@ -51,10 +44,10 @@ def test_checkable_list_keyboard_focus_matches_mouse_hover() -> None:
     """
     for qss_path in (_DARK_QSS, _LIGHT_QSS):
         text = qss_path.read_text(encoding="utf-8")
-        hover_bg = _rule_property(
+        hover_bg = extract_rule_property(
             text, 'QListWidget[class="checkableList"]::item:hover', "background-color"
         )
-        focus_bg = _rule_property(
+        focus_bg = extract_rule_property(
             text, 'QListWidget[class="checkableList"]::item:focus', "background-color"
         )
         assert hover_bg == focus_bg, (
