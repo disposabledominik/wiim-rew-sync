@@ -8,6 +8,7 @@ workflows (Req 10.1, 10.2, 15.1, 15.2).
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -19,9 +20,52 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.gui.components.list_item_style import size_list_item, style_selectable_list
+from src.gui.components.list_item_style import size_list_item, style_checkable_list
 from src.gui.components.warning_box import add_optional_warning_box
 from src.models.capabilities import DeviceInfo
+
+
+class _CheckableListWidget(QListWidget):
+    """QListWidget where a left-click anywhere on a row toggles its checkbox.
+
+    Qt only toggles a checkable item's check state when the click lands
+    exactly on the small checkbox glyph -- everywhere else in the row
+    selects it (or, with selection disabled, does nothing visible at all).
+    This takes over left-clicks entirely instead of also connecting
+    itemClicked: that signal fires *after* Qt's own glyph-click toggle has
+    already run, so unconditionally toggling there would flip a glyph click
+    back to its original state (toggle, then immediately un-toggle) --
+    empirically confirmed by testing a plain super().mousePressEvent()
+    fallthrough after the manual toggle, which reproduced exactly that.
+
+    A toggle calls setCurrentItem() directly rather than falling through to
+    super() afterward, for the same double-toggle reason -- but skipping
+    super() entirely would also skip QAbstractItemView's own current-item
+    bookkeeping, leaving arrow-key navigation stuck wherever it was before
+    the click instead of continuing from the row just toggled.
+    setCurrentItem() restores that continuity without re-running the
+    glyph-click handling that caused the double-toggle in the first place.
+    Right/middle-clicks fall through to super() unchanged (a no-op, since
+    the list has no context menu and NoSelection makes selection-handling
+    inert) rather than toggling -- confirmed by testing that a fallthrough
+    left non-glyph areas fully inert for those buttons.
+    """
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Toggle the clicked row's checkbox on left-click; pass through otherwise."""
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+        item = self.itemAt(event.position().toPoint())
+        if item is None or not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+            super().mousePressEvent(event)
+            return
+        item.setCheckState(
+            Qt.CheckState.Unchecked
+            if item.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+        self.setCurrentItem(item)
 
 
 class DevicePickerDialog(QDialog):
@@ -75,9 +119,9 @@ class DevicePickerDialog(QDialog):
         layout.addWidget(header)
 
         # Checkable device list
-        self._list_widget = QListWidget()
+        self._list_widget = _CheckableListWidget()
         self._list_widget.setObjectName("device_list")
-        style_selectable_list(self._list_widget)
+        style_checkable_list(self._list_widget)
         for device in self._devices:
             item = QListWidgetItem(f"{device.name} ({device.ip})")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
