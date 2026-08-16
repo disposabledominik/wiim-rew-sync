@@ -71,8 +71,9 @@ class _CheckableListWidget(QListWidget):
 class DevicePickerDialog(QDialog):
     """Modal dialog for selecting target WiiM devices.
 
-    Presents discovered devices (minus the currently-connected device) as
-    checkable list items. The user must select at least one device to proceed.
+    Presents discovered devices (minus the currently-connected device),
+    sorted alphabetically by name, as checkable list items. The user must
+    select at least one device to proceed.
 
     Use the static ``get_devices()`` method for standard usage.
     """
@@ -99,7 +100,15 @@ class DevicePickerDialog(QDialog):
         self.setMinimumWidth(420 if warning else 380)
         self.setModal(True)
 
-        self._devices = [d for d in discovered_devices if d.ip != exclude_ip]
+        # discovered_devices arrives in mDNS/subnet-scan discovery order
+        # (whichever device answers first), not name order -- sorted here to
+        # match ConnectPage's own device list (_device_sort_key(), same
+        # casefold-by-name convention), so device order doesn't flip between
+        # the two screens a user sees during a session.
+        self._devices = sorted(
+            (d for d in discovered_devices if d.ip != exclude_ip),
+            key=lambda d: d.name.casefold(),
+        )
         self._warning = warning
         self._setup_ui()
 
