@@ -26,28 +26,46 @@ from src.models.capabilities import DeviceInfo
 
 
 class _CheckableListWidget(QListWidget):
-    """QListWidget where a click anywhere on a row toggles its checkbox.
+    """QListWidget where a left-click anywhere on a row toggles its checkbox.
 
     Qt only toggles a checkable item's check state when the click lands
     exactly on the small checkbox glyph -- everywhere else in the row
     selects it (or, with selection disabled, does nothing visible at all).
-    This takes over the click entirely instead of also connecting
+    This takes over left-clicks entirely instead of also connecting
     itemClicked: that signal fires *after* Qt's own glyph-click toggle has
     already run, so unconditionally toggling there would flip a glyph click
-    back to its original state (toggle, then immediately un-toggle).
+    back to its original state (toggle, then immediately un-toggle) --
+    empirically confirmed by testing a plain super().mousePressEvent()
+    fallthrough after the manual toggle, which reproduced exactly that.
+
+    A toggle calls setCurrentItem() directly rather than falling through to
+    super() afterward, for the same double-toggle reason -- but skipping
+    super() entirely would also skip QAbstractItemView's own current-item
+    bookkeeping, leaving arrow-key navigation stuck wherever it was before
+    the click instead of continuing from the row just toggled.
+    setCurrentItem() restores that continuity without re-running the
+    glyph-click handling that caused the double-toggle in the first place.
+    Right/middle-clicks fall through to super() unchanged (a no-op, since
+    the list has no context menu and NoSelection makes selection-handling
+    inert) rather than toggling -- confirmed by testing that a fallthrough
+    left non-glyph areas fully inert for those buttons.
     """
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """Toggle the clicked row's checkbox instead of the native behavior."""
-        item = self.itemAt(event.position().toPoint())
-        if item is not None and item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
-            item.setCheckState(
-                Qt.CheckState.Unchecked
-                if item.checkState() == Qt.CheckState.Checked
-                else Qt.CheckState.Checked
-            )
+        """Toggle the clicked row's checkbox on left-click; pass through otherwise."""
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
             return
-        super().mousePressEvent(event)
+        item = self.itemAt(event.position().toPoint())
+        if item is None or not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+            super().mousePressEvent(event)
+            return
+        item.setCheckState(
+            Qt.CheckState.Unchecked
+            if item.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+        self.setCurrentItem(item)
 
 
 class DevicePickerDialog(QDialog):

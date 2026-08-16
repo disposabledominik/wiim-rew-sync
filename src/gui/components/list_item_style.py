@@ -60,20 +60,20 @@ def style_selectable_list(list_widget: QListWidget) -> None:
 def style_checkable_list(list_widget: QListWidget) -> None:
     """Apply the app's shared row layout to a checkbox-driven list.
 
-    Same alternating-row shading and inter-row spacing as
-    style_selectable_list(), but deliberately omits its selection tint:
-    a checkbox list's real "this row is chosen" state is the checkbox, so
+    Delegates to style_selectable_list() for the alternating-row shading and
+    inter-row spacing both share, then overrides its selection tint: a
+    checkbox list's real "this row is chosen" state is the checkbox, so
     Qt's own row-selection highlight next to it reads as a second, unrelated
     "selected" state that visibly does nothing when clicked -- confusing,
     not clarifying. Selection is disabled outright (rather than just left
     unstyled) so there's nothing for a leftover native highlight to fall
     back to. Pair with a click-anywhere-toggles-the-checkbox row handler
-    (see DevicePickerDialog) so the checkbox stays reachable without the
-    selection highlight standing in for it.
+    (see DevicePickerDialog's _CheckableListWidget, the only caller so far)
+    so the checkbox stays reachable without the selection highlight
+    standing in for it.
     """
+    style_selectable_list(list_widget)
     list_widget.setProperty("class", "checkableList")
-    list_widget.setAlternatingRowColors(True)
-    list_widget.setSpacing(LIST_ITEM_SPACING)
     list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
 

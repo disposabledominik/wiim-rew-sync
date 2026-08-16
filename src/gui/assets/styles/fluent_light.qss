@@ -1016,45 +1016,45 @@ QDockWidget::float-button:hover {
    the sidebar nav's active item and DeviceCard/StatusBanner, so every
    "this row is selected" treatment in the app looks the same. */
 
-QListWidget[class="selectableList"] {
-    border: none;
-    outline: none;
-}
+/* Shared by checkable list rows too (DevicePickerDialog, styled via
+   style_checkable_list()) -- same border/outline reset, row padding, and
+   hover cue, joined into one selector per property so the two can't drift
+   apart the way #276 found alternate-background-color already had.
+   checkableList diverges only on :selected -- see the dedicated rule
+   below for why it deliberately has none. */
 
-QListWidget[class="selectableList"]::item {
-    padding: 4px 8px;
-    border-left: 3px solid transparent;
-}
-
-QListWidget[class="selectableList"]::item:hover {
-    background-color: #F0F0F0;
-}
-
-QListWidget[class="selectableList"]::item:selected {
-    background-color: #E6F8FC;
-    color: #1A1A1A;
-    border-left: 3px solid #00B4D8;
-    outline: none;
-}
-
-/* Checkable list rows (DevicePickerDialog) -- same row padding as
-   selectableList, plus a transient hover cue (matching QTableWidget's, so
-   it still reads as "this row is clickable"), but no persistent selected
-   tint/border-left: with style_checkable_list()'s NoSelection mode and the
-   list's click-anywhere-toggles handler, the checkbox itself is the only
-   "chosen" indicator -- a second, Qt-native one would just be confusing. */
-
+QListWidget[class="selectableList"],
 QListWidget[class="checkableList"] {
     border: none;
     outline: none;
 }
 
+QListWidget[class="selectableList"]::item,
 QListWidget[class="checkableList"]::item {
     padding: 4px 8px;
 }
 
+/* Reserves the 3px accent border's own space so :selected below doesn't
+   shift row content when it appears -- checkableList never shows a
+   :selected border, so it doesn't need the reservation. */
+QListWidget[class="selectableList"]::item {
+    border-left: 3px solid transparent;
+}
+
+QListWidget[class="selectableList"]::item:hover,
 QListWidget[class="checkableList"]::item:hover {
     background-color: #F0F0F0;
+}
+
+/* checkableList has no :selected rule -- with style_checkable_list()'s
+   NoSelection mode and the list's click-anywhere-toggles handler, the
+   checkbox itself is the only "chosen" indicator; a second, Qt-native one
+   would just be confusing (#276). */
+QListWidget[class="selectableList"]::item:selected {
+    background-color: #E6F8FC;
+    color: #1A1A1A;
+    border-left: 3px solid #00B4D8;
+    outline: none;
 }
 
 /* ---------------------------------------------------------------------------

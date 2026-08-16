@@ -164,6 +164,57 @@ class TestDevicePickerDialog:
 
         assert item.checkState() == Qt.CheckState.Unchecked
 
+    def test_device_picker_right_click_does_not_toggle_checkbox(self, qtbot) -> None:
+        """Right/middle-click leaves the checkbox untouched -- only left-click toggles.
+
+        Regression test for #276's review follow-up: the first cut of
+        _CheckableListWidget.mousePressEvent() had no event.button() guard,
+        so a right-click (which opens no context menu here) silently
+        toggled the row's checkbox with no visual cue.
+        """
+        devices = [_make_device("Living Room", "192.168.1.10")]
+        dialog = DevicePickerDialog(None, devices, exclude_ip="")
+        qtbot.addWidget(dialog)
+
+        list_widget = dialog.findChild(QListWidget, "device_list")
+        assert list_widget is not None
+        item = list_widget.item(0)
+        row_rect = list_widget.visualItemRect(item)
+        far_from_glyph = QPoint(row_rect.right() - 5, row_rect.center().y())
+
+        qtbot.mouseClick(list_widget.viewport(), Qt.MouseButton.RightButton, pos=far_from_glyph)
+        assert item.checkState() == Qt.CheckState.Unchecked
+
+        qtbot.mouseClick(list_widget.viewport(), Qt.MouseButton.MiddleButton, pos=far_from_glyph)
+        assert item.checkState() == Qt.CheckState.Unchecked
+
+    def test_device_picker_click_sets_current_item_for_keyboard_nav(self, qtbot) -> None:
+        """Clicking a row (anywhere, not just the glyph) makes it the current item.
+
+        Regression test for #276's review follow-up: the first cut of
+        _CheckableListWidget.mousePressEvent() returned before
+        super().mousePressEvent() ran, so currentItem() stayed None after a
+        click -- arrow-key navigation afterward didn't continue from the
+        clicked row, and Space (which toggles the *current* item) had
+        nothing to act on.
+        """
+        devices = [
+            _make_device("Living Room", "192.168.1.10"),
+            _make_device("Bedroom", "192.168.1.11"),
+        ]
+        dialog = DevicePickerDialog(None, devices, exclude_ip="")
+        qtbot.addWidget(dialog)
+
+        list_widget = dialog.findChild(QListWidget, "device_list")
+        assert list_widget is not None
+        first_item = list_widget.item(0)
+        row_rect = list_widget.visualItemRect(first_item)
+        far_from_glyph = QPoint(row_rect.right() - 5, row_rect.center().y())
+
+        qtbot.mouseClick(list_widget.viewport(), Qt.MouseButton.LeftButton, pos=far_from_glyph)
+
+        assert list_widget.currentItem() is first_item
+
     def test_device_picker_accept_requires_selection(self, qtbot) -> None:
         """Accept is blocked when no devices are checked."""
         devices = [
