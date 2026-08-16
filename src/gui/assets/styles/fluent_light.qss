@@ -572,11 +572,13 @@ QTableView {
 }
 
 /* Single source of truth for the app-wide alternating-row shade, shared by
-   every table and by every selectable list (QListWidget[class="selectableList"],
-   defined further below) so the two can't drift apart. */
+   every table and by every selectable/checkable list
+   (QListWidget[class="selectableList"|"checkableList"], defined further
+   below) so they can't drift apart. */
 QTableWidget,
 QTableView,
-QListWidget[class="selectableList"] {
+QListWidget[class="selectableList"],
+QListWidget[class="checkableList"] {
     alternate-background-color: #F5F5F5;
 }
 
@@ -1033,6 +1035,26 @@ QListWidget[class="selectableList"]::item:selected {
     color: #1A1A1A;
     border-left: 3px solid #00B4D8;
     outline: none;
+}
+
+/* Checkable list rows (DevicePickerDialog) -- same row padding as
+   selectableList, plus a transient hover cue (matching QTableWidget's, so
+   it still reads as "this row is clickable"), but no persistent selected
+   tint/border-left: with style_checkable_list()'s NoSelection mode and the
+   list's click-anywhere-toggles handler, the checkbox itself is the only
+   "chosen" indicator -- a second, Qt-native one would just be confusing. */
+
+QListWidget[class="checkableList"] {
+    border: none;
+    outline: none;
+}
+
+QListWidget[class="checkableList"]::item {
+    padding: 4px 8px;
+}
+
+QListWidget[class="checkableList"]::item:hover {
+    background-color: #F0F0F0;
 }
 
 /* ---------------------------------------------------------------------------

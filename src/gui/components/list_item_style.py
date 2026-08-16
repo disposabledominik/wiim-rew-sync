@@ -5,7 +5,10 @@ Three responsibilities live here:
 1. style_selectable_list() -- the one place every list's shared visual
    convention (selection/hover styling class, alternating row shading, and
    the gap between rows) is applied, so no list can drift from another by
-   forgetting one of the three.
+   forgetting one of the three. style_checkable_list() is the checkbox-list
+   analog (DevicePickerDialog) -- same alternating shading and spacing, but
+   no row-selection highlight, since a checkbox row's real "selected" state
+   is the checkbox itself, not Qt's row selection.
 2. Row builders for the "currently active on this device" styling used by
    NameProfilePage's RoomFit profile list, PresetsDeviceView's combined
    preset/profile list (#165/#165c), FiltersPage's merged Device-panel list,
@@ -26,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QListWidget, QListWidgetItem, QMenu
+from PySide6.QtWidgets import QAbstractItemView, QListWidget, QListWidgetItem, QMenu
 
 from src.gui.constants import ACCENT_COLOR, LIST_ITEM_HEIGHT, LIST_ITEM_SPACING
 from src.models.canonical import CanonicalFilter
@@ -52,6 +55,26 @@ def style_selectable_list(list_widget: QListWidget) -> None:
     list_widget.setProperty("class", "selectableList")
     list_widget.setAlternatingRowColors(True)
     list_widget.setSpacing(LIST_ITEM_SPACING)
+
+
+def style_checkable_list(list_widget: QListWidget) -> None:
+    """Apply the app's shared row layout to a checkbox-driven list.
+
+    Same alternating-row shading and inter-row spacing as
+    style_selectable_list(), but deliberately omits its selection tint:
+    a checkbox list's real "this row is chosen" state is the checkbox, so
+    Qt's own row-selection highlight next to it reads as a second, unrelated
+    "selected" state that visibly does nothing when clicked -- confusing,
+    not clarifying. Selection is disabled outright (rather than just left
+    unstyled) so there's nothing for a leftover native highlight to fall
+    back to. Pair with a click-anywhere-toggles-the-checkbox row handler
+    (see DevicePickerDialog) so the checkbox stays reachable without the
+    selection highlight standing in for it.
+    """
+    list_widget.setProperty("class", "checkableList")
+    list_widget.setAlternatingRowColors(True)
+    list_widget.setSpacing(LIST_ITEM_SPACING)
+    list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
 
 def size_list_item(item: QListWidgetItem) -> None:
