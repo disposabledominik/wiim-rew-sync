@@ -507,7 +507,23 @@ class WizardController(QObject):
         # centralize invalidation on this method rather than patch each
         # call site. A no-op for every call site where current_step is
         # already at or before the frontier (the common case).
-        if self._state.current_step in new_sequence:
+        # current_step can also end up entirely absent from new_sequence
+        # (e.g. NAME_PROFILE when leaving ROOMFIT, EQ_TYPE when entering
+        # PEQ_ONLY) -- not reachable through any current call site (every
+        # production caller only invokes set_flow_type() while current_step
+        # is CONNECT or EQ_TYPE, both common to every flow pair), but left
+        # unguarded this is worse than the past-frontier case above: the
+        # next advance() does sequence.index(current_step), which raises
+        # ValueError and crashes the wizard outright, silently, since
+        # (unlike invalidate_after's analogous "step not in sequence" case)
+        # this path would otherwise emit nothing. Falls back to the
+        # frontier for the same reason the past-frontier branch does --
+        # current_step must always resolve inside get_steps().
+        if self._state.current_step not in new_sequence:
+            frontier = self.frontier_step
+            self._state.current_step = frontier
+            self.step_changed.emit(frontier)
+        else:
             frontier = self.frontier_step
             if new_sequence.index(self._state.current_step) > new_sequence.index(frontier):
                 self._state.current_step = frontier

@@ -644,6 +644,36 @@ class TestWizardControllerFlowTypeCurrentStepGap:
         assert emissions == []
         assert ctrl.current_step == WizardStep.EQ_TYPE
 
+    def test_current_step_absent_from_new_sequence_falls_back_to_frontier(
+        self, qtbot
+    ) -> None:
+        """current_step can be entirely absent from the new sequence, not
+        just past the frontier within it -- e.g. browsed to NAME_PROFILE
+        (RoomFit-only) then switching to PEQ_ONLY, which has neither
+        NAME_PROFILE nor EQ_TYPE nor SOURCE in common with it. Left
+        unguarded (found by /code-review after the past-frontier clamp
+        above was added), the next advance() would do
+        sequence.index(current_step) and raise ValueError, crashing the
+        wizard outright -- worse than the past-frontier case, since nothing
+        would even be logged. Must fall back to the frontier instead, the
+        same as the past-frontier branch, so current_step always resolves
+        inside get_steps()."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")
+        ctrl.advance("RoomFit")
+        ctrl.advance("10 filters")
+        ctrl.advance("Ready")
+        ctrl.go_to_step(WizardStep.NAME_PROFILE)
+        assert ctrl.current_step == WizardStep.NAME_PROFILE
+
+        ctrl.set_flow_type(FlowType.PEQ_ONLY)
+
+        assert ctrl.current_step in ctrl.get_steps()
+        assert ctrl.current_step == ctrl.frontier_step
+        # Must not raise -- this is the actual failure mode being guarded.
+        ctrl.advance("done")
+
 
 # ---------------------------------------------------------------------------
 # TestWizardControllerSummaries
