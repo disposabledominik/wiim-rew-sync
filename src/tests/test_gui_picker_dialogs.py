@@ -101,6 +101,60 @@ class TestDevicePickerDialog:
         assert any("Kitchen" in t for t in items_text)
         assert not any("Living Room" in t for t in items_text)
 
+    def test_device_picker_lists_devices_alphabetically(self, qtbot) -> None:
+        """Devices are sorted by name, not left in mDNS/subnet-scan arrival order.
+
+        Regression test: discovered_devices previously flowed straight from
+        discovery order (whichever device answers first) into the list with
+        no sort, inconsistent with ConnectPage's own device list, which
+        already sorts by casefolded name.
+        """
+        devices = [
+            _make_device("kitchen", "192.168.1.12"),
+            _make_device("Bedroom", "192.168.1.11"),
+            _make_device("Living Room", "192.168.1.10"),
+        ]
+        dialog = DevicePickerDialog(None, devices, exclude_ip="")
+        qtbot.addWidget(dialog)
+
+        list_widget = dialog.findChild(QListWidget, "device_list")
+        assert list_widget is not None
+        names = [list_widget.item(i).text() for i in range(list_widget.count())]
+        assert names == [
+            "Bedroom (192.168.1.11)",
+            "kitchen (192.168.1.12)",
+            "Living Room (192.168.1.10)",
+        ]
+
+    def test_device_picker_sorts_blank_named_device_as_unknown_device(self, qtbot) -> None:
+        """A blank device name sorts and displays as "Unknown Device", not first/blank.
+
+        Regression test: mDNS/subnet-scan responses can genuinely report a
+        blank name (subnet_scanner.py/zeroconf_discover.py both default to
+        "" rather than raising), and the sort key previously casefolded the
+        raw name with no fallback -- an empty string sorts before every
+        real name (landing first here) while ConnectPage's own list sorts
+        the same device under "Unknown Device" (landing under "U"),
+        flipping order between the two screens. The row label also had no
+        fallback, rendering as " (192.168.1.13)" with no identifying text.
+        """
+        devices = [
+            _make_device("Bedroom", "192.168.1.11"),
+            _make_device("", "192.168.1.13"),
+            _make_device("Living Room", "192.168.1.10"),
+        ]
+        dialog = DevicePickerDialog(None, devices, exclude_ip="")
+        qtbot.addWidget(dialog)
+
+        list_widget = dialog.findChild(QListWidget, "device_list")
+        assert list_widget is not None
+        names = [list_widget.item(i).text() for i in range(list_widget.count())]
+        assert names == [
+            "Bedroom (192.168.1.11)",
+            "Living Room (192.168.1.10)",
+            "Unknown Device (192.168.1.13)",
+        ]
+
     def test_device_picker_returns_checked_devices(self, qtbot) -> None:
         """selected_devices() returns correct DeviceInfo objects for checked items."""
         devices = [

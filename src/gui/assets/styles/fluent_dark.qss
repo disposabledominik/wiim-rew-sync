@@ -1046,6 +1046,19 @@ QListWidget[class="checkableList"]::item:hover {
     background-color: #3A3A3A;
 }
 
+/* checkableList's keyboard-navigated "current row" (arrow keys move it,
+   Space toggles its checkbox -- see DevicePickerDialog's NoSelection mode)
+   gets the same background as a mouse hover, not Qt's unstyled default
+   dotted focus rectangle: without this rule, keyboard and mouse users saw
+   two different, inconsistent indicators for what's otherwise the exact
+   same "this is the row you're about to act on" concept. selectableList
+   doesn't need the equivalent -- there, arrow-key movement also moves the
+   selection, so :selected above already covers it. */
+QListWidget[class="checkableList"]::item:focus {
+    background-color: #3A3A3A;
+    outline: none;
+}
+
 /* checkableList has no :selected rule -- with style_checkable_list()'s
    NoSelection mode and the list's click-anywhere-toggles handler, the
    checkbox itself is the only "chosen" indicator; a second, Qt-native one

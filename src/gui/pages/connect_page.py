@@ -31,6 +31,7 @@ from src.gui.constants import (
     SPACING_LG,
     SPACING_MD,
 )
+from src.utils.device_identity import device_display_name
 
 
 class ConnectPage(QWidget):
@@ -402,13 +403,13 @@ class ConnectPage(QWidget):
     def _device_display_name(device: dict[str, Any]) -> str:
         """Display name for a device, falling back for a missing or blank name.
 
-        `.get("name", "Unknown Device")` alone only covers a missing key --
-        a device dict with a present-but-empty "name" (real for some
-        mDNS/subnet-scan responses) needs the same fallback so the sort key
-        and the on-card label never disagree about what an unnamed device
-        is called.
+        Delegates to device_identity.device_display_name() so this page's
+        device dicts and DevicePickerDialog's DeviceInfo objects -- two
+        different shapes for the same discovered-device data -- can't drift
+        onto different fallback text or blank-name handling (#277's review
+        found DevicePickerDialog had silently skipped this fallback).
         """
-        return device.get("name") or "Unknown Device"
+        return device_display_name(device.get("name", ""))
 
     @classmethod
     def _device_sort_key(cls, device: dict[str, Any]) -> str:

@@ -13,7 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "scripts"))
 
-from check_qss_parity import _DARK_QSS, _LIGHT_QSS, _normalize  # type: ignore[import-not-found]
+from check_qss_parity import (  # type: ignore[import-not-found]
+    _DARK_QSS,
+    _LIGHT_QSS,
+    _normalize,
+    extract_rule_property,
+)
 
 
 def test_dark_and_light_qss_are_structurally_identical() -> None:
@@ -25,3 +30,27 @@ def test_dark_and_light_qss_are_structurally_identical() -> None:
         "fluent_dark.qss and fluent_light.qss have drifted structurally. "
         "Run `python3 scripts/check_qss_parity.py` for a full diff."
     )
+
+
+def test_checkable_list_keyboard_focus_matches_mouse_hover() -> None:
+    """A checkable list's keyboard-current row must look like a mouse-hovered one.
+
+    Regression test: checkableList (DevicePickerDialog) had a ::item:hover
+    rule but no ::item:focus rule, so arrow-key/Space keyboard navigation
+    fell back to Qt's unstyled default dotted focus rectangle instead of
+    the same background a mouse hover shows -- the two input methods gave
+    visibly different feedback for the same "this is the current row"
+    concept.
+    """
+    for qss_path in (_DARK_QSS, _LIGHT_QSS):
+        text = qss_path.read_text(encoding="utf-8")
+        hover_bg = extract_rule_property(
+            text, 'QListWidget[class="checkableList"]::item:hover', "background-color"
+        )
+        focus_bg = extract_rule_property(
+            text, 'QListWidget[class="checkableList"]::item:focus', "background-color"
+        )
+        assert hover_bg == focus_bg, (
+            f"{qss_path.name}: checkableList's ::item:focus background "
+            f"({focus_bg}) doesn't match ::item:hover ({hover_bg})"
+        )
