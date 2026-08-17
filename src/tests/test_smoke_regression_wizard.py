@@ -1199,6 +1199,88 @@ class TestIssue9DeviceItemFlowSwitchStaleSource:
         assert window._step_indicator._completed[source_idx] is False
 
 
+class TestIssue278DeviceItemFlowSwitchStepGap:
+    """User-reported (live app): RoomFit flow (device selected, RoomFit EQ
+    type, filters loaded from file, browsed to Name Profile), then browsed
+    back to Filters and loaded a PEQ-type preset from the Device panel.
+    Result: SOURCE became visible mid-sequence as an unchecked frontier
+    while FILTERS (after it) was already checked and REVIEW was the current
+    view -- a non-monotonic step state (a checked step following an
+    unchecked one) that StepIndicator's rendering contract assumes can
+    never happen. Root cause: `#266`'s fix invalidates orphaned
+    completed_steps on a flow_type switch, but RoomFit -> PEQ *inserts*
+    SOURCE (a step the RoomFit-only session never visited) between EQ_TYPE
+    and FILTERS. current_step was left at FILTERS -- past the newly
+    required, uncompleted SOURCE -- so the preset load's subsequent
+    advance() silently completed FILTERS and moved on to REVIEW, skipping
+    SOURCE entirely. Fixed in two places: `WizardController.set_flow_type()`
+    now pulls current_step back to the frontier whenever the switch leaves
+    it past an uncompleted step (see
+    `TestWizardControllerFlowTypeCurrentStepGap`,
+    test_wizard_controller.py), and `_on_device_item_selected` (this
+    handler's own docstring assumed source is "already set" by the time an
+    item here can be picked -- no longer true for this one direction) stops
+    before loading the preset when that clamp fires, instead of populating
+    Review out from under an unaddressed step."""
+
+    def test_roomfit_to_peq_preset_stops_at_source_not_review(self, window) -> None:
+        """The exact reported repro: RoomFit flow reaches Name Profile,
+        browse back to Filters, pick a PEQ preset from the Device panel."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))  # RoomFit-capable
+        window._on_eq_type_selected("roomfit")  # EQ_TYPE done, at FILTERS
+        wc.advance(summary="10 filters")  # FILTERS done, at REVIEW
+        wc.advance(summary="Ready")  # REVIEW done, at NAME_PROFILE
+        assert wc.current_step == WizardStep.NAME_PROFILE
+
+        wc.go_to_step(WizardStep.FILTERS)  # browse back -- no invalidation
+        window._primary_workflows.load_peq_preset = MagicMock()
+
+        # A PEQ-type item routes through _confirm_preset_preview's real
+        # WarningConfirmDialog (unlike RoomFit items, which skip it) --
+        # not a QMessageBox, so the autouse fixture doesn't auto-answer it.
+        item = PresetItem(name="Simple", channel_mode="Stereo", preset_type="PEQ")
+        with patch(
+            "src.gui.dialogs.warning_confirm_dialog.WarningConfirmDialog.confirm",
+            return_value=True,
+        ):
+            window._on_device_item_selected(item)
+
+        # The non-monotonic state the user hit must not occur: SOURCE
+        # (the newly required step) is the frontier, current_step sits
+        # there too (not skipped past to REVIEW), and FILTERS/REVIEW are
+        # not completed out from under it.
+        assert wc.flow_type == FlowType.PEQ
+        assert wc.current_step == WizardStep.SOURCE
+        assert wc.frontier_step == WizardStep.SOURCE
+        assert WizardStep.FILTERS not in wc.completed_steps
+        assert WizardStep.REVIEW not in wc.completed_steps
+        window._primary_workflows.load_peq_preset.assert_not_called()
+        assert "source" in window._status_banner._message_label.text().lower()
+
+    def test_peq_to_roomfit_preset_still_loads_immediately(self, window) -> None:
+        """The mirror direction (#266's original repro) is unaffected: PEQ
+        with SOURCE already completed, browsed back to Filters, picks a
+        RoomFit profile -- no gap is introduced, so the load must proceed
+        exactly as before, not get stopped by the new guard."""
+        wc = window._wizard_controller
+        window._on_device_selected("192.168.1.100")
+        window._on_capabilities_ready(_make_caps(roomfit_level=4))
+        window._on_eq_type_selected("peq")  # EQ_TYPE done, at SOURCE
+        window._on_source_selected("wifi", "Stereo")  # SOURCE done, at FILTERS
+        wc.advance(summary="10 filters")  # FILTERS done, at REVIEW
+        wc.go_to_step(WizardStep.FILTERS)  # browse back -- no invalidation
+        window._primary_workflows.pull_roomfit = MagicMock()
+
+        item = PresetItem(name="Living Room", channel_mode="Stereo", preset_type="RoomFit")
+        window._on_device_item_selected(item)
+
+        assert wc.flow_type == FlowType.ROOMFIT
+        assert wc.current_step == WizardStep.FILTERS
+        window._primary_workflows.pull_roomfit.assert_called_once()
+
+
 class TestIssue9ReprobeSameDeviceDifferentCapabilities:
     """A third, previously-undetected instance of the same bug class: the
     no-op branch in _on_device_selected (re-selecting the already-connected

@@ -560,6 +560,90 @@ class TestWizardControllerFlowTypeInvalidation:
         assert emissions == []
 
 
+# ---------------------------------------------------------------------------
+# TestWizardControllerFlowTypeCurrentStepGap
+# ---------------------------------------------------------------------------
+
+
+class TestWizardControllerFlowTypeCurrentStepGap:
+    """Invalidating orphaned completed_steps (#266) isn't enough on its own:
+    RoomFit -> PEQ *inserts* SOURCE into the sequence, a step a RoomFit-only
+    session never visited. If current_step is already past where SOURCE now
+    sits (e.g. browsed back to FILTERS after reaching NAME_PROFILE, then
+    picking a mismatched-type preset there -- docs/smoke_test_issues.md
+    #278, found via `_on_device_item_selected`), advance() would next
+    silently mark FILTERS complete and move on to REVIEW while SOURCE sits
+    uncompleted behind it -- frontier stuck behind steps the indicator
+    already shows checked, which StepIndicator's rendering contract assumes
+    can never happen (`i == frontier` and `completed` are mutually
+    exclusive with an earlier step being incomplete). set_flow_type() must
+    pull current_step back to the frontier whenever the switch leaves it
+    ahead of an uncompleted step."""
+
+    def test_roomfit_to_peq_pulls_current_step_back_to_source(self, qtbot) -> None:
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")  # CONNECT -> EQ_TYPE
+        ctrl.advance("RoomFit")  # EQ_TYPE -> FILTERS
+        ctrl.advance("10 filters")  # FILTERS -> REVIEW
+        ctrl.advance("Ready")  # REVIEW -> NAME_PROFILE
+        ctrl.go_to_step(WizardStep.FILTERS)  # browse back -- just navigation
+
+        ctrl.set_flow_type(FlowType.PEQ)
+
+        assert ctrl.current_step == WizardStep.SOURCE
+        assert ctrl.frontier_step == WizardStep.SOURCE
+        assert WizardStep.FILTERS not in ctrl.completed_steps
+
+    def test_current_step_gap_emits_step_changed(self, qtbot) -> None:
+        """The clamp is a real navigation change, not just internal
+        bookkeeping -- views wired to step_changed (page switching,
+        StepIndicator's view index) must be told."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")
+        ctrl.advance("RoomFit")
+        ctrl.advance("10 filters")
+        ctrl.go_to_step(WizardStep.FILTERS)
+
+        with qtbot.waitSignal(ctrl.step_changed, timeout=1000) as blocker:
+            ctrl.set_flow_type(FlowType.PEQ)
+
+        assert blocker.args == [WizardStep.SOURCE]
+
+    def test_peq_to_roomfit_does_not_need_a_clamp(self, qtbot) -> None:
+        """The mirror direction never inserts a step ahead of FILTERS
+        (NAME_PROFILE, RoomFit's own flow-specific step, sits after
+        FILTERS/REVIEW, not before) -- current_step must stay put."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        ctrl.advance("WiiM Pro")  # CONNECT -> EQ_TYPE
+        ctrl.advance("PEQ")  # EQ_TYPE -> SOURCE
+        ctrl.advance("wifi")  # SOURCE -> FILTERS
+        ctrl.advance("10 filters")  # FILTERS -> REVIEW
+        ctrl.go_to_step(WizardStep.FILTERS)
+
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+
+        assert ctrl.current_step == WizardStep.FILTERS
+        assert ctrl.frontier_step == WizardStep.FILTERS
+
+    def test_no_clamp_when_current_step_already_at_frontier(self, qtbot) -> None:
+        """The ordinary, well-behaved case (`_on_eq_type_selected`:
+        current_step is EQ_TYPE, the frontier, when the switch happens) must
+        not trigger any extra step_changed emission beyond
+        flow_type_changed."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        ctrl.advance("WiiM Pro")  # CONNECT -> EQ_TYPE, current_step == frontier
+
+        emissions: list[object] = []
+        ctrl.step_changed.connect(emissions.append)
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+
+        assert emissions == []
+        assert ctrl.current_step == WizardStep.EQ_TYPE
+
 
 # ---------------------------------------------------------------------------
 # TestWizardControllerSummaries

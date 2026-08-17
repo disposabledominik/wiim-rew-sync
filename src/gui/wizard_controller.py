@@ -490,3 +490,25 @@ class WizardController(QObject):
 
         self._state.flow_type = flow_type
         self.flow_type_changed.emit(flow_type)
+
+        # The switch can insert a step into the new sequence that sits
+        # *before* current_step but was never completed (e.g. RoomFit -> PEQ
+        # re-introduces SOURCE, which a RoomFit-only session never visited --
+        # docs/smoke_test_issues.md #278, found via _on_device_item_selected
+        # loading a PEQ preset while browsing back at FILTERS in a RoomFit
+        # session). Left alone, current_step would sit past that gap, and
+        # the next advance() would silently complete steps after the gap
+        # while it stays uncompleted -- frontier stuck behind steps the
+        # indicator already shows checked, the exact non-monotonic state
+        # StepIndicator's rendering contract assumes can't happen. Pulling
+        # current_step back to the frontier here, in the single shared place
+        # a flow-type transition happens, routes the user through the gap
+        # instead of skipping over it -- the same reasoning #266 used to
+        # centralize invalidation on this method rather than patch each
+        # call site. A no-op for every call site where current_step is
+        # already at or before the frontier (the common case).
+        if self._state.current_step in new_sequence:
+            frontier = self.frontier_step
+            if new_sequence.index(self._state.current_step) > new_sequence.index(frontier):
+                self._state.current_step = frontier
+                self.step_changed.emit(frontier)

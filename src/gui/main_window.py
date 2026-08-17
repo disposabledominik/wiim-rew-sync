@@ -1304,10 +1304,32 @@ class MainWindow(QMainWindow):
         # entry across a load-a-RoomFit-preset-here switch). No hand-rolled
         # invalidate_after needed here now; the shared path handles it.
         current_flow = self._wizard_controller.flow_type
+        step_before_switch = self._wizard_controller.current_step
         if preset_type == "RoomFit" and current_flow != FlowType.ROOMFIT:
             self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
         elif preset_type != "RoomFit" and current_flow == FlowType.ROOMFIT:
             self._wizard_controller.set_flow_type(FlowType.PEQ)
+
+        # RoomFit -> PEQ re-introduces SOURCE, a step a RoomFit-only session
+        # never visited. set_flow_type() (docs/smoke_test_issues.md #278)
+        # pulls current_step back to it when that leaves an uncompleted step
+        # ahead of wherever the user was, which invalidates this handler's
+        # own docstring assumption that source is "already set" by the time
+        # an item here can be picked. Comparing against step_before_switch
+        # (rather than hardcoding an expected step) only fires this guard
+        # when the clamp itself just moved current_step -- so it stays a
+        # no-op for tests and any other caller that invokes this handler
+        # without current_step already at FILTERS, matching every other
+        # switch direction and the ordinary same-flow-type case. Loading the
+        # preset now would populate Review before the user has confirmed a
+        # source, so stop and let the newly shown step take over -- the
+        # user re-selects this item once it's satisfied.
+        if self._wizard_controller.current_step != step_before_switch:
+            new_step_label = self._wizard_controller.current_step.value.replace("_", " ").title()
+            self._status_banner.show_info(
+                f"Complete the {new_step_label} step first, then select '{name}' again."
+            )
+            return
 
         self._apply_channel_mode_from_item(item)
         self._status_banner.show_progress(f"Loading preset '{name}'...")
