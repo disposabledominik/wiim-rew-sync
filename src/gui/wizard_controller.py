@@ -525,7 +525,17 @@ class WizardController(QObject):
         # never a redundant "step not in sequence" warning from
         # _render_step_indicator's own fallback for a transition this
         # clamp is about to correct anyway.
-        frontier = self.frontier_step
+        #
+        # Inlines frontier_step's own logic against new_sequence directly
+        # rather than going through the property, which would otherwise
+        # redundantly rebuild the identical list via
+        # steps_for_flow(self._state.flow_type) -- already reassigned to
+        # flow_type above, so that call would just reconstruct new_sequence
+        # a second time.
+        frontier = next(
+            (step for step in new_sequence if step not in self._state.completed_steps),
+            new_sequence[-1],
+        )
         current_step = self._state.current_step
         needs_clamp = current_step not in new_sequence or new_sequence.index(
             current_step
