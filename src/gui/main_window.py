@@ -1264,15 +1264,25 @@ class MainWindow(QMainWindow):
         saved preset's origin doesn't have to match the flow pushing it;
         the Canonical Filter Model doesn't care which device API wrote it).
 
-        The eventual *write* path (_do_push) does key off flow_type, though
-        -- so picking an item whose type disagrees with the active flow
-        must sync flow_type to match, or Push would later write a RoomFit
-        profile through the PEQ path (or vice versa). Only touches flow_type
-        when it actually needs to change, and never downgrades PEQ_ONLY
-        (RoomFit-incapable devices) to plain PEQ: a RoomFit item can only
-        ever appear in this list when supports_roomfit is true, which is
-        mutually exclusive with PEQ_ONLY, so PEQ_ONLY only needs protecting
-        on the "PEQ item picked" branch.
+        flow_type is left alone here, deliberately -- it's the *target* the
+        session is pushing to (set once, explicitly, via the EQ_TYPE page),
+        not a property of wherever the loaded filter bands happened to come
+        from. Loading a PEQ preset's bands while in a RoomFit session (or a
+        RoomFit profile's bands while in a PEQ session) still pushes to that
+        session's original target: this is exactly what the Canonical
+        Filter Model exists for, and SOURCE has no meaning in a RoomFit
+        session regardless of a loaded preset's own type (there's no
+        per-source PEQ storage being written to -- the target is a single
+        global RoomFit profile either way). An earlier version of this
+        handler synced flow_type to the picked item's type instead, on the
+        theory that `_do_push` keys off flow_type so a mismatch would push
+        through the wrong path (docs/smoke_test_issues.md #266); this
+        assumption was wrong -- `_do_push` only ever writes to whatever
+        target flow_type already names, using `state.current_filters`/
+        `state.roomfit_profile_name`/`state.selected_sources`, none of which
+        depend on where the filters were loaded from -- and caused its own,
+        worse bug (`#278`: switching flow_type mid-session could insert an
+        unaddressed step into the sequence, corrupting the step indicator).
 
         No wizard-state pre-check (EQ type / source chosen) needed here --
         with QuickSetupDialog gone, this handler is only reachable from the
@@ -1296,18 +1306,6 @@ class MainWindow(QMainWindow):
 
         if not self._confirm_preset_preview([item]):
             return
-
-        # set_flow_type() itself invalidates whatever's orphaned by the
-        # switch (docs/smoke_test_issues.md #266's confirmed root cause was
-        # this exact call site changing flow_type with no invalidation at
-        # all -- SOURCE, PEQ-only, survived as a stale completed_steps
-        # entry across a load-a-RoomFit-preset-here switch). No hand-rolled
-        # invalidate_after needed here now; the shared path handles it.
-        current_flow = self._wizard_controller.flow_type
-        if preset_type == "RoomFit" and current_flow != FlowType.ROOMFIT:
-            self._wizard_controller.set_flow_type(FlowType.ROOMFIT)
-        elif preset_type != "RoomFit" and current_flow == FlowType.ROOMFIT:
-            self._wizard_controller.set_flow_type(FlowType.PEQ)
 
         self._apply_channel_mode_from_item(item)
         self._status_banner.show_progress(f"Loading preset '{name}'...")

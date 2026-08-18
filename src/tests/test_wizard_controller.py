@@ -8,6 +8,8 @@ Requirements referenced: 1.2-1.12, 11.1-11.8.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from src.gui.wizard_controller import (
@@ -73,6 +75,26 @@ class TestWizardControllerFlowBranching:
             WizardStep.PUSH,
         ]
         assert ctrl.get_steps() == expected
+
+    def test_eq_type_index_is_identical_across_every_flow_sequence(self, qtbot) -> None:
+        """Structural guard for a /code-review finding (PLAUSIBLE, lower
+        confidence -- no live bug today, but a real design assumption
+        worth pinning down): `_on_eq_type_selected` (`main_window.py`)
+        calls `set_flow_type()` then unconditionally `advance()`, relying
+        on `EQ_TYPE` sitting at the same index in both `PEQ` and `ROOMFIT`
+        sequences so `set_flow_type()`'s current_step clamp never fires
+        there. If a future flow variant or reordering ever broke that
+        coincidence, the clamp would move current_step elsewhere and the
+        following `advance()` would silently complete the wrong step. This
+        pins the invariant down so `steps_for_flow()` can't drift from it
+        silently -- a future edit that breaks it fails this test loudly
+        instead."""
+        indices = {
+            flow_type: steps_for_flow(flow_type).index(WizardStep.EQ_TYPE)
+            for flow_type in (FlowType.PEQ, FlowType.ROOMFIT)
+            if WizardStep.EQ_TYPE in steps_for_flow(flow_type)
+        }
+        assert len(set(indices.values())) == 1, indices
 
     def test_set_flow_type_emits_signal(self, qtbot) -> None:
         """set_flow_type emits flow_type_changed with the new FlowType."""
@@ -559,6 +581,180 @@ class TestWizardControllerFlowTypeInvalidation:
 
         assert emissions == []
 
+
+# ---------------------------------------------------------------------------
+# TestWizardControllerFlowTypeCurrentStepGap
+# ---------------------------------------------------------------------------
+
+
+class TestWizardControllerFlowTypeCurrentStepGap:
+    """Invalidating orphaned completed_steps (#266) isn't enough on its own:
+    RoomFit -> PEQ *inserts* SOURCE into the sequence, a step a RoomFit-only
+    session never visited. If current_step is already past where SOURCE now
+    sits (e.g. browsed back to FILTERS after reaching NAME_PROFILE, then
+    picking a mismatched-type preset there -- docs/smoke_test_issues.md
+    #278, found via `_on_device_item_selected`), advance() would next
+    silently mark FILTERS complete and move on to REVIEW while SOURCE sits
+    uncompleted behind it -- frontier stuck behind steps the indicator
+    already shows checked, which StepIndicator's rendering contract assumes
+    can never happen (`i == frontier` and `completed` are mutually
+    exclusive with an earlier step being incomplete). set_flow_type() must
+    pull current_step back to the frontier whenever the switch leaves it
+    ahead of an uncompleted step."""
+
+    def test_roomfit_to_peq_pulls_current_step_back_to_source(self, qtbot) -> None:
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")  # CONNECT -> EQ_TYPE
+        ctrl.advance("RoomFit")  # EQ_TYPE -> FILTERS
+        ctrl.advance("10 filters")  # FILTERS -> REVIEW
+        ctrl.advance("Ready")  # REVIEW -> NAME_PROFILE
+        ctrl.go_to_step(WizardStep.FILTERS)  # browse back -- just navigation
+
+        ctrl.set_flow_type(FlowType.PEQ)
+
+        assert ctrl.current_step == WizardStep.SOURCE
+        assert ctrl.frontier_step == WizardStep.SOURCE
+        assert WizardStep.FILTERS not in ctrl.completed_steps
+
+    def test_current_step_gap_emits_step_changed(self, qtbot) -> None:
+        """The clamp is a real navigation change, not just internal
+        bookkeeping -- views wired to step_changed (page switching,
+        StepIndicator's view index) must be told."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")
+        ctrl.advance("RoomFit")
+        ctrl.advance("10 filters")
+        ctrl.go_to_step(WizardStep.FILTERS)
+
+        with qtbot.waitSignal(ctrl.step_changed, timeout=1000) as blocker:
+            ctrl.set_flow_type(FlowType.PEQ)
+
+        assert blocker.args == [WizardStep.SOURCE]
+
+    def test_peq_to_roomfit_does_not_need_a_clamp(self, qtbot) -> None:
+        """The mirror direction never inserts a step ahead of FILTERS
+        (NAME_PROFILE, RoomFit's own flow-specific step, sits after
+        FILTERS/REVIEW, not before) -- current_step must stay put."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        ctrl.advance("WiiM Pro")  # CONNECT -> EQ_TYPE
+        ctrl.advance("PEQ")  # EQ_TYPE -> SOURCE
+        ctrl.advance("wifi")  # SOURCE -> FILTERS
+        ctrl.advance("10 filters")  # FILTERS -> REVIEW
+        ctrl.go_to_step(WizardStep.FILTERS)
+
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+
+        assert ctrl.current_step == WizardStep.FILTERS
+        assert ctrl.frontier_step == WizardStep.FILTERS
+
+    def test_no_clamp_when_current_step_already_at_frontier(self, qtbot) -> None:
+        """The ordinary, well-behaved case (`_on_eq_type_selected`:
+        current_step is EQ_TYPE, the frontier, when the switch happens) must
+        not trigger any extra step_changed emission beyond
+        flow_type_changed."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.PEQ)
+        ctrl.advance("WiiM Pro")  # CONNECT -> EQ_TYPE, current_step == frontier
+
+        emissions: list[object] = []
+        ctrl.step_changed.connect(emissions.append)
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+
+        assert emissions == []
+        assert ctrl.current_step == WizardStep.EQ_TYPE
+
+    def test_current_step_absent_from_new_sequence_falls_back_to_frontier(
+        self, qtbot
+    ) -> None:
+        """current_step can be entirely absent from the new sequence, not
+        just past the frontier within it -- e.g. browsed to NAME_PROFILE
+        (RoomFit-only) then switching to PEQ_ONLY, which has neither
+        NAME_PROFILE nor EQ_TYPE nor SOURCE in common with it. Left
+        unguarded (found by /code-review after the past-frontier clamp
+        above was added), the next advance() would do
+        sequence.index(current_step) and raise ValueError, crashing the
+        wizard outright -- worse than the past-frontier case, since nothing
+        would even be logged. Must fall back to the frontier instead, the
+        same as the past-frontier branch, so current_step always resolves
+        inside get_steps()."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")
+        ctrl.advance("RoomFit")
+        ctrl.advance("10 filters")
+        ctrl.advance("Ready")
+        ctrl.go_to_step(WizardStep.NAME_PROFILE)
+        assert ctrl.current_step == WizardStep.NAME_PROFILE
+
+        ctrl.set_flow_type(FlowType.PEQ_ONLY)
+
+        assert ctrl.current_step in ctrl.get_steps()
+        assert ctrl.current_step == ctrl.frontier_step
+        # Must not raise -- this is the actual failure mode being guarded.
+        ctrl.advance("done")
+
+    def test_clamp_logs_a_warning(self, qtbot, caplog) -> None:
+        """Found via /code-review: the block's own comment argues this path
+        is worse than invalidate_after's analogous "not in sequence" case
+        specifically *because* it would otherwise be silent, but the first
+        cut added no logging at all. A fired clamp must leave a trace in
+        app.log -- the only diagnostic artifact this local-first,
+        no-telemetry app has."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")
+        ctrl.advance("RoomFit")
+        ctrl.advance("10 filters")
+        ctrl.go_to_step(WizardStep.FILTERS)
+
+        module_logger = logging.getLogger("src.gui.wizard_controller")
+        module_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="src.gui.wizard_controller"):
+                ctrl.set_flow_type(FlowType.PEQ)
+        finally:
+            module_logger.propagate = False
+
+        assert "current_step" in caplog.text
+        assert "SOURCE" in caplog.text or str(WizardStep.SOURCE) in caplog.text
+
+    def test_flow_type_changed_fires_before_the_clamped_step_changed(
+        self, qtbot
+    ) -> None:
+        """Found via /code-review: flow_type_changed used to fire before the
+        clamp corrected current_step, and since MainWindow connects it to a
+        handler that synchronously reads current_step
+        (_on_flow_type_changed -> _render_step_indicator), that let a
+        transient, uncorrected current_step render for one frame -- the
+        exact non-monotonic state this method exists to prevent. The clamp
+        must be applied before flow_type_changed emits, so by the time any
+        listener reacts to it, current_step is already consistent; the
+        corrective step_changed (if the clamp actually fires) comes after,
+        not before."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")
+        ctrl.advance("RoomFit")
+        ctrl.advance("10 filters")
+        ctrl.go_to_step(WizardStep.FILTERS)
+
+        emissions: list[str] = []
+        # Reading current_step from inside the flow_type_changed handler is
+        # exactly what MainWindow._on_flow_type_changed does -- assert it
+        # already sees the clamped value, not the stale one.
+        ctrl.flow_type_changed.connect(
+            lambda _: emissions.append(f"flow_type_changed:{ctrl.current_step.value}")
+        )
+        ctrl.step_changed.connect(
+            lambda step: emissions.append(f"step_changed:{step.value}")
+        )
+
+        ctrl.set_flow_type(FlowType.PEQ)
+
+        assert emissions == ["flow_type_changed:source", "step_changed:source"]
 
 
 # ---------------------------------------------------------------------------
