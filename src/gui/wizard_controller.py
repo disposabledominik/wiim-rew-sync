@@ -431,9 +431,15 @@ class WizardController(QObject):
     def set_flow_type(self, flow_type: FlowType) -> None:
         """Switch the flow type, rebuilding the step sequence.
 
-        Emits ``flow_type_changed``.  Does not change the current step —
-        the caller should call ``advance()`` or ``go_to_step()`` after this
-        if a step transition is needed.
+        Emits ``flow_type_changed``. Ordinarily does not change the current
+        step — the caller should still call ``advance()`` or ``go_to_step()``
+        after this if a step transition is needed, and every current call
+        site relies on that. The one exception is defensive: if the switch
+        itself would leave ``current_step`` somewhere ``advance()`` can no
+        longer safely continue from (see the clamp below), this method
+        corrects it and emits ``step_changed`` before returning, rather
+        than handing the caller a state its own docstring told it not to
+        expect.
 
         Also invalidates any step that exists in the sequence being left
         but not in the one being entered (e.g. ``SOURCE`` leaving PEQ for
@@ -489,42 +495,51 @@ class WizardController(QObject):
             self.invalidate_from(old_sequence[common_len])
 
         self._state.flow_type = flow_type
-        self.flow_type_changed.emit(flow_type)
 
         # The switch can insert a step into the new sequence that sits
         # *before* current_step but was never completed (e.g. RoomFit -> PEQ
         # re-introduces SOURCE, which a RoomFit-only session never visited --
         # docs/smoke_test_issues.md #278, found via _on_device_item_selected
         # loading a PEQ preset while browsing back at FILTERS in a RoomFit
-        # session). Left alone, current_step would sit past that gap, and
-        # the next advance() would silently complete steps after the gap
-        # while it stays uncompleted -- frontier stuck behind steps the
-        # indicator already shows checked, the exact non-monotonic state
-        # StepIndicator's rendering contract assumes can't happen. Pulling
-        # current_step back to the frontier here, in the single shared place
-        # a flow-type transition happens, routes the user through the gap
-        # instead of skipping over it -- the same reasoning #266 used to
-        # centralize invalidation on this method rather than patch each
-        # call site. A no-op for every call site where current_step is
-        # already at or before the frontier (the common case).
-        # current_step can also end up entirely absent from new_sequence
-        # (e.g. NAME_PROFILE when leaving ROOMFIT, EQ_TYPE when entering
-        # PEQ_ONLY) -- not reachable through any current call site (every
-        # production caller only invokes set_flow_type() while current_step
-        # is CONNECT or EQ_TYPE, both common to every flow pair), but left
-        # unguarded this is worse than the past-frontier case above: the
-        # next advance() does sequence.index(current_step), which raises
-        # ValueError and crashes the wizard outright, silently, since
-        # (unlike invalidate_after's analogous "step not in sequence" case)
-        # this path would otherwise emit nothing. Falls back to the
-        # frontier for the same reason the past-frontier branch does --
-        # current_step must always resolve inside get_steps().
-        if self._state.current_step not in new_sequence:
-            frontier = self.frontier_step
+        # session), or can leave current_step entirely absent from the new
+        # sequence (e.g. NAME_PROFILE when leaving ROOMFIT, EQ_TYPE when
+        # entering PEQ_ONLY). Either way, advance() can no longer safely
+        # continue from current_step: past-frontier-but-present lets it
+        # silently complete steps ahead of an uncompleted one (frontier
+        # stuck behind steps the indicator already shows checked, the exact
+        # non-monotonic state StepIndicator's rendering contract assumes
+        # can't happen); absent-entirely makes its sequence.index() raise
+        # ValueError outright. Not reachable through any current call site
+        # (every production caller only invokes set_flow_type() while
+        # current_step is CONNECT or EQ_TYPE, both common to every flow
+        # pair) -- kept as defensive protection for this method's public
+        # contract regardless, the same reasoning #266 used to centralize
+        # invalidation here rather than leave it to each caller.
+        #
+        # Computed and applied *before* the flow_type_changed emit below,
+        # not after: that signal synchronously drives
+        # MainWindow._on_flow_type_changed -> _render_step_indicator, which
+        # reads current_step directly. Clamping first means the indicator
+        # is only ever rendered with an already-consistent current_step --
+        # never the transient bad state this method exists to prevent, and
+        # never a redundant "step not in sequence" warning from
+        # _render_step_indicator's own fallback for a transition this
+        # clamp is about to correct anyway.
+        frontier = self.frontier_step
+        current_step = self._state.current_step
+        needs_clamp = current_step not in new_sequence or new_sequence.index(
+            current_step
+        ) > new_sequence.index(frontier)
+        if needs_clamp:
+            logger.warning(
+                "set_flow_type(%s) left current_step=%s past the frontier "
+                "(or outside the new sequence entirely); resetting to %s",
+                flow_type,
+                current_step,
+                frontier,
+            )
             self._state.current_step = frontier
+
+        self.flow_type_changed.emit(flow_type)
+        if needs_clamp:
             self.step_changed.emit(frontier)
-        else:
-            frontier = self.frontier_step
-            if new_sequence.index(self._state.current_step) > new_sequence.index(frontier):
-                self._state.current_step = frontier
-                self.step_changed.emit(frontier)

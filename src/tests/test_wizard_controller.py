@@ -8,6 +8,8 @@ Requirements referenced: 1.2-1.12, 11.1-11.8.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from src.gui.wizard_controller import (
@@ -73,6 +75,26 @@ class TestWizardControllerFlowBranching:
             WizardStep.PUSH,
         ]
         assert ctrl.get_steps() == expected
+
+    def test_eq_type_index_is_identical_across_every_flow_sequence(self, qtbot) -> None:
+        """Structural guard for a /code-review finding (PLAUSIBLE, lower
+        confidence -- no live bug today, but a real design assumption
+        worth pinning down): `_on_eq_type_selected` (`main_window.py`)
+        calls `set_flow_type()` then unconditionally `advance()`, relying
+        on `EQ_TYPE` sitting at the same index in both `PEQ` and `ROOMFIT`
+        sequences so `set_flow_type()`'s current_step clamp never fires
+        there. If a future flow variant or reordering ever broke that
+        coincidence, the clamp would move current_step elsewhere and the
+        following `advance()` would silently complete the wrong step. This
+        pins the invariant down so `steps_for_flow()` can't drift from it
+        silently -- a future edit that breaks it fails this test loudly
+        instead."""
+        indices = {
+            flow_type: steps_for_flow(flow_type).index(WizardStep.EQ_TYPE)
+            for flow_type in (FlowType.PEQ, FlowType.ROOMFIT)
+            if WizardStep.EQ_TYPE in steps_for_flow(flow_type)
+        }
+        assert len(set(indices.values())) == 1, indices
 
     def test_set_flow_type_emits_signal(self, qtbot) -> None:
         """set_flow_type emits flow_type_changed with the new FlowType."""
@@ -673,6 +695,66 @@ class TestWizardControllerFlowTypeCurrentStepGap:
         assert ctrl.current_step == ctrl.frontier_step
         # Must not raise -- this is the actual failure mode being guarded.
         ctrl.advance("done")
+
+    def test_clamp_logs_a_warning(self, qtbot, caplog) -> None:
+        """Found via /code-review: the block's own comment argues this path
+        is worse than invalidate_after's analogous "not in sequence" case
+        specifically *because* it would otherwise be silent, but the first
+        cut added no logging at all. A fired clamp must leave a trace in
+        app.log -- the only diagnostic artifact this local-first,
+        no-telemetry app has."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")
+        ctrl.advance("RoomFit")
+        ctrl.advance("10 filters")
+        ctrl.go_to_step(WizardStep.FILTERS)
+
+        module_logger = logging.getLogger("src.gui.wizard_controller")
+        module_logger.propagate = True
+        try:
+            with caplog.at_level(logging.WARNING, logger="src.gui.wizard_controller"):
+                ctrl.set_flow_type(FlowType.PEQ)
+        finally:
+            module_logger.propagate = False
+
+        assert "current_step" in caplog.text
+        assert "SOURCE" in caplog.text or str(WizardStep.SOURCE) in caplog.text
+
+    def test_flow_type_changed_fires_before_the_clamped_step_changed(
+        self, qtbot
+    ) -> None:
+        """Found via /code-review: flow_type_changed used to fire before the
+        clamp corrected current_step, and since MainWindow connects it to a
+        handler that synchronously reads current_step
+        (_on_flow_type_changed -> _render_step_indicator), that let a
+        transient, uncorrected current_step render for one frame -- the
+        exact non-monotonic state this method exists to prevent. The clamp
+        must be applied before flow_type_changed emits, so by the time any
+        listener reacts to it, current_step is already consistent; the
+        corrective step_changed (if the clamp actually fires) comes after,
+        not before."""
+        ctrl = WizardController()
+        ctrl.set_flow_type(FlowType.ROOMFIT)
+        ctrl.advance("WiiM Pro")
+        ctrl.advance("RoomFit")
+        ctrl.advance("10 filters")
+        ctrl.go_to_step(WizardStep.FILTERS)
+
+        emissions: list[str] = []
+        # Reading current_step from inside the flow_type_changed handler is
+        # exactly what MainWindow._on_flow_type_changed does -- assert it
+        # already sees the clamped value, not the stale one.
+        ctrl.flow_type_changed.connect(
+            lambda _: emissions.append(f"flow_type_changed:{ctrl.current_step.value}")
+        )
+        ctrl.step_changed.connect(
+            lambda step: emissions.append(f"step_changed:{step.value}")
+        )
+
+        ctrl.set_flow_type(FlowType.PEQ)
+
+        assert emissions == ["flow_type_changed:source", "step_changed:source"]
 
 
 # ---------------------------------------------------------------------------
