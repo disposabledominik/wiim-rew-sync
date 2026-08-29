@@ -363,12 +363,12 @@ class PushPage(QWidget):
                 # NOT cover the source above (that still needs the manual
                 # steps regardless of what Undo does).
                 if partial_source_names:
-                    who = f"{', '.join(partial_source_names)}, also"
+                    who = ", ".join(partial_source_names)
                 else:
                     plural = "s" if partial_sources != 1 else ""
-                    who = f"{partial_sources} other source{plural} also"
+                    who = f"{partial_sources} other source{plural}"
                 detail_text += (
-                    f"\n\nAuto-rollback failed for {who} written before this failure. "
+                    f"\n\nAuto-rollback also failed for {who} written before this failure. "
                     f"Click Undo to restore {'them' if partial_sources != 1 else 'it'} "
                     f"-- this is separate from the source above, which still needs "
                     f"the manual recovery steps regardless."

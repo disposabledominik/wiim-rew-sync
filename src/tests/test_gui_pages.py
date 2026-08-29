@@ -1161,7 +1161,7 @@ class TestPushPage:
         detail = page._detail_label.text().lower()
         assert "critical" in page._result_message.text().lower()
         assert "2 other source" in detail
-        assert "auto-rollback failed" in detail
+        assert "auto-rollback also failed" in detail
         assert "restore-backup" in detail  # manual recovery steps still shown
 
     def test_set_failure_no_partial_sources_still_hides_undo(self, qtbot) -> None:
