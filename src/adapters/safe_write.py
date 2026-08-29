@@ -53,23 +53,48 @@ class WriteResult:
     # was intended. Left None on failure: the rolled-back/deleted state isn't
     # useful to show, only the failure message is.
     read_back: PEQSettings | None = None
-    # The next two fields are set only by PrimaryWorkflowManager._do_push()'s
-    # multi-source PEQ loop, by mutating this exact WriteResult in place
+    # The next three fields are set only by PrimaryWorkflowManager
+    # ._do_push()'s multi-source PEQ loop (via _finalize_push_failure(), see
+    # primary_workflows.py), by mutating this exact WriteResult in place
     # (not replacing it) right before emitting it on a mid-loop failure --
     # deliberately preserving every other field (backup_path, in particular)
     # as this failing source's own SafeWrite.execute() result, unchanged
     # from the single-source case. 0/None for every single-source result and
     # for the all-succeeded case, neither of which goes through that path.
     #
-    # partial_sources: count of sources that already succeeded (and were
-    # NOT rolled back -- see backlog.md item 3) before this one failed.
+    # auto_rollback_attempted: count of sources that already succeeded
+    # before this one failed, and were auto-rolled-back via
+    # restore_entries() (backlog.md item 3). 0 if none had succeeded yet.
+    auto_rollback_attempted: int = 0
+    # partial_sources: of those auto_rollback_attempted sources, the count
+    # whose OWN auto-rollback failed and still need manual action -- i.e.
+    # "how many sources does the user still need to fix," not "how many
+    # succeeded before this failure" (that was the pre-item-3 meaning; see
+    # backlog.md item 3's "to reactivate" note). partial_sources ==
+    # auto_rollback_attempted == 0 means either a single-source push, or the
+    # very first source in a multi-source push, failed -- nothing to roll
+    # back. partial_sources < auto_rollback_attempted means auto-rollback
+    # partly worked; the difference is how many were successfully restored
+    # and need no further action.
     partial_sources: int = 0
-    # partial_backup_paths: those sources' backups, pre-encoded via
+    # partial_backup_paths: the partial_sources subset's backups (i.e. only
+    # the ones whose auto-rollback failed), pre-encoded via
     # encode_multi_source_backup_paths() -- kept separate from backup_path
     # above (which stays this source's own backup) so PushPage can offer
-    # Undo for the prior sources without losing this source's own recovery
-    # info, instead of claiming a full restore that didn't happen (#242).
+    # Undo for exactly those sources without losing this source's own
+    # recovery info, instead of claiming a full restore that didn't happen
+    # (#242).
     partial_backup_paths: str | None = None
+    # verified: False only when a source's write was aborted by a caught
+    # connection/response/backup error before SafeWrite.execute() itself
+    # could run to completion (see PrimaryWorkflowManager._do_push(),
+    # backlog.md item 9) -- rollback_success stays None in that case too
+    # (nothing to attempt), but unlike every OTHER rollback_success=None
+    # case (e.g. a bad profile name, where nothing was ever written), the
+    # device's actual state here is genuinely unknown, not "safely
+    # unchanged." PushPage.set_failure() uses this to avoid claiming the
+    # device was safely restored when that was never verified.
+    verified: bool = True
 
 
 def compare_band_lists(
@@ -499,6 +524,97 @@ class SafeWrite:
             on_stage("done")
 
         return result
+
+
+async def restore_one(
+    safe_write: SafeWrite,
+    source_name: str,
+    backup_path: str | Path,
+    *,
+    on_stage: Callable[[str], None] | None = None,
+) -> tuple[bool, str]:
+    """Restore one source's PEQ state from a backup file via
+    SafeWrite.undo(), checking the file exists first and converting any
+    raised exception into a plain failure result.
+
+    The single-entry primitive both restore_entries() (below, for a loop of
+    entries) and SecondaryWorkflowManager._restore_backup() (single-source
+    Undo) use -- the one place backup-file-existence checking and
+    SafeWrite.undo()'s own exception handling live, so a single-source Undo
+    and a multi-source restore loop can't drift apart in how they treat a
+    missing file or an unexpected error.
+
+    Returns:
+        (success, message) -- message is the restored-confirmation text on
+        success, or the error text on failure.
+    """
+    path = Path(backup_path) if isinstance(backup_path, str) else backup_path
+    if not path or not path.is_file():
+        logger.error("Restore requested but backup file not found: %s", path)
+        return False, "No backup available"
+    try:
+        result = await safe_write.undo(path, source_name, on_stage=on_stage)
+    except Exception as exc:
+        logger.exception("Restore of source '%s' failed", source_name)
+        return False, str(exc)
+    if result.success:
+        return True, "Previous filters restored"
+    error_msg = result.error_message or "Unknown error"
+    logger.error("Restore of source '%s' failed: %s", source_name, error_msg)
+    return False, error_msg
+
+
+async def restore_entries(
+    safe_write: SafeWrite,
+    entries: list[tuple[str, str]],
+    *,
+    on_stage: Callable[[str], None] | None = None,
+    on_round: Callable[[str, int, int], None] | None = None,
+) -> tuple[int, int, list[tuple[str, str]]]:
+    """Restore each (source_name, backup_path) entry via restore_one(), in
+    order, tallying each one's real outcome.
+
+    Shared by PrimaryWorkflowManager._do_push()'s auto-rollback of already-
+    succeeded sources on a later source's failure (backlog.md item 3) and
+    SecondaryWorkflowManager._do_undo_multi_source()'s manual multi-source
+    Undo -- the same restore-loop logic, so the two can't drift apart.
+    Deliberately takes an already-constructed SafeWrite (not a factory), so
+    callers build it once and reuse it across every entry, not per iteration.
+
+    on_stage/on_round are plain callables, not Qt signals -- same dependency-
+    inversion pattern SafeWrite.execute()/undo() already use for on_stage.
+    Each caller supplies whatever Qt-signal-bound implementation and wording
+    it needs (e.g. "Restoring" for manual undo vs. "Rolling back" for
+    auto-rollback); this function has no opinion on either.
+
+    Args:
+        safe_write: Already-constructed SafeWrite to restore through.
+        entries: (source_name, backup_path) pairs, in the order to restore.
+        on_stage: Forwarded to each restore_one() call.
+        on_round: Called before each entry as on_round(source_name, index,
+            total), 1-based index -- mirrors the forward-push loop's own
+            progress_update/push_round_changed pairing.
+
+    Returns:
+        (succeeded, failed, failed_entries) -- failed_entries is the subset
+        of `entries` whose own restore did not succeed, still needing manual
+        recovery; re-encodable via encode_multi_source_backup_paths() by the
+        caller.
+    """
+    succeeded = 0
+    failed_entries: list[tuple[str, str]] = []
+    total = len(entries)
+    for index, (source_name, backup_path) in enumerate(entries, start=1):
+        if on_round is not None:
+            on_round(source_name, index, total)
+        success, _message = await restore_one(
+            safe_write, source_name, backup_path, on_stage=on_stage
+        )
+        if success:
+            succeeded += 1
+        else:
+            failed_entries.append((source_name, backup_path))
+    return succeeded, len(failed_entries), failed_entries
 
 
 class RoomFitSafeWrite:

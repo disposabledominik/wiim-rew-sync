@@ -128,6 +128,13 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 - [P] Clicking Undo restores previous settings, shows confirmation
 - [P] For multi-source push (2+ sources selected on Source page): all sources are written; success
   message reflects all sources; Undo restores every source individually from its own backup
+- [ ] docs/backlog.md item 3 (2026-08-29): 3+ sources selected, disconnect the device (real
+  network/power interruption, timed against the "Writing"/"Verifying" stage label) after source 1
+  succeeds but before source 2 completes — source 1 is automatically rolled back; message says
+  "N source(s) automatically restored"; no Undo button offered
+- [ ] Same setup, but also disconnect *during* source 1's auto-rollback — a coherent
+  critical-recovery message names source 1 specifically, distinct from the source that originally
+  failed
 
 ### Test 7: Dry Run (PEQ)
 - [P] With Dry Run enabled, clicking "Preview Only" shows push result without writing
@@ -265,6 +272,10 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 
 ### Test 16: Error Handling
 - [P] Disconnect device from network mid-operation: error shown in banner, app doesn't hang
+- [ ] docs/backlog.md item 9 (2026-08-29): disconnect device mid-*push* specifically (timed
+  against the "Writing"/"Verifying" stage label, not a pre-write bad IP) — the Push page's main
+  card (not just the status banner) updates: stage stepper resolves to failed instead of staying
+  frozen, and the message reads "device state unknown," not "safely restored"
 - [N/A] Close REW while pulling from REW API: error shown
   NOTE: It is difficult to close REW fast enough for this test to be meaningfull.
 - [P] Try to push when device unreachable: error shown, not stuck in loading

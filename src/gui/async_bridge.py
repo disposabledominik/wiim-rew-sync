@@ -50,7 +50,20 @@ class AsyncBridge(QObject):
     # --- Signals for progress indication ---
     progress_update = Signal(str)          # Status message for progress indicator
     stage_changed = Signal(str)            # Safe-write stage key (see push_page._STAGES)
-    push_round_changed = Signal(str, int, int)  # (source_name, index, total); push or undo
+    push_round_changed = Signal(str, int, int)  # (source_name, index, total); push, undo, or
+                                                 # auto-rollback (see rollback_state_changed)
+    # Toggles PushPage's auto-rollback verb ("Rolling back" vs "Pushing to")
+    # for push_round_changed above during PrimaryWorkflowManager
+    # ._finalize_push_failure()'s restore of already-succeeded sources
+    # (docs/backlog.md item 3). Manual Undo's equivalent mode flag is set by
+    # MainWindow calling PushPage.start_undo() directly (it owns PushPage,
+    # dispatched synchronously from the Undo button's own click handler) --
+    # auto-rollback has no such direct-call path since it's triggered deep
+    # inside PrimaryWorkflowManager, which (by design) never touches GUI
+    # widgets directly, only self._bridge. This is the minimal signal that
+    # gap actually needs -- push_round_changed's own (source_name, index,
+    # total) payload is already fully reused as-is, unchanged, for this case.
+    rollback_state_changed = Signal(bool)  # True while auto-rollback is running
     operation_started = Signal(bool, int)  # (cancellable, token) -- see run_async()'s *token*
     operation_finished = Signal(int)       # token -- see run_async()'s *token*
 

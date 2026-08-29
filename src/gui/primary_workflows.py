@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from PySide6.QtCore import QObject, Signal
 
-from src.adapters.safe_write import WriteResult
+from src.adapters.safe_write import WriteResult, restore_entries
 from src.gui.wizard_controller import FlowType
 from src.models.channel_mode import (
     ChannelMode,
@@ -37,6 +37,7 @@ from src.models.channel_mode import (
     require_lr_filters,
     resolve_roomfit_channel_kwargs,
 )
+from src.models.errors import BackupError, WiiMConnectionError, WiiMResponseError
 from src.models.peq import PEQSettings, build_peq_settings, extract_filters
 from src.models.profile import build_profile
 from src.repository.backup_manager import encode_multi_source_backup_paths
@@ -1529,11 +1530,7 @@ class PrimaryWorkflowManager(QObject):
             # same as every other push failure, instead of the raw
             # ValueError propagating past this method to _bridge_wrapper's
             # generic operation_error handler, which never touches PushPage
-            # (round-4 review finding #4, 2026-07-19). Deliberately scoped to
-            # just this check, not a blanket try/except around the loop --
-            # safe_write.execute()'s own exceptions (e.g. a connection drop
-            # mid-push) still propagate to _bridge_wrapper unchanged, per
-            # the existing, tested convention for the PEQ push path.
+            # (round-4 review finding #4, 2026-07-19).
             if channel_mode.is_lr:
                 try:
                     require_lr_filters(state.filters_l, state.filters_r)
@@ -1560,32 +1557,35 @@ class PrimaryWorkflowManager(QObject):
                     filters_l=state.filters_l,
                     filters_r=state.filters_r,
                 )
-                result = await safe_write.execute(source_name, settings, on_stage=on_stage)
+                try:
+                    result = await safe_write.execute(source_name, settings, on_stage=on_stage)
+                except (WiiMConnectionError, WiiMResponseError, BackupError) as exc:
+                    # A connection/response/backup error aborted this
+                    # source's write before SafeWrite.execute() could return
+                    # a result at all -- e.g. a connection drop mid-write
+                    # (docs/backlog.md item 9). Distinct from a *returned*
+                    # failed WriteResult (below): here nothing was verified,
+                    # so backup_path stays None (no backup exists to point
+                    # recovery at) and verified=False tells PushPage not to
+                    # claim the device was safely restored, since that was
+                    # never confirmed.
+                    logger.exception("Push to source '%s' failed", source_name)
+                    result = WriteResult(
+                        success=False, error_message=str(exc), backup_path=None,
+                        verified=False,
+                    )
+                    await self._finalize_push_failure(result, backup_paths, safe_write)
+                    return
                 last_result = result
 
                 if not result.success:
-                    # Abort on first failure. Sources 0..i-1 (already in
-                    # backup_paths) succeeded and are NOT automatically
-                    # rolled back here -- each already passed its own
-                    # SafeWrite verification, so this is a cross-source gap,
-                    # not a per-source one (docs/backlog.md item 3). Source i
-                    # itself already rolled back via its own SafeWrite.execute()
-                    # call, so its backup is deliberately excluded below --
-                    # nothing to undo there. Surface the prior sources'
-                    # backups so PushPage can offer Undo for them instead of
-                    # claiming a full restore that didn't happen (smoke #242).
-                    # Mutated onto the existing `result` in place, not a new
-                    # WriteResult -- this keeps backup_path/rollback_success/
-                    # error_message exactly as SafeWrite.execute() returned
-                    # them for source i (the failing one), unchanged from the
-                    # single-source-failure case, which needs source i's own
-                    # backup_path for its critical-recovery display.
-                    if backup_paths:
-                        result.partial_sources = len(backup_paths)
-                        result.partial_backup_paths = encode_multi_source_backup_paths(
-                            backup_paths
-                        )
-                    self._bridge.write_complete.emit(result)
+                    # Abort on first failure. Source i itself already rolled
+                    # back via its own SafeWrite.execute() call, so its
+                    # backup is excluded from backup_paths below -- nothing
+                    # to undo there. Sources 0..i-1 (already in backup_paths)
+                    # succeeded and are handled by _finalize_push_failure()
+                    # (docs/backlog.md item 3).
+                    await self._finalize_push_failure(result, backup_paths, safe_write)
                     return
 
                 # Collect backup path for undo only for sources that
@@ -1609,6 +1609,69 @@ class PrimaryWorkflowManager(QObject):
                     read_back=last_result.read_back,
                 )
                 self._bridge.write_complete.emit(result)
+
+    async def _finalize_push_failure(
+        self,
+        result: WriteResult,
+        backup_paths: list[tuple[str, str]],
+        safe_write: SafeWrite,
+    ) -> None:
+        """Auto-roll-back already-succeeded sources on a mid-loop push
+        failure, populate `result` with the outcome, and emit it.
+
+        The one place this logic lives, called both when SafeWrite.execute()
+        returns a failed WriteResult and when it raises a connection/
+        response/backup error (see _do_push()'s PEQ loop above) -- so the
+        two failure origins can't drift apart (docs/backlog.md items 3, 9).
+
+        Args:
+            result: The failing source's own WriteResult (already built,
+                either returned by SafeWrite.execute() or constructed from a
+                caught exception). Mutated in place with auto-rollback
+                outcome fields, then emitted -- every other field (backup_
+                path, error_message, verified) stays exactly as the caller
+                set it.
+            backup_paths: (source_name, backup_path) pairs for the sources
+                that already succeeded before this failure, in push order.
+                Empty if this is the first source, or a single-source push.
+            safe_write: The SafeWrite instance _do_push() is already using
+                for this run, reused here (not rebuilt) to restore each
+                entry.
+        """
+        assert self._bridge is not None
+        if backup_paths:
+            self._bridge.rollback_state_changed.emit(True)
+            try:
+                # succeeded count is intentionally not read here -- it's
+                # always derivable as auto_rollback_attempted - partial_sources
+                # (see WriteResult's docstring), so no separate field for it.
+                _, failed, failed_entries = await restore_entries(
+                    safe_write, backup_paths,
+                    on_stage=self._bridge.stage_changed.emit,
+                    on_round=self._on_rollback_round,
+                )
+            finally:
+                self._bridge.rollback_state_changed.emit(False)
+            result.auto_rollback_attempted = len(backup_paths)
+            result.partial_sources = failed
+            result.partial_backup_paths = (
+                encode_multi_source_backup_paths(failed_entries) if failed_entries else None
+            )
+        self._bridge.write_complete.emit(result)
+
+    def _on_rollback_round(self, source_name: str, index: int, total: int) -> None:
+        """Progress callback for restore_entries() during auto-rollback.
+
+        Mirrors the forward-push loop's own progress_update/push_round_changed
+        pairing a few lines up in _do_push(), with "Rolling back" wording so
+        it reads distinctly from a manual Undo's "Restoring" (see PushPage
+        .set_push_round()'s _rollback_mode flag).
+        """
+        assert self._bridge is not None
+        self._bridge.progress_update.emit(
+            f"Rolling back {source_name} ({index} of {total})..."
+        )
+        self._bridge.push_round_changed.emit(source_name, index, total)
 
     # ------------------------------------------------------------------
     # Workflow: Raw Command (Diagnostics panel)

@@ -17,8 +17,8 @@ number was kept, not reused, since it's cited by number outside this file. Items
 
 | # | Item | Status |
 |---|------|--------|
-| 3 | Multi-source push has no automatic rollback across sources on partial failure (manual per-source Undo exists) | Partially addressed |
-| 9 | Push page doesn't update its main-view card on a device connection failure; only a status banner shows it | Not started |
+| 3 | Multi-source push has no automatic rollback across sources on partial failure (manual per-source Undo exists) | Implemented (2026-08-29); manual hardware retest pending |
+| 9 | Push page doesn't update its main-view card on a device connection failure; only a status banner shows it | (a) Implemented (2026-08-29); (b) not started |
 | 6 | CI only tests Ubuntu/Python 3.12 while release builds ship Windows/macOS/Linux | Not started |
 | 4 | Backup files don't record which source they were taken from | Not started |
 | 1 | Hardware QA sign-off — full-flow validation against real devices | Ongoing (1 open issue: smoke #119) |
@@ -46,16 +46,30 @@ when source N fails risks a rollback-of-a-rollback failure and is a large enough
 failed auto-rollback also need its own critical-recovery UI?) to warrant its own design pass, so
 it's still deferred.
 
-**Status:** Partially addressed (smoke #242, `c132304`). `PushPage.set_failure()` now shows an
-accurate "N source(s) not restored" message instead of the misleading "device safely restored"
-line, and offers a one-click Undo for the sources that were actually written (via
-`WriteResult.partial_backup_paths` + the existing multi-source undo path) — closing the
-"document/expose the manual-undo path" option below. Automatic cross-source rollback is still not
-implemented.
+**Status:** Implemented (2026-08-29). `PrimaryWorkflowManager._do_push()`'s PEQ loop now
+auto-rolls-back the already-succeeded sources when a later source fails, via a new shared
+`restore_entries()`/`restore_one()` pair in `safe_write.py` — the same primitive
+`SecondaryWorkflowManager._do_undo_multi_source()` (manual Undo) now also calls, so the two paths
+can't drift apart. `WriteResult.partial_sources`/`partial_backup_paths` were repurposed (not
+duplicated) to mean "sources whose own auto-rollback failed and still need manual action" rather
+than "all N-1 prior successes" — auto-rollback succeeding for all of them now correctly hides the
+Undo button instead of always offering it. A new `auto_rollback_attempted` field lets
+`PushPage.set_failure()` distinguish "fully auto-restored," "partially auto-restored, Undo covers
+the rest," and the original "nothing to roll back yet" cases. Progress during the rollback
+sub-loop reuses the existing `push_round_changed` signal and `PushPage._rollback_mode` flag
+(no new signal needed) rather than `start_undo()`'s badge/stepper-reset, since this happens inside
+an in-progress push, not a separate run. Automated tests: `TestRestoreOne`/`TestRestoreEntries`
+(`test_safe_write.py`), extended `TestPushMultiSourcePartialFailure`
+(`test_gui_push_export.py`), new `PushPage.set_failure()`/`set_push_round()` UI-state tests
+(`test_gui_pages.py`), and the pre-existing `_do_undo_multi_source` characterization suite
+(`test_smoke_regression_operations.py`, `test_gui_integration_secondary.py`) all pass unmodified
+in behavior, now backed by the shared primitive. **Manual hardware retest still required** (a real
+mid-rollback connection drop can't be simulated in CI) — see docs/backlog.md item 1's
+hardware-QA-owner convention.
 
-**To reactivate:** Decide whether automatic cross-source rollback is wanted on top of the current
-one-click manual Undo, and how it should behave if that rollback itself fails. Implement in
-`PrimaryWorkflowManager._do_push()`'s PEQ branch.
+**To reactivate:** N/A — implemented. If a future review finds the rollback-of-a-rollback UX
+(critical message naming the specific source whose auto-rollback failed) needs refinement, start
+from `PrimaryWorkflowManager._finalize_push_failure()`.
 
 ---
 
@@ -90,20 +104,30 @@ progress stepper in the main view and has to notice/read a separate banner to le
 happened and that the operation is over — confusing, since the main content area is the natural
 place to look for the outcome of what it was just showing progress for.
 
-**Why deferred:** Not started; surfaced during a 2026-08-29 Q&A/backlog-scoping session, not yet
-scheduled.
+**Why deferred:** (b) not started; surfaced during a 2026-08-29 Q&A/backlog-scoping session, not
+yet scheduled.
 
-**Status:** Not started.
+**Status:** (a) Implemented (2026-08-29). `_do_push()`'s PEQ loop now catches
+`WiiMConnectionError`/`WiiMResponseError`/`BackupError` around the `safe_write.execute()` call
+(narrow domain-exception catch, mirroring `SafeWrite._rollback()`'s own precedent, not a blanket
+`except Exception` — an unexpected bug still surfaces via `_bridge_wrapper`'s traceback logging)
+and routes the failure through `_finalize_push_failure()` (the same shared method item 3's
+auto-rollback uses) so `write_complete` fires and `PushPage.set_failure()` runs instead of leaving
+the stepper frozen. A new `WriteResult.verified` field (default `True`) fixes a correctness issue
+found while implementing this: the non-critical failure branch used to unconditionally claim
+"device safely restored," which was only ever true for the two pre-existing cases reaching it
+(rollback ran and succeeded, or nothing was ever written) — a connection-drop-mid-write is a third
+case where the device's actual state is genuinely unknown, so `set_failure(verified=False)` now
+shows "device state unknown" instead. RoomFit's equivalent except-block (pre-existing, already
+correct) had zero test coverage before this — now covered too. Automated tests:
+`TestPushConnectionFailure` (`test_gui_push_export.py`), new `PushPage.set_failure(verified=False)`
+UI-state test (`test_gui_pages.py`). **(b) still not started** — `set_failure()` still shows a
+count ("N source(s)...") rather than per-source names; `partial_backup_paths` is decoded only for
+the Undo action. **Manual hardware retest required for (a)** (a real mid-write connection drop
+can't be simulated in CI) — see docs/backlog.md item 1's hardware-QA-owner convention.
 
-**To reactivate:** For (a), wrap `safe_write.execute()`/`roomfit_safe_write.execute()` calls in
-`_do_push()` for connection/timeout exceptions (mirroring the existing `ValueError` catch pattern
-already used at `primary_workflows.py:1537-1545`), build a `WriteResult(success=False,
-error_message=...)` from the caught error, and emit `write_complete` so `PushPage.set_failure()`
-runs and the stepper resolves to a failed state instead of staying frozen — needs care for which
-source/round failed in the multi-source loop, and a test extending or replacing
-`TestPushException` to assert `set_failure()` fires and the stepper isn't left stuck. For (b),
-decode `partial_backup_paths` in `set_failure()` and render source names instead of just a count.
-(a) is small-to-medium; (b) is small.
+**To reactivate:** (a) is done. For (b), decode `partial_backup_paths` in `set_failure()` and
+render source names instead of just a count — small, GUI-only.
 
 ---
 

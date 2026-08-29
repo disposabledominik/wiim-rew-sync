@@ -20,7 +20,10 @@ import pytest
 from src.adapters.safe_write import (
     RoomFitSafeWrite,
     SafeWrite,
+    WriteResult,
     _describe_first_mismatch,
+    restore_entries,
+    restore_one,
     verify_bands,
 )
 from src.adapters.wiim_adapter import WiiMAdapter
@@ -1182,6 +1185,158 @@ def roomfit_safe_write(
     return RoomFitSafeWrite(
         adapter=mock_roomfit_adapter, backup_manager=mock_backup_manager
     )
+
+
+class TestRestoreOne:
+    """restore_one() -- the single-entry primitive both restore_entries()
+    (multi-source loop) and SecondaryWorkflowManager._restore_backup()
+    (single-source Undo) delegate to (docs/backlog.md item 3).
+    """
+
+    async def test_missing_file_returns_false_without_calling_undo(
+        self, safe_write: SafeWrite, tmp_path: Path
+    ) -> None:
+        missing = tmp_path / "does_not_exist.json"
+        safe_write.undo = AsyncMock()
+
+        success, message = await restore_one(safe_write, "wifi", missing)
+
+        assert success is False
+        assert message == "No backup available"
+        safe_write.undo.assert_not_called()
+
+    async def test_undo_success_returns_confirmation_message(
+        self, safe_write: SafeWrite, tmp_path: Path
+    ) -> None:
+        backup_file = tmp_path / "backup.json"
+        backup_file.write_text("{}", encoding="utf-8")
+        safe_write.undo = AsyncMock(
+            return_value=WriteResult(success=True)
+        )
+
+        success, message = await restore_one(safe_write, "wifi", backup_file)
+
+        assert success is True
+        assert message == "Previous filters restored"
+        safe_write.undo.assert_awaited_once_with(backup_file, "wifi", on_stage=None)
+
+    async def test_undo_returned_failure_propagates_error_message(
+        self, safe_write: SafeWrite, tmp_path: Path
+    ) -> None:
+        backup_file = tmp_path / "backup.json"
+        backup_file.write_text("{}", encoding="utf-8")
+        safe_write.undo = AsyncMock(
+            return_value=WriteResult(success=False, error_message="Verification failed")
+        )
+
+        success, message = await restore_one(safe_write, "wifi", backup_file)
+
+        assert success is False
+        assert message == "Verification failed"
+
+    async def test_undo_raised_exception_returns_false_not_raise(
+        self, safe_write: SafeWrite, tmp_path: Path
+    ) -> None:
+        backup_file = tmp_path / "backup.json"
+        backup_file.write_text("{}", encoding="utf-8")
+        safe_write.undo = AsyncMock(
+            side_effect=WiiMConnectionError("Device unreachable")
+        )
+
+        success, message = await restore_one(safe_write, "wifi", backup_file)
+
+        assert success is False
+        assert message == "Device unreachable"
+
+
+class TestRestoreEntries:
+    """restore_entries() -- the shared multi-source restore loop
+    PrimaryWorkflowManager._do_push()'s auto-rollback (docs/backlog.md item
+    3) and SecondaryWorkflowManager._do_undo_multi_source() (manual undo)
+    both use, so they can't drift apart in how they restore a source or
+    tally the outcome.
+    """
+
+    async def test_empty_entries_returns_zero_zero_empty(
+        self, safe_write: SafeWrite
+    ) -> None:
+        succeeded, failed, failed_entries = await restore_entries(safe_write, [])
+
+        assert (succeeded, failed, failed_entries) == (0, 0, [])
+
+    async def test_all_succeed(self, safe_write: SafeWrite, tmp_path: Path) -> None:
+        wifi_backup = tmp_path / "wifi.json"
+        wifi_backup.write_text("{}", encoding="utf-8")
+        optical_backup = tmp_path / "optical.json"
+        optical_backup.write_text("{}", encoding="utf-8")
+        safe_write.undo = AsyncMock(
+            return_value=WriteResult(success=True)
+        )
+
+        succeeded, failed, failed_entries = await restore_entries(
+            safe_write,
+            [("wifi", str(wifi_backup)), ("optical", str(optical_backup))],
+        )
+
+        assert (succeeded, failed, failed_entries) == (2, 0, [])
+        assert safe_write.undo.await_count == 2
+
+    async def test_one_fails(self, safe_write: SafeWrite, tmp_path: Path) -> None:
+        wifi_backup = tmp_path / "wifi.json"
+        wifi_backup.write_text("{}", encoding="utf-8")
+        optical_backup = tmp_path / "optical.json"
+        optical_backup.write_text("{}", encoding="utf-8")
+
+        async def _undo(
+            path: str | Path, source_name: str, on_stage: object = None
+        ) -> WriteResult:
+            if source_name == "optical":
+                return WriteResult(success=False, error_message="Device unreachable")
+            return WriteResult(success=True)
+
+        safe_write.undo = AsyncMock(side_effect=_undo)
+
+        succeeded, failed, failed_entries = await restore_entries(
+            safe_write,
+            [("wifi", str(wifi_backup)), ("optical", str(optical_backup))],
+        )
+
+        assert (succeeded, failed) == (1, 1)
+        assert failed_entries == [("optical", str(optical_backup))]
+
+    async def test_all_fail(self, safe_write: SafeWrite, tmp_path: Path) -> None:
+        wifi_backup = tmp_path / "wifi.json"
+        wifi_backup.write_text("{}", encoding="utf-8")
+        safe_write.undo = AsyncMock(
+            return_value=WriteResult(success=False, error_message="Verification failed")
+        )
+
+        succeeded, failed, failed_entries = await restore_entries(
+            safe_write, [("wifi", str(wifi_backup))]
+        )
+
+        assert (succeeded, failed) == (0, 1)
+        assert failed_entries == [("wifi", str(wifi_backup))]
+
+    async def test_on_round_called_with_1_based_index_and_total(
+        self, safe_write: SafeWrite, tmp_path: Path
+    ) -> None:
+        wifi_backup = tmp_path / "wifi.json"
+        wifi_backup.write_text("{}", encoding="utf-8")
+        optical_backup = tmp_path / "optical.json"
+        optical_backup.write_text("{}", encoding="utf-8")
+        safe_write.undo = AsyncMock(
+            return_value=WriteResult(success=True)
+        )
+        rounds: list[tuple[str, int, int]] = []
+
+        await restore_entries(
+            safe_write,
+            [("wifi", str(wifi_backup)), ("optical", str(optical_backup))],
+            on_round=lambda source, index, total: rounds.append((source, index, total)),
+        )
+
+        assert rounds == [("wifi", 1, 2), ("optical", 2, 2)]
 
 
 class TestRoomFitOnStageCallback:

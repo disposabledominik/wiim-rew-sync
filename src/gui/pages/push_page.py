@@ -116,6 +116,7 @@ class PushPage(QWidget):
         self._success_filters_l: list[CanonicalFilter] | None = None
         self._success_filters_r: list[CanonicalFilter] | None = None
         self._undo_mode: bool = False
+        self._rollback_mode: bool = False
         self._setup_ui()
         self.reset()
 
@@ -164,15 +165,18 @@ class PushPage(QWidget):
                 row.set_status("pending")
 
     def set_push_round(self, source_name: str, index: int, total: int) -> None:
-        """Show which source/round a multi-source push (or undo) is on.
+        """Show which source/round a multi-source push, undo, or auto-
+        rollback is on.
 
         Hidden entirely for a single-source operation (`total <= 1`), since
         there's nothing to disambiguate in that case.
 
         The AsyncBridge's push_round_changed signal is reused verbatim for
-        multi-source undo (SecondaryWorkflowManager._do_undo_multi_source),
-        so the label wording here switches on start_undo()'s mode flag
-        rather than needing a second signal/handler pair.
+        multi-source undo (SecondaryWorkflowManager._do_undo_multi_source)
+        and for auto-rollback of already-succeeded sources on a later
+        source's failure (PrimaryWorkflowManager._finalize_push_failure(),
+        docs/backlog.md item 3), so the label wording here switches on a
+        mode flag rather than needing a second signal/handler pair per case.
 
         Args:
             source_name: The source currently being written to.
@@ -182,9 +186,26 @@ class PushPage(QWidget):
         if total <= 1:
             self._round_label.setVisible(False)
             return
-        verb = "Restoring" if self._undo_mode else "Pushing to"
+        if self._rollback_mode:
+            verb = "Rolling back"
+        elif self._undo_mode:
+            verb = "Restoring"
+        else:
+            verb = "Pushing to"
         self._round_label.setText(f"{verb} {source_name} ({index} of {total})")
         self._round_label.setVisible(True)
+
+    def set_rollback_in_progress(self, active: bool) -> None:
+        """Mark whether set_push_round() is currently reporting an
+        in-progress push's own auto-rollback of already-succeeded sources
+        (docs/backlog.md item 3), rather than the forward push or a manual
+        Undo run.
+
+        Deliberately narrower than start_undo(): this doesn't touch the
+        status badge or reset the stepper rows, since auto-rollback happens
+        as part of the same still-in-progress push, not a separate run.
+        """
+        self._rollback_mode = active
 
     def start_undo(self) -> None:
         """Enter undo mode and show the progress stepper for the undo run.
@@ -258,6 +279,8 @@ class PushPage(QWidget):
         backup_path: str,
         critical: bool = False,
         partial_sources: int = 0,
+        verified: bool = True,
+        auto_rollback_attempted: int = 0,
     ) -> None:
         """Transition to failure state.
 
@@ -274,18 +297,31 @@ class PushPage(QWidget):
                 to pick up (see encode_multi_source_backup_paths).
             critical: True if rollback also failed (critical state).
             partial_sources: On a multi-source PEQ push, the count of
-                sources that already succeeded before this one failed --
-                those were left written, not automatically rolled back
-                (smoke #242). 0 for every other failure, including a
-                single-source push whose own SafeWrite rollback ran. Can be
-                combined with critical=True (this source's own rollback also
-                failed) -- both messages are shown in that case.
+                sources whose own auto-rollback failed and still need manual
+                action (docs/backlog.md item 3) -- 0 for every other
+                failure, including a single-source push whose own SafeWrite
+                rollback ran, or a multi-source failure where every prior
+                source's auto-rollback succeeded. Can be combined with
+                critical=True (this source's own rollback also failed) --
+                both messages are shown in that case.
+            verified: False when the write was aborted by a connection/
+                response/backup error before it could be confirmed either
+                way (docs/backlog.md item 9) -- distinct from every other
+                False-critical-and-zero-partial_sources case, where nothing
+                was ever written, so "safely restored" would be true. Only
+                affects the non-critical, zero-partial_sources message.
+            auto_rollback_attempted: On a multi-source PEQ push, the count
+                of already-succeeded sources whose restore was attempted
+                (docs/backlog.md item 3). 0 means either a single-source
+                push, or the very first source, failed -- nothing to roll
+                back. auto_rollback_attempted - partial_sources is how many
+                were successfully auto-restored.
         """
         self._fail_active_stage()
 
         self._show_result_state()
         if critical:
-            self._result_icon.setText("\u26A0")  # warning triangle
+            self._result_icon.setText("⚠")  # warning triangle
             self._set_result_class("error")
             self._result_message.setText("Critical: Manual recovery required")
             detail_text = (
@@ -297,36 +333,76 @@ class PushPage(QWidget):
                 f"Backup: {backup_path}"
             )
             if partial_sources:
-                # Both this source's own rollback AND an earlier source in
-                # the same multi-source push can fail independently -- the
-                # Undo button below (unconditional on partial_sources alone)
+                # Both this source's own rollback AND an earlier source's
+                # own auto-rollback can fail independently -- the Undo
+                # button below (unconditional on partial_sources alone)
                 # would otherwise appear with no explanation of what it
                 # restores in this combined case, and no indication it does
                 # NOT cover the source above (that still needs the manual
                 # steps regardless of what Undo does).
                 plural = "s" if partial_sources != 1 else ""
                 detail_text += (
-                    f"\n\n{partial_sources} other source{plural} were also written "
-                    f"before this failure and were NOT automatically rolled back. "
+                    f"\n\nAuto-rollback failed for {partial_sources} other "
+                    f"source{plural} also written before this failure. "
                     f"Click Undo to restore {'them' if partial_sources != 1 else 'it'} "
                     f"-- this is separate from the source above, which still needs "
                     f"the manual recovery steps regardless."
                 )
         elif partial_sources:
-            self._result_icon.setText("\u26A0")  # warning triangle
+            self._result_icon.setText("⚠")  # warning triangle
             self._set_result_class("warning")
             plural = "s" if partial_sources != 1 else ""
+            if auto_rollback_attempted > partial_sources:
+                # Auto-rollback partly worked -- say so, rather than
+                # implying nothing was attempted (matches the fully-failed
+                # wording below for the case where none of it worked).
+                restored = auto_rollback_attempted - partial_sources
+                self._result_message.setText(
+                    f"Push failed - auto-rollback failed for {partial_sources} of "
+                    f"{auto_rollback_attempted} source{plural}"
+                )
+                detail_text = (
+                    f"{message}\n\n"
+                    f"{restored} of {auto_rollback_attempted} source{plural} written "
+                    f"before this failure were automatically restored. Auto-rollback "
+                    f"failed for the remaining {partial_sources}. Click Undo to "
+                    f"restore {'them' if partial_sources != 1 else 'it'}."
+                )
+            else:
+                self._result_message.setText(
+                    f"Push failed - {partial_sources} source{plural} not restored"
+                )
+                detail_text = (
+                    f"{message}\n\n"
+                    f"{partial_sources} source{plural} were written before this "
+                    f"failure and were NOT automatically rolled back. Click Undo to "
+                    f"restore {'them' if partial_sources != 1 else 'it'}."
+                )
+        elif auto_rollback_attempted:
+            # Auto-rollback fully succeeded -- nothing left to undo.
+            self._result_icon.setText("⚠")  # warning triangle
+            self._set_result_class("warning")
+            plural = "s" if auto_rollback_attempted != 1 else ""
             self._result_message.setText(
-                f"Push failed - {partial_sources} source{plural} not restored"
+                f"Push failed - {auto_rollback_attempted} source{plural} "
+                f"automatically restored"
             )
             detail_text = (
                 f"{message}\n\n"
-                f"{partial_sources} source{plural} were written before this failure and "
-                f"were NOT automatically rolled back. Click Undo to restore "
-                f"{'them' if partial_sources != 1 else 'it'}."
+                f"{auto_rollback_attempted} source{plural} written before this "
+                f"failure were automatically restored to their previous state."
+            )
+        elif not verified:
+            self._result_icon.setText("⚠")  # warning triangle
+            self._set_result_class("warning")
+            self._result_message.setText("Push failed - device state unknown")
+            detail_text = (
+                f"{message}\n\n"
+                f"The write could not be confirmed. The device may or may not "
+                f"have been updated. No backup was created for this attempt."
             )
         else:
-            self._result_icon.setText("\u26A0")  # warning triangle
+            self._result_icon.setText("⚠")  # warning triangle
             self._set_result_class("warning")
             self._result_message.setText("Push failed - device safely restored")
             detail_text = (
@@ -344,10 +420,11 @@ class PushPage(QWidget):
         # useful to show, only the failure message matters here.
         self._clear_success_filters()
 
-        # Show failure actions. Undo is only offered for the partial
-        # multi-source case (smoke #242) -- every other failure path has
-        # nothing left to undo, either because SafeWrite already rolled the
-        # single source back, or because rollback itself failed (critical).
+        # Show failure actions. Undo is only offered when something still
+        # needs manual restoring (smoke #242; docs/backlog.md item 3) --
+        # every other failure path has nothing left to undo, either because
+        # SafeWrite/auto-rollback already restored everything, or because
+        # rollback itself failed (critical).
         self._ok_button.setVisible(True)
         self._undo_button.setVisible(bool(partial_sources))
         self._secondary_row.setVisible(False)
@@ -437,6 +514,7 @@ class PushPage(QWidget):
     def reset(self) -> None:
         """Reset to initial state (all stages pending, no result)."""
         self._undo_mode = False
+        self._rollback_mode = False
         self._progress_container.setVisible(True)
         self._result_container.setVisible(False)
         self._status_badge.setVisible(False)
