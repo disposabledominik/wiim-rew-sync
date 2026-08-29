@@ -138,7 +138,16 @@ primitive's existing failure-log wording. The duplicated "state unknown" caveat 
 sites) was also hoisted into one class constant. Automated tests: `TestPushConnectionFailure`
 (`test_gui_push_export.py`), `PushPage.set_failure(verified=False)` UI-state tests including the
 two swallowed-signal cases and the backup-path-confirmation cases (`test_gui_pages.py`),
-`TestRestoreOne::test_undo_success_logs_confirmation` (`test_safe_write.py`). **(b) still not
+`TestRestoreOne::test_undo_success_logs_confirmation` (`test_safe_write.py`). CI itself then
+caught a real test-infra gap this change exposed: `test_wizard_integration.py`'s
+`test_write_failure_shows_error_on_push_page` built its `WriteResult` stand-in as a bare
+`MagicMock()`, whose unset `partial_sources`/`auto_rollback_attempted` fields silently
+auto-vivified as truthy `MagicMock` objects instead of real `int` defaults — harmless until
+`set_failure()`'s new `auto_rollback_attempted > partial_sources` comparison needed them to
+actually be numbers, which raised `TypeError`. Fixed by constructing a real `WriteResult`
+instance instead of a hand-rolled mock; audited the other `_on_write_complete()` test call sites
+(`test_smoke_regression_operations.py`) for the same pattern — all `success=True`, never reach
+the failure branch, so no other instance existed. **(b) still not
 started** — `set_failure()` still shows a
 count ("N source(s)...") rather than per-source names; `partial_backup_paths` is decoded only for
 the Undo action. **Manual hardware retest required for (a)** (a real mid-write connection drop
