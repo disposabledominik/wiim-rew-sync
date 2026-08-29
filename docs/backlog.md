@@ -10,19 +10,22 @@ code comments, docstrings, and `docs/smoke_test_issues.md` rows cite items by th
 "docs/backlog.md item 3"), so numbers are never reassigned even when an item's position in this
 list changes as priorities shift. Reordered 2026-08-02; no numbers changed, item 6 added. Item 7
 added 2026-08-05. Item 8 added 2026-08-29. Item 5 archived 2026-08-29 (resolved 2026-08); its
-number was kept, not reused, since it's cited by number outside this file.
+number was kept, not reused, since it's cited by number outside this file. Items 9-10 added
+2026-08-29.
 
 **At a glance** (priority order; full detail in each item below):
 
 | # | Item | Status |
 |---|------|--------|
 | 3 | Multi-source push has no automatic rollback across sources on partial failure (manual per-source Undo exists) | Partially addressed |
+| 9 | Push page doesn't update its main-view card on a device connection failure; only a status banner shows it | Not started |
 | 6 | CI only tests Ubuntu/Python 3.12 while release builds ship Windows/macOS/Linux | Not started |
 | 4 | Backup files don't record which source they were taken from | Not started |
 | 1 | Hardware QA sign-off — full-flow validation against real devices | Ongoing (1 open issue: smoke #119) |
 | 2 | `DevicePickerDialog`/`DeviceInfoDialog` duplicate their optional-warning boilerplate | Not started |
 | 7 | No confirmation prompt when switching EQ type clears loaded filters | Not started |
 | 8 | Profile JSON's `channel_mode: "left"` sentinel is a misleading name for L/R mode | Not started |
+| 10 | Candidate list: activate/rename/enable-toggle actions for "Presets on Device" (speculative, not committed) | Not started |
 
 ---
 
@@ -53,6 +56,54 @@ implemented.
 **To reactivate:** Decide whether automatic cross-source rollback is wanted on top of the current
 one-click manual Undo, and how it should behave if that rollback itself fails. Implement in
 `PrimaryWorkflowManager._do_push()`'s PEQ branch.
+
+---
+
+## 9. Push Page's Main Card Doesn't Reflect a Device Connection Failure (Found During Q&A)
+
+**What:** Two related gaps in how `PushPage` (`src/gui/pages/push_page.py`) surfaces push
+failures, found while scoping a user-reported UX complaint:
+
+- **(a) Connection failure during push never reaches the main card.** `PrimaryWorkflowManager
+  ._do_push()` deliberately does not wrap `SafeWrite.execute()` in try/except (comment at
+  `primary_workflows.py:1526-1536`: connection-drop exceptions "propagate to `_bridge_wrapper`
+  unchanged"), and `SafeWrite.execute()` itself (`safe_write.py:248-328`) has no try/except around
+  its read/write steps either. So a `WiiMConnectionError`/timeout mid-push propagates straight out,
+  is caught by `MainWindow._bridge_wrapper`'s catch-all (`main_window.py:2373-2380`), mapped to a
+  message, and shown only via `StatusBanner.show_error()` (`src/gui/components/status_banner.py`)
+  — the app's toast/status-bar equivalent. `write_complete` is never emitted in this path, so
+  `PushPage.set_failure()` never runs. The page's stage stepper (`PushPage.set_stage()`,
+  `push_page.py:135-164`) stays frozen on whichever step ("Backing up"/"Writing"/"Verifying") was
+  active when the connection dropped, rendered as permanently "active" with no failure indication,
+  while the actual error only appears in the separately-dismissible status banner. This is
+  currently tested-as-intended, not an accidental gap:
+  `TestPushException.test_push_exception_emits_operation_error`
+  (`src/tests/test_gui_push_export.py:319-337`) asserts only `operation_error` fires here.
+- **(b) Partial multi-source failure summary is a count, not a per-source list.**
+  `PushPage.set_failure()` already shows "N source(s) not restored" (see item 3 above for the
+  broader rollback gap this is part of), but not which sources succeeded/failed by name — even
+  though `encode_multi_source_backup_paths()` already encodes `(source_name, path)` pairs; they're
+  decoded only for the Undo action, not for display.
+
+**Why it matters:** A user watching a push that fails on a connection drop sees a stuck-looking
+progress stepper in the main view and has to notice/read a separate banner to learn what actually
+happened and that the operation is over — confusing, since the main content area is the natural
+place to look for the outcome of what it was just showing progress for.
+
+**Why deferred:** Not started; surfaced during a 2026-08-29 Q&A/backlog-scoping session, not yet
+scheduled.
+
+**Status:** Not started.
+
+**To reactivate:** For (a), wrap `safe_write.execute()`/`roomfit_safe_write.execute()` calls in
+`_do_push()` for connection/timeout exceptions (mirroring the existing `ValueError` catch pattern
+already used at `primary_workflows.py:1537-1545`), build a `WriteResult(success=False,
+error_message=...)` from the caught error, and emit `write_complete` so `PushPage.set_failure()`
+runs and the stepper resolves to a failed state instead of staying frozen — needs care for which
+source/round failed in the multi-source loop, and a test extending or replacing
+`TestPushException` to assert `set_failure()` fires and the stepper isn't left stuck. For (b),
+decode `partial_backup_paths` in `set_failure()` and render source names instead of just a count.
+(a) is small-to-medium; (b) is small.
 
 ---
 
@@ -208,6 +259,48 @@ aliases. Expected footprint (~25-30 lines, mostly test literals, confirmed by gr
 lines, sections 198-199/252/265/280). `src/cli/main.py`'s `--channel left/right` flag,
 `wiim_adapter.py`, and `wiim_parser.py` are a separate "which channel" vocabulary that maps into
 `ChannelMode` rather than storing the literal string, and are unaffected.
+
+---
+
+## 10. Candidate List: "Presets on Device" Activate/Rename/Enable-Toggle Actions (Speculative — Not Committed)
+
+**What:** Three feature ideas for `PresetsDeviceView` (`src/gui/views/presets_device_view.py`),
+raised during a 2026-08-29 Q&A session. Listed here purely so they aren't lost -- **there is no
+commitment to build any of this**; each needs confirmed demand or an explicit product decision
+before it's scoped as real work.
+
+- **(a) Activate a named PEQ preset onto a source** (load-and-leave-active, not the load-then-
+  restore preview `read_peq_preset_preview()` already does for Export/Save/Copy). `WiiMAdapter
+  .load_peq_profile()` already wraps `EQv2SourceLoad` and is reusable, but a true "activate" needs
+  its own flow that intentionally skips the restore-afterward step, and must respect the
+  documented rule that `EQv2SourceLoad` unconditionally turns `EQStat` on (see CLAUDE.md).
+  RoomFit has an equivalent (`load_roomfit_profile`), same caveat.
+- **(b) Rename named PEQ presets and RoomFit profiles.** `EQv2Rename` is hardware-confirmed
+  working for both (`docs/wiim_api_notes.md`; see the archived "On-Device Preset/Profile Rename"
+  item below), but no adapter method wraps it yet. Being a metadata write rather than a filter
+  write, it likely doesn't need the full `safe_write.py` Backup->Write->Read-Back->Verify->Rollback
+  protocol -- a simpler flow should suffice.
+- **(c) Toggle enable/disable PEQ and/or RoomFit from this view.** Backend already exists
+  (`enable_peq()`/`disable_peq()`, `enable_roomfit()`/`disable_roomfit()`), but this explicitly
+  reopens a prior product decision: see the archived "PEQ / RoomFit Enable/Disable Toggle in GUI"
+  item below, closed 2026-07-14 as "explicit product decision (2026-07-02) not to build it -- the
+  WiiM Home app already covers this." Re-adding it means deliberately revisiting that decision,
+  not just implementing it.
+
+**Why it matters:** (a) and (b) fill real gaps in what "Presets on Device" can do today (list,
+load-for-preview, export, save-to-library, copy-to-device, delete -- but not activate-in-place or
+rename); (c) is a UX convenience question, not a gap.
+
+**Why deferred:** Speculative. No confirmed user demand yet for (a)/(b); (c) was explicitly
+decided against once already.
+
+**Status:** Not started -- candidate list only.
+
+**To reactivate:** Confirm real demand (or, for (c), a deliberate reversal of the 2026-07-02
+decision) for each sub-item independently before scoping -- they don't need to ship together.
+Rough complexity if pursued: (a) medium (new adapter-level activate flow + GUI + tests), (b)
+medium (new adapter method(s) for PEQ and RoomFit + rename dialog + wiring + tests), (c) small
+(GUI toggle + wiring, since adapter methods already exist) if the product decision is reversed.
 
 ---
 
