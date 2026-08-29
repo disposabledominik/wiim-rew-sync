@@ -135,6 +135,10 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 - [ ] Same setup, but also disconnect *during* source 1's auto-rollback — a coherent
   critical-recovery message names source 1 specifically, distinct from the source that originally
   failed
+- [ ] docs/backlog.md item 9(b) (2026-08-29): 3+ sources, disconnect after sources 1 and 2 succeed
+  but before source 3 completes, and source 1's auto-rollback then fails (e.g. disconnect again
+  during the rollback sub-loop) while source 2's succeeds — the failure message names source 1
+  specifically (not just "1 source"), and Undo is scoped to source 1 by name
 
 ### Test 7: Dry Run (PEQ)
 - [P] With Dry Run enabled, clicking "Preview Only" shows push result without writing
