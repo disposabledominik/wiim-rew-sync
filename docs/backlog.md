@@ -9,14 +9,14 @@ low-priority tech debt). Each item's `## N.` number is a stable identifier, not 
 code comments, docstrings, and `docs/smoke_test_issues.md` rows cite items by this number (e.g.
 "docs/backlog.md item 3"), so numbers are never reassigned even when an item's position in this
 list changes as priorities shift. Reordered 2026-08-02; no numbers changed, item 6 added. Item 7
-added 2026-08-05.
+added 2026-08-05. Item 8 added 2026-08-29. Item 5 archived 2026-08-29 (resolved 2026-08); its
+number was kept, not reused, since it's cited by number outside this file.
 
 **At a glance** (priority order; full detail in each item below):
 
 | # | Item | Status |
 |---|------|--------|
 | 3 | Multi-source push has no automatic rollback across sources on partial failure (manual per-source Undo exists) | Partially addressed |
-| 5 | Overlapping operations can race and restore the wrong button-state snapshot | Resolved (2026-08) |
 | 6 | CI only tests Ubuntu/Python 3.12 while release builds ship Windows/macOS/Linux | Not started |
 | 4 | Backup files don't record which source they were taken from | Not started |
 | 1 | Hardware QA sign-off — full-flow validation against real devices | Ongoing (1 open issue: smoke #119) |
@@ -53,44 +53,6 @@ implemented.
 **To reactivate:** Decide whether automatic cross-source rollback is wanted on top of the current
 one-click manual Undo, and how it should behave if that rollback itself fails. Implement in
 `PrimaryWorkflowManager._do_push()`'s PEQ branch.
-
----
-
-## 5. Operation Feedback: Overlapping Operations Can Race (Found via `/code-review ultra`)
-
-**What:** `OperationFeedbackManager` (`src/gui/operation_feedback.py`) tracks exactly one
-in-flight operation via a single `_is_active` flag and one `_prior_enabled` button-state
-snapshot, both overwritten wholesale on every `start_operation()` call. If an operation is
-cancelled (`_on_cancel_clicked()` calls `finish_operation()` immediately) while its underlying
-coroutine keeps running in the background — since Cancel only resets the UI and does not
-actually stop the coroutine — and a second, unrelated operation starts before that first
-coroutine's `finally` block fires its own `operation_finished` signal, the stray late signal
-calls `finish_operation()` again and restores buttons using the *second* operation's snapshot,
-not the first's. This can re-enable or re-disable buttons out of step with what's actually
-running.
-
-**Why deferred:** Found during a `/simplify`/`/code-review ultra --fix` cleanup pass on an
-unrelated diff (smoke `docs/smoke_test_issues.md` #243/#244); fixing it properly touches two
-separate concerns — (a) giving each `start_operation()` call an identity (a token returned by
-`start_operation()` that `finish_operation(token)` must match to actually apply, so a
-stale/mismatched call is a no-op) and (b) the more fundamental gap that Cancel doesn't cancel
-the underlying coroutine at all, which a token-based fix would paper over rather than resolve.
-Both are design decisions bigger than a quality-cleanup pass's scope, and the app's current
-one-op-at-a-time model means this is a narrow race window in practice, not a routinely-hit bug.
-Independently re-confirmed (still unfixed) during a 2026-08-02 codebase review.
-
-**Status:** Resolved (2026-08). Both root causes from "Why deferred" above are fixed, and neither
-needed the token-based approach originally sketched under "To reactivate" — the actual fix is
-simpler than that: `AsyncBridge.run_async()` now accepts `cancellable: bool` and tracks the
-current `Future`; `_dispatch()` in both workflow managers threads it through, opt-in per call site
-(reads/local-file operations only — device writes stay non-cancellable by default, the safe
-direction). `OperationFeedbackManager.request_cancel()` (shared by the Cancel button and Escape)
-now actually cancels that Future via a new `AsyncBridge.request_cancel()`, and — this is what
-closes the race — no longer calls `finish_operation()` itself; the real `operation_finished`
-signal (fired once the cancelled coroutine's `finally` block actually unwinds) is the only thing
-that resets UI state, so a second operation starting in the gap can no longer have its snapshot
-stomped by a stale finish. Removing the premature call turned out to be simpler than adding a
-token to guard it. See `src/gui/async_bridge.py`, `src/gui/operation_feedback.py`.
 
 ---
 
@@ -250,6 +212,29 @@ lines, sections 198-199/252/265/280). `src/cli/main.py`'s `--channel left/right`
 ---
 
 ## Completed / Closed Items (Archive)
+
+### 5. Operation Feedback: Overlapping Operations Can Race (Found via `/code-review ultra`)
+**Completed:** 2026-08. `OperationFeedbackManager` (`src/gui/operation_feedback.py`) tracked
+exactly one in-flight operation via a single `_is_active` flag and one `_prior_enabled`
+button-state snapshot, both overwritten wholesale on every `start_operation()` call. If an
+operation was cancelled (`_on_cancel_clicked()` called `finish_operation()` immediately) while its
+underlying coroutine kept running in the background -- Cancel only reset the UI, it didn't stop
+the coroutine -- and a second, unrelated operation started before that first coroutine's `finally`
+block fired its own `operation_finished` signal, the stray late signal called `finish_operation()`
+again and restored buttons using the *second* operation's snapshot, not the first's. Found during a
+`/simplify`/`/code-review ultra --fix` cleanup pass (smoke `docs/smoke_test_issues.md` #243/#244),
+independently re-confirmed during a 2026-08-02 codebase review. Fixed without the token-based
+identity scheme originally sketched: `AsyncBridge.run_async()` now accepts `cancellable: bool` and
+tracks the current `Future`; `_dispatch()` in both workflow managers threads it through, opt-in per
+call site (reads/local-file operations only -- device writes stay non-cancellable by default, the
+safe direction). `OperationFeedbackManager.request_cancel()` (shared by the Cancel button and
+Escape) now actually cancels that Future via a new `AsyncBridge.request_cancel()`, and -- this is
+what closes the race -- no longer calls `finish_operation()` itself; the real `operation_finished`
+signal (fired once the cancelled coroutine's `finally` block actually unwinds) is the only thing
+that resets UI state, so a second operation starting in the gap can no longer have its snapshot
+stomped by a stale finish. See `src/gui/async_bridge.py`, `src/gui/operation_feedback.py`. Item
+number kept (not reused) -- cited by number in `docs/architecture.md`, `test_main_window_settings.py`,
+`test_gui_operation_timeout.py`.
 
 ### CI Release Pipeline (No Published Download Path)
 **Completed.** `.github/workflows/ci.yml` runs ruff/mypy/pip-audit/pytest on every PR and on
