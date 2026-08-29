@@ -379,7 +379,9 @@ class TestPushMultiSourcePartialFailure:
         PushPage.set_failure() and store the encoded prior-sources backup
         string (not the failing source's own backup_path) as
         last_backup_path, so a subsequent Undo click restores the right
-        sources via the existing multi-source undo path.
+        sources via the existing multi-source undo path. Also decodes
+        partial_backup_paths' own source names for display (docs/backlog.md
+        item 9b).
         """
         result = WriteResult(
             success=False,
@@ -395,9 +397,32 @@ class TestPushMultiSourcePartialFailure:
 
         mock_set_failure.assert_called_once_with(
             "Verification mismatch", str(Path("/backups/optical.json")), False, 1,
-            True, 0,
+            True, 0, ["wifi"],
         )
         assert window._wizard_controller.state.last_backup_path == "wifi=/backups/wifi.json"
+
+    async def test_main_window_decodes_multiple_partial_source_names(
+        self, window
+    ) -> None:
+        """docs/backlog.md item 9b: with more than one prior-succeeded
+        source needing manual action, _on_write_complete decodes all of
+        their names from partial_backup_paths, in encoded order."""
+        result = WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path=Path("/backups/hdmi.json"),
+            error_message="Verification mismatch",
+            partial_sources=2,
+            partial_backup_paths="wifi=/backups/wifi.json;optical=/backups/optical.json",
+        )
+
+        with patch.object(window._push_page, "set_failure") as mock_set_failure:
+            window._on_write_complete(result)
+
+        mock_set_failure.assert_called_once_with(
+            "Verification mismatch", str(Path("/backups/hdmi.json")), False, 2,
+            True, 0, ["wifi", "optical"],
+        )
 
 
 # ---------------------------------------------------------------------------

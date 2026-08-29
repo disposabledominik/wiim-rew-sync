@@ -106,7 +106,11 @@ from src.models.errors import (
     WiiMTimeoutError,
 )
 from src.models.profile import build_profile
-from src.repository.backup_manager import BackupManager, is_multi_source_backup_path
+from src.repository.backup_manager import (
+    BackupManager,
+    decode_multi_source_backup_paths,
+    is_multi_source_backup_path,
+)
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
 from src.utils.device_name import sanitize_device_name
@@ -2104,9 +2108,18 @@ class MainWindow(QMainWindow):
             verified = getattr(result, "verified", True)
             if partial_sources and partial_backup_paths:
                 self._wizard_controller.state.last_backup_path = partial_backup_paths
+            # partial_source_names: decode partial_backup_paths' own source
+            # names for display (docs/backlog.md item 9b) -- PushPage falls
+            # back to a bare count if this comes back empty (malformed
+            # string, or partial_backup_paths unset).
+            partial_source_names = (
+                [name for name, _path in decode_multi_source_backup_paths(partial_backup_paths)]
+                if partial_backup_paths
+                else []
+            )
             self._push_page.set_failure(
                 error_msg, backup_path, critical, partial_sources,
-                verified, auto_rollback_attempted,
+                verified, auto_rollback_attempted, partial_source_names,
             )
             self._status_banner.show_error(f"Push failed: {error_msg}")
             logger.error(

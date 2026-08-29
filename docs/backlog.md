@@ -18,7 +18,7 @@ number was kept, not reused, since it's cited by number outside this file. Items
 | # | Item | Status |
 |---|------|--------|
 | 3 | Multi-source push has no automatic rollback across sources on partial failure (manual per-source Undo exists) | Implemented (2026-08-29); manual hardware retest pending |
-| 9 | Push page doesn't update its main-view card on a device connection failure; only a status banner shows it | (a) Implemented (2026-08-29); (b) not started |
+| 9 | Push page doesn't update its main-view card on a device connection failure; only a status banner shows it | Implemented (2026-08-29); manual hardware retest pending |
 | 6 | CI only tests Ubuntu/Python 3.12 while release builds ship Windows/macOS/Linux | Not started |
 | 4 | Backup files don't record which source they were taken from | Not started |
 | 2 | `DevicePickerDialog`/`DeviceInfoDialog` duplicate their optional-warning boilerplate | Not started |
@@ -103,9 +103,6 @@ progress stepper in the main view and has to notice/read a separate banner to le
 happened and that the operation is over — confusing, since the main content area is the natural
 place to look for the outcome of what it was just showing progress for.
 
-**Why deferred:** (b) not started; surfaced during a 2026-08-29 Q&A/backlog-scoping session, not
-yet scheduled.
-
 **Status:** (a) Implemented (2026-08-29). `_do_push()`'s PEQ loop now catches
 `WiiMConnectionError`/`WiiMResponseError`/`BackupError` around the `safe_write.execute()` call
 (narrow domain-exception catch, mirroring `SafeWrite._rollback()`'s own precedent, not a blanket
@@ -147,14 +144,24 @@ auto-vivified as truthy `MagicMock` objects instead of real `int` defaults — h
 actually be numbers, which raised `TypeError`. Fixed by constructing a real `WriteResult`
 instance instead of a hand-rolled mock; audited the other `_on_write_complete()` test call sites
 (`test_smoke_regression_operations.py`) for the same pattern — all `success=True`, never reach
-the failure branch, so no other instance existed. **(b) still not
-started** — `set_failure()` still shows a
-count ("N source(s)...") rather than per-source names; `partial_backup_paths` is decoded only for
-the Undo action. **Manual hardware retest required for (a)** (a real mid-write connection drop
-can't be simulated in CI) — see docs/backlog.md item 1's hardware-QA-owner convention.
+the failure branch, so no other instance existed. **(b) Implemented (2026-08-29).**
+`PushPage.set_failure()` gained a `partial_source_names: list[str] | None = None` parameter; every
+message/detail branch that previously stated only "{partial_sources} source(s)" now renders the
+joined names instead when they're supplied, falling back to the pre-9b count-only wording when
+they're not (an older caller, or a `partial_backup_paths` string that failed to decode). Decoding
+lives in `MainWindow._on_write_complete()` — `decode_multi_source_backup_paths(partial_backup_paths)`,
+already used by the Undo path, is now also used here for display — so `set_failure()` itself stays
+GUI-only with no knowledge of the wire encoding. `_result_message` (the short one-line heading)
+still shows a count, by design — it's a single-line label with no room to wrap a name list; the
+names appear in `_detail_label` (the wrapped multi-line box) instead. Automated tests: 4 new
+`PushPage.set_failure()` UI-state tests covering all three branches that mention partial sources
+plus the no-names fallback (`test_gui_pages.py`), a `MainWindow._on_write_complete()` decode test
+for the multi-name case, and the existing single-name wiring test updated for the new argument
+(`test_gui_push_export.py`). **Manual hardware retest required for (a)** (a real mid-write
+connection drop can't be simulated in CI) — see docs/backlog.md item 1's hardware-QA-owner
+convention.
 
-**To reactivate:** (a) is done. For (b), decode `partial_backup_paths` in `set_failure()` and
-render source names instead of just a count — small, GUI-only.
+**To reactivate:** N/A — both (a) and (b) implemented.
 
 ---
 

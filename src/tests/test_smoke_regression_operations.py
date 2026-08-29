@@ -2648,7 +2648,7 @@ class TestPresets:
             window._on_write_complete(result)
 
         mock_set_failure.assert_called_once_with(
-            "Clamped values rejected", "/tmp/backup.json", False, 0, True, 0
+            "Clamped values rejected", "/tmp/backup.json", False, 0, True, 0, []
         )
         mock_show_error.assert_called_once_with("Push failed: Clamped values rejected")
 
@@ -2683,6 +2683,7 @@ class TestPresets:
             0,
             True,
             0,
+            [],
         )
 
     # --- Issue #123: L/R clamping uses separate maps per channel ---

@@ -1256,6 +1256,77 @@ class TestPushPage:
         detail = page._detail_label.text().lower()
         assert "1 of 2 source" in detail
 
+    def test_set_failure_partial_sources_names_replace_count(self, qtbot) -> None:
+        """docs/backlog.md item 9b: when the caller supplies decoded source
+        names, the detail text names them instead of just stating a count
+        -- the "N source(s) not restored" branch (all of auto-rollback
+        failed, or none was attempted)."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "wifi=/tmp/wifi.json",
+            partial_sources=2, partial_source_names=["optical", "hdmi"],
+        )
+
+        detail = page._detail_label.text()
+        assert "optical, hdmi" in detail
+        assert "2 sources" not in detail
+
+    def test_set_failure_auto_rollback_partial_failure_names_replace_count(
+        self, qtbot
+    ) -> None:
+        """Same as above, for the partly-succeeded auto-rollback branch."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "/tmp/hdmi.json",
+            partial_sources=1, auto_rollback_attempted=2,
+            partial_source_names=["optical"],
+        )
+
+        detail = page._detail_label.text()
+        assert "failed for optical" in detail
+        assert "the remaining 1" not in detail
+
+    def test_set_failure_critical_and_partial_sources_names_replace_count(
+        self, qtbot
+    ) -> None:
+        """Same as above, for the critical (this source's own rollback also
+        failed) branch's own partial_sources mention."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Rollback failed", "/tmp/optical.json", critical=True,
+            partial_sources=2, partial_source_names=["wifi", "hdmi"],
+        )
+
+        detail = page._detail_label.text()
+        assert "wifi, hdmi" in detail
+        assert "2 other source" not in detail
+
+    def test_set_failure_partial_sources_falls_back_to_count_without_names(
+        self, qtbot
+    ) -> None:
+        """No partial_source_names supplied (e.g. an older caller, or
+        partial_backup_paths failed to decode) -- must degrade to the
+        pre-9b count-only wording, not crash or show nothing."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "wifi=/tmp/wifi.json", partial_sources=2
+        )
+
+        detail = page._detail_label.text().lower()
+        assert "2 sources" in detail
+
     def test_set_failure_unverified_not_swallowed_by_auto_rollback_message(
         self, qtbot
     ) -> None:

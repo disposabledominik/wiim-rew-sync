@@ -290,6 +290,7 @@ class PushPage(QWidget):
         partial_sources: int = 0,
         verified: bool = True,
         auto_rollback_attempted: int = 0,
+        partial_source_names: list[str] | None = None,
     ) -> None:
         """Transition to failure state.
 
@@ -330,6 +331,13 @@ class PushPage(QWidget):
                 push, or the very first source, failed -- nothing to roll
                 back. auto_rollback_attempted - partial_sources is how many
                 were successfully auto-restored.
+            partial_source_names: The partial_sources subset's own source
+                names, decoded from WriteResult.partial_backup_paths by the
+                caller (docs/backlog.md item 9b). None or empty falls back
+                to "{partial_sources} source(s)" wherever it would be used
+                -- older callers, or the encoded string failing to decode,
+                degrade to the pre-9b count-only wording rather than
+                crashing or showing nothing.
         """
         self._fail_active_stage()
 
@@ -354,10 +362,13 @@ class PushPage(QWidget):
                 # restores in this combined case, and no indication it does
                 # NOT cover the source above (that still needs the manual
                 # steps regardless of what Undo does).
-                plural = "s" if partial_sources != 1 else ""
+                if partial_source_names:
+                    who = f"{', '.join(partial_source_names)}, also"
+                else:
+                    plural = "s" if partial_sources != 1 else ""
+                    who = f"{partial_sources} other source{plural} also"
                 detail_text += (
-                    f"\n\nAuto-rollback failed for {partial_sources} other "
-                    f"source{plural} also written before this failure. "
+                    f"\n\nAuto-rollback failed for {who} written before this failure. "
                     f"Click Undo to restore {'them' if partial_sources != 1 else 'it'} "
                     f"-- this is separate from the source above, which still needs "
                     f"the manual recovery steps regardless."
@@ -366,6 +377,10 @@ class PushPage(QWidget):
             self._result_icon.setText("⚠")  # warning triangle
             self._set_result_class("warning")
             plural = "s" if partial_sources != 1 else ""
+            # docs/backlog.md item 9b: name the actual sources when decoded
+            # from partial_backup_paths, falling back to the bare count
+            # wherever the caller couldn't supply names.
+            names = ", ".join(partial_source_names) if partial_source_names else None
             if auto_rollback_attempted > partial_sources:
                 # Auto-rollback partly worked -- say so, rather than
                 # implying nothing was attempted (matches the fully-failed
@@ -379,8 +394,8 @@ class PushPage(QWidget):
                     f"{message}\n\n"
                     f"{restored} of {auto_rollback_attempted} source{plural} written "
                     f"before this failure were automatically restored. Auto-rollback "
-                    f"failed for the remaining {partial_sources}. Click Undo to "
-                    f"restore {'them' if partial_sources != 1 else 'it'}."
+                    f"failed for {names or f'the remaining {partial_sources}'}. "
+                    f"Click Undo to restore {'them' if partial_sources != 1 else 'it'}."
                 )
             else:
                 self._result_message.setText(
@@ -388,9 +403,9 @@ class PushPage(QWidget):
                 )
                 detail_text = (
                     f"{message}\n\n"
-                    f"{partial_sources} source{plural} were written before this "
-                    f"failure and were NOT automatically rolled back. Click Undo to "
-                    f"restore {'them' if partial_sources != 1 else 'it'}."
+                    f"{names or f'{partial_sources} source{plural}'} were written "
+                    f"before this failure and were NOT automatically rolled back. "
+                    f"Click Undo to restore {'them' if partial_sources != 1 else 'it'}."
                 )
             if not verified:
                 # This source's own write is a separate, unconfirmed
