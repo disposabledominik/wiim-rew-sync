@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from src.adapters.safe_write import WriteResult
 from src.gui.app_settings import AppSettings
 from src.gui.main_window import PAGE_INDICES, MainWindow
 from src.gui.wizard_controller import FlowType, WizardStep
@@ -84,14 +85,18 @@ def _make_caps(roomfit_level: int = 0) -> MagicMock:
     return caps
 
 
-def _make_write_result(success: bool = True) -> MagicMock:
-    """Create a mock WriteResult object."""
-    result = MagicMock()
-    result.success = success
-    result.backup_path = "/backups/peq_backup_001.json"
-    result.error = "" if success else "Connection timeout"
-    result.critical = False
-    return result
+def _make_write_result(success: bool = True) -> WriteResult:
+    """Create a real WriteResult -- a bare MagicMock() previously stood in
+    for this, but its unset fields (partial_sources, auto_rollback_attempted,
+    verified) silently auto-vivified as truthy MagicMocks rather than their
+    real int/bool defaults, which crashed once PushPage.set_failure() started
+    comparing partial_sources/auto_rollback_attempted numerically (CI
+    failure caught on PR #37, docs/backlog.md items 3/9)."""
+    return WriteResult(
+        success=success,
+        backup_path="/backups/peq_backup_001.json",
+        error_message=None if success else "Connection timeout",
+    )
 
 
 # ---------------------------------------------------------------------------
