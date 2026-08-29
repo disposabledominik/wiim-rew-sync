@@ -1516,7 +1516,10 @@ class PrimaryWorkflowManager(QObject):
                     )
                 self._bridge.write_complete.emit(result)
             except Exception as exc:
-                result = WriteResult(success=False, error_message=str(exc), backup_path=None)
+                logger.exception("RoomFit push to source '%s' failed", source_name)
+                result = WriteResult(
+                    success=False, error_message=str(exc), backup_path=None, verified=False
+                )
                 self._bridge.write_complete.emit(result)
         else:
             # PEQ: use SafeWrite protocol — push to ALL selected sources

@@ -117,10 +117,19 @@ found while implementing this: the non-critical failure branch used to unconditi
 "device safely restored," which was only ever true for the two pre-existing cases reaching it
 (rollback ran and succeeded, or nothing was ever written) — a connection-drop-mid-write is a third
 case where the device's actual state is genuinely unknown, so `set_failure(verified=False)` now
-shows "device state unknown" instead. RoomFit's equivalent except-block (pre-existing, already
-correct) had zero test coverage before this — now covered too. Automated tests:
-`TestPushConnectionFailure` (`test_gui_push_export.py`), new `PushPage.set_failure(verified=False)`
-UI-state test (`test_gui_pages.py`). **(b) still not started** — `set_failure()` still shows a
+shows "device state unknown" instead. A 2026-08-29 code review (PR #37) found two follow-on gaps
+in this same change, both fixed in the same PR: (1) `set_failure()`'s `elif` chain checked
+`partial_sources`/`auto_rollback_attempted` before `not verified`, so on a multi-source push where
+a prior source's own auto-rollback outcome was also nonzero, the current failing source's
+`verified=False` signal was silently swallowed — fixed by appending an "unconfirmed, state
+unknown" caveat to those branches' detail text instead of treating `verified` as its own exclusive
+branch. (2) RoomFit's `except Exception` block was *not* actually already correct as first
+claimed — it built `WriteResult` without `verified=False`, so a RoomFit connection drop still
+showed "device safely restored." Both fixed; the RoomFit regression test now asserts
+`emitted.verified is False` instead of only `success`/`error_message`. Automated tests:
+`TestPushConnectionFailure` (`test_gui_push_export.py`), `PushPage.set_failure(verified=False)`
+UI-state tests including the two swallowed-signal cases (`test_gui_pages.py`). **(b) still not
+started** — `set_failure()` still shows a
 count ("N source(s)...") rather than per-source names; `partial_backup_paths` is decoded only for
 the Undo action. **Manual hardware retest required for (a)** (a real mid-write connection drop
 can't be simulated in CI) — see docs/backlog.md item 1's hardware-QA-owner convention.

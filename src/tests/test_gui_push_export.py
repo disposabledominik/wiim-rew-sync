@@ -535,6 +535,7 @@ class TestPushConnectionFailure:
         emitted = window._bridge.write_complete.emit.call_args[0][0]
         assert emitted.success is False
         assert emitted.error_message == "Could not reach device"
+        assert emitted.verified is False
 
     @pytest.mark.asyncio
     async def test_finalize_push_failure_treats_both_failure_origins_identically(

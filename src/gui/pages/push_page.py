@@ -307,9 +307,14 @@ class PushPage(QWidget):
             verified: False when the write was aborted by a connection/
                 response/backup error before it could be confirmed either
                 way (docs/backlog.md item 9) -- distinct from every other
-                False-critical-and-zero-partial_sources case, where nothing
-                was ever written, so "safely restored" would be true. Only
-                affects the non-critical, zero-partial_sources message.
+                non-critical case, where the device's state actually is
+                known (rolled back, or never touched). This is a fact about
+                THIS failing source specifically, independent of
+                partial_sources/auto_rollback_attempted (which describe
+                prior sources) -- so it appends a caveat to whichever of
+                those branches applies rather than being its own exclusive
+                branch, to avoid silently dropping the "state unknown"
+                signal on a multi-source push (code review finding).
             auto_rollback_attempted: On a multi-source PEQ push, the count
                 of already-succeeded sources whose restore was attempted
                 (docs/backlog.md item 3). 0 means either a single-source
@@ -378,6 +383,16 @@ class PushPage(QWidget):
                     f"failure and were NOT automatically rolled back. Click Undo to "
                     f"restore {'them' if partial_sources != 1 else 'it'}."
                 )
+            if not verified:
+                # This source's own write is a separate, unconfirmed
+                # outcome from the prior sources' auto-rollback tally above
+                # -- without this, the message reads as if only the prior
+                # sources' state is in question (code review finding,
+                # docs/backlog.md item 9).
+                detail_text += (
+                    "\n\nThis source's own write could not be confirmed -- its "
+                    "device state is unknown. No backup was created for it."
+                )
         elif auto_rollback_attempted:
             # Auto-rollback fully succeeded -- nothing left to undo.
             self._result_icon.setText("⚠")  # warning triangle
@@ -392,6 +407,11 @@ class PushPage(QWidget):
                 f"{auto_rollback_attempted} source{plural} written before this "
                 f"failure were automatically restored to their previous state."
             )
+            if not verified:
+                detail_text += (
+                    "\n\nThis source's own write could not be confirmed -- its "
+                    "device state is unknown. No backup was created for it."
+                )
         elif not verified:
             self._result_icon.setText("⚠")  # warning triangle
             self._set_result_class("warning")

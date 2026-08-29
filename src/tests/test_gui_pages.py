@@ -1229,6 +1229,48 @@ class TestPushPage:
         detail = page._detail_label.text().lower()
         assert "1 of 2 source" in detail
 
+    def test_set_failure_unverified_not_swallowed_by_auto_rollback_message(
+        self, qtbot
+    ) -> None:
+        """Code review finding: a multi-source push where a prior source's
+        auto-rollback fully succeeded (auto_rollback_attempted > 0) must
+        still surface that THIS failing source's own write is unconfirmed
+        (verified=False) -- the two facts describe different sources and
+        neither should silently drop the other."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Could not reach device", "",
+            partial_sources=0, auto_rollback_attempted=1, verified=False,
+        )
+
+        msg = page._result_message.text().lower()
+        assert "automatically restored" in msg
+        detail = page._detail_label.text().lower()
+        assert "could not be confirmed" in detail
+        assert "state is unknown" in detail
+
+    def test_set_failure_unverified_not_swallowed_by_partial_sources_message(
+        self, qtbot
+    ) -> None:
+        """Same code review finding as above, for the partial_sources
+        (auto-rollback failed for some prior sources) branch."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Could not reach device", "",
+            partial_sources=1, auto_rollback_attempted=1, verified=False,
+        )
+
+        detail = page._detail_label.text().lower()
+        assert "not restored" in detail or "not automatically rolled back" in detail
+        assert "could not be confirmed" in detail
+        assert "state is unknown" in detail
+
     def test_set_failure_critical_recovery_command_is_valid_cli_invocation(
         self, qtbot
     ) -> None:
