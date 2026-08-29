@@ -11,7 +11,7 @@ code comments, docstrings, and `docs/smoke_test_issues.md` rows cite items by th
 list changes as priorities shift. Reordered 2026-08-02; no numbers changed, item 6 added. Item 7
 added 2026-08-05. Item 8 added 2026-08-29. Item 5 archived 2026-08-29 (resolved 2026-08); its
 number was kept, not reused, since it's cited by number outside this file. Items 9-10 added
-2026-08-29.
+2026-08-29. Item 1 archived 2026-08-29 (QA sign-off completed).
 
 **At a glance** (priority order; full detail in each item below):
 
@@ -21,7 +21,6 @@ number was kept, not reused, since it's cited by number outside this file. Items
 | 9 | Push page doesn't update its main-view card on a device connection failure; only a status banner shows it | (a) Implemented (2026-08-29); (b) not started |
 | 6 | CI only tests Ubuntu/Python 3.12 while release builds ship Windows/macOS/Linux | Not started |
 | 4 | Backup files don't record which source they were taken from | Not started |
-| 1 | Hardware QA sign-off — full-flow validation against real devices | Ongoing (1 open issue: smoke #119) |
 | 2 | `DevicePickerDialog`/`DeviceInfoDialog` duplicate their optional-warning boilerplate | Not started |
 | 7 | No confirmation prompt when switching EQ type clears loaded filters | Not started |
 | 8 | Profile JSON's `channel_mode: "left"` sentinel is a misleading name for L/R mode | Not started |
@@ -189,24 +188,6 @@ default `--source` from the backup file when present, keeping the flag for older
 
 ---
 
-## 1. Hardware QA Sign-off
-
-**What:** Full-flow validation against real WiiM device(s) covering GUI-era scenarios that can't
-be automated (multiroom groups, RoomFit push with naming, device reboot mid-write, etc.) — see
-`docs/qa_signoff.md` §5.
-
-**Status:** Kept open at the device owner's request. `docs/qa.md`, the pre-GUI `docs/qa_signoff.md`,
-and `docs/smoke_test_procedure.md` have been consolidated into one current `docs/qa_signoff.md`
-(manual QA & sign-off guide, automated-gate checklist, scenario traceability matrix). One
-genuinely `OPEN` issue remains in `docs/smoke_test_issues.md` (#119, an intermittent
-window-restore-from-maximized clipping bug — low severity, needs a consistent repro); the
-automated suite is at 1500+ tests across 60 files.
-
-**To reactivate:** Close out #119 and formally fill in `docs/qa_signoff.md`'s sign-off form with
-current test counts/coverage.
-
----
-
 ## 2. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)
 
 **What:** `DevicePickerDialog` and `DeviceInfoDialog` each independently carry an optional
@@ -329,6 +310,19 @@ medium (new adapter method(s) for PEQ and RoomFit + rename dialog + wiring + tes
 ---
 
 ## Completed / Closed Items (Archive)
+
+### 1. Hardware QA Sign-off
+**Completed:** 2026-08-29. `docs/qa_signoff.md`'s sign-off form (§7) is filled in and signed by
+the device owner (disposabledominik): all automated quality gates pass, all applicable manual
+tests (§4) pass or have logged failures, every scenario in the §5 traceability matrix resolves to
+a passing test or a documented/waived gap, and the verdict is checked "PASS — ready to release."
+Tested against WiiM Sound (x2 firmware builds), WiiM Amp Ultra, WiiM Amp Pro, and WiiM Mini.
+**Note:** `docs/smoke_test_issues.md` #119 (intermittent window-restore-from-maximized clipping,
+low severity, no consistent repro) is still listed `OPEN` there — it was not separately closed out
+or explicitly listed under this sign-off's "Waived gaps," it's carried as an accepted low-severity
+known issue rather than a release blocker. If a consistent repro turns up, fix it and update #119's
+row in the same commit per CLAUDE.md's rule, but it does not block this item's completion. Item
+number kept (not reused) — cited by number in this file's own history note and possibly elsewhere.
 
 ### 5. Operation Feedback: Overlapping Operations Can Race (Found via `/code-review ultra`)
 **Completed:** 2026-08. `OperationFeedbackManager` (`src/gui/operation_feedback.py`) tracked
