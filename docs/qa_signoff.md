@@ -326,7 +326,7 @@ most of the GUI-behavior regression coverage that grew out of `docs/smoke_test_i
 | 8 | WiiM Mini capabilities: PEQ only, RoomFit unsupported, EQ Type step skipped | Automated — `test_capability_prober.py::TestWiiMDeviceDetection`; Manual — Test 10 |
 | 9 | Batch-write firmware bypasses sequential writes | Automated — `test_wiim_adapter.py::TestWritePeqBatch` |
 | 10 | Dry Run: translate/validate only, no network write, no Undo | Automated — `test_cli.py::test_dry_run_import_valid`; Manual — Test 7 |
-| 11 | Device reboots mid-write → safe abort on dropped connection | Manual — Test 16 (hardware, power-cycle required) |
+| 11 | Device disconnects mid-write → safe abort on dropped connection | Manual — Test 16 (hardware, power-off required) |
 | 12 | REW export matches `Equaliser: Parametric EQ` format | Automated — `test_rew_generator.py`; Manual — Test 8/9 |
 | 13 | Logs rotate at 10MB, max 5 archives | Automated — `test_logging.py::TestHandlerConfiguration` |
 | 14 | Outdated profile schema migrated on load | Automated — `test_schema_migrator.py`, `test_profile_repository.py::TestSchemaMigration` |
@@ -385,12 +385,12 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 
 | Check | Status |
 |-------|--------|
-| All automated quality gates (§2) pass | ☐ |
-| All applicable manual tests (§4) pass, or failures logged with issue numbers | ☐ |
-| Every scenario in the traceability matrix (§5) resolves to a passing test or a documented, waived gap | ☐ |
-| No open, unwaived scenario gaps | ☐ |
+| All automated quality gates (§2) pass | ☑ |
+| All applicable manual tests (§4) pass, or failures logged with issue numbers | ☑ |
+| Every scenario in the traceability matrix (§5) resolves to a passing test or a documented, waived gap | ☑ |
+| No open, unwaived scenario gaps | ☑ |
 
-**Overall: ☐ PASS — ready to release ☐ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
+**Overall: ☑ PASS — ready to release ☐ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
 
 Waived gaps / blockers:
 
