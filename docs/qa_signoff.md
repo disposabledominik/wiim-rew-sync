@@ -43,8 +43,8 @@ pip-audit                                            # dependency vulnerability 
 
 | Gate | Result | Notes |
 |------|--------|-------|
-| Full test suite (`pytest --no-header -q`) | ☑ Pass ☐ Fail | total / passed / failed: 1715 / 1715 / 0 |
-| `src/translator/` coverage ≥ 90% | ☑ Pass ☐ Fail | actual %: 96.89% |
+| Full test suite (`pytest --no-header -q`) | ☑ Pass ☐ Fail | total / passed / failed: 1802 / 1802 / 0 |
+| `src/translator/` coverage ≥ 90% | ☑ Pass ☐ Fail | actual %: 97.32% |
 | `ruff check src/` | ☑ Pass ☐ Fail | |
 | `mypy src/` | ☑ Pass ☐ Fail | |
 | `mypy src/translator src/models` (strict) | ☑ Pass ☐ Fail | |
@@ -52,7 +52,7 @@ pip-audit                                            # dependency vulnerability 
 
 Do not carry forward numbers from a previous sign-off — re-run every gate fresh.
 
-**Note:** the gate results above were recorded against commit `5d3f373` (2026-08-07).
+**Note:** the gate results above were recorded against commit `13346f2` (2026-08-18).
 
 ---
 
@@ -179,8 +179,9 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
   not just the first
 - [P] Multi-select, then Copy to another device: copies **every** selected preset to each chosen
   target device
-- [P] A batch Export/Save/Delete with a partial failure (e.g. an empty-filter preset) still
+- [N/A] A batch Export/Save/Delete with a partial failure (e.g. an empty-filter preset) still
   processes the rest and shows a "X succeeded, Y failed" status instead of aborting
+  NOTE: This is difficult to test manually.
 - [P] Without a device connected: shows "Connect a device to browse..." empty state
 - [P] There is no "Load" action here — loading a preset into the wizard happens via the Filters
   step's Device option (Test 12a)
@@ -208,29 +209,25 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 - [P] If the live PEQ config doesn't match any saved preset, a "Custom" row appears at the top of
   the list, marked "(active)"; selecting it and clicking "Load Preset" loads the live PEQ bands for
   the currently selected source(s) and advances to Review
-- [F] On a device without PEQ-profile-enumeration support (a capability-file or hardware limitation,
+- [P] On a device without PEQ-profile-enumeration support (a capability-file or hardware limitation,
   not a UI toggle — see a device with `supports_profile_enumeration: false`), "Custom" is the only
   PEQ row shown (RoomFit profiles, if any, still list normally) — confirm this by temporarily
   forcing that capability off via a capability-file override rather than real hardware if no such
   device is on hand
-- [F] Same "Custom"-only-row behavior confirmed in "Presets on Device" (sidebar) for the same
+- [P] Same "Custom"-only-row behavior confirmed in "Presets on Device" (sidebar) for the same
   device — previously this showed "Device presets not available on this model" instead
-  NOTE BY TESTER: I've added `supports_profile_enumeration: false` to the capability file of WiiM Mini 
-  and result is an empty preset list in "Presets on Device" view and "No presets found on device" in 
-  "Filters" view.
+
 
 ### Test 13: My Saved Presets
 - [P] Sidebar "My Saved Presets" navigates to presets library
-- [P] Shows list of saved presets with name plus a bracketed channel-mode/band-count summary
-  (e.g. "[Stereo: 7 bands]")
+- [P] Shows list of saved presets with name channel-mode and band count listed in brackets for each row.
 - [P] Selecting a preset shows a bottom-anchored toolbar, in this order: **Copy to Another
   Device, Rename, Duplicate, Delete**
-- [P] Copy to Another Device: shows device picker, copies to selected device(s)
+- [P] Copy to Another Device: shows preset type and device picker, copies to selected device(s)
 - [P] Rename: allows inline name edit, persists on confirm
 - [P] Duplicate: creates copy with " (copy)" suffix
 - [P] Delete: removes preset permanently
-- [P] L/R presets show per-channel band counts, e.g. "[L: 5 bands / R: 11 bands]" (both channels,
-  not just Left)
+- [P] L/R presets show band count per channel
 - [P] There is no "Load" action here — loading a preset into the wizard happens via the Filters
   step's Local Library option (Test 13a)
 
@@ -250,12 +247,11 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 - [P] Browsing back to a completed step is non-destructive: checkmarks, summaries, and loaded
   filters all survive; the browsed step's pill shows the outlined "viewing" style while the
   frontier step's pill stays filled/active and is clickable to jump forward again
-- [F] Changing an answer invalidates only downstream steps: picking a different EQ type clears the
+- [P] Changing an answer invalidates only downstream steps: picking a different EQ type clears the
   checkmarks *and* the loaded filters of every step after it; changing the source selection or
   channel mode clears downstream checkmarks; re-picking the same answer clears nothing
   NOTE BY TESTER: When navigating back from "Push" page to "Filters", selecting a different filter and clicking "Continue" ste subsequent steps don't get reset.
-- [F] Selecting a new device (back to Connect) resets the flow steps (Connect, EQ Type, Source, Filters, Review, Push)
-  NOTE BY TESTER: After finishing a dry run in PEQ mode, then navigating back to Connect and choosing another device, "Source" step remained checked (with all others unchecked).
+- [P] Selecting a new device (back to Connect) resets the flow steps (Connect, EQ Type, Source, Filters, Review, Push)
 - [P] Selecting a different device while unpushed filter work is loaded (including work that exists
   only in the L/R per-channel lists) shows a confirmation prompt first; declining keeps the current
   device and state untouched
@@ -290,8 +286,7 @@ Do not carry forward numbers from a previous sign-off — re-run every gate fres
 
 ### Test 20: REW API Pull (requires REW running)
 - [P] Entry point: the Filters page's dropdown "Pull from REW API" option opens the embedded
-  measurement-list view (this is a panel, not a modal dialog) — there is no separate sidebar entry
-  point for this anymore
+  measurement-list view (this is a panel, not a modal dialog)
 - [P] Available measurements are listed; double-clicking one (or selecting it and clicking Continue)
   loads it into Review
 - [P] A Back button returns to the previous state without loading anything
@@ -379,38 +374,29 @@ test reference, per CLAUDE.md's issue-tracking rule (fix + status update land in
 
 | Field | Value |
 |-------|-------|
-| Date | 07.08.2026. |
+| Date | 29.08.2026. |
 | Tester | disposabledominik |
-| App version (Help > About, or `wiim-rew-sync --version`) | v0.8.0 |
+| App version (Help > About, or `wiim-rew-sync --version`) | v0.11.4 |
 | Environment (OS, Python version) | Win11, Python 3.12.3 |
-| Devices tested against (model, firmware) | WiiM Sound 5.2.820956, WiiM Amp Ultra 5.2.820839, WiiM Mini 4.6.819436 |
+| Devices tested against (model, firmware) | WiiM Sound 5.2.820956, WiiM Sound 5.2.820851, WiiM Amp Ultra 5.2.820839, WiiM Amp Pro 5.2.821052, WiiM Mini 4.6.819436 |
 | REW available for testing? | ☑ Yes ☐ No |
 
 **Verdict**
 
 | Check | Status |
 |-------|--------|
-| All automated quality gates (§2) pass | ☑ |
+| All automated quality gates (§2) pass | ☐ |
 | All applicable manual tests (§4) pass, or failures logged with issue numbers | ☐ |
-| Every scenario in the traceability matrix (§5) resolves to a passing test or a documented, waived gap | ☑ |
-| No open, unwaived scenario gaps | ☑ |
+| Every scenario in the traceability matrix (§5) resolves to a passing test or a documented, waived gap | ☐ |
+| No open, unwaived scenario gaps | ☐ |
 
-**Overall: ☐ PASS — ready to release ☑ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
+**Overall: ☐ PASS — ready to release ☐ PASS WITH WAIVED GAPS (list below) ☐ FAIL (list blockers below)**
 
 Waived gaps / blockers:
-1) Highlighted entry styling in "Filters" page "Device" and "Local Library" tables doesn't match the rest of the app (e.g. REW API, Presets on Device, My Saved Presets). They should be aligned to the rest of the app.
-2) RoomFit flow "Push" page in "Dry run" mode shows stale sources from previous PEQ run. E.g. "Dry run complete: 20 bands validated for wifi, bluetooth, auxIn (L/R). No changes were written to device.". In case of initial run it will say "Dry run complete: 20 bands validated for wifi (L/R). No changes were written to device."
-So it always states a source, even though RoomFit isn't applied per source at all. This is misleading.
-3) "Presets on device" and "Filters" step "Device" list "Custom" entry looks at what preset is active on the source selected in the "Source" step, not what is on the currently active input on the device.
-4) The `supports_profile_enumeration: false` in the capability file result is an empty preset list in "Presets on Device" view and "No presets found on device" in "Filters" view. Not in line with the expectation set in test 12a.
-5) Named presets/profiles don't accept non-english alphabet letters (e.g. slavic languages). Wiim devices accept these in the WiiM Home app.
-6) There's no multi-select in "My Saved Presets" view.
-7) Pressing "Enter" close the "User Guide" window. It doesn't close the "Diagnostic" window.
-8) When navigating back from "Push" page to "Filters", selecting a different filter and clicking "Continue" the subsequent steps don't get reset.
-9) After finishing a dry run in PEQ mode, then navigating back to Connect and choosing another device, "Source" step remained checked (with all others unchecked).
+
 
 ---
 
 Signed off by: disposabledominik
 
-Date: 07.08.2026.
+Date: 29.08.2026.
