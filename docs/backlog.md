@@ -22,6 +22,7 @@ added 2026-08-05.
 | 1 | Hardware QA sign-off — full-flow validation against real devices | Ongoing (1 open issue: smoke #119) |
 | 2 | `DevicePickerDialog`/`DeviceInfoDialog` duplicate their optional-warning boilerplate | Not started |
 | 7 | No confirmation prompt when switching EQ type clears loaded filters | Not started |
+| 8 | Profile JSON's `channel_mode: "left"` sentinel is a misleading name for L/R mode | Not started |
 
 ---
 
@@ -213,6 +214,38 @@ call best made after real-world use.
 confirmation prompt to `_on_eq_type_selected` gated on the same "unsaved work" predicate as the
 device-switch prompt (`_has_unsaved_changes`), reusing the existing `QMessageBox.question`
 pattern. Source/channel changes should stay prompt-free (nothing but checkmarks is lost).
+
+---
+
+## 8. Profile JSON `channel_mode: "left"` Sentinel Is a Misleading Name (Found During Q&A)
+
+**What:** `ChannelMode.profile_value` (`src/models/channel_mode.py`) serializes L/R-mode profiles
+with `"channel_mode": "left"` in the on-disk Profile JSON -- not `"lr"` or `"L/R"`. `"right"` is
+also accepted on read as an equivalent legacy alias. Both predate this repo's tracked git history
+(present already in the root commit, before the `ChannelMode` enum consolidated the scattered
+string comparisons around it) and there is no recorded rationale for the choice.
+
+**Why it matters:** Read cold -- by a new contributor, or in a saved preset file a user opens --
+`"left"` reads as "this is the left channel," not "this profile has both L and R channels." Purely
+a naming/readability issue; the current value round-trips correctly and no functional bug is known.
+
+**Why deferred:** Low priority, no user-facing symptom. `"left"` is baked into every profile a user
+has already saved to disk, so `from_profile`/`from_any` would need to keep accepting it as a legacy
+read value indefinitely regardless of what the write side changes to -- this is a rename, not a bug
+fix, and the payoff (readability) doesn't yet outweigh the churn of touching test literals for no
+behavior change.
+
+**Status:** Not started.
+
+**To reactivate:** Change `ChannelMode.profile_value`'s `LR` branch to a clearer literal (e.g.
+`"lr"`), keeping `"left"`/`"right"` accepted in `from_profile`/`from_any` as legacy read-only
+aliases. Expected footprint (~25-30 lines, mostly test literals, confirmed by grep 2026-08-29):
+`src/models/channel_mode.py` (profile_value + docstrings, ~6-8 lines); tests --
+`test_models.py` (7), `test_profile_repository.py` (2), `test_wiim_adapter.py` (2),
+`test_safe_write.py` (1), `test_smoke_regression_operations.py` (7); `docs/data_models.md` (~6
+lines, sections 198-199/252/265/280). `src/cli/main.py`'s `--channel left/right` flag,
+`wiim_adapter.py`, and `wiim_parser.py` are a separate "which channel" vocabulary that maps into
+`ChannelMode` rather than storing the literal string, and are unaffected.
 
 ---
 
