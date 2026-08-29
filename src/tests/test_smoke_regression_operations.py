@@ -2648,7 +2648,7 @@ class TestPresets:
             window._on_write_complete(result)
 
         mock_set_failure.assert_called_once_with(
-            "Clamped values rejected", "/tmp/backup.json", False, 0
+            "Clamped values rejected", "/tmp/backup.json", False, 0, True, 0, []
         )
         mock_show_error.assert_called_once_with("Push failed: Clamped values rejected")
 
@@ -2681,6 +2681,9 @@ class TestPresets:
             "/tmp/backup.json",
             True,
             0,
+            True,
+            0,
+            [],
         )
 
     # --- Issue #123: L/R clamping uses separate maps per channel ---
@@ -2966,11 +2969,14 @@ class TestPresets:
     #
     # Update (branch-quality review, 2026-07-18): the race itself is fixed.
     # _do_undo_multi_source now awaits each source's real restore via
-    # SecondaryWorkflowManager._restore_backup() directly instead of the
+    # restore_entries() (src/adapters/safe_write.py) instead of the
     # fire-and-forget undo_last_push(), so succeeded/failed reflects actual
-    # per-source outcomes. Tests below updated to mock _restore_backup()
-    # (the real awaited call) rather than undo_last_push() (no longer
-    # called by this method at all).
+    # per-source outcomes. Tests below mock restore_entries() (the real
+    # awaited call, and the same shared restore-loop primitive
+    # PrimaryWorkflowManager._do_push()'s auto-rollback uses, docs/
+    # backlog.md item 3) rather than undo_last_push() (no longer called by
+    # this method at all) or _restore_backup() (no longer called by this
+    # method either now that restore_entries() calls restore_one() itself).
 
     def test_undo_multi_source_single_entry_restores_and_reports_success(
         self, window
@@ -2979,12 +2985,13 @@ class TestPresets:
         success only once that restore actually succeeds."""
         _setup_device(window)
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            return True, "Previous filters restored"
+        async def _fake_restore_entries(safe_write, entries, **_kwargs):
+            return len(entries), 0, []
 
         with (
-            patch.object(
-                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            patch(
+                "src.gui.secondary_workflows.restore_entries",
+                side_effect=_fake_restore_entries,
             ) as mock_restore,
             patch.object(window._push_page, "set_undo_success") as mock_undo_success,
             patch.object(window._status_banner, "show_success") as mock_success,
@@ -2997,24 +3004,27 @@ class TestPresets:
                 )
             )
 
-        mock_restore.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
+        mock_restore.assert_called_once()
+        assert mock_restore.call_args.args[1] == [("wifi", "/tmp/backup_wifi.json")]
         mock_undo_success.assert_called_once_with("All 1 source(s) restored from backup")
         mock_success.assert_called_once_with("All 1 source(s) restored from backup")
 
     def test_undo_multi_source_multi_entry_all_restored_reports_success(
         self, window
     ) -> None:
-        """Multiple "source=path" entries each await their own real
-        restore; the summary banner counts actual per-source successes."""
+        """Multiple "source=path" entries are all passed to restore_entries()
+        in one call; the summary banner counts actual per-source successes
+        as restore_entries() reports them."""
         _setup_device(window)
         backup_str = "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json"
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            return True, "Previous filters restored"
+        async def _fake_restore_entries(safe_write, entries, **_kwargs):
+            return len(entries), 0, []
 
         with (
-            patch.object(
-                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            patch(
+                "src.gui.secondary_workflows.restore_entries",
+                side_effect=_fake_restore_entries,
             ) as mock_restore,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
@@ -3022,23 +3032,27 @@ class TestPresets:
 
             asyncio.run(window._secondary_workflows._do_undo_multi_source(backup_str))
 
-        assert mock_restore.call_count == 2
-        mock_restore.assert_any_call("wifi", "/tmp/backup_wifi.json")
-        mock_restore.assert_any_call("bluetooth", "/tmp/backup_bt.json")
+        mock_restore.assert_called_once()
+        assert mock_restore.call_args.args[1] == [
+            ("wifi", "/tmp/backup_wifi.json"),
+            ("bluetooth", "/tmp/backup_bt.json"),
+        ]
         mock_success.assert_called_once_with("All 2 source(s) restored from backup")
 
     def test_undo_multi_source_malformed_entries_skipped(self, window) -> None:
         """Entries without "=" (malformed) are silently skipped -- not
-        counted toward succeeded or failed."""
+        passed to restore_entries() and not counted toward succeeded or
+        failed."""
         _setup_device(window)
         backup_str = "wifi=/tmp/backup_wifi.json;garbage-no-equals;;"
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            return True, "Previous filters restored"
+        async def _fake_restore_entries(safe_write, entries, **_kwargs):
+            return len(entries), 0, []
 
         with (
-            patch.object(
-                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            patch(
+                "src.gui.secondary_workflows.restore_entries",
+                side_effect=_fake_restore_entries,
             ) as mock_restore,
             patch.object(window._status_banner, "show_success") as mock_success,
         ):
@@ -3046,16 +3060,17 @@ class TestPresets:
 
             asyncio.run(window._secondary_workflows._do_undo_multi_source(backup_str))
 
-        mock_restore.assert_called_once_with("wifi", "/tmp/backup_wifi.json")
+        mock_restore.assert_called_once()
+        assert mock_restore.call_args.args[1] == [("wifi", "/tmp/backup_wifi.json")]
         mock_success.assert_called_once_with("All 1 source(s) restored from backup")
 
     def test_undo_multi_source_waits_for_real_undo_outcome(self, window) -> None:
         """Regression test for the scheduling-vs-outcome fix (branch-quality
-        review, 2026-07-18): the summary now reflects _restore_backup()'s
-        real, awaited return value -- a source that actually fails to
-        restore (device unreachable, verification failure, etc.) is counted
-        as failed, not as succeeded-because-scheduling-didn't-raise (the
-        prior bug this test used to golden-master).
+        review, 2026-07-18): the summary reflects restore_entries()'s real,
+        awaited return value -- a source that actually fails to restore
+        (device unreachable, verification failure, etc.) is counted as
+        failed, not as succeeded-because-scheduling-didn't-raise (the prior
+        bug this test used to golden-master).
         """
         _setup_device(window)
 
@@ -3064,11 +3079,14 @@ class TestPresets:
             lambda succeeded, failed, msg: captured.append((succeeded, failed, msg))
         )
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            return False, "Device unreachable"
+        async def _fake_restore_entries(safe_write, entries, **_kwargs):
+            return 0, len(entries), list(entries)
 
         with (
-            patch.object(window._secondary_workflows, "_restore_backup", side_effect=_restore),
+            patch(
+                "src.gui.secondary_workflows.restore_entries",
+                side_effect=_fake_restore_entries,
+            ),
             patch.object(window._status_banner, "show_error") as mock_error,
         ):
             import asyncio
@@ -3081,7 +3099,7 @@ class TestPresets:
 
         mock_error.assert_called_once()
         # The real (failed) outcome is reflected -- not a scheduling-based
-        # success, since _restore_backup is awaited before the tally.
+        # success, since restore_entries() is awaited before the tally.
         assert captured == [(0, 1, "0 restored, 1 failed")]
 
     def test_undo_multi_source_partial_failure_clears_snapshot(self, window) -> None:
@@ -3095,14 +3113,14 @@ class TestPresets:
         _setup_device(window)
         window._wizard_controller.state.last_pushed_filters = ["sentinel"]
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            if src == "bluetooth":
-                return False, "Device unreachable"
-            return True, "Previous filters restored"
+        async def _fake_restore_entries(safe_write, entries, **_kwargs):
+            failed_entries = [e for e in entries if e[0] == "bluetooth"]
+            return len(entries) - len(failed_entries), len(failed_entries), failed_entries
 
         with (
-            patch.object(
-                window._secondary_workflows, "_restore_backup", side_effect=_restore
+            patch(
+                "src.gui.secondary_workflows.restore_entries",
+                side_effect=_fake_restore_entries,
             ),
             patch.object(window._status_banner, "show_error"),
         ):

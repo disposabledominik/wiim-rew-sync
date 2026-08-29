@@ -24,6 +24,7 @@ from src.gui.app_settings import AppSettings
 from src.gui.main_window import MainWindow
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import ChannelMode
+from src.models.errors import BackupError, WiiMConnectionError, WiiMTimeoutError
 from src.tests.conftest import close_coroutine_tree
 from src.translator._warnings import ValidationWarning
 
@@ -284,6 +285,93 @@ class TestPushMultiSourcePartialFailure:
         assert emitted.backup_path == Path("/backups/wifi.json")
 
     @pytest.mark.asyncio
+    async def test_two_of_four_sources_succeed_third_fails_auto_rollback_restores_both(
+        self, window, tmp_path
+    ) -> None:
+        """wifi and optical succeed, hdmi fails, ethernet is never attempted.
+        wifi/optical are automatically rolled back (docs/backlog.md item 3)
+        -- auto_rollback_attempted=2, partial_sources=0 (nothing left to
+        manually undo), no Undo button offered.
+        """
+        mock_safe_write = _setup_push_state(window)
+        window._wizard_controller.state.selected_sources = [
+            "wifi", "optical", "hdmi", "ethernet",
+        ]
+        wifi_backup = tmp_path / "wifi.json"
+        wifi_backup.write_text("{}", encoding="utf-8")
+        optical_backup = tmp_path / "optical.json"
+        optical_backup.write_text("{}", encoding="utf-8")
+
+        wifi_result = WriteResult(success=True, backup_path=wifi_backup)
+        optical_result = WriteResult(success=True, backup_path=optical_backup)
+        hdmi_result = WriteResult(
+            success=False, rollback_success=True, backup_path=Path("/backups/hdmi.json"),
+            error_message="Verification mismatch",
+        )
+        mock_safe_write.execute = AsyncMock(
+            side_effect=[wifi_result, optical_result, hdmi_result]
+        )
+        mock_safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+
+        await window._primary_workflows._do_push()
+
+        assert mock_safe_write.execute.call_count == 3
+        assert mock_safe_write.undo.await_count == 2
+        undo_paths = {c.args[0] for c in mock_safe_write.undo.await_args_list}
+        assert undo_paths == {wifi_backup, optical_backup}
+
+        window._bridge.write_complete.emit.assert_called_once()
+        emitted = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted.success is False
+        assert emitted.auto_rollback_attempted == 2
+        assert emitted.partial_sources == 0
+        assert emitted.partial_backup_paths is None
+        # hdmi's own recovery info survives unchanged.
+        assert emitted.backup_path == Path("/backups/hdmi.json")
+        assert emitted.error_message == "Verification mismatch"
+
+    @pytest.mark.asyncio
+    async def test_auto_rollback_partial_failure_reports_only_failed_subset(
+        self, window, tmp_path
+    ) -> None:
+        """wifi and optical succeed, hdmi fails. Auto-rollback of wifi
+        succeeds but optical's own restore fails -- partial_sources must
+        report only optical (1), not both, and auto_rollback_attempted
+        stays 2 so the UI can say "1 of 2" rather than implying nothing was
+        attempted.
+        """
+        mock_safe_write = _setup_push_state(window)
+        window._wizard_controller.state.selected_sources = ["wifi", "optical", "hdmi"]
+        wifi_backup = tmp_path / "wifi.json"
+        wifi_backup.write_text("{}", encoding="utf-8")
+        optical_backup = tmp_path / "optical.json"
+        optical_backup.write_text("{}", encoding="utf-8")
+
+        wifi_result = WriteResult(success=True, backup_path=wifi_backup)
+        optical_result = WriteResult(success=True, backup_path=optical_backup)
+        hdmi_result = WriteResult(
+            success=False, rollback_success=True, backup_path=Path("/backups/hdmi.json"),
+            error_message="Verification mismatch",
+        )
+        mock_safe_write.execute = AsyncMock(
+            side_effect=[wifi_result, optical_result, hdmi_result]
+        )
+
+        async def _undo(path: Path, source_name: str, **_kwargs: object) -> WriteResult:
+            if path == optical_backup:
+                return WriteResult(success=False, error_message="Device unreachable")
+            return WriteResult(success=True)
+
+        mock_safe_write.undo = _undo
+
+        await window._primary_workflows._do_push()
+
+        emitted = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted.auto_rollback_attempted == 2
+        assert emitted.partial_sources == 1
+        assert emitted.partial_backup_paths == f"optical={optical_backup}"
+
+    @pytest.mark.asyncio
     async def test_main_window_offers_undo_for_partial_multi_source_failure(
         self, window
     ) -> None:
@@ -291,7 +379,9 @@ class TestPushMultiSourcePartialFailure:
         PushPage.set_failure() and store the encoded prior-sources backup
         string (not the failing source's own backup_path) as
         last_backup_path, so a subsequent Undo click restores the right
-        sources via the existing multi-source undo path.
+        sources via the existing multi-source undo path. Also decodes
+        partial_backup_paths' own source names for display (docs/backlog.md
+        item 9b).
         """
         result = WriteResult(
             success=False,
@@ -306,9 +396,33 @@ class TestPushMultiSourcePartialFailure:
             window._on_write_complete(result)
 
         mock_set_failure.assert_called_once_with(
-            "Verification mismatch", str(Path("/backups/optical.json")), False, 1
+            "Verification mismatch", str(Path("/backups/optical.json")), False, 1,
+            True, 0, ["wifi"],
         )
         assert window._wizard_controller.state.last_backup_path == "wifi=/backups/wifi.json"
+
+    async def test_main_window_decodes_multiple_partial_source_names(
+        self, window
+    ) -> None:
+        """docs/backlog.md item 9b: with more than one prior-succeeded
+        source needing manual action, _on_write_complete decodes all of
+        their names from partial_backup_paths, in encoded order."""
+        result = WriteResult(
+            success=False,
+            rollback_success=True,
+            backup_path=Path("/backups/hdmi.json"),
+            error_message="Verification mismatch",
+            partial_sources=2,
+            partial_backup_paths="wifi=/backups/wifi.json;optical=/backups/optical.json",
+        )
+
+        with patch.object(window._push_page, "set_failure") as mock_set_failure:
+            window._on_write_complete(result)
+
+        mock_set_failure.assert_called_once_with(
+            "Verification mismatch", str(Path("/backups/hdmi.json")), False, 2,
+            True, 0, ["wifi", "optical"],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +435,11 @@ class TestPushException:
 
     @pytest.mark.asyncio
     async def test_push_exception_emits_operation_error(self, window) -> None:
-        """Verify operation_error emitted when safe_write.execute raises.
+        """A genuinely unexpected exception (not one of the domain
+        connection/response/backup types _do_push()'s PEQ loop now catches
+        -- see TestPushConnectionFailure below, docs/backlog.md item 9)
+        still safety-nets through operation_error via _bridge_wrapper's
+        catch-all, rather than being silently swallowed.
 
         Requirement: 6.1, 12.1
         """
@@ -335,6 +453,160 @@ class TestPushException:
         window._bridge.operation_error.emit.assert_called_once()
         error_type, _message = window._bridge.operation_error.emit.call_args[0]
         assert error_type == "ConnectionError"
+
+
+# ---------------------------------------------------------------------------
+# Push — Connection/response/backup errors during write (docs/backlog.md
+# item 9: main card must reflect this, not just a status banner)
+# ---------------------------------------------------------------------------
+
+
+class TestPushConnectionFailure:
+    """A WiiMConnectionError/WiiMTimeoutError/BackupError raised by
+    safe_write.execute() mid-push must be caught inside _do_push() and
+    turned into a failed WriteResult (verified=False) emitted via
+    write_complete -- not left to propagate to _bridge_wrapper's generic
+    operation_error handler, which never reaches PushPage.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            WiiMConnectionError("Could not reach device"),
+            WiiMTimeoutError("Device not responding"),
+            BackupError("Disk full"),
+        ],
+        ids=["connection", "timeout", "backup"],
+    )
+    async def test_single_source_emits_unverified_failure(self, window, exc) -> None:
+        mock_safe_write = _setup_push_state(window)
+        mock_safe_write.execute = AsyncMock(side_effect=exc)
+
+        await window._bridge_wrapper("push", window._primary_workflows._do_push())
+
+        window._bridge.operation_error.emit.assert_not_called()
+        window._bridge.write_complete.emit.assert_called_once()
+        emitted = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted.success is False
+        assert emitted.verified is False
+        assert emitted.backup_path is None
+        assert emitted.error_message == str(exc)
+        assert emitted.partial_sources == 0
+        assert emitted.auto_rollback_attempted == 0
+
+    @pytest.mark.asyncio
+    async def test_second_of_three_sources_raising_reports_one_partial_source(
+        self, window
+    ) -> None:
+        """wifi succeeds, optical's execute() raises (not returns a failed
+        result), hdmi is never attempted -- mirrors
+        TestPushMultiSourcePartialFailure's returned-failure case, proving
+        the two failure origins (raised vs. returned) can't drift apart
+        (both go through PrimaryWorkflowManager._finalize_push_failure()).
+        """
+        mock_safe_write = _setup_push_state(window)
+        window._wizard_controller.state.selected_sources = ["wifi", "optical", "hdmi"]
+        wifi_result = WriteResult(
+            success=True, rollback_success=None, backup_path=Path("/backups/wifi.json")
+        )
+        mock_safe_write.execute = AsyncMock(
+            side_effect=[wifi_result, WiiMConnectionError("Could not reach device")]
+        )
+
+        await window._primary_workflows._do_push()
+
+        assert mock_safe_write.execute.call_count == 2
+        window._bridge.write_complete.emit.assert_called_once()
+        emitted = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted.success is False
+        assert emitted.verified is False
+        assert emitted.backup_path is None
+        assert emitted.partial_sources == 1
+        assert emitted.partial_backup_paths == "wifi=/backups/wifi.json"
+
+    @pytest.mark.asyncio
+    async def test_roomfit_connection_error_emits_write_complete_not_operation_error(
+        self, window
+    ) -> None:
+        """RoomFit's except block (primary_workflows.py, already existing
+        before docs/backlog.md item 9) has zero test coverage today --
+        close that gap, not just add PEQ coverage."""
+        from src.gui.wizard_controller import FlowType
+
+        state = window._wizard_controller.state
+        state.flow_type = FlowType.ROOMFIT
+        state.roomfit_profile_name = "Living Room"
+        state.selected_sources = ["wifi"]
+        state.dry_run = False
+
+        mock_adapter = MagicMock()
+        mock_adapter.capabilities = MagicMock()
+        window._wiim_adapter = mock_adapter
+        window._primary_workflows.set_current_adapter(mock_adapter)
+
+        mock_roomfit_safe_write = AsyncMock()
+        mock_roomfit_safe_write.execute = AsyncMock(
+            side_effect=WiiMConnectionError("Could not reach device")
+        )
+        window._primary_workflows._roomfit_safe_write_factory = (
+            lambda adapter: mock_roomfit_safe_write
+        )
+
+        await window._bridge_wrapper("push", window._primary_workflows._do_push())
+
+        window._bridge.operation_error.emit.assert_not_called()
+        window._bridge.write_complete.emit.assert_called_once()
+        emitted = window._bridge.write_complete.emit.call_args[0][0]
+        assert emitted.success is False
+        assert emitted.error_message == "Could not reach device"
+        assert emitted.verified is False
+
+    @pytest.mark.asyncio
+    async def test_finalize_push_failure_treats_both_failure_origins_identically(
+        self, window, tmp_path
+    ) -> None:
+        """_finalize_push_failure() is the one place partial_sources/
+        partial_backup_paths get populated, called from both the returned-
+        failure branch and the raised-exception branch in _do_push()'s PEQ
+        loop -- proving directly that the same backup_paths input produces
+        the same partial-source outcome regardless of which of the two
+        failure origins the failing source's own WriteResult came from.
+        """
+        mock_safe_write = _setup_push_state(window)
+        wifi_backup = tmp_path / "wifi.json"
+        wifi_backup.write_text("{}", encoding="utf-8")
+        backup_paths = [("wifi", str(wifi_backup))]
+        mock_safe_write.undo = AsyncMock(
+            return_value=WriteResult(success=False, error_message="Device unreachable")
+        )
+
+        returned_failure = WriteResult(
+            success=False, rollback_success=True, backup_path=Path("/backups/optical.json"),
+            error_message="Verification mismatch",
+        )
+        raised_failure = WriteResult(
+            success=False, error_message="Could not reach device", backup_path=None,
+            verified=False,
+        )
+
+        await window._primary_workflows._finalize_push_failure(
+            returned_failure, list(backup_paths), mock_safe_write
+        )
+        await window._primary_workflows._finalize_push_failure(
+            raised_failure, list(backup_paths), mock_safe_write
+        )
+
+        assert returned_failure.auto_rollback_attempted == raised_failure.auto_rollback_attempted
+        assert returned_failure.partial_sources == raised_failure.partial_sources
+        assert returned_failure.partial_backup_paths == raised_failure.partial_backup_paths
+        # Every other field stays exactly what the caller set -- proving
+        # _finalize_push_failure() only ever mutates the three
+        # auto-rollback outcome fields, never backup_path/error_message/
+        # verified/rollback_success.
+        assert returned_failure.backup_path == Path("/backups/optical.json")
+        assert raised_failure.backup_path is None
+        assert raised_failure.verified is False
 
 
 # ---------------------------------------------------------------------------

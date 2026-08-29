@@ -1161,7 +1161,7 @@ class TestPushPage:
         detail = page._detail_label.text().lower()
         assert "critical" in page._result_message.text().lower()
         assert "2 other source" in detail
-        assert "not automatically rolled back" in detail
+        assert "auto-rollback also failed" in detail
         assert "restore-backup" in detail  # manual recovery steps still shown
 
     def test_set_failure_no_partial_sources_still_hides_undo(self, qtbot) -> None:
@@ -1175,6 +1175,199 @@ class TestPushPage:
 
         assert not page._undo_button.isVisible()
         assert "safely restored" in page._detail_label.text().lower()
+
+    def test_set_failure_unverified_does_not_claim_safely_restored(self, qtbot) -> None:
+        """docs/backlog.md item 9: a connection/response/backup error that
+        aborted the write before it could be confirmed either way must NOT
+        say "device safely restored" -- that claim is only true when a
+        rollback actually ran (or nothing was ever written), neither of
+        which happened here."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure("Could not reach device", "", verified=False)
+
+        assert not page._undo_button.isVisible()
+        detail = page._detail_label.text().lower()
+        assert "safely restored" not in detail
+        assert "device state unknown" in page._result_message.text().lower()
+
+    def test_set_failure_auto_rollback_fully_succeeded_hides_undo(self, qtbot) -> None:
+        """docs/backlog.md item 3: when every already-succeeded source was
+        automatically restored, there's nothing left to manually undo."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "/tmp/hdmi.json",
+            partial_sources=0, auto_rollback_attempted=2,
+        )
+
+        assert not page._undo_button.isVisible()
+        msg = page._result_message.text().lower()
+        assert "2 source" in msg
+        assert "automatically restored" in msg
+        # Code review finding: this source's own backup_path is shown via
+        # _backup_path_label (visible whenever backup_path is set and
+        # partial_sources == 0) -- the detail text must confirm what it's
+        # for, not leave an unexplained path on screen.
+        assert page._backup_path_label.isVisible()
+        detail = page._detail_label.text().lower()
+        assert "safely restored" in detail
+        assert "/tmp/hdmi.json" in detail
+
+    def test_set_failure_auto_rollback_fully_succeeded_no_own_backup(
+        self, qtbot
+    ) -> None:
+        """Same branch as above, but this source's own write never got far
+        enough to create a backup (backup_path empty) -- no false "safely
+        restored" claim should be added since there's nothing to confirm."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "No profile name specified", "",
+            partial_sources=0, auto_rollback_attempted=1,
+        )
+
+        assert not page._backup_path_label.isVisible()
+        detail = page._detail_label.text().lower()
+        assert "safely restored" not in detail
+
+    def test_set_failure_auto_rollback_partial_failure_offers_undo(self, qtbot) -> None:
+        """docs/backlog.md item 3: when auto-rollback fails for some (but
+        not all) already-succeeded sources, Undo is offered for the
+        remaining subset and the message says how many of how many."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "/tmp/hdmi.json",
+            partial_sources=1, auto_rollback_attempted=2,
+        )
+
+        assert page._undo_button.isVisible()
+        msg = page._result_message.text().lower()
+        assert "auto-rollback failed for 1 of 2" in msg
+        detail = page._detail_label.text().lower()
+        assert "1 of 2 source" in detail
+
+    def test_set_failure_partial_sources_names_replace_count(self, qtbot) -> None:
+        """docs/backlog.md item 9b: when the caller supplies decoded source
+        names, the detail text names them instead of just stating a count
+        -- the "N source(s) not restored" branch (all of auto-rollback
+        failed, or none was attempted)."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "wifi=/tmp/wifi.json",
+            partial_sources=2, partial_source_names=["optical", "hdmi"],
+        )
+
+        detail = page._detail_label.text()
+        assert "optical, hdmi" in detail
+        assert "2 sources" not in detail
+
+    def test_set_failure_auto_rollback_partial_failure_names_replace_count(
+        self, qtbot
+    ) -> None:
+        """Same as above, for the partly-succeeded auto-rollback branch."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "/tmp/hdmi.json",
+            partial_sources=1, auto_rollback_attempted=2,
+            partial_source_names=["optical"],
+        )
+
+        detail = page._detail_label.text()
+        assert "failed for optical" in detail
+        assert "the remaining 1" not in detail
+
+    def test_set_failure_critical_and_partial_sources_names_replace_count(
+        self, qtbot
+    ) -> None:
+        """Same as above, for the critical (this source's own rollback also
+        failed) branch's own partial_sources mention."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Rollback failed", "/tmp/optical.json", critical=True,
+            partial_sources=2, partial_source_names=["wifi", "hdmi"],
+        )
+
+        detail = page._detail_label.text()
+        assert "wifi, hdmi" in detail
+        assert "2 other source" not in detail
+
+    def test_set_failure_partial_sources_falls_back_to_count_without_names(
+        self, qtbot
+    ) -> None:
+        """No partial_source_names supplied (e.g. an older caller, or
+        partial_backup_paths failed to decode) -- must degrade to the
+        pre-9b count-only wording, not crash or show nothing."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Verification mismatch", "wifi=/tmp/wifi.json", partial_sources=2
+        )
+
+        detail = page._detail_label.text().lower()
+        assert "2 sources" in detail
+
+    def test_set_failure_unverified_not_swallowed_by_auto_rollback_message(
+        self, qtbot
+    ) -> None:
+        """Code review finding: a multi-source push where a prior source's
+        auto-rollback fully succeeded (auto_rollback_attempted > 0) must
+        still surface that THIS failing source's own write is unconfirmed
+        (verified=False) -- the two facts describe different sources and
+        neither should silently drop the other."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Could not reach device", "",
+            partial_sources=0, auto_rollback_attempted=1, verified=False,
+        )
+
+        msg = page._result_message.text().lower()
+        assert "automatically restored" in msg
+        detail = page._detail_label.text().lower()
+        assert "could not be confirmed" in detail
+        assert "state is unknown" in detail
+
+    def test_set_failure_unverified_not_swallowed_by_partial_sources_message(
+        self, qtbot
+    ) -> None:
+        """Same code review finding as above, for the partial_sources
+        (auto-rollback failed for some prior sources) branch."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "Could not reach device", "",
+            partial_sources=1, auto_rollback_attempted=1, verified=False,
+        )
+
+        detail = page._detail_label.text().lower()
+        assert "not restored" in detail or "not automatically rolled back" in detail
+        assert "could not be confirmed" in detail
+        assert "state is unknown" in detail
 
     def test_set_failure_critical_recovery_command_is_valid_cli_invocation(
         self, qtbot
@@ -1408,6 +1601,48 @@ class TestPushPage:
 
         assert page._round_label.isVisible()
         assert page._round_label.text() == "Restoring optical (2 of 3)"
+
+    def test_set_push_round_uses_rolling_back_text_when_rollback_in_progress(
+        self, qtbot
+    ) -> None:
+        """docs/backlog.md item 3: during an in-progress push's own
+        auto-rollback of already-succeeded sources, the round label reads
+        "Rolling back" -- distinct from both the forward push's "Pushing
+        to" and a manual Undo's "Restoring" -- and without touching the
+        UNDO badge/stepper the way start_undo() does, since this happens
+        mid-push, not as a separate run."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_rollback_in_progress(True)
+        page.set_push_round("wifi", 1, 2)
+
+        assert page._round_label.isVisible()
+        assert page._round_label.text() == "Rolling back wifi (1 of 2)"
+        assert not page._status_badge.isVisible()
+
+    def test_set_rollback_in_progress_false_restores_pushing_verb(self, qtbot) -> None:
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_rollback_in_progress(True)
+        page.set_rollback_in_progress(False)
+        page.set_push_round("wifi", 1, 2)
+
+        assert page._round_label.text() == "Pushing to wifi (1 of 2)"
+
+    def test_reset_clears_rollback_mode(self, qtbot) -> None:
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+        page.set_rollback_in_progress(True)
+
+        page.reset()
+        page.set_push_round("wifi", 1, 2)
+
+        assert page._round_label.text() == "Pushing to wifi (1 of 2)"
 
     def test_set_undo_success_hides_undo_and_secondary_actions(self, qtbot) -> None:
         """A successful undo shows the given message, hides Undo (nothing

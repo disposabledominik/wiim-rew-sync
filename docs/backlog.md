@@ -9,89 +9,24 @@ low-priority tech debt). Each item's `## N.` number is a stable identifier, not 
 code comments, docstrings, and `docs/smoke_test_issues.md` rows cite items by this number (e.g.
 "docs/backlog.md item 3"), so numbers are never reassigned even when an item's position in this
 list changes as priorities shift. Reordered 2026-08-02; no numbers changed, item 6 added. Item 7
-added 2026-08-05.
+added 2026-08-05. Item 8 added 2026-08-29. Item 5 archived 2026-08-29 (resolved 2026-08); its
+number was kept, not reused, since it's cited by number outside this file. Items 9-10 added
+2026-08-29. Item 1 archived 2026-08-29 (QA sign-off completed). Items 3 and 9 archived 2026-08-29
+(implemented and hardware-verified, PR #37).
 
 **At a glance** (priority order; full detail in each item below):
 
 | # | Item | Status |
 |---|------|--------|
-| 3 | Multi-source push has no automatic rollback across sources on partial failure (manual per-source Undo exists) | Partially addressed |
-| 5 | Overlapping operations can race and restore the wrong button-state snapshot | Resolved (2026-08) |
 | 6 | CI only tests Ubuntu/Python 3.12 while release builds ship Windows/macOS/Linux | Not started |
 | 4 | Backup files don't record which source they were taken from | Not started |
-| 1 | Hardware QA sign-off — full-flow validation against real devices | Ongoing (1 open issue: smoke #119) |
 | 2 | `DevicePickerDialog`/`DeviceInfoDialog` duplicate their optional-warning boilerplate | Not started |
 | 7 | No confirmation prompt when switching EQ type clears loaded filters | Not started |
+| 8 | Profile JSON's `channel_mode: "left"` sentinel is a misleading name for L/R mode | Not started |
+| 10 | Candidate list: activate/rename/enable-toggle actions for "Presets on Device" (speculative, not committed) | Not started |
 
 ---
 
-## 3. Multi-Source Push: No Automatic Rollback on Partial Failure (Known Limitation)
-
-**What:** `PrimaryWorkflowManager._do_push()`'s PEQ flow writes to each of
-`state.selected_sources` in sequence and aborts on the first failure. Each individual source's
-write still goes through the full `SafeWrite` 5-step protocol — but if source N fails after
-sources 1..N-1 already succeeded, there is no cross-source rollback: the already-written sources
-are left in their new state. CLAUDE.md's design principles ("Safety before convenience" /
-"automatic rollback on verification failure") read as applying at the whole-push level, not just
-per-source, so this is a real gap, not just a UX rough edge.
-
-**Why deferred:** Backup paths for all sources written before the failure are collected and
-surfaced (smoke #242), so the *user* can undo each succeeded source with one click today — the
-gap that remains is *automatic* rollback, not recoverability. Auto-invoking undo on sources 1..N-1
-when source N fails risks a rollback-of-a-rollback failure and is a large enough decision (does a
-failed auto-rollback also need its own critical-recovery UI?) to warrant its own design pass, so
-it's still deferred.
-
-**Status:** Partially addressed (smoke #242, `c132304`). `PushPage.set_failure()` now shows an
-accurate "N source(s) not restored" message instead of the misleading "device safely restored"
-line, and offers a one-click Undo for the sources that were actually written (via
-`WriteResult.partial_backup_paths` + the existing multi-source undo path) — closing the
-"document/expose the manual-undo path" option below. Automatic cross-source rollback is still not
-implemented.
-
-**To reactivate:** Decide whether automatic cross-source rollback is wanted on top of the current
-one-click manual Undo, and how it should behave if that rollback itself fails. Implement in
-`PrimaryWorkflowManager._do_push()`'s PEQ branch.
-
----
-
-## 5. Operation Feedback: Overlapping Operations Can Race (Found via `/code-review ultra`)
-
-**What:** `OperationFeedbackManager` (`src/gui/operation_feedback.py`) tracks exactly one
-in-flight operation via a single `_is_active` flag and one `_prior_enabled` button-state
-snapshot, both overwritten wholesale on every `start_operation()` call. If an operation is
-cancelled (`_on_cancel_clicked()` calls `finish_operation()` immediately) while its underlying
-coroutine keeps running in the background — since Cancel only resets the UI and does not
-actually stop the coroutine — and a second, unrelated operation starts before that first
-coroutine's `finally` block fires its own `operation_finished` signal, the stray late signal
-calls `finish_operation()` again and restores buttons using the *second* operation's snapshot,
-not the first's. This can re-enable or re-disable buttons out of step with what's actually
-running.
-
-**Why deferred:** Found during a `/simplify`/`/code-review ultra --fix` cleanup pass on an
-unrelated diff (smoke `docs/smoke_test_issues.md` #243/#244); fixing it properly touches two
-separate concerns — (a) giving each `start_operation()` call an identity (a token returned by
-`start_operation()` that `finish_operation(token)` must match to actually apply, so a
-stale/mismatched call is a no-op) and (b) the more fundamental gap that Cancel doesn't cancel
-the underlying coroutine at all, which a token-based fix would paper over rather than resolve.
-Both are design decisions bigger than a quality-cleanup pass's scope, and the app's current
-one-op-at-a-time model means this is a narrow race window in practice, not a routinely-hit bug.
-Independently re-confirmed (still unfixed) during a 2026-08-02 codebase review.
-
-**Status:** Resolved (2026-08). Both root causes from "Why deferred" above are fixed, and neither
-needed the token-based approach originally sketched under "To reactivate" — the actual fix is
-simpler than that: `AsyncBridge.run_async()` now accepts `cancellable: bool` and tracks the
-current `Future`; `_dispatch()` in both workflow managers threads it through, opt-in per call site
-(reads/local-file operations only — device writes stay non-cancellable by default, the safe
-direction). `OperationFeedbackManager.request_cancel()` (shared by the Cancel button and Escape)
-now actually cancels that Future via a new `AsyncBridge.request_cancel()`, and — this is what
-closes the race — no longer calls `finish_operation()` itself; the real `operation_finished`
-signal (fired once the cancelled coroutine's `finally` block actually unwinds) is the only thing
-that resets UI state, so a second operation starting in the gap can no longer have its snapshot
-stomped by a stale finish. Removing the premature call turned out to be simpler than adding a
-token to guard it. See `src/gui/async_bridge.py`, `src/gui/operation_feedback.py`.
-
----
 
 ## 6. CI Test Matrix: Single OS/Python Version Tests a 3-Platform Release (Found During Codebase Review)
 
@@ -151,24 +86,6 @@ default `--source` from the backup file when present, keeping the flag for older
 
 ---
 
-## 1. Hardware QA Sign-off
-
-**What:** Full-flow validation against real WiiM device(s) covering GUI-era scenarios that can't
-be automated (multiroom groups, RoomFit push with naming, device reboot mid-write, etc.) — see
-`docs/qa_signoff.md` §5.
-
-**Status:** Kept open at the device owner's request. `docs/qa.md`, the pre-GUI `docs/qa_signoff.md`,
-and `docs/smoke_test_procedure.md` have been consolidated into one current `docs/qa_signoff.md`
-(manual QA & sign-off guide, automated-gate checklist, scenario traceability matrix). One
-genuinely `OPEN` issue remains in `docs/smoke_test_issues.md` (#119, an intermittent
-window-restore-from-maximized clipping bug — low severity, needs a consistent repro); the
-automated suite is at 1500+ tests across 60 files.
-
-**To reactivate:** Close out #119 and formally fill in `docs/qa_signoff.md`'s sign-off form with
-current test counts/coverage.
-
----
-
 ## 2. Shared Base/Mixin for "Optional Embedded Warning" Dialogs (Tech Debt)
 
 **What:** `DevicePickerDialog` and `DeviceInfoDialog` each independently carry an optional
@@ -216,7 +133,145 @@ pattern. Source/channel changes should stay prompt-free (nothing but checkmarks 
 
 ---
 
+## 8. Profile JSON `channel_mode: "left"` Sentinel Is a Misleading Name (Found During Q&A)
+
+**What:** `ChannelMode.profile_value` (`src/models/channel_mode.py`) serializes L/R-mode profiles
+with `"channel_mode": "left"` in the on-disk Profile JSON -- not `"lr"` or `"L/R"`. `"right"` is
+also accepted on read as an equivalent legacy alias. Both predate this repo's tracked git history
+(present already in the root commit, before the `ChannelMode` enum consolidated the scattered
+string comparisons around it) and there is no recorded rationale for the choice.
+
+**Why it matters:** Read cold -- by a new contributor, or in a saved preset file a user opens --
+`"left"` reads as "this is the left channel," not "this profile has both L and R channels." Purely
+a naming/readability issue; the current value round-trips correctly and no functional bug is known.
+
+**Why deferred:** Low priority, no user-facing symptom. `"left"` is baked into every profile a user
+has already saved to disk, so `from_profile`/`from_any` would need to keep accepting it as a legacy
+read value indefinitely regardless of what the write side changes to -- this is a rename, not a bug
+fix, and the payoff (readability) doesn't yet outweigh the churn of touching test literals for no
+behavior change.
+
+**Status:** Not started.
+
+**To reactivate:** Change `ChannelMode.profile_value`'s `LR` branch to a clearer literal (e.g.
+`"lr"`), keeping `"left"`/`"right"` accepted in `from_profile`/`from_any` as legacy read-only
+aliases. Expected footprint (~25-30 lines, mostly test literals, confirmed by grep 2026-08-29):
+`src/models/channel_mode.py` (profile_value + docstrings, ~6-8 lines); tests --
+`test_models.py` (7), `test_profile_repository.py` (2), `test_wiim_adapter.py` (2),
+`test_safe_write.py` (1), `test_smoke_regression_operations.py` (7); `docs/data_models.md` (~6
+lines, sections 198-199/252/265/280). `src/cli/main.py`'s `--channel left/right` flag,
+`wiim_adapter.py`, and `wiim_parser.py` are a separate "which channel" vocabulary that maps into
+`ChannelMode` rather than storing the literal string, and are unaffected.
+
+---
+
+## 10. Candidate List: "Presets on Device" Activate/Rename/Enable-Toggle Actions (Speculative — Not Committed)
+
+**What:** Three feature ideas for `PresetsDeviceView` (`src/gui/views/presets_device_view.py`),
+raised during a 2026-08-29 Q&A session. Listed here purely so they aren't lost -- **there is no
+commitment to build any of this**; each needs confirmed demand or an explicit product decision
+before it's scoped as real work.
+
+- **(a) Activate a named PEQ preset onto a source** (load-and-leave-active, not the load-then-
+  restore preview `read_peq_preset_preview()` already does for Export/Save/Copy). `WiiMAdapter
+  .load_peq_profile()` already wraps `EQv2SourceLoad` and is reusable, but a true "activate" needs
+  its own flow that intentionally skips the restore-afterward step, and must respect the
+  documented rule that `EQv2SourceLoad` unconditionally turns `EQStat` on (see CLAUDE.md).
+  RoomFit has an equivalent (`load_roomfit_profile`), same caveat.
+- **(b) Rename named PEQ presets and RoomFit profiles.** `EQv2Rename` is hardware-confirmed
+  working for both (`docs/wiim_api_notes.md`; see the archived "On-Device Preset/Profile Rename"
+  item below), but no adapter method wraps it yet. Being a metadata write rather than a filter
+  write, it likely doesn't need the full `safe_write.py` Backup->Write->Read-Back->Verify->Rollback
+  protocol -- a simpler flow should suffice.
+- **(c) Toggle enable/disable PEQ and/or RoomFit from this view.** Backend already exists
+  (`enable_peq()`/`disable_peq()`, `enable_roomfit()`/`disable_roomfit()`), but this explicitly
+  reopens a prior product decision: see the archived "PEQ / RoomFit Enable/Disable Toggle in GUI"
+  item below, closed 2026-07-14 as "explicit product decision (2026-07-02) not to build it -- the
+  WiiM Home app already covers this." Re-adding it means deliberately revisiting that decision,
+  not just implementing it.
+
+**Why it matters:** (a) and (b) fill real gaps in what "Presets on Device" can do today (list,
+load-for-preview, export, save-to-library, copy-to-device, delete -- but not activate-in-place or
+rename); (c) is a UX convenience question, not a gap.
+
+**Why deferred:** Speculative. No confirmed user demand yet for (a)/(b); (c) was explicitly
+decided against once already.
+
+**Status:** Not started -- candidate list only.
+
+**To reactivate:** Confirm real demand (or, for (c), a deliberate reversal of the 2026-07-02
+decision) for each sub-item independently before scoping -- they don't need to ship together.
+Rough complexity if pursued: (a) medium (new adapter-level activate flow + GUI + tests), (b)
+medium (new adapter method(s) for PEQ and RoomFit + rename dialog + wiring + tests), (c) small
+(GUI toggle + wiring, since adapter methods already exist) if the product decision is reversed.
+
+---
+
 ## Completed / Closed Items (Archive)
+
+### 3. Multi-Source Push: No Automatic Rollback on Partial Failure
+**Completed:** 2026-08-29 (PR #37). `PrimaryWorkflowManager._do_push()`'s PEQ loop now
+auto-rolls-back the already-succeeded sources when a later source fails, via a shared
+`restore_entries()`/`restore_one()` pair in `safe_write.py` — the same primitive
+`SecondaryWorkflowManager._do_undo_multi_source()` (manual Undo) also calls, so the two restore
+paths can't drift apart. `WriteResult.partial_sources`/`partial_backup_paths` were repurposed to
+mean "sources whose own auto-rollback failed and still need manual action"; a new
+`auto_rollback_attempted` field lets `PushPage.set_failure()` distinguish fully-restored,
+partially-restored, and nothing-to-restore-yet cases. Manual hardware retest passed (2026-08-29):
+single- and multi-source PEQ pushes, RoomFit, and the resulting critical/manual-recovery message
+after a real network disconnect during a multi-source push's rollback attempt. Item number kept
+(not reused) — cited by number in `docs/architecture.md` and elsewhere.
+
+### 9. Push Page's Main Card Doesn't Reflect a Device Connection Failure
+**Completed:** 2026-08-29 (PR #37). Two parts, both implemented: (a) `_do_push()`'s PEQ loop now
+catches `WiiMConnectionError`/`WiiMResponseError`/`BackupError` around `safe_write.execute()` and
+routes the failure through the same `_finalize_push_failure()` method item 3 uses, so
+`write_complete` fires and `PushPage.set_failure()` runs instead of leaving the stage stepper
+frozen — a new `WriteResult.verified` field lets the UI say "device state unknown" instead of
+falsely claiming "device safely restored" when the write was aborted before its outcome could be
+confirmed. RoomFit's equivalent exception path is covered too. (b) `PushPage.set_failure()` gained
+a `partial_source_names` parameter so the partial-failure summary names the actual sources instead
+of just a count, decoded from `partial_backup_paths` in `MainWindow._on_write_complete()`. Two
+rounds of code review on this PR (see PR #37 comments) found and fixed several follow-on gaps in
+the `verified`/message-rendering logic along the way. Manual hardware retest passed (2026-08-29):
+single-source PEQ and RoomFit connection drops correctly update the main card instead of freezing;
+multi-source per-source naming confirmed. Item number kept (not reused).
+
+### 1. Hardware QA Sign-off
+**Completed:** 2026-08-29. `docs/qa_signoff.md`'s sign-off form (§7) is filled in and signed by
+the device owner (disposabledominik): all automated quality gates pass, all applicable manual
+tests (§4) pass or have logged failures, every scenario in the §5 traceability matrix resolves to
+a passing test or a documented/waived gap, and the verdict is checked "PASS — ready to release."
+Tested against WiiM Sound (x2 firmware builds), WiiM Amp Ultra, WiiM Amp Pro, and WiiM Mini.
+**Note:** `docs/smoke_test_issues.md` #119 (intermittent window-restore-from-maximized clipping,
+low severity, no consistent repro) is still listed `OPEN` there — it was not separately closed out
+or explicitly listed under this sign-off's "Waived gaps," it's carried as an accepted low-severity
+known issue rather than a release blocker. If a consistent repro turns up, fix it and update #119's
+row in the same commit per CLAUDE.md's rule, but it does not block this item's completion. Item
+number kept (not reused) — cited by number in this file's own history note and possibly elsewhere.
+
+### 5. Operation Feedback: Overlapping Operations Can Race (Found via `/code-review ultra`)
+**Completed:** 2026-08. `OperationFeedbackManager` (`src/gui/operation_feedback.py`) tracked
+exactly one in-flight operation via a single `_is_active` flag and one `_prior_enabled`
+button-state snapshot, both overwritten wholesale on every `start_operation()` call. If an
+operation was cancelled (`_on_cancel_clicked()` called `finish_operation()` immediately) while its
+underlying coroutine kept running in the background -- Cancel only reset the UI, it didn't stop
+the coroutine -- and a second, unrelated operation started before that first coroutine's `finally`
+block fired its own `operation_finished` signal, the stray late signal called `finish_operation()`
+again and restored buttons using the *second* operation's snapshot, not the first's. Found during a
+`/simplify`/`/code-review ultra --fix` cleanup pass (smoke `docs/smoke_test_issues.md` #243/#244),
+independently re-confirmed during a 2026-08-02 codebase review. Fixed without the token-based
+identity scheme originally sketched: `AsyncBridge.run_async()` now accepts `cancellable: bool` and
+tracks the current `Future`; `_dispatch()` in both workflow managers threads it through, opt-in per
+call site (reads/local-file operations only -- device writes stay non-cancellable by default, the
+safe direction). `OperationFeedbackManager.request_cancel()` (shared by the Cancel button and
+Escape) now actually cancels that Future via a new `AsyncBridge.request_cancel()`, and -- this is
+what closes the race -- no longer calls `finish_operation()` itself; the real `operation_finished`
+signal (fired once the cancelled coroutine's `finally` block actually unwinds) is the only thing
+that resets UI state, so a second operation starting in the gap can no longer have its snapshot
+stomped by a stale finish. See `src/gui/async_bridge.py`, `src/gui/operation_feedback.py`. Item
+number kept (not reused) -- cited by number in `docs/architecture.md`, `test_main_window_settings.py`,
+`test_gui_operation_timeout.py`.
 
 ### CI Release Pipeline (No Published Download Path)
 **Completed.** `.github/workflows/ci.yml` runs ruff/mypy/pip-audit/pytest on every PR and on

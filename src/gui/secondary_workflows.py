@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from src.adapters.safe_write import restore_entries, restore_one
+from src.gui.async_bridge import emit_round_progress
 from src.gui.primary_workflows import EmptyPresetFiltersError
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import (
@@ -345,9 +347,10 @@ class SecondaryWorkflowManager(QObject):
     async def _restore_backup(
         self, source_name: str, backup_path: str | Path
     ) -> tuple[bool, str]:
-        """Restore a source's PEQ state from backup via SafeWrite.undo()
-        (backup parsing and PEQSettings reconstruction live inside
-        SafeWrite.undo(), not here -- see its docstring).
+        """Restore a source's PEQ state from backup via restore_one() (file-
+        existence check, SafeWrite.undo() call, and exception handling all
+        live there -- see its docstring -- shared with restore_entries()'s
+        multi-source loop so the two can't drift apart).
 
         Shared by _do_undo (single-source, wraps this in an undo_complete
         emit) and _do_undo_multi_source (awaits this directly per source so
@@ -364,39 +367,31 @@ class SecondaryWorkflowManager(QObject):
             Tuple of (success, message) -- message is the restored-
             confirmation text on success, or the error text on failure.
         """
+        # Check the file first, ahead of the configure()-invariant asserts
+        # below -- a missing backup is an ordinary, expected outcome (no
+        # configure()/bridge setup required to detect it), not a
+        # configuration-invariant violation. restore_one() below does its
+        # own equivalent check too (needed for restore_entries()'s
+        # multi-source callers, which have no such ordering requirement) --
+        # this one short-circuits before it, preserving that a bad path
+        # alone should never require configure() to have run.
         path = Path(backup_path) if isinstance(backup_path, str) else backup_path
-
-        # Check if backup file exists (Req 8.5). Deliberately ahead of the
-        # configure()-invariant asserts below -- a missing backup is an
-        # ordinary, expected outcome (no configure()/bridge setup required
-        # to detect it), not a configuration-invariant violation.
         if not path or not path.is_file():
-            logger.error("Undo requested but backup file not found: %s", path)
+            logger.error("Restore requested but backup file not found: %s", path)
             return False, "No backup available"
 
-        # Outside the try/except below on purpose: a configure()-invariant
-        # violation is a programmer error, not a runtime undo failure, so it
-        # must propagate to _bridge_wrapper's loud crash-log path instead of
-        # being caught and reported as an ordinary "Undo failed" message.
+        # configure()-invariant asserts: a violation is a programmer error,
+        # not a runtime undo failure, so it must propagate to
+        # _bridge_wrapper's loud crash-log path -- restore_one() itself has
+        # no opinion on this, it just takes an already-built SafeWrite.
         assert self._bridge is not None, "configure() must run before undo"
         assert self._safe_write_factory is not None, "configure() must run before undo"
         assert self._current_adapter is not None, "configure() must run before undo"
 
-        try:
-            safe_write = self._safe_write_factory(self._current_adapter)
-            result = await safe_write.undo(
-                path, source_name, on_stage=self._bridge.stage_changed.emit
-            )
-
-            if result.success:
-                logger.info("Undo last push: completed successfully")
-                return True, "Previous filters restored"
-            error_msg = result.error_message or "Unknown error"
-            logger.error("Undo last push failed: %s", error_msg)
-            return False, error_msg
-        except Exception as exc:
-            logger.exception("Undo last push failed")
-            return False, str(exc)
+        safe_write = self._safe_write_factory(self._current_adapter)
+        return await restore_one(
+            safe_write, source_name, path, on_stage=self._bridge.stage_changed.emit
+        )
 
     async def _do_undo(self, source_name: str, backup_path: str | Path) -> None:
         """Execute undo via _restore_backup() and report the result."""
@@ -478,18 +473,22 @@ class SecondaryWorkflowManager(QObject):
         Args:
             backup_paths_str: Semicolon-separated "source=/path" entries.
 
-        Awaits each source's real restore via _restore_backup() directly
-        (rather than undo_last_push(), which only schedules the restore via
-        run_async() and returns immediately) so succeeded/failed reflects
-        each source's actual outcome, not just scheduling success. Fixed
-        branch-quality review, 2026-07-18 -- see docs/corrections.md for the
-        prior scheduling-vs-outcome gap this replaces.
+        Awaits each source's real restore via restore_entries() (rather than
+        undo_last_push(), which only schedules the restore via run_async()
+        and returns immediately) so succeeded/failed reflects each source's
+        actual outcome, not just scheduling success. Fixed branch-quality
+        review, 2026-07-18 -- see docs/corrections.md for the prior
+        scheduling-vs-outcome gap this replaces. restore_entries() is the
+        same restore-loop logic PrimaryWorkflowManager._do_push()'s
+        auto-rollback uses (docs/backlog.md item 3), so the two paths can't
+        drift apart in how they restore a source or tally the outcome.
 
-        Emits push_round_changed per source -- the same signal
-        PrimaryWorkflowManager._do_push uses for a multi-source push -- so
-        PushPage's round label ("Restoring X (i of N)" in undo mode) tracks
-        real per-source progress, on top of _restore_backup()'s own
-        stage_changed emits for the Backup/Write/Verify stepper.
+        The on_round callback below emits progress_update/push_round_changed
+        per source -- the same signal PrimaryWorkflowManager._do_push uses
+        for a multi-source push -- so PushPage's round label
+        ("Restoring X (i of N)" in undo mode) tracks real per-source
+        progress, on top of restore_entries()'s own stage_changed emits for
+        the Backup/Write/Verify stepper.
 
         Emits undo_multi_source_complete (succeeded, failed, message) rather
         than the shared undo_complete(bool, str) the other two undo paths
@@ -505,10 +504,11 @@ class SecondaryWorkflowManager(QObject):
             # No current producer of backup_paths_str can generate a
             # degenerate zero-entry string today (round-4 review finding
             # #6, 2026-07-19, PLAUSIBLE not CONFIRMED) -- but without this
-            # guard, the loop below never runs, failed stays 0, and the
-            # success branch fires a misleading "All 0 source(s) restored"
-            # banner while succeeded==0 also skips clearing the stale
-            # pushed-filters snapshot. Defensive, cheap to keep correct.
+            # guard, restore_entries() below never runs, failed stays 0, and
+            # the success branch fires a misleading "All 0 source(s)
+            # restored" banner while succeeded==0 also skips clearing the
+            # stale pushed-filters snapshot. Defensive, cheap to keep
+            # correct.
             logger.error(
                 "Undo multi-source: no backup entries decoded from '%s'",
                 backup_paths_str,
@@ -517,19 +517,19 @@ class SecondaryWorkflowManager(QObject):
                 0, 1, "No sources to restore -- backup data was empty or malformed"
             )
             return
-        succeeded = 0
-        failed = 0
-        total = len(entries)
 
-        for i, (source_name, bp) in enumerate(entries):
-            self._bridge.progress_update.emit(f"Restoring {source_name}...")
-            self._bridge.push_round_changed.emit(source_name, i + 1, total)
-            success, message = await self._restore_backup(source_name, bp)
-            if success:
-                succeeded += 1
-            else:
-                logger.error("Undo source '%s' failed: %s", source_name, message)
-                failed += 1
+        def on_round(source_name: str, index: int, total: int) -> None:
+            assert self._bridge is not None
+            emit_round_progress(self._bridge, "Restoring", source_name, index, total)
+
+        assert self._safe_write_factory is not None, "configure() must run before undo"
+        assert self._current_adapter is not None, "configure() must run before undo"
+        safe_write = self._safe_write_factory(self._current_adapter)
+        succeeded, failed, _failed_entries = await restore_entries(
+            safe_write, entries,
+            on_stage=self._bridge.stage_changed.emit,
+            on_round=on_round,
+        )
 
         if failed == 0:
             self.undo_multi_source_complete.emit(

@@ -28,7 +28,7 @@ Requirements: 8.1-8.6
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -365,56 +365,72 @@ class TestUndoRoomfit:
 class TestUndoMultiSource:
     """Test SecondaryWorkflowManager._do_undo_multi_source.
 
-    _do_undo_multi_source awaits each source's real restore via
-    _restore_backup() directly (fixed branch-quality review, 2026-07-18 --
+    _do_undo_multi_source awaits the real restore of every entry via
+    restore_entries() (src/adapters/safe_write.py) -- the same shared
+    restore-loop primitive PrimaryWorkflowManager._do_push()'s auto-rollback
+    uses (docs/backlog.md item 3). Fixed branch-quality review, 2026-07-18 --
     previously it called the fire-and-forget undo_last_push() and tallied
     scheduling success, not actual outcome; full characterization of that
     prior gap lives in test_smoke_regression_operations.py, captured before
-    this method moved here). These tests mock _restore_backup() directly to
-    isolate this method's aggregation logic; _restore_backup()'s own
-    correctness (SafeWrite.undo() success/failure/missing-backup-file
-    handling) is covered by TestUndoSuccessWithValidBackup and
+    this method moved here. These tests mock restore_entries() directly to
+    isolate this method's own aggregation/signal logic; restore_entries()'s
+    own correctness (looping, per-entry restore_one() success/failure/
+    missing-backup-file handling) is unit-tested directly in
+    test_safe_write.py, and _restore_backup()'s single-source delegation to
+    restore_one() is covered by TestUndoSuccessWithValidBackup and
     TestUndoMissingBackupFile above, which exercise it via _do_undo().
     """
 
-    @pytest.mark.asyncio
-    async def test_single_entry_restores_and_emits_success(self) -> None:
+    @staticmethod
+    def _configure_manager() -> SecondaryWorkflowManager:
         manager = SecondaryWorkflowManager()
         manager._bridge = MagicMock()
-        restored: list[tuple[str, str]] = []
+        manager._current_adapter = MagicMock()
+        manager._safe_write_factory = MagicMock()
+        return manager
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            restored.append((src, path))
-            return True, "Previous filters restored"
+    @pytest.mark.asyncio
+    async def test_single_entry_restores_and_emits_success(self) -> None:
+        manager = self._configure_manager()
+        captured_entries: list[tuple[str, str]] = []
 
-        manager._restore_backup = _restore  # type: ignore[assignment]
+        async def _fake_restore_entries(
+            safe_write: object, entries: list[tuple[str, str]], **_kwargs: object
+        ) -> tuple[int, int, list[tuple[str, str]]]:
+            captured_entries.extend(entries)
+            return 1, 0, []
 
         undo_signals: list[tuple[int, int, str]] = []
         manager.undo_multi_source_complete.connect(
             lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
         )
 
-        await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
+        with patch(
+            "src.gui.secondary_workflows.restore_entries", _fake_restore_entries
+        ):
+            await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
 
-        assert restored == [("wifi", "/tmp/backup_wifi.json")]
+        assert captured_entries == [("wifi", "/tmp/backup_wifi.json")]
         assert undo_signals == [(1, 0, "All 1 source(s) restored from backup")]
 
     @pytest.mark.asyncio
     async def test_restore_failure_emits_failure_tally(self) -> None:
-        manager = SecondaryWorkflowManager()
-        manager._bridge = MagicMock()
+        manager = self._configure_manager()
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            return False, "Verification failed"
-
-        manager._restore_backup = _restore  # type: ignore[assignment]
+        async def _fake_restore_entries(
+            safe_write: object, entries: list[tuple[str, str]], **_kwargs: object
+        ) -> tuple[int, int, list[tuple[str, str]]]:
+            return 0, 1, list(entries)
 
         undo_signals: list[tuple[int, int, str]] = []
         manager.undo_multi_source_complete.connect(
             lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
         )
 
-        await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
+        with patch(
+            "src.gui.secondary_workflows.restore_entries", _fake_restore_entries
+        ):
+            await manager._do_undo_multi_source("wifi=/tmp/backup_wifi.json")
 
         assert undo_signals == [(0, 1, "0 restored, 1 failed")]
 
@@ -429,31 +445,37 @@ class TestUndoMultiSource:
         snapshot on a partial success, not just a full one. Also regression
         coverage for the scheduling-vs-outcome fix (2026-07-18): the tally
         now reflects each source's real restore outcome, not just whether
-        scheduling it raised.
+        scheduling it raised. restore_entries()'s own per-entry
+        succeeded/failed tallying is unit-tested directly in
+        test_safe_write.py -- this test only verifies _do_undo_multi_source
+        decodes all 3 entries and correctly forwards whatever tally
+        restore_entries() returns into the emitted signal.
         """
-        manager = SecondaryWorkflowManager()
-        manager._bridge = MagicMock()
-        restored: list[tuple[str, str]] = []
+        manager = self._configure_manager()
+        captured_entries: list[tuple[str, str]] = []
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            if src == "bluetooth":
-                return False, "Device unreachable"
-            restored.append((src, path))
-            return True, "Previous filters restored"
-
-        manager._restore_backup = _restore  # type: ignore[assignment]
+        async def _fake_restore_entries(
+            safe_write: object, entries: list[tuple[str, str]], **_kwargs: object
+        ) -> tuple[int, int, list[tuple[str, str]]]:
+            captured_entries.extend(entries)
+            return 2, 1, [("bluetooth", "/tmp/backup_bt.json")]
 
         undo_signals: list[tuple[int, int, str]] = []
         manager.undo_multi_source_complete.connect(
             lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
         )
 
-        await manager._do_undo_multi_source(
-            "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json;optical=/tmp/backup_opt.json"
-        )
+        with patch(
+            "src.gui.secondary_workflows.restore_entries", _fake_restore_entries
+        ):
+            await manager._do_undo_multi_source(
+                "wifi=/tmp/backup_wifi.json;bluetooth=/tmp/backup_bt.json;"
+                "optical=/tmp/backup_opt.json"
+            )
 
-        assert restored == [
+        assert captured_entries == [
             ("wifi", "/tmp/backup_wifi.json"),
+            ("bluetooth", "/tmp/backup_bt.json"),
             ("optical", "/tmp/backup_opt.json"),
         ]
         assert undo_signals == [(2, 1, "2 restored, 1 failed")]
@@ -461,29 +483,34 @@ class TestUndoMultiSource:
     @pytest.mark.asyncio
     async def test_zero_entries_emits_failure_not_false_success(self) -> None:
         """A backup_paths_str that decodes to zero entries (empty or fully
-        malformed) must not fall through the loop and emit a misleading
-        "All 0 source(s) restored" success -- no current producer of
-        backup_paths_str can generate this today, but the guard is cheap
-        and correct to keep (round-4 review finding #6, PLAUSIBLE,
-        2026-07-19)."""
+        malformed) must not fall through to restore_entries() and emit a
+        misleading "All 0 source(s) restored" success -- no current
+        producer of backup_paths_str can generate this today, but the guard
+        is cheap and correct to keep (round-4 review finding #6, PLAUSIBLE,
+        2026-07-19). Deliberately does not configure _current_adapter/
+        _safe_write_factory -- the guard must fire before those would ever
+        be needed, same as before this method called restore_entries()."""
         manager = SecondaryWorkflowManager()
         manager._bridge = MagicMock()
-        restore_calls: list[tuple[str, str]] = []
+        restore_entries_calls: list[object] = []
 
-        async def _restore(src: str, path: str) -> tuple[bool, str]:
-            restore_calls.append((src, path))
-            return True, "Previous filters restored"
-
-        manager._restore_backup = _restore  # type: ignore[assignment]
+        async def _fake_restore_entries(
+            safe_write: object, entries: list[tuple[str, str]], **_kwargs: object
+        ) -> tuple[int, int, list[tuple[str, str]]]:
+            restore_entries_calls.append(entries)
+            return 0, 0, []
 
         undo_signals: list[tuple[int, int, str]] = []
         manager.undo_multi_source_complete.connect(
             lambda succeeded, failed, msg: undo_signals.append((succeeded, failed, msg))
         )
 
-        await manager._do_undo_multi_source("")
+        with patch(
+            "src.gui.secondary_workflows.restore_entries", _fake_restore_entries
+        ):
+            await manager._do_undo_multi_source("")
 
-        assert restore_calls == []
+        assert restore_entries_calls == []
         assert len(undo_signals) == 1
         succeeded, failed, _msg = undo_signals[0]
         assert succeeded == 0

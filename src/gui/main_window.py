@@ -106,7 +106,11 @@ from src.models.errors import (
     WiiMTimeoutError,
 )
 from src.models.profile import build_profile
-from src.repository.backup_manager import BackupManager, is_multi_source_backup_path
+from src.repository.backup_manager import (
+    BackupManager,
+    decode_multi_source_backup_paths,
+    is_multi_source_backup_path,
+)
 from src.repository.profile_repository import ProfileRepository
 from src.utils.app_dirs import get_app_data_dir, get_log_dir
 from src.utils.device_name import sanitize_device_name
@@ -827,6 +831,7 @@ class MainWindow(QMainWindow):
         self._bridge.progress_update.connect(self._on_progress_update)
         self._bridge.stage_changed.connect(self._on_stage_changed)
         self._bridge.push_round_changed.connect(self._on_push_round_changed)
+        self._bridge.rollback_state_changed.connect(self._on_rollback_state_changed)
         self._bridge.rew_measurements_ready.connect(self._on_measurements_listed)
         self._bridge.rew_filters_ready.connect(self._on_rew_filters_ready)
 
@@ -2079,24 +2084,51 @@ class MainWindow(QMainWindow):
             # rollback restore itself failed too -- the only state that needs
             # the "Critical: Manual recovery required" UI, not just any failure.
             critical = getattr(result, "rollback_success", None) is False
-            # >0 only on a multi-source PEQ push where earlier sources
-            # succeeded before this one failed (smoke #242) -- those sources
-            # were left written, not rolled back. partial_backup_paths (kept
-            # separate from backup_path, which stays this failing source's
-            # own backup for the critical-recovery display above) is their
-            # encoded backup string; record it the same way a successful
-            # push does, so _on_undo_requested's existing
-            # is_multi_source_backup_path() branch lets the user Undo them.
+            # >0 only on a multi-source PEQ push where an earlier source's
+            # own auto-rollback failed (docs/backlog.md item 3) -- that
+            # source is still written and needs manual action.
+            # partial_backup_paths (kept separate from backup_path, which
+            # stays this failing source's own backup for the critical-
+            # recovery display above) is their encoded backup string;
+            # record it the same way a successful push does, so
+            # _on_undo_requested's existing is_multi_source_backup_path()
+            # branch lets the user Undo them.
             partial_sources = getattr(result, "partial_sources", 0) or 0
             partial_backup_paths = getattr(result, "partial_backup_paths", None)
+            # auto_rollback_attempted: count of already-succeeded sources
+            # whose restore was attempted before this WriteResult was
+            # emitted -- 0 for a single-source push or a first-source
+            # failure, where there was nothing to roll back yet.
+            auto_rollback_attempted = getattr(result, "auto_rollback_attempted", 0) or 0
+            # verified: False only when the write was aborted by a caught
+            # connection/response/backup error before it could be confirmed
+            # either way (docs/backlog.md item 9) -- distinct from every
+            # other non-critical failure, where the device's state actually
+            # is known (rolled back, or never touched).
+            verified = getattr(result, "verified", True)
             if partial_sources and partial_backup_paths:
                 self._wizard_controller.state.last_backup_path = partial_backup_paths
-            self._push_page.set_failure(error_msg, backup_path, critical, partial_sources)
+            # partial_source_names: decode partial_backup_paths' own source
+            # names for display (docs/backlog.md item 9b) -- PushPage falls
+            # back to a bare count if this comes back empty (malformed
+            # string, or partial_backup_paths unset).
+            partial_source_names = (
+                [name for name, _path in decode_multi_source_backup_paths(partial_backup_paths)]
+                if partial_backup_paths
+                else []
+            )
+            self._push_page.set_failure(
+                error_msg, backup_path, critical, partial_sources,
+                verified, auto_rollback_attempted, partial_source_names,
+            )
             self._status_banner.show_error(f"Push failed: {error_msg}")
             logger.error(
-                "Push failed (critical=%s, partial_sources=%d): %s. Backup: %s",
+                "Push failed (critical=%s, partial_sources=%d, "
+                "auto_rollback_attempted=%d, verified=%s): %s. Backup: %s",
                 critical,
                 partial_sources,
+                auto_rollback_attempted,
+                verified,
                 error_msg,
                 backup_path or "(none)",
             )
@@ -2221,6 +2253,14 @@ class MainWindow(QMainWindow):
             total: Total number of sources being pushed to.
         """
         self._push_page.set_push_round(source_name, index, total)
+
+    @Slot(bool)
+    def _on_rollback_state_changed(self, active: bool) -> None:
+        """Toggle the Push page's round label between "Rolling back" and its
+        other verbs during an in-progress push's own auto-rollback of
+        already-succeeded sources (docs/backlog.md item 3).
+        """
+        self._push_page.set_rollback_in_progress(active)
 
     @Slot(list)
     def _on_measurements_listed(self, measurements: list[Any]) -> None:
