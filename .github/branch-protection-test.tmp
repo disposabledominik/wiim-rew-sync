@@ -1,0 +1,3 @@
+Throwaway file to verify branch protection on `development` blocks merging until
+the `lint-type-test` CI check passes. This PR will be closed (not merged) and the
+branch deleted once verified — do not merge this.
