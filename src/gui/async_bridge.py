@@ -221,3 +221,20 @@ class AsyncBridge(QObject):
 
         self._loop = None
         self._thread = None
+
+
+def emit_round_progress(
+    bridge: AsyncBridge, verb: str, source_name: str, index: int, total: int
+) -> None:
+    """Emit the (progress_update, push_round_changed) pair used for every
+    per-source round of a push, undo, or auto-rollback loop -- the same
+    two-signal pairing was independently reimplemented at three call sites
+    (PrimaryWorkflowManager's forward-push loop and its auto-rollback
+    _on_rollback_round(), SecondaryWorkflowManager's multi-source undo
+    on_round()), differing only by verb ("Pushing to"/"Rolling back"/
+    "Restoring") -- code review finding. Plain function, not a method, so
+    either manager can call it without depending on the other (they're
+    siblings composed only by MainWindow, per CLAUDE.md's manager pattern).
+    """
+    bridge.progress_update.emit(f"{verb} {source_name} ({index} of {total})...")
+    bridge.push_round_changed.emit(source_name, index, total)

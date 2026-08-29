@@ -126,9 +126,19 @@ unknown" caveat to those branches' detail text instead of treating `verified` as
 branch. (2) RoomFit's `except Exception` block was *not* actually already correct as first
 claimed — it built `WriteResult` without `verified=False`, so a RoomFit connection drop still
 showed "device safely restored." Both fixed; the RoomFit regression test now asserts
-`emitted.verified is False` instead of only `success`/`error_message`. Automated tests:
-`TestPushConnectionFailure` (`test_gui_push_export.py`), `PushPage.set_failure(verified=False)`
-UI-state tests including the two swallowed-signal cases (`test_gui_pages.py`). **(b) still not
+`emitted.verified is False` instead of only `success`/`error_message`. A follow-up `/code-review
+ultra` pass on that fix found two more small gaps, also fixed in the same PR: (3) the fully-
+auto-restored branch (`auto_rollback_attempted > 0`, `partial_sources == 0`) showed this failing
+source's own backup path via `_backup_path_label` with no confirming text explaining it, unlike
+every other branch that shows a backup path — fixed by appending the same "safely restored"
+confirmation used elsewhere, only when this source's own backup actually exists. (4) `restore_one()`
+(the extraction that replaced `_restore_backup()`'s inline logic) dropped the pre-existing
+`logger.info` confirmation on a successful restore — restored, reworded to match the shared
+primitive's existing failure-log wording. The duplicated "state unknown" caveat text (two call
+sites) was also hoisted into one class constant. Automated tests: `TestPushConnectionFailure`
+(`test_gui_push_export.py`), `PushPage.set_failure(verified=False)` UI-state tests including the
+two swallowed-signal cases and the backup-path-confirmation cases (`test_gui_pages.py`),
+`TestRestoreOne::test_undo_success_logs_confirmation` (`test_safe_write.py`). **(b) still not
 started** — `set_failure()` still shows a
 count ("N source(s)...") rather than per-source names; `partial_backup_paths` is decoded only for
 the Undo action. **Manual hardware retest required for (a)** (a real mid-write connection drop

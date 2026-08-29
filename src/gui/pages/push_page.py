@@ -109,6 +109,15 @@ class PushPage(QWidget):
     save_preset_requested = Signal()
     done_acknowledged = Signal()
 
+    # Shared by set_failure()'s partial_sources and auto_rollback_attempted
+    # branches -- both need to append this same caveat when verified=False,
+    # since it's a fact about THIS failing source independent of either
+    # branch's own tally of prior sources (code review finding).
+    _UNVERIFIED_OWN_STATE_CAVEAT = (
+        "\n\nThis source's own write could not be confirmed -- its "
+        "device state is unknown. No backup was created for it."
+    )
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("PushPage")
@@ -389,10 +398,7 @@ class PushPage(QWidget):
                 # -- without this, the message reads as if only the prior
                 # sources' state is in question (code review finding,
                 # docs/backlog.md item 9).
-                detail_text += (
-                    "\n\nThis source's own write could not be confirmed -- its "
-                    "device state is unknown. No backup was created for it."
-                )
+                detail_text += self._UNVERIFIED_OWN_STATE_CAVEAT
         elif auto_rollback_attempted:
             # Auto-rollback fully succeeded -- nothing left to undo.
             self._result_icon.setText("⚠")  # warning triangle
@@ -408,9 +414,17 @@ class PushPage(QWidget):
                 f"failure were automatically restored to their previous state."
             )
             if not verified:
+                detail_text += self._UNVERIFIED_OWN_STATE_CAVEAT
+            elif backup_path:
+                # This source's own backup/rollback -- shown via
+                # _backup_path_label below (visible whenever backup_path is
+                # set and partial_sources == 0) -- otherwise appears with no
+                # explanation in this branch, unlike the final `else`
+                # branch below which always pairs it with this same
+                # confirmation (code review finding).
                 detail_text += (
-                    "\n\nThis source's own write could not be confirmed -- its "
-                    "device state is unknown. No backup was created for it."
+                    f"\n\nYour device was safely restored to its previous "
+                    f"state.\nBackup: {backup_path}"
                 )
         elif not verified:
             self._result_icon.setText("⚠")  # warning triangle

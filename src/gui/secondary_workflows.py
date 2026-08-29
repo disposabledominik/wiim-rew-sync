@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 from PySide6.QtCore import QObject, Signal, Slot
 
 from src.adapters.safe_write import restore_entries, restore_one
+from src.gui.async_bridge import emit_round_progress
 from src.gui.primary_workflows import EmptyPresetFiltersError
 from src.models.canonical import CanonicalFilter
 from src.models.channel_mode import (
@@ -519,10 +520,7 @@ class SecondaryWorkflowManager(QObject):
 
         def on_round(source_name: str, index: int, total: int) -> None:
             assert self._bridge is not None
-            self._bridge.progress_update.emit(
-                f"Restoring {source_name} ({index} of {total})..."
-            )
-            self._bridge.push_round_changed.emit(source_name, index, total)
+            emit_round_progress(self._bridge, "Restoring", source_name, index, total)
 
         assert self._safe_write_factory is not None, "configure() must run before undo"
         assert self._current_adapter is not None, "configure() must run before undo"

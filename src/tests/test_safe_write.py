@@ -1220,6 +1220,28 @@ class TestRestoreOne:
         assert message == "Previous filters restored"
         safe_write.undo.assert_awaited_once_with(backup_file, "wifi", on_stage=None)
 
+    async def test_undo_success_logs_confirmation(
+        self, safe_write: SafeWrite, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Code review finding: pre-refactor _restore_backup() logged an
+        INFO confirmation on a successful restore; restore_one() must not
+        silently drop that observability when replacing it."""
+        backup_file = tmp_path / "backup.json"
+        backup_file.write_text("{}", encoding="utf-8")
+        safe_write.undo = AsyncMock(return_value=WriteResult(success=True))
+        logger = logging.getLogger("wiim_rew_sync.app")
+        logger.propagate = True
+        try:
+            with caplog.at_level(logging.INFO, logger="wiim_rew_sync.app"):
+                await restore_one(safe_write, "wifi", backup_file)
+        finally:
+            logger.propagate = False
+
+        assert any(
+            "wifi" in record.message and "completed successfully" in record.message
+            for record in caplog.records
+        )
+
     async def test_undo_returned_failure_propagates_error_message(
         self, safe_write: SafeWrite, tmp_path: Path
     ) -> None:

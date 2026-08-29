@@ -558,6 +558,7 @@ async def restore_one(
         logger.exception("Restore of source '%s' failed", source_name)
         return False, str(exc)
     if result.success:
+        logger.info("Restore of source '%s': completed successfully", source_name)
         return True, "Previous filters restored"
     error_msg = result.error_message or "Unknown error"
     logger.error("Restore of source '%s' failed: %s", source_name, error_msg)

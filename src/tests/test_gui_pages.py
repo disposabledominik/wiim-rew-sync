@@ -1209,6 +1209,33 @@ class TestPushPage:
         msg = page._result_message.text().lower()
         assert "2 source" in msg
         assert "automatically restored" in msg
+        # Code review finding: this source's own backup_path is shown via
+        # _backup_path_label (visible whenever backup_path is set and
+        # partial_sources == 0) -- the detail text must confirm what it's
+        # for, not leave an unexplained path on screen.
+        assert page._backup_path_label.isVisible()
+        detail = page._detail_label.text().lower()
+        assert "safely restored" in detail
+        assert "/tmp/hdmi.json" in detail
+
+    def test_set_failure_auto_rollback_fully_succeeded_no_own_backup(
+        self, qtbot
+    ) -> None:
+        """Same branch as above, but this source's own write never got far
+        enough to create a backup (backup_path empty) -- no false "safely
+        restored" claim should be added since there's nothing to confirm."""
+        page = PushPage()
+        qtbot.addWidget(page)
+        page.show()
+
+        page.set_failure(
+            "No profile name specified", "",
+            partial_sources=0, auto_rollback_attempted=1,
+        )
+
+        assert not page._backup_path_label.isVisible()
+        detail = page._detail_label.text().lower()
+        assert "safely restored" not in detail
 
     def test_set_failure_auto_rollback_partial_failure_offers_undo(self, qtbot) -> None:
         """docs/backlog.md item 3: when auto-rollback fails for some (but

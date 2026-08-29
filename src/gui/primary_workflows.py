@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from PySide6.QtCore import QObject, Signal
 
 from src.adapters.safe_write import WriteResult, restore_entries
+from src.gui.async_bridge import emit_round_progress
 from src.gui.wizard_controller import FlowType
 from src.models.channel_mode import (
     ChannelMode,
@@ -1548,11 +1549,8 @@ class PrimaryWorkflowManager(QObject):
             backup_paths: list[tuple[str, str]] = []
             for i, source_name in enumerate(source_list):
                 if len(source_list) > 1:
-                    self._bridge.progress_update.emit(
-                        f"Pushing to {source_name} ({i + 1}/{len(source_list)})..."
-                    )
-                    self._bridge.push_round_changed.emit(
-                        source_name, i + 1, len(source_list)
+                    emit_round_progress(
+                        self._bridge, "Pushing to", source_name, i + 1, len(source_list)
                     )
 
                 settings = build_peq_settings(
@@ -1665,16 +1663,13 @@ class PrimaryWorkflowManager(QObject):
     def _on_rollback_round(self, source_name: str, index: int, total: int) -> None:
         """Progress callback for restore_entries() during auto-rollback.
 
-        Mirrors the forward-push loop's own progress_update/push_round_changed
-        pairing a few lines up in _do_push(), with "Rolling back" wording so
-        it reads distinctly from a manual Undo's "Restoring" (see PushPage
-        .set_push_round()'s _rollback_mode flag).
+        Uses emit_round_progress(), the same helper the forward-push loop
+        above and SecondaryWorkflowManager's multi-source undo use, with
+        "Rolling back" wording so it reads distinctly from a manual Undo's
+        "Restoring" (see PushPage.set_push_round()'s _rollback_mode flag).
         """
         assert self._bridge is not None
-        self._bridge.progress_update.emit(
-            f"Rolling back {source_name} ({index} of {total})..."
-        )
-        self._bridge.push_round_changed.emit(source_name, index, total)
+        emit_round_progress(self._bridge, "Rolling back", source_name, index, total)
 
     # ------------------------------------------------------------------
     # Workflow: Raw Command (Diagnostics panel)
