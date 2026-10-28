@@ -34,7 +34,7 @@
 
 | Document | Description |
 |----------|-------------|
-| [release_process.md](release_process.md) | Step-by-step release checklist — merge to main, tag, publish |
+| [release_process.md](release_process.md) | Step-by-step release checklist — confirm main, tag, publish |
 | [../packaging/README.md](../packaging/README.md) | Build instructions for Windows, macOS, Linux executables |
 
 ## Contributing

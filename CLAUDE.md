@@ -1,7 +1,8 @@
 # CLAUDE.md
 
-All work happens on the `development` branch unless a different branch is explicitly named.
-PRs target `development`; `main` only receives merges from `development` before cutting a release.
+All work happens on `development` unless a different branch is named. PRs target `development`.
+Post-merge step: once a PR is merged and CI on `development` is green, fast-forward `main` to
+`development` (`git push origin origin/development:main`); never merge directly into `main`.
 
 ## Project
 
@@ -18,6 +19,7 @@ Design principles that drive most design decisions in this codebase:
 ## Commands
 
 Dev workflow runs in **WSL2 Ubuntu bash** (`python3`/`pip3`).
+Cloud sessions (Linux container): `pip install -e '.[dev]'` first; Qt tests need `QT_QPA_PLATFORM=offscreen`. The WSL timing and `/mnt/c/` notes below don't apply there.
 
 ```bash
 python3 -m pytest src/tests/test_<module>.py -v --no-cov     # targeted test, ~5s — primary workflow

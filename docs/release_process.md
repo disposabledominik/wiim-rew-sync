@@ -5,9 +5,10 @@ Read time: ~2 minutes. Come back here every time you cut a release -- don't wing
 
 ## Steps
 
-1. **Merge `development` into `main`.** `main` only ever receives merges from `development`
-   (see [CLAUDE.md](../CLAUDE.md)) -- no separate PR needed for this step, since the actual
-   review already happened on the PRs that landed on `development`.
+1. **Confirm `main` is at `development`.** `main` is fast-forwarded to `development` after every
+   merged PR once CI on `development` is green (see [CLAUDE.md](../CLAUDE.md)), so this is normally
+   a no-op check; no separate PR is needed, since the actual review already happened on the PRs
+   that landed on `development`. If `main` is behind:
    ```bash
    git push origin origin/development:main
    ```
