@@ -19,7 +19,7 @@ Design principles that drive most design decisions in this codebase:
 ## Commands
 
 Dev workflow runs in **WSL2 Ubuntu bash** (`python3`/`pip3`).
-Cloud sessions (Linux container): `pip install -e '.[dev]'` first; Qt tests need `QT_QPA_PLATFORM=offscreen`. The WSL timing and `/mnt/c/` notes below don't apply there.
+Cloud sessions (Linux container): `apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3` and `pip install -e '.[dev]'` first; Qt tests need `QT_QPA_PLATFORM=offscreen`. The WSL timing and `/mnt/c/` notes below don't apply there.
 
 ```bash
 python3 -m pytest src/tests/test_<module>.py -v --no-cov     # targeted test, ~5s — primary workflow
