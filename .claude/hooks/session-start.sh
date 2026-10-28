@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # Project SessionStart bootstrap (runs in local and cloud sessions).
-# Delegates to the global hook from disposabledominik/claude-config. If that
-# config is not installed yet (e.g. a cloud setup script did not run), it
-# installs it from a sibling clone and prints the global rules as context.
+# 1. Fallback dependency install: runs this repo's .claude/setup.sh, which is a
+#    fast no-op when the environment setup script already installed everything.
+# 2. Delegates to the global hook from disposabledominik/claude-config. If that
+#    config is not installed yet, installs it from a sibling clone and prints
+#    the global rules as context.
+setup="$CLAUDE_PROJECT_DIR/.claude/setup.sh"
+[ -x "$setup" ] && "$setup" </dev/null
 hook="$HOME/.claude/hooks/session-start.sh"
 if [ ! -x "$hook" ]; then
   for d in "${CLAUDE_CONFIG_DIR:-}" "$CLAUDE_PROJECT_DIR/../claude-config" /home/user/claude-config "$HOME/code/claude-config"; do
@@ -17,4 +21,4 @@ if [ ! -x "$hook" ]; then
 fi
 if [ -x "$hook" ]; then exec "$hook"; fi
 git fetch --quiet --all --prune 2>/dev/null
-echo "Git: $(git branch --show-current) at $(git rev-parse --short HEAD). claude-config not found; global rules are not loaded."
+echo "claude-config not found; global rules are not loaded. See its README."
